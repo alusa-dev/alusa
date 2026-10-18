@@ -11,7 +11,8 @@ const mocks = vi.hoisted(() => ({
   familyOperationUpdateMany: vi.fn(), familyOperationFindFirst: vi.fn(), outboxFindFirst: vi.fn(),
   getSubscription: vi.fn(), billingAllocationCount: vi.fn(),
   outboxFindMany: vi.fn(),
-  subscriptionFindMany: vi.fn(), deletePayment: vi.fn(), deleteSubscription: vi.fn(), listPayments: vi.fn(),
+  subscriptionFindMany: vi.fn(), chargeFindMany: vi.fn(), chargeUpdateMany: vi.fn(),
+  getPayment: vi.fn(), deletePayment: vi.fn(), deleteSubscription: vi.fn(), listPayments: vi.fn(),
 }));
 
 vi.mock('@alusa/database', () => ({
@@ -24,12 +25,12 @@ vi.mock('@alusa/database', () => ({
       findFirst: mocks.familyAllocationFindFirst,
       updateMany: mocks.familyAllocationUpdateMany,
     },
-    charge: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    charge: { findMany: mocks.chargeFindMany, updateMany: mocks.chargeUpdateMany },
     chargeReadModel: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn({
       matriculaFamiliar: { updateMany: mocks.familyProvisionUpdateMany },
       conta: { findUnique: mocks.accountFindUnique },
-      charge: { findMany: vi.fn().mockResolvedValue([]), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      charge: { findMany: mocks.chargeFindMany, updateMany: mocks.chargeUpdateMany },
       chargeReadModel: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
       matricula: { findMany: mocks.enrollmentFindMany, updateMany: mocks.enrollmentUpdateMany },
     standaloneSubscription: { findMany: mocks.subscriptionFindMany, updateMany: mocks.standaloneUpdateMany },
@@ -53,7 +54,7 @@ vi.mock('@alusa/database', () => ({
 }));
 vi.mock('../use-cases/create-standalone-charge', () => ({ createStandaloneCharge: mocks.createStandaloneCharge }));
 vi.mock('../use-cases/asaas-ops', () => ({
-  getSubscription: mocks.getSubscription, deleteSubscription: mocks.deleteSubscription,
+  getPayment: mocks.getPayment, getSubscription: mocks.getSubscription, deleteSubscription: mocks.deleteSubscription,
   deletePayment: mocks.deletePayment, listPayments: mocks.listPayments,
 }));
 vi.mock('../projections/enrollment-fee-projection.service', () => ({ projectFamilyEnrollmentFeeState: vi.fn() }));
@@ -67,6 +68,17 @@ vi.mock('../billing-agreements/adjustment-processor.js', () => ({
 }));
 
 import { compensateFamilyCreationRemoteEffects, executeFamilyBilling, parseFamilyBillingPayload, processFamilyBillingOutboxBatch, processFamilyBillingOutboxEvent } from './processor';
+
+function compensationPayload(contaId = 'conta-1') {
+  return parseFamilyBillingPayload({
+    aggregateType: 'MATRICULA_FAMILIAR', aggregateId: 'family-1', contaId,
+    responsavelId: 'responsavel-1', responsavelNome: 'Responsável', totalAlunos: 1,
+    monthlyValue: 100, enrollmentFeeValue: 0, billingType: 'BOLETO', cycle: 'MONTHLY',
+    nextDueDate: '2026-11-01', endDate: '2027-10-31', enrollmentFeeDueDate: '2026-10-10',
+    description: 'Matrícula familiar', actorId: 'user-1', strategy: 'SEPARATE',
+    uiRequestId: 'request-1',
+  });
+}
 
 describe('future family billing outbox', () => {
   beforeEach(() => {
@@ -85,9 +97,12 @@ describe('future family billing outbox', () => {
     mocks.outboxFindMany.mockResolvedValue([]);
     mocks.outboxUpdateMany.mockResolvedValue({ count: 1 });
     mocks.subscriptionFindMany.mockResolvedValue([]);
+    mocks.chargeFindMany.mockResolvedValue([]);
+    mocks.chargeUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.getPayment.mockResolvedValue({ id: 'payment-1', status: 'PENDING', deleted: false });
     mocks.deletePayment.mockResolvedValue(undefined);
     mocks.deleteSubscription.mockResolvedValue(undefined);
-    mocks.listPayments.mockResolvedValue({ data: [] });
+    mocks.listPayments.mockResolvedValue({ object: 'list', data: [], totalCount: 0, offset: 0, limit: 100, hasMore: false });
     mocks.getSubscription.mockResolvedValue({ value: 100, status: 'ACTIVE' });
     mocks.standaloneUpdateMany.mockResolvedValue({ count: 1 });
     mocks.billingAllocationCount.mockResolvedValue(1);
@@ -459,7 +474,7 @@ describe('future family billing outbox', () => {
 
   it('não persiste compensação local se o claim for perdido após apagar assinatura no provider', async () => {
     mocks.subscriptionFindMany.mockResolvedValue([{ id: 'subscription-local', asaasSubscriptionId: 'asaas-subscription' }]);
-    mocks.listPayments.mockResolvedValue({ data: [] });
+    mocks.listPayments.mockResolvedValue({ object: 'list', data: [], totalCount: 0, offset: 0, limit: 100, hasMore: false });
     const payload = parseFamilyBillingPayload({
       aggregateType: 'MATRICULA_FAMILIAR', aggregateId: 'family-1', contaId: 'conta-1',
       responsavelId: 'responsavel-1', responsavelNome: 'Responsável', totalAlunos: 1,
@@ -479,6 +494,169 @@ describe('future family billing outbox', () => {
       .rejects.toThrow('FAMILY_BILLING_LEASE_LOST_RESULT_UNCERTAIN');
 
     expect(mocks.deleteSubscription).toHaveBeenCalledWith('asaas-subscription', { contaId: 'conta-1' });
+    expect(mocks.standaloneUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('pagina payments da assinatura e remove candidato cancelável encontrado depois da primeira página', async () => {
+    mocks.subscriptionFindMany.mockResolvedValue([{ id: 'subscription-local', asaasSubscriptionId: 'asaas-subscription' }]);
+    mocks.listPayments
+      .mockResolvedValueOnce({
+        object: 'list', totalCount: 101, offset: 0, limit: 100, hasMore: true,
+        data: Array.from({ length: 100 }, (_, index) => ({ id: `paid-${index}`, status: 'RECEIVED', deleted: false })),
+      })
+      .mockResolvedValueOnce({
+        object: 'list', totalCount: 101, offset: 100, limit: 100, hasMore: false,
+        data: [{ id: 'pending-page-2', status: 'PENDING', deleted: false }],
+      });
+    const payload = parseFamilyBillingPayload({
+      aggregateType: 'MATRICULA_FAMILIAR', aggregateId: 'family-1', contaId: 'conta-1',
+      responsavelId: 'responsavel-1', responsavelNome: 'Responsável', totalAlunos: 1,
+      monthlyValue: 100, enrollmentFeeValue: 0, billingType: 'BOLETO', cycle: 'MONTHLY',
+      nextDueDate: '2026-11-01', endDate: '2027-10-31', enrollmentFeeDueDate: '2026-10-10',
+      description: 'Matrícula familiar', actorId: 'user-1', strategy: 'SEPARATE',
+      uiRequestId: 'request-1', billingPhase: 'RECURRING',
+    });
+
+    await expect(compensateFamilyCreationRemoteEffects(payload)).resolves.toEqual({ complete: true, errors: [] });
+
+    expect(mocks.listPayments.mock.calls.map(([filters, options]) => [filters.offset, options.contaId]))
+      .toEqual([[0, 'conta-1'], [100, 'conta-1']]);
+    expect(mocks.deletePayment).toHaveBeenCalledTimes(1);
+    expect(mocks.deletePayment).toHaveBeenCalledWith('pending-page-2', { contaId: 'conta-1' });
+    expect(mocks.deleteSubscription).toHaveBeenCalledWith('asaas-subscription', { contaId: 'conta-1' });
+  });
+
+  it('preserva payments e assinatura quando lookup paginado falha após encontrar payment pendente', async () => {
+    mocks.subscriptionFindMany.mockResolvedValue([{ id: 'subscription-local', asaasSubscriptionId: 'asaas-subscription' }]);
+    mocks.listPayments
+      .mockResolvedValueOnce({
+        object: 'list', totalCount: 101, offset: 0, limit: 100, hasMore: true,
+        data: Array.from({ length: 100 }, (_, index) => ({
+          id: index === 0 ? 'pending-page-1' : `paid-${index}`,
+          status: index === 0 ? 'PENDING' : 'RECEIVED', deleted: false,
+        })),
+      })
+      .mockRejectedValueOnce(new Error('temporary lookup failure'));
+    const payload = parseFamilyBillingPayload({
+      aggregateType: 'MATRICULA_FAMILIAR', aggregateId: 'family-1', contaId: 'conta-1',
+      responsavelId: 'responsavel-1', responsavelNome: 'Responsável', totalAlunos: 1,
+      monthlyValue: 100, enrollmentFeeValue: 0, billingType: 'BOLETO', cycle: 'MONTHLY',
+      nextDueDate: '2026-11-01', endDate: '2027-10-31', enrollmentFeeDueDate: '2026-10-10',
+      description: 'Matrícula familiar', actorId: 'user-1', strategy: 'SEPARATE',
+      uiRequestId: 'request-1', billingPhase: 'RECURRING',
+    });
+
+    const result = await compensateFamilyCreationRemoteEffects(payload);
+
+    expect(result.complete).toBe(false);
+    expect(result.errors).toEqual([expect.stringContaining('temporary lookup failure')]);
+    expect(mocks.deletePayment).not.toHaveBeenCalled();
+    expect(mocks.deleteSubscription).not.toHaveBeenCalled();
+    expect(mocks.standaloneUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it.each(['RECEIVED', 'UNKNOWN_STATUS'])('não apaga payment de cobrança com status terminal/desconhecido (%s)', async (status) => {
+    mocks.familyFindFirst.mockResolvedValue({ standaloneEnrollmentChargeId: 'charge-local' });
+    mocks.chargeFindMany.mockResolvedValue([{ id: 'charge-local', asaasPaymentId: 'payment-shared-id' }]);
+    mocks.getPayment.mockResolvedValue({ id: 'payment-shared-id', status, deleted: false });
+
+    const result = await compensateFamilyCreationRemoteEffects(compensationPayload());
+
+    expect(result.complete).toBe(false);
+    expect(result.errors).toEqual([expect.stringContaining('NOT_CANCELLABLE_OR_UNVERIFIED')]);
+    expect(mocks.getPayment).toHaveBeenCalledWith('payment-shared-id', { contaId: 'conta-1' });
+    expect(mocks.deletePayment).not.toHaveBeenCalled();
+    expect(mocks.chargeUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it('mantém charge local rastreável quando deletePayment falha', async () => {
+    mocks.familyFindFirst.mockResolvedValue({ standaloneEnrollmentChargeId: 'charge-local' });
+    mocks.chargeFindMany.mockResolvedValue([{ id: 'charge-local', asaasPaymentId: 'payment-delete-fails' }]);
+    mocks.getPayment.mockResolvedValue({ id: 'payment-delete-fails', status: 'PENDING', deleted: false });
+    mocks.deletePayment.mockRejectedValue(new Error('provider delete failed'));
+
+    const result = await compensateFamilyCreationRemoteEffects(compensationPayload());
+
+    expect(result.complete).toBe(false);
+    expect(result.errors).toEqual([expect.stringContaining('provider delete failed')]);
+    expect(mocks.chargeUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { id: 'payment-already-deleted', status: 'PENDING', deleted: true },
+    { id: 'payment-already-deleted', status: 'DELETED', deleted: false },
+  ])('conclui idempotentemente quando GET confirma payment já removido (%s)', async (remotePayment) => {
+    mocks.familyFindFirst.mockResolvedValue({ standaloneEnrollmentChargeId: 'charge-local' });
+    mocks.chargeFindMany.mockResolvedValue([{ id: 'charge-local', asaasPaymentId: 'payment-already-deleted' }]);
+    mocks.getPayment.mockResolvedValue(remotePayment);
+
+    const result = await compensateFamilyCreationRemoteEffects(compensationPayload());
+
+    expect(result).toEqual({ complete: true, errors: [] });
+    expect(mocks.deletePayment).not.toHaveBeenCalled();
+    expect(mocks.chargeUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { contaId: 'conta-1', id: { in: ['charge-local'] } },
+      data: { status: 'CANCELED', asaasStatus: 'DELETED' },
+    }));
+  });
+
+  it('escopa lookup, delete e update de cobrança à conta A mesmo com IDs homônimos na conta B', async () => {
+    const tenantFixtures = [
+      { contaId: 'conta-A', id: 'charge-homonym', asaasPaymentId: 'payment-homonym', status: 'OPEN' },
+      { contaId: 'conta-B', id: 'charge-homonym', asaasPaymentId: 'payment-homonym', status: 'OPEN' },
+    ];
+    mocks.familyFindFirst.mockResolvedValue({ standaloneEnrollmentChargeId: 'charge-homonym' });
+    mocks.chargeFindMany.mockImplementation(async ({ where }) => {
+      return tenantFixtures.filter((charge) => charge.contaId === where.contaId && where.id.in.includes(charge.id));
+    });
+    mocks.chargeUpdateMany.mockImplementation(async ({ where, data }) => {
+      let count = 0;
+      for (const charge of tenantFixtures) {
+        if (charge.contaId === where.contaId && where.id.in.includes(charge.id)) {
+          charge.status = data.status;
+          count += 1;
+        }
+      }
+      return { count };
+    });
+    mocks.getPayment.mockResolvedValue({ id: 'payment-homonym', status: 'PENDING', deleted: false });
+
+    const result = await compensateFamilyCreationRemoteEffects(compensationPayload('conta-A'));
+
+    expect(result).toEqual({ complete: true, errors: [] });
+    expect(mocks.chargeFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ contaId: 'conta-A', id: { in: expect.arrayContaining(['charge-homonym']) } }),
+    }));
+    expect(mocks.getPayment).toHaveBeenCalledTimes(1);
+    expect(mocks.getPayment).toHaveBeenCalledWith('payment-homonym', { contaId: 'conta-A' });
+    expect(mocks.getPayment).not.toHaveBeenCalledWith('payment-homonym', { contaId: 'conta-B' });
+    expect(mocks.deletePayment).toHaveBeenCalledTimes(1);
+    expect(mocks.deletePayment).toHaveBeenCalledWith('payment-homonym', { contaId: 'conta-A' });
+    expect(mocks.deletePayment).not.toHaveBeenCalledWith('payment-homonym', { contaId: 'conta-B' });
+    expect(mocks.chargeUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { contaId: 'conta-A', id: { in: ['charge-homonym'] } },
+    }));
+    expect(mocks.chargeUpdateMany).not.toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ contaId: 'conta-B' }),
+    }));
+    expect(tenantFixtures.find((charge) => charge.contaId === 'conta-A')?.status).toBe('CANCELED');
+    expect(tenantFixtures.find((charge) => charge.contaId === 'conta-B')?.status).toBe('OPEN');
+  });
+
+  it.each([undefined, 'UNRECOGNIZED_STATUS'])('preserva subscription se listed payment status é ausente/desconhecido (%s)', async (status) => {
+    mocks.subscriptionFindMany.mockResolvedValue([{ id: 'subscription-local', asaasSubscriptionId: 'asaas-subscription' }]);
+    mocks.listPayments.mockResolvedValue({
+      object: 'list', totalCount: 1, offset: 0, limit: 100, hasMore: false,
+      data: [{ id: 'payment-unverified', ...(status ? { status } : {}), deleted: false }],
+    });
+    const payload = compensationPayload();
+
+    const result = await compensateFamilyCreationRemoteEffects(payload);
+
+    expect(result.complete).toBe(false);
+    expect(result.errors).toEqual([expect.stringContaining('STATUS_UNVERIFIED')]);
+    expect(mocks.deletePayment).not.toHaveBeenCalled();
+    expect(mocks.deleteSubscription).not.toHaveBeenCalled();
     expect(mocks.standaloneUpdateMany).not.toHaveBeenCalled();
   });
 

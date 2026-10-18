@@ -49,7 +49,7 @@ export function isEventRevenueExpectedStatus(status: string): boolean {
 
 export function isEventRevenueRealizedStatus(status: string): boolean {
   return status === 'RECEIVED' || status === 'PENDING'
-    || status === 'PARTIALLY_PAID' || status === 'PARTIALLY_REFUNDED';
+    || status === 'PARTIALLY_PAID' || status === 'PARTIALLY_REFUNDED' || status === 'REFUNDED';
 }
 
 export function isEventCostExpectedStatus(status: string): boolean {
@@ -642,15 +642,20 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
         consistencyIssues.push(`REVENUE:${entry.originId ?? 'unknown'}:refund_above_actual`);
       }
       if (isEventRevenueExpectedStatus(entry.status)) {
+        receitaBrutaPrevista += gross;
+        descontosPrevistos += discount;
         receitaPrevista += expected;
         receitaBrutaPrevista += gross;
         descontosPrevistos += discount;
       }
       if (isEventRevenueRealizedStatus(entry.status)) {
         if (entry.actualAmount != null) {
+          const effectiveRefunded = entry.status === 'REFUNDED'
+            ? Math.max(refunded, actual)
+            : refunded;
           receitaRecebidaBruta += actual;
-          receitaEstornada += refunded;
-          receitaRealizada += getEventNetRealizedAmount(actual, refunded);
+          receitaEstornada += effectiveRefunded;
+          receitaRealizada += getEventNetRealizedAmount(actual, effectiveRefunded);
         }
       }
       if (entry.status === 'REFUNDED' && entry.actualAmount != null) {

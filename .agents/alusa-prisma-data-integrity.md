@@ -39,7 +39,7 @@ Projetar e revisar persistência para que dados financeiros e operacionais perma
 ### Migrations (`prisma/migrations/`)
 
 - Migrations **seguras**: add nullable → backfill → constraint
-- Revisar SQL gerado antes de merge
+- Revisar SQL gerado antes de aplicar em produção
 - Nomes descritivos (`harden_multi_tenant_indices`, `finance_webhook_side_effect_outbox`)
 - Compatibilidade produção: dados duplicados antes de unique composto
 - RLS policies (coordenação com **tenant** — migrations em `20260518193000_prepare_tenant_rls`)
@@ -116,6 +116,15 @@ Anti-padrões:
 - Migration destrutiva sem janela de rollback
 
 Ferramentas: `prisma migrate dev --create-only`, `prisma migrate diff`, revisar SQL.
+
+### Release e banco Neon de produção
+
+- Toda migration versionada exigida por uma mudança deve ser testada em banco descartável ou branch Neon e também aplicada à branch/database Neon de produção como etapa do release. Aplicar apenas localmente não conclui a mudança.
+- Em produção, usar `prisma migrate deploy`; nunca `prisma migrate dev`. Usar `DIRECT_URL` não pooled para a conexão de migration.
+- Antes de executar, confirmar no dashboard/endpoint que `DIRECT_URL` aponta para a branch Neon de produção e consultar `prisma migrate status`. Após aplicar, consultar status novamente e confirmar que as migrations esperadas foram aplicadas.
+- O push pode iniciar deploy Vercel automaticamente. Migration backwards-compatible pode ser aplicada antes do push do código que a usa. Para mudança incompatível/destrutiva, usar expand/contract ou deploy em fases para manter compatibilidade entre schema e versões da aplicação.
+- Falha de migration é falha real: não publicar código dependente enquanto ela não for corrigida e aplicada com segurança. Nunca mascarar o erro ou alterar dados para forçar o avanço.
+- Validar a migration primeiro em banco descartável/branch; conferir integridade tenant (`contaId`) e preservar dados financeiros/acadêmicos. Não apontar ambiente de teste para produção.
 
 Referência: regra Cursor `migration-best-practices.mdc`
 

@@ -114,6 +114,32 @@ describe('getAccountVerificationStatus', () => {
     expect(action.uploadGroupId).toBeUndefined();
   });
 
+  it('no modo readModelOnly expõe grupo externo sem URL como WAITING_PROVIDER sem refetch', async () => {
+    mockGetKycSnapshotByContaId.mockResolvedValueOnce(
+      baseSnapshot({
+        nextActions: [{
+          kind: 'EXTERNAL_ONBOARDING',
+          groupId: 'grp_external',
+          groupStatus: 'NOT_SENT',
+          type: 'IDENTIFICATION_SELFIE',
+          title: 'Selfie',
+          submissionMethod: 'EXTERNAL_ONBOARDING_URL',
+        }],
+      }),
+    );
+
+    const result = await getAccountVerificationStatus('conta_1', { readModelOnly: true });
+
+    expect(mockGetKycSnapshotByContaId).toHaveBeenCalledTimes(1);
+    expect(mockGetKycSnapshotByContaId).toHaveBeenCalledWith('conta_1', { readModelOnly: true });
+    expect(result.ready).toBe(true);
+    if (!result.ready) return;
+    expect(result.data.actions[0]).toMatchObject({
+      mode: 'WAITING_PROVIDER',
+      submissionMethod: 'EXTERNAL_ONBOARDING_URL',
+    });
+  });
+
   it('mapeia group sem onboardingUrl para action UPLOAD com uploadGroupId (sem redirectUrl)', async () => {
     mockGetKycSnapshotByContaId.mockResolvedValueOnce(
       baseSnapshot({

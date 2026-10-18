@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   findMany: vi.fn(),
   update: vi.fn(),
+  updateMany: vi.fn(),
+  resourceOriginFindUnique: vi.fn(),
   payment: vi.fn(),
   confirmOutbound: vi.fn(),
   getQueueMetrics: vi.fn(),
@@ -18,7 +20,9 @@ vi.mock('@alusa/database', async (importOriginal) => ({
     webhookAsaas: {
       findMany: mocks.findMany,
       update: mocks.update,
+      updateMany: mocks.updateMany,
     },
+    asaasResourceOrigin: { findUnique: mocks.resourceOriginFindUnique },
   },
 }));
 
@@ -52,12 +56,16 @@ import { processAsaasWebhookQueue } from '../asaas-webhook-handler.server';
 describe('processAsaasWebhookQueue notification timestamp', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    const claimedAt = new Date('2026-03-28T15:02:00.000Z');
     mocks.transaction.mockImplementation(async (callback) => callback({
-      $queryRaw: vi.fn().mockResolvedValue([{ id: 'hook-1' }]),
+      $queryRaw: vi.fn().mockResolvedValue([{
+        id: 'hook-1', tentativas: 2, ultimaTentativaEm: claimedAt,
+      }]),
     }));
     mocks.findMany.mockResolvedValue([{
       id: 'hook-1',
       contaId: 'conta-a',
+      status: 'PROCESSANDO',
       evento: 'PAYMENT_RECEIVED',
       eventId: 'evt-1',
       payload: {
@@ -71,11 +79,13 @@ describe('processAsaasWebhookQueue notification timestamp', () => {
         },
       },
       recebidoEm: new Date('2026-03-28T15:00:00Z'),
-      ultimaTentativaEm: new Date('2026-03-28T15:01:00Z'),
-      tentativas: 1,
+      ultimaTentativaEm: claimedAt,
+      tentativas: 2,
       attemptsLog: [],
     }]);
     mocks.update.mockResolvedValue({});
+    mocks.updateMany.mockResolvedValue({ count: 1 });
+    mocks.resourceOriginFindUnique.mockResolvedValue(null);
     mocks.payment.mockResolvedValue({ success: true, skipped: false });
     mocks.confirmOutbound.mockResolvedValue(undefined);
     mocks.getQueueMetrics.mockResolvedValue({});

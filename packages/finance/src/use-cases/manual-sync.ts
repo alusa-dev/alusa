@@ -5,6 +5,7 @@ import { createCharge, type CreateChargeError } from './create-charge';
 import { getAsaasPaymentDetails } from './get-asaas-payment-details';
 import { formatDate, getCurrentBrasiliaDate, listPayments } from './asaas-ops';
 import { syncPaymentStateFromAsaas } from './sync-payment-state-from-asaas';
+import { assertCompleteAsaasPage } from './asaas-pagination';
 
 export class ManualSyncError extends Error {
   constructor(
@@ -81,8 +82,80 @@ async function resolveOfficialPaymentForResend(params: {
   }
 
   const externalReference = `charge:${params.cobranca.id}`;
-  const listedPayments = await listPayments({ externalReference, limit: 10 }, { contaId: params.contaId });
-  const activeCandidates = (listedPayments.data ?? []).filter(
+  const listedPayments: Awaited<ReturnType<typeof listPayments>>['data'] = [];
+  const seenPaymentIds = new Set<string>();
+  const pageSize = 100;
+  let lookupComplete = false;
+  let expectedTotalCount: number | undefined;
+  for (let page = 0; page < 100; page += 1) {
+    let response: Awaited<ReturnType<typeof listPayments>>;
+    try {
+      response = await listPayments(
+        { externalReference, limit: pageSize, offset: page * pageSize },
+        { contaId: params.contaId },
+      );
+    } catch {
+      throw new ManualSyncError(
+        503,
+        'ASAAS_PAYMENT_LOOKUP_INCOMPLETE',
+        'Não foi possível concluir a verificação da cobrança no Asaas. Tente novamente mais tarde.',
+        { cobrancaId: params.cobranca.id, externalReference, page },
+      );
+    }
+    if (
+      !response ||
+      !Array.isArray(response.data) ||
+      typeof response.hasMore !== 'boolean' ||
+      response.offset !== page * pageSize ||
+      response.limit !== pageSize ||
+      response.data.some((payment) =>
+        !payment?.id || seenPaymentIds.has(payment.id) || payment.externalReference !== externalReference,
+      )
+    ) {
+      throw new ManualSyncError(
+        503,
+        'ASAAS_PAYMENT_LOOKUP_INCOMPLETE',
+        'A resposta da verificação da cobrança no Asaas ficou incompleta ou inconsistente.',
+        { cobrancaId: params.cobranca.id, externalReference, page },
+      );
+    }
+    try {
+      expectedTotalCount = assertCompleteAsaasPage(response, page * pageSize, pageSize, expectedTotalCount);
+    } catch (error) {
+      throw new ManualSyncError(
+        503,
+        'ASAAS_PAYMENT_LOOKUP_INCOMPLETE',
+        'A resposta da verificação da cobrança no Asaas ficou incompleta ou inconsistente.',
+        { cobrancaId: params.cobranca.id, externalReference, page, cause: error instanceof Error ? error.message : 'INVALID_PAGE' },
+      );
+    }
+    for (const payment of response.data) {
+      seenPaymentIds.add(payment.id);
+      listedPayments.push(payment);
+    }
+    if (!response.hasMore) {
+      lookupComplete = true;
+      break;
+    }
+    if (response.data.length === 0) {
+      throw new ManualSyncError(
+        503,
+        'ASAAS_PAYMENT_LOOKUP_INCOMPLETE',
+        'A paginação da verificação da cobrança no Asaas ficou incompleta.',
+        { cobrancaId: params.cobranca.id, externalReference, page },
+      );
+    }
+  }
+  if (!lookupComplete) {
+    throw new ManualSyncError(
+      503,
+      'ASAAS_PAYMENT_LOOKUP_INCOMPLETE',
+      'A verificação da cobrança no Asaas excedeu o limite seguro de páginas.',
+      { cobrancaId: params.cobranca.id, externalReference },
+    );
+  }
+
+  const activeCandidates = listedPayments.filter(
     (payment) =>
       typeof payment.id === 'string' &&
       payment.id.trim().length > 0 &&

@@ -1,7 +1,7 @@
 import { createSubscription as createAsaasSubscription, type BillingType, type Cycle } from '@alusa/asaas';
 import { loadAsaasCredentials } from '@alusa/database';
 
-import { buildSafeAsaasIdempotencyKey, hashPayload } from '../core';
+import { buildOutboundOperationKey, hashPayload } from '../core';
 import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
 import { requireKycApproved } from '../foundation/kyc-guard';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
@@ -22,6 +22,8 @@ import {
   markOutboundResultUnknown,
   reserveOutboundFinancialOperation,
 } from './outbound-financial-operation';
+import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
+import { assertCompleteAsaasPage } from './asaas-pagination';
 
 export type EnrollmentSubscriptionStageInput = {
   value: number;
@@ -116,13 +118,29 @@ type Dependencies = {
   markFailed: typeof markOutboundFailed;
   markResultUnknown: typeof markOutboundResultUnknown;
   wait: (milliseconds: number) => Promise<void>;
+  recordCompensationIssue: typeof upsertFinanceReconciliationIssue;
 };
 
 type StagedRemoteIds = {
   asaasSubscriptionId: string | null;
   firstSubscriptionPaymentId: string | null;
   enrollmentFeePaymentId: string | null;
+  outboundClaimAcquired: boolean;
+  feeClaimAcquired: boolean;
 };
+
+const TERMINAL_PAYMENT_STATUSES = new Set([
+  'RECEIVED',
+  'CONFIRMED',
+  'RECEIVED_IN_CASH',
+  'REFUNDED',
+  'REFUND_IN_PROGRESS',
+  'REFUND_REQUESTED',
+  'CHARGEBACK_REQUESTED',
+  'CHARGEBACK_DISPUTE',
+  'AWAITING_CHARGEBACK_REVERSAL',
+  'DUNNING_RECEIVED',
+]);
 
 const defaultDependencies: Dependencies = {
   ensureCustomer,
@@ -144,6 +162,7 @@ const defaultDependencies: Dependencies = {
   markFailed: markOutboundFailed,
   markResultUnknown: markOutboundResultUnknown,
   wait: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  recordCompensationIssue: upsertFinanceReconciliationIssue,
 };
 
 class EnrollmentFinancialStageError extends Error {
@@ -233,14 +252,67 @@ function paymentMatches(input: {
   );
 }
 
+async function collectCompletePages<T extends { id: string }>(
+  loadPage: (offset: number, limit: number) => Promise<{ data: T[]; hasMore: boolean; totalCount: number; offset: number; limit: number }>,
+  errorCode: string,
+  onPage?: (items: T[]) => void,
+): Promise<T[]> {
+  const items: T[] = [];
+  const seenIds = new Set<string>();
+  let expectedTotalCount: number | undefined;
+
+  for (let page = 0; page < 100; page += 1) {
+    let response: { data: T[]; hasMore: boolean; totalCount: number; offset: number; limit: number };
+    try {
+      response = await loadPage(page * 100, 100);
+    } catch (error) {
+      throw new EnrollmentFinancialStageError(`${errorCode}:${errorMessage(error)}`, true);
+    }
+    if (
+      !response ||
+      !Array.isArray(response.data) ||
+      typeof response.hasMore !== 'boolean' ||
+      response.offset !== page * 100 ||
+      response.limit !== 100
+    ) {
+      throw new EnrollmentFinancialStageError(`${errorCode}:INVALID_PAGE`, true);
+    }
+    try {
+      expectedTotalCount = assertCompleteAsaasPage(response, page * 100, 100, expectedTotalCount);
+    } catch (error) {
+      throw new EnrollmentFinancialStageError(`${errorCode}:${error instanceof Error ? error.message : 'INVALID_PAGE'}`, true);
+    }
+    if (response.data.some((item) => !item?.id || seenIds.has(item.id))) {
+      throw new EnrollmentFinancialStageError(`${errorCode}:REPEATED_OR_INVALID_ID`, true);
+    }
+    response.data.forEach((item) => seenIds.add(item.id));
+    items.push(...response.data);
+    onPage?.(response.data);
+    if (!response.hasMore) return items;
+    if (response.data.length === 0) {
+      throw new EnrollmentFinancialStageError(`${errorCode}:EMPTY_PAGE_WITH_MORE`, true);
+    }
+  }
+
+  throw new EnrollmentFinancialStageError(`${errorCode}:PAGE_LIMIT_EXCEEDED`, true);
+}
+
 async function findUniqueSubscriptionByReference(
   contaId: string,
   externalReference: string,
   deps: Dependencies,
 ) {
-  const matches = await deps
-    .listSubscriptions({ externalReference, limit: 10, includeDeleted: true }, { contaId })
-    .then((result) => result.data.filter((item) => !item.deleted));
+  const items = await collectCompletePages(
+    (offset, limit) => deps.listSubscriptions(
+      { externalReference, offset, limit, includeDeleted: true },
+      { contaId },
+    ),
+    'SUBSCRIPTION_REFERENCE_LOOKUP_INCOMPLETE',
+  );
+  if (items.some((item) => item.externalReference !== externalReference)) {
+    throw new EnrollmentFinancialStageError('SUBSCRIPTION_REFERENCE_LOOKUP_MISMATCH', true);
+  }
+  const matches = items.filter((item) => !item.deleted);
   if (matches.length > 1) {
     throw new EnrollmentFinancialStageError(
       'MULTIPLE_REMOTE_SUBSCRIPTIONS_FOR_EXTERNAL_REFERENCE',
@@ -255,9 +327,17 @@ async function findUniquePaymentByReference(
   externalReference: string,
   deps: Dependencies,
 ) {
-  const matches = await deps
-    .listPayments({ externalReference, limit: 10, includeDeleted: true }, { contaId })
-    .then((result) => result.data.filter((item) => !item.deleted));
+  const items = await collectCompletePages(
+    (offset, limit) => deps.listPayments(
+      { externalReference, offset, limit, includeDeleted: true },
+      { contaId },
+    ),
+    'PAYMENT_REFERENCE_LOOKUP_INCOMPLETE',
+  );
+  if (items.some((item) => item.externalReference !== externalReference)) {
+    throw new EnrollmentFinancialStageError('PAYMENT_REFERENCE_LOOKUP_MISMATCH', true);
+  }
+  const matches = items.filter((item) => !item.deleted);
   if (matches.length > 1) {
     throw new EnrollmentFinancialStageError(
       'MULTIPLE_REMOTE_PAYMENTS_FOR_EXTERNAL_REFERENCE',
@@ -298,7 +378,7 @@ async function stageSubscription(input: {
     interest: input.request.subscription.interest,
     fine: input.request.subscription.fine,
   };
-  const idempotencyKey = buildSafeAsaasIdempotencyKey(
+  const idempotencyKey = buildOutboundOperationKey(
     `${input.request.idempotencyKey}:subscription`,
   );
   const operation = await deps.reserveOperation({
@@ -328,6 +408,7 @@ async function stageSubscription(input: {
     if (!claimed) {
       throw new EnrollmentFinancialStageError('SUBSCRIPTION_OPERATION_ALREADY_IN_PROGRESS', true);
     }
+    input.stagedIds.outboundClaimAcquired = true;
     try {
       const created = await deps.createSubscription({
         apiKey: input.apiKey,
@@ -404,11 +485,14 @@ async function confirmFirstPayment(input: {
   const attempts = Math.max(1, Math.min(input.request.confirmationAttempts ?? 3, 6));
   const delay = Math.max(0, Math.min(input.request.confirmationDelayMs ?? 250, 2_000));
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const payments = await deps.listPayments(
-      { subscription: input.subscriptionId, limit: 20, includeDeleted: true },
-      { contaId: input.request.contaId },
+    const payments = await collectCompletePages(
+      (offset, limit) => deps.listPayments(
+        { subscription: input.subscriptionId, offset, limit, includeDeleted: true },
+        { contaId: input.request.contaId },
+      ),
+      'FIRST_SUBSCRIPTION_PAYMENT_LOOKUP_INCOMPLETE',
     );
-    const payment = payments.data.find((candidate) =>
+    const matches = payments.filter((candidate) =>
       paymentMatches({
         payment: candidate,
         customerId: input.customerId,
@@ -417,7 +501,10 @@ async function confirmFirstPayment(input: {
         subscriptionId: input.subscriptionId,
       }),
     );
-    if (payment) return payment;
+    if (matches.length > 1) {
+      throw new EnrollmentFinancialStageError('MULTIPLE_FIRST_SUBSCRIPTION_PAYMENTS', true);
+    }
+    if (matches.length === 1) return matches[0]!;
     if (attempt < attempts && delay > 0) await deps.wait(delay);
   }
   throw new EnrollmentFinancialStageError('FIRST_SUBSCRIPTION_PAYMENT_NOT_CONFIRMED', true);
@@ -443,7 +530,7 @@ async function stageEnrollmentFee(input: {
     interest: input.fee.interest,
     fine: input.fee.fine,
   };
-  const idempotencyKey = buildSafeAsaasIdempotencyKey(paymentInput.idempotencyKey);
+  const idempotencyKey = buildOutboundOperationKey(paymentInput.idempotencyKey);
   const operation = await deps.reserveOperation({
     contaId: input.request.contaId,
     type: 'CREATE_PAYMENT',
@@ -469,6 +556,8 @@ async function stageEnrollmentFee(input: {
     if (!claimed) {
       throw new EnrollmentFinancialStageError('ENROLLMENT_FEE_OPERATION_ALREADY_IN_PROGRESS', true);
     }
+    input.stagedIds.outboundClaimAcquired = true;
+    input.stagedIds.feeClaimAcquired = true;
     const created = await deps.createPayment(paymentInput);
     if (created.success) {
       payment = await deps
@@ -511,8 +600,6 @@ async function stageEnrollmentFee(input: {
     }
   }
 
-  input.stagedIds.enrollmentFeePaymentId = payment.id;
-
   if (
     !paymentMatches({
       payment,
@@ -536,6 +623,7 @@ async function stageEnrollmentFee(input: {
     throw new EnrollmentFinancialStageError('REMOTE_ENROLLMENT_FEE_CONFIRMATION_MISMATCH', true);
   }
 
+  input.stagedIds.enrollmentFeePaymentId = payment.id;
   await deps.markRemoteConfirmed(operation.job.id, payment.id, { providerStatus: payment.status });
   return payment;
 }
@@ -547,6 +635,7 @@ export async function compensateStagedEnrollmentFinancialResources(
     asaasSubscriptionId?: string | null;
     firstSubscriptionPaymentId?: string | null;
     enrollmentFeePaymentId?: string | null;
+    discoverFeeByOperationId?: boolean;
   },
   dependencyOverrides: Partial<Dependencies> = {},
 ): Promise<EnrollmentFinancialCompensationResult> {
@@ -566,6 +655,10 @@ export async function compensateStagedEnrollmentFinancialResources(
   if (enrollmentFeePaymentId) paymentIds.add(enrollmentFeePaymentId);
 
   let asaasSubscriptionId = input.asaasSubscriptionId ?? null;
+  let subscriptionPaymentLookupComplete = true;
+  let paymentCleanupComplete = true;
+  const preservedTerminalPayments: Array<{ id: string; status: string }> = [];
+  const paymentCleanupBlockers: Array<{ id: string; reason: string }> = [];
   if (input.operationId) {
     try {
       const discoveredSubscription = await findUniqueSubscriptionByReference(
@@ -574,14 +667,16 @@ export async function compensateStagedEnrollmentFinancialResources(
         deps,
       );
       asaasSubscriptionId ??= discoveredSubscription?.id ?? null;
-      const discoveredFee = await findUniquePaymentByReference(
-        input.contaId,
-        `enrollment-op:${input.operationId}:fee`,
-        deps,
-      );
-      if (discoveredFee) {
-        enrollmentFeePaymentId ??= discoveredFee.id;
-        paymentIds.add(discoveredFee.id);
+      if (input.discoverFeeByOperationId ?? true) {
+        const discoveredFee = await findUniquePaymentByReference(
+          input.contaId,
+          `enrollment-op:${input.operationId}:fee`,
+          deps,
+        );
+        if (discoveredFee) {
+          enrollmentFeePaymentId ??= discoveredFee.id;
+          paymentIds.add(discoveredFee.id);
+        }
       }
     } catch (error) {
       result.errors.push({
@@ -594,14 +689,20 @@ export async function compensateStagedEnrollmentFinancialResources(
 
   if (asaasSubscriptionId) {
     try {
-      const payments = await deps.listPayments(
-        { subscription: asaasSubscriptionId, limit: 100, includeDeleted: true },
-        { contaId: input.contaId },
+      await collectCompletePages(
+        (offset, limit) => deps.listPayments(
+          { subscription: asaasSubscriptionId!, offset, limit, includeDeleted: true },
+          { contaId: input.contaId },
+        ),
+        'SUBSCRIPTION_PAYMENT_CLEANUP_LOOKUP_INCOMPLETE',
+        (page) => {
+          for (const payment of page) {
+            if (!payment.deleted) paymentIds.add(payment.id);
+          }
+        },
       );
-      for (const payment of payments.data) {
-        if (!payment.deleted) paymentIds.add(payment.id);
-      }
     } catch (error) {
+      subscriptionPaymentLookupComplete = false;
       result.errors.push({
         resource: 'SUBSCRIPTION',
         id: asaasSubscriptionId,
@@ -611,6 +712,42 @@ export async function compensateStagedEnrollmentFinancialResources(
   }
 
   for (const paymentId of paymentIds) {
+    let payment: Awaited<ReturnType<typeof getPayment>>;
+    try {
+      payment = await deps.getPayment(paymentId, { contaId: input.contaId });
+    } catch (error) {
+      paymentCleanupComplete = false;
+      const reason = isNotFound(error)
+        ? 'PAYMENT_GET_NOT_FOUND_IDENTITY_UNCONFIRMED'
+        : `PAYMENT_GET_FAILED:${errorMessage(error)}`;
+      paymentCleanupBlockers.push({ id: paymentId, reason });
+      result.errors.push({ resource: 'PAYMENT', id: paymentId, message: reason });
+      continue;
+    }
+    if (!payment || payment.id !== paymentId) {
+      paymentCleanupComplete = false;
+      paymentCleanupBlockers.push({ id: paymentId, reason: 'PAYMENT_IDENTITY_NOT_CONFIRMED' });
+      result.errors.push({ resource: 'PAYMENT', id: paymentId, message: 'PAYMENT_IDENTITY_NOT_CONFIRMED' });
+      continue;
+    }
+    if (payment.deleted || payment.status === 'DELETED') {
+      result.deletedPaymentIds.push(paymentId);
+      if (paymentId === firstSubscriptionPaymentId) result.deletedFirstSubscriptionPaymentId = paymentId;
+      if (paymentId === enrollmentFeePaymentId) result.deletedEnrollmentFeePaymentId = paymentId;
+      continue;
+    }
+    const status = String(payment.status ?? '').trim().toUpperCase();
+    if (status !== 'PENDING' && status !== 'OVERDUE') {
+      paymentCleanupComplete = false;
+      preservedTerminalPayments.push({ id: paymentId, status: status || 'UNKNOWN' });
+      paymentCleanupBlockers.push({ id: paymentId, reason: `PAYMENT_PRESERVED:${status || 'UNKNOWN'}` });
+      result.errors.push({
+        resource: 'PAYMENT',
+        id: paymentId,
+        message: `PAYMENT_PRESERVED_FOR_RECONCILIATION:${status || 'UNKNOWN'}`,
+      });
+      continue;
+    }
     try {
       await deps.deletePayment(paymentId, { contaId: input.contaId });
       result.deletedPaymentIds.push(paymentId);
@@ -630,12 +767,43 @@ export async function compensateStagedEnrollmentFinancialResources(
           result.deletedEnrollmentFeePaymentId = paymentId;
         }
       } else {
+        paymentCleanupComplete = false;
+        paymentCleanupBlockers.push({ id: paymentId, reason: `PAYMENT_DELETE_FAILED:${errorMessage(error)}` });
         result.errors.push({ resource: 'PAYMENT', id: paymentId, message: errorMessage(error) });
       }
     }
   }
 
-  if (asaasSubscriptionId) {
+  if (paymentCleanupBlockers.length > 0 && asaasSubscriptionId) {
+    try {
+      await deps.recordCompensationIssue({
+        contaId: input.contaId,
+        entityType: 'SUBSCRIPTION',
+        entityId: input.operationId ?? asaasSubscriptionId,
+        asaasId: asaasSubscriptionId,
+        issueType: 'BILLING_OPERATION_UNCERTAIN',
+        severity: 'CRITICAL',
+        localStatus: 'COMPENSATION_INCOMPLETE',
+        remoteStatus: preservedTerminalPayments.some((payment) => TERMINAL_PAYMENT_STATUSES.has(payment.status))
+          ? 'PAYMENT_TERMINAL_PRESERVED'
+          : 'PAYMENT_CLEANUP_FAILED',
+        metadata: {
+          operationId: input.operationId ?? null,
+          subscriptionId: asaasSubscriptionId,
+          preservedPayments: preservedTerminalPayments,
+          paymentCleanupBlockers,
+        },
+      });
+    } catch (error) {
+      result.errors.push({
+        resource: 'SUBSCRIPTION',
+        id: asaasSubscriptionId,
+        message: `RECONCILIATION_ISSUE_WRITE_FAILED:${errorMessage(error)}`,
+      });
+    }
+  }
+
+  if (asaasSubscriptionId && subscriptionPaymentLookupComplete && paymentCleanupComplete) {
     try {
       await deps.deleteSubscription(asaasSubscriptionId, { contaId: input.contaId });
       result.deletedSubscriptionId = asaasSubscriptionId;
@@ -665,6 +833,8 @@ export async function stageEnrollmentFinancialResources(
     asaasSubscriptionId: null,
     firstSubscriptionPaymentId: null,
     enrollmentFeePaymentId: null,
+    outboundClaimAcquired: false,
+    feeClaimAcquired: false,
   };
 
   try {
@@ -753,16 +923,26 @@ export async function stageEnrollmentFinancialResources(
         },
       };
     }
-    const compensation = await compensateStagedEnrollmentFinancialResources(
-      {
-        contaId: input.contaId,
-        operationId: input.operationId,
-        asaasSubscriptionId: stagedIds.asaasSubscriptionId,
-        firstSubscriptionPaymentId: stagedIds.firstSubscriptionPaymentId,
-        enrollmentFeePaymentId: stagedIds.enrollmentFeePaymentId,
-      },
-      deps,
-    );
+    const compensation = stagedIds.outboundClaimAcquired
+      ? await compensateStagedEnrollmentFinancialResources(
+          {
+            contaId: input.contaId,
+            operationId: input.operationId,
+            asaasSubscriptionId: stagedIds.asaasSubscriptionId,
+            firstSubscriptionPaymentId: stagedIds.firstSubscriptionPaymentId,
+            enrollmentFeePaymentId: stagedIds.enrollmentFeePaymentId,
+            discoverFeeByOperationId: stagedIds.feeClaimAcquired,
+          },
+          deps,
+        )
+      : {
+          complete: true,
+          deletedPaymentIds: [],
+          deletedFirstSubscriptionPaymentId: null,
+          deletedEnrollmentFeePaymentId: null,
+          deletedSubscriptionId: null,
+          errors: [],
+        };
     const stagedError = error instanceof EnrollmentFinancialStageError ? error : null;
     const compensationResolvedRemoteUncertainty =
       compensation.complete &&

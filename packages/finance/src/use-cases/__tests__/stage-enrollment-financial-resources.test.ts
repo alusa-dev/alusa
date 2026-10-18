@@ -83,12 +83,12 @@ function dependencies() {
       },
     })),
     getSubscription: vi.fn(async () => subscriptionFixture()),
-    listSubscriptions: vi.fn(async () => ({
+    listSubscriptions: vi.fn(async (filters: { externalReference?: string; offset?: number; limit?: number }, _options?: { contaId: string }) => ({
       object: 'list',
       hasMore: false,
       totalCount: 0,
-      limit: 10,
-      offset: 0,
+      limit: 100,
+      offset: filters.offset ?? 0,
       data: [],
     })),
     getPayment: vi.fn(async (paymentId: string) =>
@@ -102,12 +102,12 @@ function dependencies() {
           })
         : paymentFixture(),
     ),
-    listPayments: vi.fn(async (filters: { subscription?: string; externalReference?: string }) => ({
+    listPayments: vi.fn(async (filters: { subscription?: string; externalReference?: string; offset?: number; limit?: number }, _options?: { contaId: string }) => ({
       object: 'list',
       hasMore: false,
       totalCount: filters.subscription ? 1 : 0,
-      limit: 20,
-      offset: 0,
+      limit: 100,
+      offset: filters.offset ?? 0,
       data: filters.subscription ? [paymentFixture()] : [],
     })),
     deleteSubscription: vi.fn(async () => subscriptionFixture({ deleted: true })),
@@ -129,6 +129,7 @@ function dependencies() {
     markFailed: vi.fn(async () => ({})),
     markResultUnknown: vi.fn(async () => ({})),
     wait: vi.fn(async () => undefined),
+    recordCompensationIssue: vi.fn(async () => ({})),
   };
 }
 
@@ -164,7 +165,7 @@ describe('stageEnrollmentFinancialResources', () => {
       object: 'list',
       hasMore: false,
       totalCount: 0,
-      limit: 20,
+      limit: 100,
       offset: 0,
       data: [],
     });
@@ -227,27 +228,33 @@ describe('stageEnrollmentFinancialResources', () => {
 
   it('encerra a incerteza quando encontra e remove todos os recursos após resposta perdida', async () => {
     const deps = dependencies();
+    let feeLookups = 0;
     deps.createPayment.mockResolvedValue({
       success: false as const,
       error: { code: 'RESULT_UNKNOWN' as const, message: 'ASAAS_REJECTED', resultUnknown: true },
     });
     deps.listPayments.mockImplementation(
-      async (filters: { subscription?: string; externalReference?: string }) => ({
-        object: 'list',
-        hasMore: false,
-        totalCount: 1,
-        limit: 20,
-        offset: 0,
-        data: filters.externalReference
-          ? [
-              paymentFixture({
-                id: 'pay_fee_1',
-                subscription: null,
-                externalReference: 'enrollment-op:operation-1:fee',
-              }),
-            ]
-          : [paymentFixture()],
-      }),
+      async (filters: { subscription?: string; externalReference?: string }) => {
+        if (filters.externalReference?.endsWith(':fee')) {
+          feeLookups += 1;
+          return {
+            object: 'list', hasMore: false, totalCount: feeLookups === 1 ? 0 : 1, limit: 100, offset: 0,
+            data: feeLookups === 1 ? [] : [paymentFixture({
+              id: 'pay_fee_1', subscription: null, externalReference: 'enrollment-op:operation-1:fee',
+            })],
+          };
+        }
+        if (filters.externalReference) {
+          return {
+            object: 'list', hasMore: false, totalCount: 1, limit: 100, offset: 0,
+            data: [subscriptionFixture()],
+          };
+        }
+        return {
+          object: 'list', hasMore: false, totalCount: 1, limit: 100, offset: 0,
+          data: [paymentFixture()],
+        };
+      },
     );
 
     const result = await stageEnrollmentFinancialResources(
@@ -307,7 +314,7 @@ describe('stageEnrollmentFinancialResources', () => {
       object: 'list',
       hasMore: false,
       totalCount: 1,
-      limit: 10,
+      limit: 100,
       offset: 0,
       data: [subscriptionFixture()],
     });
@@ -317,6 +324,180 @@ describe('stageEnrollmentFinancialResources', () => {
     expect(result.success).toBe(true);
     expect(deps.createSubscription).not.toHaveBeenCalled();
     expect(deps.markRemoteRequested).not.toHaveBeenCalled();
+  });
+
+  it('bloqueia POST quando existem assinaturas ativas duplicadas com a referência exata', async () => {
+    const deps = dependencies();
+    deps.listSubscriptions.mockResolvedValue({
+      object: 'list', hasMore: false, totalCount: 2, limit: 100, offset: 0,
+      data: [subscriptionFixture({ id: 'sub-a' }), subscriptionFixture({ id: 'sub-b' })],
+    });
+
+    const result = await stageEnrollmentFinancialResources(request(), deps);
+
+    expect(result).toMatchObject({ success: false, resultUnknown: true });
+    expect(deps.createSubscription).not.toHaveBeenCalled();
+    expect(deps.markRemoteRequested).not.toHaveBeenCalled();
+    expect(deps.deleteSubscription).not.toHaveBeenCalled();
+    expect(deps.deletePayment).not.toHaveBeenCalled();
+    expect(deps.listSubscriptions).toHaveBeenCalledTimes(1);
+  });
+
+  it('não compensa nem remove recurso de execução concorrente sem claim outbound', async () => {
+    const deps = dependencies();
+    deps.listSubscriptions.mockResolvedValueOnce({
+      object: 'list', hasMore: false, totalCount: 0, limit: 100, offset: 0, data: [],
+    });
+    deps.markRemoteRequested.mockResolvedValue(false);
+
+    const result = await stageEnrollmentFinancialResources(request(), deps);
+
+    expect(result).toMatchObject({
+      success: false,
+      error: 'SUBSCRIPTION_OPERATION_ALREADY_IN_PROGRESS',
+      resultUnknown: true,
+    });
+    expect(deps.markRemoteRequested).toHaveBeenCalledTimes(1);
+    expect(deps.createSubscription).not.toHaveBeenCalled();
+    expect(deps.listSubscriptions).toHaveBeenCalledTimes(1);
+    expect(deps.deleteSubscription).not.toHaveBeenCalled();
+    expect(deps.deletePayment).not.toHaveBeenCalled();
+  });
+
+  it('encontra assinatura na segunda página antes de criar outra', async () => {
+    const deps = dependencies();
+    deps.listSubscriptions
+      .mockResolvedValueOnce({
+        object: 'list', hasMore: true, totalCount: 101, limit: 100, offset: 0,
+        data: Array.from({ length: 100 }, (_, index) => subscriptionFixture({ id: `deleted-${index}`, deleted: true })),
+      })
+      .mockResolvedValueOnce({
+        object: 'list', hasMore: false, totalCount: 101, limit: 100, offset: 100,
+        data: [subscriptionFixture()],
+      });
+
+    const result = await stageEnrollmentFinancialResources(request(), deps);
+
+    expect(result).toMatchObject({ success: true });
+    expect(deps.createSubscription).not.toHaveBeenCalled();
+    expect(deps.listSubscriptions.mock.calls.map(([filters, options]) => [filters.offset, options?.contaId]))
+      .toEqual([[0, 'conta-1'], [100, 'conta-1']]);
+  });
+
+  it.each([
+    ['offset', { offset: 1, limit: 100 }],
+    ['limit', { offset: 0, limit: 99 }],
+  ])('bloqueia criação quando lookup de assinatura responde com %s inconsistente', async (_field, pagination) => {
+    const deps = dependencies();
+    deps.listSubscriptions.mockResolvedValueOnce({
+      object: 'list', hasMore: false, totalCount: 0, ...pagination, data: [],
+    } as never);
+
+    const result = await stageEnrollmentFinancialResources(request(), deps);
+
+    expect(result).toMatchObject({ success: false, error: expect.stringContaining('SUBSCRIPTION_REFERENCE_LOOKUP_INCOMPLETE') });
+    expect(deps.markRemoteRequested).not.toHaveBeenCalled();
+    expect(deps.createSubscription).not.toHaveBeenCalled();
+  });
+
+  it('bloqueia criação quando a paginação da busca de assinatura excede o limite seguro', async () => {
+    const deps = dependencies();
+    deps.listSubscriptions.mockImplementation(async (filters) => ({
+      object: 'list', hasMore: true, totalCount: 10_001, limit: 100,
+      offset: filters.offset ?? 0,
+      data: Array.from({ length: 100 }, (_, index) => subscriptionFixture({
+        id: `sub-${filters.offset ?? 0}-${index}`, deleted: true,
+      })),
+    }));
+
+    const result = await stageEnrollmentFinancialResources(
+      request({ claimCompensation: async () => false }),
+      deps,
+    );
+
+    expect(result).toMatchObject({ success: false, error: 'ENROLLMENT_OPERATION_LEASE_LOST' });
+    expect(deps.listSubscriptions).toHaveBeenCalledTimes(100);
+    expect(deps.createSubscription).not.toHaveBeenCalled();
+  });
+
+  it('confirma a primeira mensalidade encontrada somente após paginar completamente', async () => {
+    const deps = dependencies();
+    deps.listPayments.mockImplementation(async (filters) => {
+      if (filters.subscription) {
+        return filters.offset === 0
+          ? { object: 'list', hasMore: true, totalCount: 101, limit: 100, offset: 0,
+              data: Array.from({ length: 100 }, (_, index) => paymentFixture({ id: `pay-first-${index}`, dueDate: '2026-08-06' })) }
+          : { object: 'list', hasMore: false, totalCount: 101, limit: 100, offset: 100,
+              data: [paymentFixture({ id: 'pay_monthly_later' })] };
+      }
+      return { object: 'list', hasMore: false, totalCount: 0, limit: 100,
+        offset: filters.offset ?? 0, data: [] };
+    });
+
+    const result = await stageEnrollmentFinancialResources(request(), deps);
+
+    expect(result).toMatchObject({ success: true, data: { subscription: { firstPayment: { asaasPaymentId: 'pay_monthly_later' } } } });
+    expect(deps.listPayments.mock.calls.map(([filters, options]) => [filters.offset, options?.contaId]))
+      .toEqual([[0, 'conta-1'], [100, 'conta-1']]);
+  });
+
+  it('não cria taxa de matrícula se a busca pela referência não termina', async () => {
+    const deps = dependencies();
+    deps.listPayments.mockImplementation(async (filters) => {
+      if (filters.externalReference) {
+        return {
+          object: 'list', hasMore: true, totalCount: 10_001, limit: 100,
+          offset: filters.offset ?? 0,
+          data: Array.from({ length: 100 }, (_, index) => paymentFixture({
+            id: `pay-fee-${filters.offset ?? 0}-${index}`, externalReference: filters.externalReference,
+          })),
+        };
+      }
+      return { object: 'list', hasMore: false, totalCount: 1, limit: 100,
+        offset: filters.offset ?? 0, data: [paymentFixture()] };
+    });
+
+    await stageEnrollmentFinancialResources(
+      request({
+        enrollmentFee: { value: 75, dueDate: '2026-08-01', billingType: 'PIX' },
+        claimCompensation: async () => false,
+      }),
+      deps,
+    );
+
+    expect(deps.createPayment).not.toHaveBeenCalled();
+    const feeLookupCalls = deps.listPayments.mock.calls.filter(([filters]) => Boolean(filters.externalReference));
+    expect(feeLookupCalls).toHaveLength(100);
+    expect(feeLookupCalls.every(([, options]) => options?.contaId === 'conta-1')).toBe(true);
+  });
+
+  it('encontra taxa de matrícula na segunda página sem repetir POST', async () => {
+    const deps = dependencies();
+    deps.listPayments.mockImplementation(async (filters) => {
+      if (filters.externalReference) {
+        return filters.offset === 0
+          ? { object: 'list', hasMore: true, totalCount: 101, limit: 100, offset: 0,
+              data: Array.from({ length: 100 }, (_, index) => paymentFixture({
+                id: `deleted-fee-${index}`, deleted: true, externalReference: filters.externalReference,
+              })) }
+          : { object: 'list', hasMore: false, totalCount: 101, limit: 100, offset: 100,
+              data: [paymentFixture({ id: 'pay_fee_1', subscription: null, value: 75,
+                dueDate: '2026-08-01', externalReference: filters.externalReference })] };
+      }
+      return { object: 'list', hasMore: false, totalCount: 1, limit: 100,
+        offset: filters.offset ?? 0, data: [paymentFixture()] };
+    });
+
+    const result = await stageEnrollmentFinancialResources(
+      request({ enrollmentFee: { value: 75, dueDate: '2026-08-01', billingType: 'PIX' } }),
+      deps,
+    );
+
+    expect(result).toMatchObject({ success: true, data: { enrollmentFee: { asaasPaymentId: 'pay_fee_1' } } });
+    expect(deps.createPayment).not.toHaveBeenCalled();
+    const feeLookupCalls = deps.listPayments.mock.calls.filter(([filters]) => Boolean(filters.externalReference));
+    expect(feeLookupCalls.map(([filters, options]) => [filters.offset, options?.contaId]))
+      .toEqual([[0, 'conta-1'], [100, 'conta-1']]);
   });
 
   it('compensa assinatura conhecida quando a confirmação remota diverge', async () => {
@@ -331,7 +512,7 @@ describe('stageEnrollmentFinancialResources', () => {
       object: 'list',
       hasMore: false,
       totalCount: 0,
-      limit: 20,
+      limit: 100,
       offset: 0,
       data: [],
     });
@@ -355,7 +536,7 @@ describe('stageEnrollmentFinancialResources', () => {
       object: 'list',
       hasMore: false,
       totalCount: 0,
-      limit: 20,
+      limit: 100,
       offset: 0,
       data: [],
     });
@@ -379,7 +560,7 @@ describe('stageEnrollmentFinancialResources', () => {
       object: 'list',
       hasMore: false,
       totalCount: 0,
-      limit: 20,
+      limit: 100,
       offset: 0,
       data: [],
     });
@@ -407,7 +588,7 @@ describe('compensateStagedEnrollmentFinancialResources', () => {
       object: 'list',
       hasMore: false,
       totalCount: 1,
-      limit: 10,
+      limit: 100,
       offset: 0,
       data: [subscriptionFixture()],
     });
@@ -452,7 +633,7 @@ describe('compensateStagedEnrollmentFinancialResources', () => {
         object: 'list',
         hasMore: false,
         totalCount: 1,
-        limit: 10,
+        limit: 100,
         offset: 0,
         data: [
           paymentFixture({
@@ -488,5 +669,143 @@ describe('compensateStagedEnrollmentFinancialResources', () => {
       deletedEnrollmentFeePaymentId: 'pay_fee_1',
       deletedPaymentIds: expect.arrayContaining(['pay_fee_1', 'pay_monthly_1']),
     });
+  });
+
+  it('não apaga assinatura se a busca paginada de pagamentos dela fica incompleta', async () => {
+    const deps = dependencies();
+    deps.listPayments
+      .mockResolvedValueOnce({
+        object: 'list', hasMore: true, totalCount: 101, limit: 100, offset: 0,
+        data: Array.from({ length: 100 }, (_, index) => index === 0
+          ? paymentFixture({ id: 'pay_monthly_1' })
+          : paymentFixture({ id: `already-deleted-${index}`, deleted: true })),
+      })
+      .mockRejectedValueOnce(new Error('temporary provider failure'));
+
+    const result = await compensateStagedEnrollmentFinancialResources(
+      { contaId: 'conta-1', asaasSubscriptionId: 'sub_remote_1' },
+      deps,
+    );
+
+    expect(result.complete).toBe(false);
+    expect(result.errors).toEqual([
+      expect.objectContaining({ resource: 'SUBSCRIPTION', id: 'sub_remote_1', message: expect.stringContaining('SUBSCRIPTION_PAYMENT_CLEANUP_LOOKUP_INCOMPLETE') }),
+    ]);
+    expect(deps.listPayments.mock.calls.map(([filters, options]) => [filters.offset, options?.contaId]))
+      .toEqual([[0, 'conta-1'], [100, 'conta-1']]);
+    expect(result.deletedPaymentIds).toEqual(['pay_monthly_1']);
+    expect(deps.deletePayment).toHaveBeenCalledWith('pay_monthly_1', { contaId: 'conta-1' });
+    expect(deps.deleteSubscription).not.toHaveBeenCalled();
+  });
+
+  it('preserva pagamento terminal, registra divergência e não remove assinatura', async () => {
+    const deps = dependencies();
+    deps.getPayment.mockResolvedValue(paymentFixture({ status: 'RECEIVED' }));
+
+    const result = await compensateStagedEnrollmentFinancialResources(
+      { contaId: 'conta-1', operationId: 'operation-1', asaasSubscriptionId: 'sub_remote_1' },
+      deps,
+    );
+
+    expect(result.complete).toBe(false);
+    expect(result.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        resource: 'PAYMENT',
+        id: 'pay_monthly_1',
+        message: 'PAYMENT_PRESERVED_FOR_RECONCILIATION:RECEIVED',
+      }),
+    ]));
+    expect(deps.getPayment).toHaveBeenCalledWith('pay_monthly_1', { contaId: 'conta-1' });
+    expect(deps.deletePayment).not.toHaveBeenCalled();
+    expect(deps.deleteSubscription).not.toHaveBeenCalled();
+    expect(deps.recordCompensationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1',
+      entityType: 'SUBSCRIPTION',
+      entityId: 'operation-1',
+      asaasId: 'sub_remote_1',
+      localStatus: 'COMPENSATION_INCOMPLETE',
+      remoteStatus: 'PAYMENT_TERMINAL_PRESERVED',
+      metadata: expect.objectContaining({
+        preservedPayments: [{ id: 'pay_monthly_1', status: 'RECEIVED' }],
+      }),
+    }));
+  });
+
+  it.each([
+    ['status ausente', undefined],
+    ['status desconhecido', 'CUSTOM_PROVIDER_STATE'],
+  ])('preserva payment com %s e bloqueia exclusão da assinatura', async (_label, status) => {
+    const deps = dependencies();
+    deps.getPayment.mockResolvedValue(paymentFixture({ status }));
+
+    const result = await compensateStagedEnrollmentFinancialResources(
+      { contaId: 'conta-1', asaasSubscriptionId: 'sub_remote_1' },
+      deps,
+    );
+
+    expect(result.complete).toBe(false);
+    expect(result.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        resource: 'PAYMENT',
+        id: 'pay_monthly_1',
+        message: `PAYMENT_PRESERVED_FOR_RECONCILIATION:${status ?? 'UNKNOWN'}`,
+      }),
+    ]));
+    expect(result.deletedPaymentIds).not.toContain('pay_monthly_1');
+    expect(deps.deletePayment).not.toHaveBeenCalled();
+    expect(deps.deleteSubscription).not.toHaveBeenCalled();
+    expect(deps.recordCompensationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1',
+      asaasId: 'sub_remote_1',
+      localStatus: 'COMPENSATION_INCOMPLETE',
+    }));
+  });
+
+  it('bloqueia cleanup e subscription quando GET retorna ID divergente mesmo com status DELETED', async () => {
+    const deps = dependencies();
+    deps.getPayment.mockResolvedValue(paymentFixture({ id: 'different-payment', status: 'DELETED', deleted: true }));
+
+    const result = await compensateStagedEnrollmentFinancialResources(
+      { contaId: 'conta-1', asaasSubscriptionId: 'sub_remote_1' },
+      deps,
+    );
+
+    expect(result.complete).toBe(false);
+    expect(result.errors).toContainEqual({
+      resource: 'PAYMENT',
+      id: 'pay_monthly_1',
+      message: 'PAYMENT_IDENTITY_NOT_CONFIRMED',
+    });
+    expect(result.deletedPaymentIds).not.toContain('pay_monthly_1');
+    expect(deps.deletePayment).not.toHaveBeenCalled();
+    expect(deps.deleteSubscription).not.toHaveBeenCalled();
+    expect(deps.recordCompensationIssue).toHaveBeenCalled();
+  });
+
+  it('não remove assinatura se falha não-404 ao excluir payment', async () => {
+    const deps = dependencies();
+    deps.deletePayment.mockRejectedValue(new Error('provider unavailable'));
+
+    const result = await compensateStagedEnrollmentFinancialResources(
+      { contaId: 'conta-1', asaasSubscriptionId: 'sub_remote_1' },
+      deps,
+    );
+
+    expect(result.complete).toBe(false);
+    expect(result.errors).toContainEqual({
+      resource: 'PAYMENT',
+      id: 'pay_monthly_1',
+      message: 'provider unavailable',
+    });
+    expect(result.deletedPaymentIds).not.toContain('pay_monthly_1');
+    expect(deps.deleteSubscription).not.toHaveBeenCalled();
+    expect(deps.recordCompensationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1',
+      asaasId: 'sub_remote_1',
+      remoteStatus: 'PAYMENT_CLEANUP_FAILED',
+      metadata: expect.objectContaining({
+        paymentCleanupBlockers: [{ id: 'pay_monthly_1', reason: 'PAYMENT_DELETE_FAILED:provider unavailable' }],
+      }),
+    }));
   });
 });

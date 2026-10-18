@@ -3,7 +3,9 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { prisma } from '@alusa/database';
 
-import { handleAsaasWebhookEvent } from '../asaas-webhook-handler';
+import { enqueueAsaasWebhookEvent, handleAsaasWebhookEvent } from '../asaas-webhook-handler';
+import { claimTenantFairAsaasWebhooks, processAsaasWebhookQueue } from '../asaas-webhook-handler.server';
+import { recoverStuckWebhooks } from '../webhook-reconciliation.service';
 
 vi.mock('@alusa/asaas', async () => {
   const actual = await vi.importActual<typeof import('@alusa/asaas')>('@alusa/asaas');
@@ -49,6 +51,7 @@ async function cleanup(contaId: string) {
 
   await prisma.webhookAsaas.deleteMany({ where: { contaId } });
   await prisma.financeReconciliationIssue.deleteMany({ where: { contaId } });
+  await prisma.asaasResourceOrigin.deleteMany({ where: { contaId } });
   await prisma.logIntegracao.deleteMany({ where: { contaId } });
   await prisma.asaasIntegrationJob.deleteMany({ where: { contaId } });
   await prisma.invoice.deleteMany({ where: { contaId } });
@@ -72,6 +75,322 @@ async function cleanup(contaId: string) {
 }
 
 describe('handleAsaasWebhookEvent (Fase 2 - authToken)', () => {
+  it('finalizes a SQL-claimed webhook despite PostgreSQL timestamp precision', async () => {
+    const conta = await prisma.conta.create({
+      data: {
+        nome: 'Conta Precisão',
+        cpfCnpj: `000000000004${String(Date.now()).slice(-2)}`,
+      },
+    });
+    const eventId = `evt_${randomUUID()}`;
+    const hook = await prisma.webhookAsaas.create({
+      data: {
+        contaId: conta.id,
+        evento: 'UNROUTED_TEST_EVENT',
+        eventId,
+        payload: { id: eventId, event: 'UNROUTED_TEST_EVENT' },
+        status: 'PENDENTE',
+        tentativas: 0,
+      },
+    });
+
+    try {
+      const result = await processAsaasWebhookQueue({ contaId: conta.id, webhookId: hook.id });
+      const persisted = await prisma.webhookAsaas.findUnique({ where: { id: hook.id } });
+
+      expect(result).toMatchObject({ attempted: 1, processed: 1, failed: 0, skipped: 0 });
+      expect(persisted).toMatchObject({ status: 'PROCESSADO', tentativas: 1 });
+      expect(persisted?.ultimaTentativaEm).toBeInstanceOf(Date);
+    } finally {
+      await cleanup(conta.id);
+    }
+  });
+
+  it('recovers stale rows with PostgreSQL precision and preserves a newer processing attempt', async () => {
+    const conta = await prisma.conta.create({
+      data: {
+        nome: 'Conta Recovery',
+        cpfCnpj: `000000000005${String(Date.now()).slice(-2)}`,
+      },
+    });
+    const oldDate = new Date(Date.now() - 10 * 60_000);
+    const hook = await prisma.webhookAsaas.create({
+      data: {
+        contaId: conta.id,
+        evento: 'UNROUTED_TEST_EVENT',
+        eventId: `evt_${randomUUID()}`,
+        payload: { event: 'UNROUTED_TEST_EVENT' },
+        status: 'PROCESSANDO',
+        tentativas: 2,
+        recebidoEm: oldDate,
+        ultimaTentativaEm: oldDate,
+      },
+    });
+    const recoverableHook = await prisma.webhookAsaas.create({
+      data: {
+        contaId: conta.id,
+        evento: 'UNROUTED_TEST_EVENT',
+        eventId: `evt_${randomUUID()}`,
+        payload: { event: 'UNROUTED_TEST_EVENT' },
+        status: 'PROCESSANDO',
+        tentativas: 4,
+        recebidoEm: oldDate,
+        ultimaTentativaEm: oldDate,
+      },
+    });
+    const actualFindMany = prisma.webhookAsaas.findMany.bind(prisma.webhookAsaas);
+    prisma.webhookAsaas.findMany = async (args) => {
+      const rows = await actualFindMany(args);
+      if (rows.some((row) => row.id === hook.id)) {
+        await prisma.webhookAsaas.update({
+          where: { id: hook.id },
+          data: { tentativas: { increment: 1 }, ultimaTentativaEm: new Date() },
+        });
+      }
+      return rows;
+    };
+
+    try {
+      const result = await recoverStuckWebhooks({ contaId: conta.id, timeoutMinutes: 5 });
+      const persisted = await prisma.webhookAsaas.findUnique({ where: { id: hook.id } });
+      const recovered = await prisma.webhookAsaas.findUnique({ where: { id: recoverableHook.id } });
+
+      expect(result).toMatchObject({ recovered: 1, ids: [recoverableHook.id] });
+      expect(persisted).toMatchObject({ status: 'PROCESSANDO', tentativas: 3 });
+      expect(persisted?.ultimaTentativaEm?.getTime()).toBeGreaterThan(oldDate.getTime());
+      expect(recovered).toMatchObject({ status: 'ERRO', tentativas: 4 });
+    } finally {
+      prisma.webhookAsaas.findMany = actualFindMany;
+      await cleanup(conta.id);
+    }
+  });
+
+  it('does not let an old worker finalize a webhook after a newer claim takes over', async () => {
+    const conta = await prisma.conta.create({
+      data: {
+        nome: 'Conta Claim',
+        cpfCnpj: `000000000003${String(Date.now()).slice(-2)}`,
+      },
+    });
+    const eventId = `evt_${randomUUID()}`;
+    const hook = await prisma.webhookAsaas.create({
+      data: {
+        contaId: conta.id,
+        evento: 'PAYMENT_RECEIVED',
+        eventId,
+        payload: { id: eventId, event: 'PAYMENT_RECEIVED', payment: { id: `pay_${randomUUID()}` } },
+        status: 'PENDENTE',
+        tentativas: 0,
+      },
+    });
+
+    const actualUpdateMany = prisma.webhookAsaas.updateMany.bind(prisma.webhookAsaas);
+    prisma.webhookAsaas.updateMany = async (args) => {
+      if ((args?.where as { id?: string } | undefined)?.id === hook.id) {
+        await actualUpdateMany({
+          where: { id: hook.id, status: 'PROCESSANDO' },
+          data: { tentativas: { increment: 1 }, ultimaTentativaEm: new Date(Date.now() + 1_000) },
+        });
+      }
+      return actualUpdateMany(args);
+    };
+
+    try {
+      const result = await processAsaasWebhookQueue({ contaId: conta.id, webhookId: hook.id });
+      const persisted = await prisma.webhookAsaas.findUnique({ where: { id: hook.id } });
+
+      expect(result).toMatchObject({ attempted: 1, processed: 0, failed: 0, skipped: 1 });
+      expect(persisted).toMatchObject({ status: 'PROCESSANDO', tentativas: 2 });
+      expect(persisted?.ultimoErro).toBeNull();
+    } finally {
+      prisma.webhookAsaas.updateMany = actualUpdateMany;
+      await cleanup(conta.id);
+    }
+  });
+
+  it('fences a recycled attempt number with a strictly increasing database claim timestamp', async () => {
+    const conta = await prisma.conta.create({
+      data: { nome: 'Conta Claim Fence', cpfCnpj: `000000000006${String(Date.now()).slice(-2)}` },
+    });
+    const previousClaimAt = new Date(Date.now() - 2_000);
+    const hook = await prisma.webhookAsaas.create({
+      data: {
+        contaId: conta.id,
+        evento: 'UNROUTED_TEST_EVENT',
+        eventId: `evt_${randomUUID()}`,
+        payload: { event: 'UNROUTED_TEST_EVENT' },
+        status: 'ERRO',
+        tentativas: 0,
+        ultimaTentativaEm: previousClaimAt,
+      },
+    });
+
+    try {
+      const firstClaim = await prisma.$transaction((tx) => claimTenantFairAsaasWebhooks(tx, {
+        statuses: ['ERRO'], maxAttempts: 5, limit: 1,
+      }));
+      expect(firstClaim).toHaveLength(1);
+      expect(firstClaim[0]?.tentativas).toBe(1);
+
+      // ALUSA classification resets only the replay budget. The old claim's
+      // timestamp remains the lower bound for the next fencing token.
+      await prisma.webhookAsaas.updateMany({
+        where: { id: hook.id, contaId: conta.id, status: 'PROCESSANDO', tentativas: 1 },
+        data: { status: 'ERRO', tentativas: 0 },
+      });
+
+      const secondClaim = await prisma.$transaction((tx) => claimTenantFairAsaasWebhooks(tx, {
+        statuses: ['ERRO'], maxAttempts: 5, limit: 1,
+      }));
+      expect(secondClaim).toHaveLength(1);
+      expect(secondClaim[0]?.tentativas).toBe(1);
+      expect(secondClaim[0]!.ultimaTentativaEm.getTime()).toBeGreaterThan(firstClaim[0]!.ultimaTentativaEm.getTime());
+
+      const staleFinalizer = await prisma.webhookAsaas.updateMany({
+        where: {
+          id: hook.id,
+          contaId: conta.id,
+          status: 'PROCESSANDO',
+          tentativas: firstClaim[0]!.tentativas,
+          ultimaTentativaEm: firstClaim[0]!.ultimaTentativaEm,
+        },
+        data: { status: 'PROCESSADO', processadoEm: new Date() },
+      });
+      expect(staleFinalizer.count).toBe(0);
+      const persisted = await prisma.webhookAsaas.findUnique({ where: { id: hook.id } });
+      expect(persisted).toMatchObject({ status: 'PROCESSANDO', tentativas: 1 });
+      expect(persisted?.ultimaTentativaEm?.getTime()).toBe(secondClaim[0]!.ultimaTentativaEm.getTime());
+    } finally {
+      await cleanup(conta.id);
+    }
+  });
+
+  it('uses the timestamp fence when the normal queue recycles attempt one', async () => {
+    const conta = await prisma.conta.create({
+      data: { nome: 'Conta Normal Claim Fence', cpfCnpj: `000000000007${String(Date.now()).slice(-2)}` },
+    });
+    const eventId = `evt_${randomUUID()}`;
+    const hook = await prisma.webhookAsaas.create({
+      data: {
+        contaId: conta.id,
+        evento: 'UNROUTED_TEST_EVENT',
+        eventId,
+        payload: { id: eventId, event: 'UNROUTED_TEST_EVENT' },
+        status: 'ERRO',
+        tentativas: 0,
+      },
+    });
+
+    const actualUpdateMany = prisma.webhookAsaas.updateMany.bind(prisma.webhookAsaas);
+    let replayed = false;
+    prisma.webhookAsaas.updateMany = async (args) => {
+      const where = args?.where as { id?: string; ultimaTentativaEm?: Date } | undefined;
+      if (!replayed && where?.id === hook.id && where.ultimaTentativaEm instanceof Date) {
+        replayed = true;
+        const firstClaimAt = where.ultimaTentativaEm;
+        await actualUpdateMany({
+          where: { id: hook.id, contaId: conta.id, status: 'PROCESSANDO', tentativas: 1 },
+          data: { status: 'ERRO', tentativas: 0 },
+        });
+        prisma.webhookAsaas.updateMany = actualUpdateMany;
+        const secondRun = await processAsaasWebhookQueue({ contaId: conta.id, webhookId: hook.id });
+        expect(secondRun).toMatchObject({ attempted: 1, processed: 1, skipped: 0 });
+        const newerClaimAt = (await prisma.webhookAsaas.findUnique({ where: { id: hook.id } }))?.ultimaTentativaEm;
+        expect(newerClaimAt?.getTime()).toBeGreaterThan(firstClaimAt.getTime());
+        return actualUpdateMany(args);
+      }
+      return actualUpdateMany(args);
+    };
+
+    try {
+      const firstRun = await processAsaasWebhookQueue({ contaId: conta.id, webhookId: hook.id });
+      const persisted = await prisma.webhookAsaas.findUnique({ where: { id: hook.id } });
+
+      expect(firstRun).toMatchObject({ attempted: 1, processed: 0, skipped: 1 });
+      expect(persisted).toMatchObject({ status: 'PROCESSADO', tentativas: 1 });
+    } finally {
+      prisma.webhookAsaas.updateMany = actualUpdateMany;
+      await cleanup(conta.id);
+    }
+  });
+
+  it('does not requeue an errored webhook claimed concurrently after the initial read', async () => {
+    const conta = await prisma.conta.create({
+      data: {
+        nome: 'Conta Teste',
+        cpfCnpj: `000000000001${String(Date.now()).slice(-2)}`,
+      },
+    });
+    const profile = await prisma.financeProfile.create({ data: { contaId: conta.id } });
+    const authToken = `token_${randomUUID()}`;
+    await prisma.asaasAccount.create({
+      data: {
+        financeProfileId: profile.id,
+        asaasAccountId: `asaas_${randomUUID()}`,
+        externalReference: `financeProfile:${profile.id}`,
+        status: 'APPROVED',
+        statusUpdatedAt: new Date(),
+        webhookAuthTokenHash: sha256Hex(authToken),
+      },
+    });
+    const eventId = `evt_${randomUUID()}`;
+    const hook = await prisma.webhookAsaas.create({
+      data: {
+        contaId: conta.id,
+        evento: 'PAYMENT_RECEIVED',
+        eventId,
+        payload: { id: eventId, event: 'PAYMENT_RECEIVED' },
+        status: 'ERRO',
+        tentativas: 1,
+      },
+    });
+    const otherConta = await prisma.conta.create({
+      data: {
+        nome: 'Outra Conta',
+        cpfCnpj: `000000000002${String(Date.now()).slice(-2)}`,
+      },
+    });
+    const otherHook = await prisma.webhookAsaas.create({
+      data: {
+        contaId: otherConta.id,
+        evento: 'PAYMENT_RECEIVED',
+        eventId,
+        payload: { id: eventId, event: 'PAYMENT_RECEIVED' },
+        status: 'ERRO',
+        tentativas: 1,
+      },
+    });
+
+    const actualUpdateMany = prisma.webhookAsaas.updateMany.bind(prisma.webhookAsaas);
+    prisma.webhookAsaas.updateMany = async (args) => {
+      // Deterministically place a worker claim between the enqueue read and CAS.
+      await actualUpdateMany({
+        where: { id: hook.id },
+        data: { status: 'PROCESSANDO', tentativas: { increment: 1 }, ultimaTentativaEm: new Date() },
+      });
+      return actualUpdateMany(args);
+    };
+
+    try {
+      const result = await enqueueAsaasWebhookEvent({
+        rawBody: JSON.stringify({ id: eventId, event: 'PAYMENT_RECEIVED' }),
+        accessToken: authToken,
+      });
+
+      expect(result).toMatchObject({ success: true, persisted: true, webhookId: hook.id });
+      const persisted = await prisma.webhookAsaas.findUnique({ where: { id: hook.id } });
+      expect(persisted?.status).toBe('PROCESSANDO');
+      expect(persisted?.tentativas).toBe(2);
+      const otherPersisted = await prisma.webhookAsaas.findUnique({ where: { id: otherHook.id } });
+      expect(otherPersisted?.status).toBe('ERRO');
+      expect(otherPersisted?.tentativas).toBe(1);
+    } finally {
+      prisma.webhookAsaas.updateMany = actualUpdateMany;
+      await cleanup(conta.id);
+      await cleanup(otherConta.id);
+    }
+  });
+
   it('deve rejeitar JSON inválido', async () => {
     const res = await handleAsaasWebhookEvent({ rawBody: '{', accessToken: `token_${randomUUID()}` });
     expect(res).toMatchObject({ success: false, status: 400 });
@@ -326,6 +645,28 @@ describe('handleAsaasWebhookEvent (Fase 2 - authToken)', () => {
       },
     });
 
+    await prisma.asaasResourceOrigin.create({
+      data: {
+        contaId: conta.id,
+        resourceType: 'PAYMENT',
+        asaasId: paymentId,
+        origin: 'ALUSA',
+        reason: 'operator_classification',
+        actorId: 'admin-test',
+      },
+    });
+    await prisma.financeReconciliationIssue.create({
+      data: {
+        contaId: conta.id,
+        entityType: 'PAYMENT',
+        asaasId: paymentId,
+        issueType: 'PAYMENT_NEEDS_REVIEW',
+        severity: 'MEDIUM',
+        dedupeKey: `PAYMENT_NEEDS_REVIEW:PAYMENT:${paymentId}`,
+        metadata: { reason: 'resource_origin_unknown' },
+      },
+    });
+
     const eventId = `evt_${randomUUID()}`;
     const rawBody = JSON.stringify({
       id: eventId,
@@ -350,6 +691,54 @@ describe('handleAsaasWebhookEvent (Fase 2 - authToken)', () => {
         where: { contaId: conta.id, externalRef: `asaas:payment:${paymentId}`, isEstorno: false },
       });
       expect(lancamento).not.toBeNull();
+
+      const issue = await prisma.financeReconciliationIssue.findFirst({
+        where: { contaId: conta.id, asaasId: paymentId, issueType: 'PAYMENT_NEEDS_REVIEW' },
+      });
+      expect(issue).toMatchObject({ status: 'RESOLVED' });
+      expect(issue?.resolution).toContain('classificado como ALUSA');
+    } finally {
+      await cleanup(conta.id);
+    }
+  });
+
+  it('mantém PAYMENT_NEEDS_REVIEW aberto quando o replay bem-sucedido ainda não tem origem ALUSA', async () => {
+    const conta = await prisma.conta.create({
+      data: {
+        nome: 'Conta Origem Desconhecida',
+        cpfCnpj: `000000000006${String(Date.now()).slice(-2)}`,
+      },
+    });
+    const profile = await prisma.financeProfile.create({ data: { contaId: conta.id } });
+    const authToken = `token_${randomUUID()}`;
+    await prisma.asaasAccount.create({
+      data: {
+        financeProfileId: profile.id,
+        asaasAccountId: `asaas_${randomUUID()}`,
+        externalReference: `financeProfile:${profile.id}`,
+        status: 'IN_PROGRESS',
+        statusUpdatedAt: new Date(),
+        webhookAuthTokenHash: sha256Hex(authToken),
+      },
+    });
+
+    const paymentId = `pay_${randomUUID()}`;
+    const eventId = `evt_${randomUUID()}`;
+    const rawBody = JSON.stringify({
+      id: eventId,
+      event: 'PAYMENT_CONFIRMED',
+      payment: { id: paymentId, status: 'CONFIRMED', value: 150 },
+    });
+
+    try {
+      const result = await handleAsaasWebhookEvent({ rawBody, accessToken: authToken });
+      expect(result).toMatchObject({ success: true, status: 200 });
+
+      const issue = await prisma.financeReconciliationIssue.findFirst({
+        where: { contaId: conta.id, asaasId: paymentId, issueType: 'PAYMENT_NEEDS_REVIEW' },
+      });
+      expect(issue).toMatchObject({ status: 'OPEN' });
+      expect(issue?.metadata).toMatchObject({ reason: 'resource_origin_unknown' });
     } finally {
       await cleanup(conta.id);
     }

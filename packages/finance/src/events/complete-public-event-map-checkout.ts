@@ -10,12 +10,16 @@ import { reconcileEventMapOrderFinancialStateFromAsaas } from './event-map-payme
 import type { PublicCheckoutInput } from '@alusa/lib/events/map/event-map.schema';
 import {
   getEventAsaasPaymentProvider,
+  listCompleteEventCustomersByDocument,
+  listCompleteEventPaymentsByReference,
+  selectUniqueActiveEventPayment,
   type EventAsaasPayment,
 } from './event-asaas-payment-provider';
 import { EventsError } from '@alusa/domain/events';
 import { loadDecryptedAsaasCredentials } from '../foundation/load-decrypted-asaas-credentials';
 import { parseFirstValidCivilDatePreservingInstant } from '../mappers/civil-date';
 import { logEventsFinance } from './events-finance-observability';
+import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
 
 const PAID_ASAAS_PAYMENT_STATUSES = new Set([
   'CONFIRMED',
@@ -36,6 +40,56 @@ function toAsaasDate(date: Date) {
 
 function buildEventMapAsaasIdempotencyKey(scope: 'customer' | 'payment', orderId: string) {
   return `event-map:${scope}:${orderId}`;
+}
+
+async function requireBuyerAsaasCustomerId(input: {
+  apiKey: string;
+  buyerDocument: string;
+  localCustomerId?: string | null;
+}) {
+  const customers = await listCompleteEventCustomersByDocument({
+    apiKey: input.apiKey,
+    cpfCnpj: input.buyerDocument,
+  });
+  const matches = customers.filter((customer) => !customer.deleted);
+  if (matches.length !== 1 || !matches[0]?.id || (input.localCustomerId && input.localCustomerId !== matches[0].id)) {
+    throw new Error('BUYER_ASAAS_CUSTOMER_NOT_UNIQUELY_CONFIRMED');
+  }
+  return matches[0].id;
+}
+
+async function markEventMapPaymentReconciliationRequired(input: {
+  contaId: string;
+  orderId: string;
+  expectedPaymentStatus: string | null;
+  externalReference: string;
+  reason: string;
+  metadata?: Prisma.InputJsonObject;
+}) {
+  await prisma.eventMapOrder.updateMany({
+    where: {
+      id: input.orderId,
+      contaId: input.contaId,
+      status: 'PAYMENT_PENDING',
+      asaasPaymentId: null,
+      paymentStatus: input.expectedPaymentStatus,
+    },
+    data: { paymentStatus: 'PAYMENT_CREATION_UNKNOWN' },
+  });
+  await upsertFinanceReconciliationIssue({
+    contaId: input.contaId,
+    entityType: 'PAYMENT',
+    entityId: input.orderId,
+    issueType: 'BILLING_OPERATION_UNCERTAIN',
+    severity: 'CRITICAL',
+    localStatus: 'PAYMENT_CREATION_UNKNOWN',
+    remoteStatus: input.reason,
+    metadata: {
+      orderId: input.orderId,
+      externalReference: input.externalReference,
+      ...input.metadata,
+    },
+  });
 }
 
 async function buildCheckoutResponse(
@@ -91,6 +145,9 @@ export async function completePublicEventMapCheckout(
   const pending = await preparePublicEventMapCheckout(publicSlug, input);
   let paymentCreationClaimed = false;
   let paymentCreationStarted = false;
+  let paymentReferenceLookupStarted = false;
+  let paymentReferenceLookupCompleted = false;
+  let paymentReferenceCandidateBlocked = false;
   try {
     const credentials = await loadDecryptedAsaasCredentials(pending.map.contaId);
     if (!credentials?.apiKey) {
@@ -113,20 +170,49 @@ export async function completePublicEventMapCheckout(
     // Always reconcile by our stable external reference before attempting a
     // payment POST. Asaas may have accepted an earlier request whose response
     // was lost before this order persisted the remote ID.
-    const remotePayments = await getEventAsaasPaymentProvider().listPayments({
-      apiKey: credentials.apiKey,
-      externalReference,
-      limit: 10,
-    });
-    const existingPayments = remotePayments.data.filter((candidate) => !candidate.deleted);
-    if (existingPayments.length > 1) {
+    paymentReferenceLookupStarted = true;
+    let remotePayments: EventAsaasPayment[];
+    try {
+      remotePayments = await listCompleteEventPaymentsByReference({
+        apiKey: credentials.apiKey,
+        externalReference,
+      });
+    } catch (error) {
+      paymentReferenceCandidateBlocked = true;
+      await markEventMapPaymentReconciliationRequired({
+        contaId: pending.map.contaId,
+        orderId: pending.order.id,
+        expectedPaymentStatus: pending.order.paymentStatus,
+        externalReference,
+        reason: 'REFERENCE_LOOKUP_INCOMPLETE',
+        metadata: { lookupError: error instanceof Error ? error.message : String(error) },
+      });
+      throw new EventsError(
+        'PAGAMENTO_EM_VERIFICACAO',
+        'Estamos verificando a cobrança com o provedor. Consulte o pedido novamente em instantes.',
+        409,
+      );
+    }
+    paymentReferenceLookupCompleted = true;
+    let existingPayment: EventAsaasPayment | null;
+    try {
+      existingPayment = selectUniqueActiveEventPayment(remotePayments);
+    } catch {
+      paymentReferenceCandidateBlocked = true;
+      await markEventMapPaymentReconciliationRequired({
+        contaId: pending.map.contaId,
+        orderId: pending.order.id,
+        expectedPaymentStatus: pending.order.paymentStatus,
+        externalReference,
+        reason: 'MULTIPLE_REMOTE_PAYMENTS',
+        metadata: { lookupStatus: 'COMPLETE' },
+      });
       throw new EventsError(
         'COBRANCAS_DUPLICADAS_EM_RECONCILIACAO',
         'Encontramos mais de uma cobrança para este pedido. A equipe da instituição precisa verificar antes de continuar.',
         409,
       );
     }
-    const existingPayment = existingPayments[0];
     if (existingPayment) {
       const expectedValue = toMoney(pending.totalAmount);
       const remoteValue =
@@ -135,28 +221,94 @@ export async function completePublicEventMapCheckout(
         where: { id: pending.order.id, contaId: pending.map.contaId },
         select: { asaasCustomerId: true },
       });
+      let buyerCustomerId: string;
+      try {
+        buyerCustomerId = await requireBuyerAsaasCustomerId({
+          apiKey: credentials.apiKey,
+          buyerDocument,
+          localCustomerId: currentOrder?.asaasCustomerId,
+        });
+      } catch (error) {
+        paymentReferenceCandidateBlocked = true;
+        await markEventMapPaymentReconciliationRequired({
+          contaId: pending.map.contaId,
+          orderId: pending.order.id,
+          expectedPaymentStatus: pending.order.paymentStatus,
+          externalReference,
+          reason: 'BUYER_CUSTOMER_NOT_CONFIRMED',
+          metadata: { lookupError: error instanceof Error ? error.message : String(error) },
+        });
+        throw new EventsError(
+          'COBRANCA_DIVERGENTE_EM_RECONCILIACAO',
+          'Não foi possível confirmar o vínculo da cobrança com o comprador. A equipe da instituição precisa verificar.',
+          409,
+        );
+      }
       if (
         remoteValue !== expectedValue ||
         existingPayment.billingType !== input.paymentMethod ||
-        (currentOrder?.asaasCustomerId && existingPayment.customer !== currentOrder.asaasCustomerId)
+        existingPayment.customer !== buyerCustomerId
       ) {
+        paymentReferenceCandidateBlocked = true;
+        await markEventMapPaymentReconciliationRequired({
+          contaId: pending.map.contaId,
+          orderId: pending.order.id,
+          expectedPaymentStatus: pending.order.paymentStatus,
+          externalReference,
+          reason: 'PAYMENT_MISMATCH',
+          metadata: {
+            lookupStatus: 'COMPLETE',
+            paymentId: existingPayment.id,
+            customerIdMatched: existingPayment.customer === buyerCustomerId,
+          },
+        });
         throw new EventsError(
           'COBRANCA_DIVERGENTE_EM_RECONCILIACAO',
           'A cobrança encontrada não corresponde aos dados desta compra e precisa de verificação antes de continuar.',
           409,
         );
       }
-      const attached = await prisma.eventMapOrder.update({
-        where: { id: pending.order.id },
+      const attached = await prisma.eventMapOrder.updateMany({
+        where: {
+          id: pending.order.id,
+          contaId: pending.map.contaId,
+          status: 'PAYMENT_PENDING',
+          asaasPaymentId: null,
+          paymentStatus: pending.order.paymentStatus,
+        },
         data: {
           asaasPaymentId: existingPayment.id,
           paymentStatus: existingPayment.status ?? 'PENDING',
           paymentProvider: 'ASAAS',
           invoiceUrl: existingPayment.invoiceUrl ?? null,
         },
+      });
+      const reconciledOrder = await prisma.eventMapOrder.findFirst({
+        where: { id: pending.order.id, contaId: pending.map.contaId },
         include: { items: { include: { ticket: true } } },
       });
-      return buildCheckoutResponse(attached, {
+      if (!reconciledOrder) throw new EventsError('PEDIDO_NAO_ENCONTRADO', 'Pedido não encontrado após reconciliar a cobrança.', 404);
+      if (attached.count !== 1 && reconciledOrder.asaasPaymentId !== existingPayment.id) {
+        paymentReferenceCandidateBlocked = true;
+        await markEventMapPaymentReconciliationRequired({
+          contaId: pending.map.contaId,
+          orderId: pending.order.id,
+          expectedPaymentStatus: pending.order.paymentStatus,
+          externalReference,
+          reason: 'LOCAL_ORDER_PAYMENT_CONFLICT',
+          metadata: {
+            lookupStatus: 'COMPLETE',
+            remotePaymentId: existingPayment.id,
+            localPaymentId: reconciledOrder.asaasPaymentId,
+          },
+        });
+        throw new EventsError(
+          'PAGAMENTO_EM_VERIFICACAO',
+          'O pedido foi atualizado durante a reconciliação da cobrança. Consulte o pedido novamente.',
+          409,
+        );
+      }
+      return buildCheckoutResponse(reconciledOrder, {
         apiKey: credentials.apiKey,
         paymentMethod: input.paymentMethod,
         publicSlug: pending.map.publicSlug,
@@ -193,12 +345,28 @@ export async function completePublicEventMapCheckout(
     }
     paymentCreationClaimed = true;
 
-    const existing = await getEventAsaasPaymentProvider().listCustomers({
+    const existingCustomers = await listCompleteEventCustomersByDocument({
       apiKey: credentials.apiKey,
       cpfCnpj: buyerDocument,
-      limit: 10,
     });
-    const activeCustomer = existing.data.find((customer) => !customer.deleted);
+    const activeCustomers = existingCustomers.filter((customer) => !customer.deleted);
+    if (activeCustomers.length > 1) {
+      paymentReferenceCandidateBlocked = true;
+      await markEventMapPaymentReconciliationRequired({
+        contaId: pending.map.contaId,
+        orderId: pending.order.id,
+        expectedPaymentStatus: 'PAYMENT_CREATION_IN_PROGRESS',
+        externalReference,
+        reason: 'DUPLICATE_BUYER_CUSTOMERS',
+        metadata: { customerIds: activeCustomers.map((customer) => customer.id) },
+      });
+      throw new EventsError(
+        'COMPRADOR_DUPLICADO_EM_RECONCILIACAO',
+        'Encontramos mais de um cadastro para o comprador. A equipe da instituição precisa verificar antes de continuar.',
+        409,
+      );
+    }
+    const activeCustomer = activeCustomers[0];
     let customerId = activeCustomer?.id ?? '';
     if (activeCustomer) {
       // A transient lookup/update failure must stop checkout. Creating a second
@@ -211,7 +379,6 @@ export async function completePublicEventMapCheckout(
           name: input.buyerName,
           email: input.buyerEmail,
           mobilePhone: input.buyerPhone,
-          externalReference: `event-map-order:${pending.order.id}`,
         },
       });
     }
@@ -268,24 +435,116 @@ export async function completePublicEventMapCheckout(
           externalReference,
         },
       });
+      if (
+        !payment?.id?.trim() ||
+        payment.externalReference !== externalReference ||
+        typeof payment.value !== 'number' ||
+        !Number.isFinite(payment.value) ||
+        toMoney(payment.value) !== toMoney(pending.totalAmount) ||
+        payment.billingType !== input.paymentMethod ||
+        payment.customer !== customerId
+      ) {
+        paymentReferenceCandidateBlocked = true;
+        await markEventMapPaymentReconciliationRequired({
+          contaId: pending.map.contaId,
+          orderId: pending.order.id,
+          expectedPaymentStatus: 'PAYMENT_CREATION_UNKNOWN',
+          externalReference,
+          reason: 'POST_RESPONSE_MISMATCH',
+          metadata: {
+            paymentId: payment?.id ?? null,
+            referenceMatched: payment?.externalReference === externalReference,
+            valueMatched: typeof payment?.value === 'number' && toMoney(payment.value) === toMoney(pending.totalAmount),
+            billingTypeMatched: payment?.billingType === input.paymentMethod,
+            customerMatched: payment?.customer === customerId,
+          },
+        });
+        throw new EventsError(
+          'COBRANCA_DIVERGENTE_EM_RECONCILIACAO',
+          'A cobrança retornada pelo provedor não corresponde ao pedido e precisa de verificação.',
+          409,
+        );
+      }
     } catch (paymentError) {
-      const reconciled = await getEventAsaasPaymentProvider()
-        .listPayments({
+      if (
+        paymentError instanceof EventsError &&
+        paymentError.code === 'COBRANCA_DIVERGENTE_EM_RECONCILIACAO'
+      ) {
+        paymentReferenceCandidateBlocked = true;
+        await markEventMapPaymentReconciliationRequired({
+          contaId: pending.map.contaId,
+          orderId: pending.order.id,
+          expectedPaymentStatus: 'PAYMENT_CREATION_UNKNOWN',
+          externalReference,
+          reason: 'POST_RESPONSE_PAYMENT_MISMATCH',
+          metadata: { lookupStatus: 'POST_RESPONSE' },
+        });
+        throw paymentError;
+      }
+      let postFailureLookupCompleted = false;
+      try {
+        const reconciled = await listCompleteEventPaymentsByReference({
           apiKey: credentials.apiKey,
           externalReference,
-          limit: 10,
-        })
-        .catch((listError) => {
-          logEventsFinance(
-            'finance.events.public_event_map.checkout.payment_reconciliation.failed',
-            { error: listError },
-            'warn',
-          );
-          return null;
         });
-      const existingPayment = reconciled?.data.find((candidate) => !candidate.deleted) ?? null;
-      if (!existingPayment) throw paymentError;
-      payment = existingPayment;
+        postFailureLookupCompleted = true;
+        let recovered: EventAsaasPayment | null;
+        try {
+          recovered = selectUniqueActiveEventPayment(reconciled);
+        } catch {
+          throw new EventsError(
+            'COBRANCAS_DUPLICADAS_EM_RECONCILIACAO',
+            'Encontramos mais de uma cobrança para este pedido. A equipe da instituição precisa verificar antes de continuar.',
+            409,
+          );
+        }
+        if (!recovered) throw paymentError;
+        const expectedValue = toMoney(pending.totalAmount);
+        const remoteValue = typeof recovered.value === 'number' ? toMoney(recovered.value) : null;
+        if (
+          remoteValue !== expectedValue ||
+          recovered.billingType !== input.paymentMethod ||
+          recovered.customer !== customerId
+        ) {
+          throw new EventsError(
+            'COBRANCA_DIVERGENTE_EM_RECONCILIACAO',
+            'A cobrança encontrada não corresponde aos dados desta compra e precisa de verificação antes de continuar.',
+            409,
+          );
+        }
+        payment = recovered;
+      } catch (listError) {
+        const reconciliationError = listError instanceof EventsError ? listError : null;
+        const reason = reconciliationError?.code === 'COBRANCAS_DUPLICADAS_EM_RECONCILIACAO'
+          ? 'POST_RESPONSE_MULTIPLE_PAYMENTS'
+          : reconciliationError?.code === 'COBRANCA_DIVERGENTE_EM_RECONCILIACAO'
+            ? 'POST_RESPONSE_PAYMENT_MISMATCH'
+            : postFailureLookupCompleted && listError === paymentError
+              ? 'POST_RESPONSE_PAYMENT_NOT_FOUND'
+              : 'POST_RESPONSE_LOOKUP_INCOMPLETE';
+        const lookupStatus = reason === 'POST_RESPONSE_MULTIPLE_PAYMENTS'
+          ? 'MULTIPLE'
+          : reason === 'POST_RESPONSE_PAYMENT_MISMATCH'
+            ? 'MISMATCH'
+            : reason === 'POST_RESPONSE_PAYMENT_NOT_FOUND'
+              ? 'COMPLETE_NO_MATCH'
+              : 'INCOMPLETE';
+        paymentReferenceCandidateBlocked = true;
+        await markEventMapPaymentReconciliationRequired({
+          contaId: pending.map.contaId,
+          orderId: pending.order.id,
+          expectedPaymentStatus: 'PAYMENT_CREATION_UNKNOWN',
+          externalReference,
+          reason,
+          metadata: { lookupStatus },
+        });
+        logEventsFinance(
+          'finance.events.public_event_map.checkout.payment_reconciliation.failed',
+          { error: listError },
+          'warn',
+        );
+        throw listError;
+      }
     }
 
     const attached = await prisma.eventMapOrder.updateMany({
@@ -314,6 +573,27 @@ export async function completePublicEventMapCheckout(
         'Pedido não encontrado após criar a cobrança.',
         404,
       );
+
+    if (
+      attached.count !== 1 &&
+      updated.asaasPaymentId !== payment.id &&
+      !['EXPIRED', 'CANCELLED'].includes(updated.status)
+    ) {
+      paymentReferenceCandidateBlocked = true;
+      await markEventMapPaymentReconciliationRequired({
+        contaId: pending.map.contaId,
+        orderId: pending.order.id,
+        expectedPaymentStatus: 'PAYMENT_CREATION_UNKNOWN',
+        externalReference,
+        reason: 'POST_ATTACH_CONFLICT',
+        metadata: { remotePaymentId: payment.id, localPaymentId: updated.asaasPaymentId },
+      });
+      throw new EventsError(
+        'PAGAMENTO_EM_VERIFICACAO',
+        'O pedido foi atualizado durante a criação da cobrança. Consulte o pedido novamente.',
+        409,
+      );
+    }
 
     if (attached.count !== 1 && updated.asaasPaymentId !== payment.id) {
       // The hold expired while the provider request was in flight. Persist the
@@ -417,8 +697,8 @@ export async function completePublicEventMapCheckout(
       });
       paymentCreationClaimed = released.count === 0;
     }
-    const currentOrder = await prisma.eventMapOrder.findUnique({
-      where: { id: pending.order.id },
+    const currentOrder = await prisma.eventMapOrder.findFirst({
+      where: { id: pending.order.id, contaId: pending.map.contaId },
       select: { asaasPaymentId: true, paymentStatus: true },
     });
     const unresolvedPaymentCreation =
@@ -428,7 +708,9 @@ export async function completePublicEventMapCheckout(
       !currentOrder?.asaasPaymentId &&
       !unresolvedPaymentCreation &&
       !paymentCreationClaimed &&
-      !paymentCreationStarted
+      !paymentCreationStarted &&
+      (!paymentReferenceLookupStarted ||
+        (paymentReferenceLookupCompleted && !paymentReferenceCandidateBlocked))
     ) {
       await cancelPublicEventMapOrder(
         pending.map.contaId,

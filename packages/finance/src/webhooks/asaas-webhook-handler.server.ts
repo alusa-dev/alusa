@@ -37,7 +37,11 @@ import {
 import { shouldBlockAsaasWebhookByIpForTenant } from './webhook-ip-whitelist';
 import { syncAsaasOperationalStatus } from '../foundation/asaas-operational-guard';
 import { shouldAlertUnknownWebhookEvent } from './asaas-event-registry';
-import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
+import {
+  buildFinanceReconciliationIssueDedupeKey,
+  resolveFinanceReconciliationIssue,
+  upsertFinanceReconciliationIssue,
+} from '../reconciliation/finance-reconciliation-issue.service';
 import {
   sanitizeRejectedWebhookPayload,
   sanitizeWebhookPayload,
@@ -378,6 +382,12 @@ async function processAsaasWebhookForRecord(params: {
 
       const ok = paymentResult.success && installmentResult.success;
       const error = paymentResult.error ?? installmentResult.error;
+      if (ok && !paymentResult.skipped) {
+        await resolvePaymentOriginReviewAfterReplay({
+          contaId,
+          asaasPaymentId: payload.payment.id,
+        });
+      }
       if (ok) {
         await confirmOutboundCreateByProviderEvent({
           contaId,
@@ -783,6 +793,53 @@ async function processAsaasWebhookForRecord(params: {
   }
 }
 
+async function resolvePaymentOriginReviewAfterReplay(input: {
+  contaId: string;
+  asaasPaymentId: string;
+}): Promise<void> {
+  const origin = await prisma.asaasResourceOrigin.findUnique({
+    where: {
+      uq_asaas_resource_origin_tenant_resource: {
+        contaId: input.contaId,
+        resourceType: 'PAYMENT',
+        asaasId: input.asaasPaymentId,
+      },
+    },
+    select: { origin: true },
+  });
+  if (origin?.origin !== 'ALUSA') return;
+
+  const dedupeKey = buildFinanceReconciliationIssueDedupeKey({
+    entityType: 'PAYMENT',
+    asaasId: input.asaasPaymentId,
+    issueType: 'PAYMENT_NEEDS_REVIEW',
+  });
+  const candidates = await prisma.financeReconciliationIssue.findMany({
+    where: {
+      contaId: input.contaId,
+      dedupeKey,
+      issueType: 'PAYMENT_NEEDS_REVIEW',
+      entityType: 'PAYMENT',
+      asaasId: input.asaasPaymentId,
+      status: 'OPEN',
+    },
+    select: { id: true, metadata: true },
+  });
+
+  for (const issue of candidates) {
+    const metadata = issue.metadata && typeof issue.metadata === 'object' && !Array.isArray(issue.metadata)
+      ? issue.metadata as Record<string, unknown>
+      : null;
+    if (metadata?.reason !== 'resource_origin_unknown') continue;
+    await resolveFinanceReconciliationIssue({
+      contaId: input.contaId,
+      issueId: issue.id,
+      resolution: 'Pagamento classificado como ALUSA e webhook reprocessado com sucesso.',
+      actor: { type: 'SYSTEM' },
+    });
+  }
+}
+
 /**
  * Enfileira webhook no banco para processamento assíncrono.
  * Usado quando FIN_WEBHOOK_ASYNC_ENABLED=true.
@@ -909,8 +966,13 @@ async function enqueueAsaasWebhookEventInternal(
   let webhookId: string;
 
   if (existing) {
-    const updated = await prisma.webhookAsaas.update({
-      where: { id: existing.id },
+    const updated = await prisma.webhookAsaas.updateMany({
+      where: {
+        id: existing.id,
+        contaId,
+        status: existing.status,
+        tentativas: existing.tentativas,
+      },
       data: {
         evento: event,
         payload: sanitizedPayload as unknown as object,
@@ -926,9 +988,22 @@ async function enqueueAsaasWebhookEventInternal(
         asaasTransferId: getPayloadAsaasTransferId(payload) ?? existing.asaasTransferId,
         recebidoEm: existing.recebidoEm ?? now,
       },
-      select: { id: true },
     });
-    webhookId = updated.id;
+    // O registro pode ter sido reclamado/processado desde a leitura inicial.
+    // Só responda como enfileirado: nunca sobrescreva o estado mais recente.
+    if (updated.count !== 1) {
+      return {
+        success: true,
+        status: 200,
+        persisted: true,
+        message: 'Evento já enfileirado',
+        webhookId: existing.id,
+        contaId,
+        event,
+        eventId,
+      };
+    }
+    webhookId = existing.id;
   } else {
     try {
       const created = await prisma.webhookAsaas.create({
@@ -990,8 +1065,8 @@ async function enqueueAsaasWebhookEventInternal(
 export async function claimTenantFairAsaasWebhooks(
   tx: Prisma.TransactionClient,
   input: { statuses: string[]; maxAttempts: number; limit: number },
-): Promise<Array<{ id: string }>> {
-  return tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+): Promise<Array<{ id: string; tentativas: number; ultimaTentativaEm: Date }>> {
+  return tx.$queryRaw<Array<{ id: string; tentativas: number; ultimaTentativaEm: Date }>>(Prisma.sql`
     WITH ranked AS (
       SELECT w.id, w."contaId", w."recebidoEm",
         ROW_NUMBER() OVER (PARTITION BY w."contaId" ORDER BY w."recebidoEm" ASC, w.id ASC) AS tenant_rank
@@ -1009,12 +1084,13 @@ export async function claimTenantFairAsaasWebhooks(
       LIMIT ${input.limit}
     )
     UPDATE "WebhookAsaas" w
-    SET status = 'PROCESSANDO', tentativas = w.tentativas + 1, "ultimaTentativaEm" = NOW()
+    SET status = 'PROCESSANDO', tentativas = w.tentativas + 1,
+        "ultimaTentativaEm" = GREATEST(NOW(), COALESCE(w."ultimaTentativaEm", '-infinity'::timestamptz) + INTERVAL '1 millisecond')
     FROM picked
     WHERE w.id = picked.id
       AND w.status IN (${Prisma.join(input.statuses)})
       AND w.tentativas < ${input.maxAttempts}
-    RETURNING w.id
+    RETURNING w.id, w.tentativas, w."ultimaTentativaEm"
   `);
 }
 
@@ -1067,7 +1143,7 @@ export async function processAsaasWebhookQueue(params?: {
       return claimTenantFairAsaasWebhooks(tx, { statuses, maxAttempts, limit });
     }
 
-    return tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+    return tx.$queryRaw<Array<{ id: string; tentativas: number; ultimaTentativaEm: Date }>>(Prisma.sql`
       WITH picked AS (
         SELECT w.id
         FROM "WebhookAsaas" w
@@ -1084,12 +1160,12 @@ export async function processAsaasWebhookQueue(params?: {
       SET
         status = 'PROCESSANDO',
         tentativas = w.tentativas + 1,
-        "ultimaTentativaEm" = NOW()
+        "ultimaTentativaEm" = GREATEST(NOW(), COALESCE(w."ultimaTentativaEm", '-infinity'::timestamptz) + INTERVAL '1 millisecond')
       FROM picked
       WHERE w.id = picked.id
         AND w.status IN (${Prisma.join(statuses)})
         AND w.tentativas < ${maxAttempts}
-      RETURNING w.id
+      RETURNING w.id, w.tentativas, w."ultimaTentativaEm"
     `);
   });
 
@@ -1099,21 +1175,36 @@ export async function processAsaasWebhookQueue(params?: {
 
   const hookIds = claimedRows.map((r) => r.id);
   const hooks = await prisma.webhookAsaas.findMany({
-    where: { id: { in: hookIds } },
+    where: {
+      id: { in: hookIds },
+      ...(params?.contaId ? { contaId: params.contaId } : {}),
+    },
     orderBy: { recebidoEm: 'asc' },
   });
+  const claimsById = new Map(claimedRows.map((claim) => [claim.id, claim]));
 
   let attempted = 0;
   let processed = 0;
   let failed = 0;
-  const skipped = 0;
+  let skipped = 0;
   const failedWebhookIds: string[] = [];
 
   for (const hook of hooks) {
     attempted += 1;
 
+    const claim = claimsById.get(hook.id);
+    if (
+      !claim ||
+      hook.status !== 'PROCESSANDO' ||
+      hook.tentativas !== claim.tentativas ||
+      hook.ultimaTentativaEm?.getTime() !== claim.ultimaTentativaEm.getTime()
+    ) {
+      skipped += 1;
+      continue;
+    }
+
     const event = hook.evento;
-    const claimedAt = hook.ultimaTentativaEm ?? new Date();
+    const claimedAt = claim.ultimaTentativaEm;
     logWebhookClaimed({
       event,
       eventId: hook.eventId ?? null,
@@ -1149,8 +1240,14 @@ export async function processAsaasWebhookQueue(params?: {
       correlationId,
     });
 
-    await prisma.webhookAsaas.update({
-      where: { id: hook.id },
+    const finalized = await prisma.webhookAsaas.updateMany({
+      where: {
+        id: hook.id,
+        contaId: hook.contaId,
+        status: 'PROCESSANDO',
+        tentativas: hook.tentativas,
+        ultimaTentativaEm: claimedAt,
+      },
       data: {
         status,
         processadoEm: new Date(),
@@ -1160,6 +1257,13 @@ export async function processAsaasWebhookQueue(params?: {
         nextRetryAt: result.ok ? null : computeNextRetryAt(hook.tentativas),
       },
     });
+
+    // Recovery/reclaim may have moved this row to a newer attempt while the
+    // handler was running. An old worker must not finalize that newer claim.
+    if (finalized.count !== 1) {
+      skipped += 1;
+      continue;
+    }
 
     logWebhookProcessing(
       createWebhookLogEntry({

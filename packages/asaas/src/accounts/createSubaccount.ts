@@ -27,10 +27,7 @@ export async function createSubaccount(
     apiKey: params.apiKey,
   });
 
-  const headers: Record<string, string> = {};
-  if (params.idempotencyKey) {
-    headers['Idempotency-Key'] = params.idempotencyKey;
-  }
-
-  return client.post<AsaasSubaccount>('/accounts', params.data, { headers });
+  // idempotencyKey is an internal operation key; Asaas does not document
+  // provider-side deduplication for this endpoint.
+  return client.post<AsaasSubaccount>('/accounts', params.data);
 }

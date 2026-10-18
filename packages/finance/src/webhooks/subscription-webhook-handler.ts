@@ -66,12 +66,12 @@ async function projectCanonicalSubscriptionWebhook(input: {
   contaId: string;
   payload: SubscriptionWebhookPayload;
   nextStatus: SubscriptionStatus | null;
-}) {
+}): Promise<number> {
   const nextDueDate = input.payload.subscription.nextDueDate
     ? new Date(`${input.payload.subscription.nextDueDate}T00:00:00.000Z`)
     : undefined;
   const remoteEndExclusive = exclusiveDate(input.payload.subscription.endDate);
-  await prisma.billingAgreement.updateMany({
+  const updated = await prisma.billingAgreement.updateMany({
     where: { contaId: input.contaId, asaasSubscriptionId: input.payload.subscription.id },
     data: {
       ...(typeof input.payload.subscription.value === 'number'
@@ -94,6 +94,7 @@ async function projectCanonicalSubscriptionWebhook(input: {
             : {}),
     },
   });
+  return updated.count;
 }
 
 async function markMatriculaDivergence(params: {
@@ -122,6 +123,53 @@ async function markMatriculaDivergence(params: {
       erro: `Divergência detectada no webhook (${params.warningCode})`,
     },
   });
+}
+
+async function resolveUnknownSubscriptionReviewAfterReplay(contaId: string, payload: SubscriptionWebhookPayload) {
+  if (!payload.eventId) return;
+  const issue = await prisma.financeReconciliationIssue.findFirst({
+    where: {
+      contaId,
+      entityType: 'SUBSCRIPTION',
+      asaasId: payload.subscription.id,
+      issueType: 'SUBSCRIPTION_NEEDS_REVIEW',
+      status: 'OPEN',
+      AND: [
+        { metadata: { path: ['reason'], equals: 'resource_origin_unknown' } },
+        { metadata: { path: ['lastCauseId'], equals: payload.eventId } },
+      ],
+    },
+    select: { id: true },
+  });
+  if (!issue) return;
+  const resolved = await prisma.financeReconciliationIssue.updateMany({
+    where: {
+      id: issue.id,
+      contaId,
+      status: 'OPEN',
+      AND: [
+        { metadata: { path: ['reason'], equals: 'resource_origin_unknown' } },
+        { metadata: { path: ['lastCauseId'], equals: payload.eventId } },
+      ],
+    },
+    data: {
+      status: 'RESOLVED',
+      resolvedAt: new Date(),
+      resolution: 'Webhook da assinatura reaplicado com sucesso após classificação da origem.',
+    },
+  });
+  if (resolved.count === 1) {
+    await auditLogService.record({
+      contaId,
+      action: 'finance.webhook.subscription_unknown_origin_review_resolved',
+      entity: { type: 'FinanceReconciliationIssue', id: issue.id },
+      metadata: {
+        asaasSubscriptionId: payload.subscription.id,
+        eventId: payload.eventId,
+        resolution: 'SUBSCRIPTION_WEBHOOK_REPLAY_SUCCEEDED',
+      },
+    });
+  }
 }
 
 function mapAsaasSubscriptionStatus(params: {
@@ -256,8 +304,11 @@ export async function handleSubscriptionWebhook(
     }
 
     const canonicalStatus = resolveNextStatus(payload);
-    await projectCanonicalSubscriptionWebhook({ contaId, payload, nextStatus: canonicalStatus });
-
+    const projectedBillingAgreements = await projectCanonicalSubscriptionWebhook({
+      contaId,
+      payload,
+      nextStatus: canonicalStatus,
+    });
     const stagedReference = externalReference?.match(/^enrollment-op:([^:]+):subscription$/);
     if (stagedReference) {
       const operationId = stagedReference[1]!;
@@ -453,6 +504,7 @@ export async function handleSubscriptionWebhook(
         });
       }
 
+      await resolveUnknownSubscriptionReviewAfterReplay(contaId, payload);
       return { success: true };
     }
 
@@ -469,19 +521,24 @@ export async function handleSubscriptionWebhook(
     });
 
     if (!subscription) {
+      if (projectedBillingAgreements > 0) {
+        await resolveUnknownSubscriptionReviewAfterReplay(contaId, payload);
+        return { success: true };
+      }
       const origin = await prisma.asaasResourceOrigin.findUnique({
         where: { uq_asaas_resource_origin_tenant_resource: {
           contaId, resourceType: 'SUBSCRIPTION', asaasId: payload.subscription.id,
         } },
         select: { origin: true },
       });
+      const alusaReference = origin?.origin === 'ALUSA' || Boolean(externalReference && (
+        externalReference.startsWith('alusa:') || externalReference.startsWith('subscription:') ||
+        externalReference.startsWith('standalone-subscription:') || externalReference.startsWith('enrollment-op:')
+      ));
       if (origin?.origin === 'EXTERNAL') {
         logFinanceOperationalEvent({ severity: 'info', eventName: 'finance.webhook.subscription.external_resource_observed' });
-      } else {
-        const alusaReference = origin?.origin === 'ALUSA' || Boolean(externalReference && (
-          externalReference.startsWith('alusa:') || externalReference.startsWith('subscription:') ||
-          externalReference.startsWith('standalone-subscription:') || externalReference.startsWith('enrollment-op:')
-        ));
+        return { success: true };
+      }
         await upsertFinanceReconciliationIssue({
           contaId,
           entityType: 'SUBSCRIPTION',
@@ -506,7 +563,10 @@ export async function handleSubscriptionWebhook(
             ? 'finance.webhook.subscription.local_entity_missing'
             : 'finance.webhook.subscription.resource_origin_unknown',
         });
-      }
+        if (conta?.financeIntegrationMode === 'EXTERNAL_ASAAS_ACCOUNT') {
+          return { success: true };
+        }
+
       return { success: true };
     }
 
@@ -854,6 +914,7 @@ export async function handleSubscriptionWebhook(
       });
     }
 
+    await resolveUnknownSubscriptionReviewAfterReplay(contaId, payload);
     return { success: true };
   } catch (error) {
     logFinanceOperationalEvent({ severity: 'error', eventName: 'finance.webhook.subscription.processing.failed', error });

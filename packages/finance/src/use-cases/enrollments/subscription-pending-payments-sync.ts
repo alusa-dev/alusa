@@ -1,4 +1,5 @@
 import { getPayment, listSubscriptionPayments, updatePayment } from '../asaas-ops';
+import { assertCompleteAsaasPage } from '../asaas-pagination';
 
 type PaymentTerms = {
   interest?: { value: number } | null;
@@ -70,9 +71,10 @@ export async function syncEditableSubscriptionPayments(input: {
   for (const status of EDITABLE_ASAAS_PAYMENT_STATUSES) {
     let offset = 0;
     const limit = 100;
-    let hasMore = true;
+    let expectedTotalCount: number | undefined;
 
-    while (hasMore) {
+    let completed = false;
+    for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
       const page = await listSubscriptionPayments(input.asaasSubscriptionId, {
         contaId: input.contaId,
         status,
@@ -80,10 +82,17 @@ export async function syncEditableSubscriptionPayments(input: {
         offset,
       });
 
+      expectedTotalCount = assertCompleteAsaasPage(page, offset, limit, expectedTotalCount);
+      if (!Array.isArray(page.data)) throw new Error('SUBSCRIPTION_PAYMENT_LOOKUP_INCOMPLETE:INVALID_DATA');
+
       payments.push(...(page.data as SyncablePayment[]).filter((payment) => !payment.deleted));
-      hasMore = Boolean(page.hasMore);
+      if (!page.hasMore) {
+        completed = true;
+        break;
+      }
       offset += limit;
     }
+    if (!completed) throw new Error(`SUBSCRIPTION_PAYMENT_LOOKUP_INCOMPLETE:PAGE_LIMIT_REACHED:${status}`);
   }
 
   const termsPayload = buildPaymentTermsPayload(input.terms);

@@ -75,7 +75,7 @@ O cliente aplica os limites documentados pelo Asaas:
 - leitura dos cabeçalhos `RateLimit-Limit`, `RateLimit-Remaining` e `RateLimit-Reset`, com espera antes de novas chamadas quando o saldo chega a zero;
 - até 50 GETs concorrentes por conta. O limite local padrão é 45 para manter margem operacional.
 
-As chamadas mutáveis só são repetidas automaticamente quando possuem `Idempotency-Key`. O contador de quota é reservado por tentativa física, e não por chamada lógica.
+Chamadas mutáveis não são repetidas automaticamente. Uma chave local de operação não garante deduplicação no Asaas; em caso de resultado desconhecido, o fluxo financeiro deve consultar a operação por `externalReference` (ou pelo identificador remoto já conhecido) e reconciliar antes de qualquer nova criação. O contador de quota é reservado por tentativa física, e não por chamada lógica.
 
 Em produção, configure `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` e `ASAAS_REDIS_ENABLED=true` para compartilhar quota e semáforo de GET entre instâncias. Se Redis estiver ausente ou indisponível, o cliente falha fechado com erro 503 antes de chamar o Asaas. O fallback em memória existe apenas fora de produção, pois contadores por processo não protegem o limite global entre réplicas.
 

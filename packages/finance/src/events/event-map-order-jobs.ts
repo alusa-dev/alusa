@@ -1,7 +1,13 @@
 import { prisma } from '@alusa/database';
 import { Prisma } from '@prisma/client';
 import { loadDecryptedAsaasCredentials } from '../foundation/load-decrypted-asaas-credentials';
-import { getEventAsaasPaymentProvider, type EventAsaasPayment } from './event-asaas-payment-provider';
+import {
+  getEventAsaasPaymentProvider,
+  listCompleteEventCustomersByDocument,
+  listCompleteEventPaymentsByReference,
+  selectUniqueActiveEventPayment,
+  type EventAsaasPayment,
+} from './event-asaas-payment-provider';
 import { parseFirstValidCivilDatePreservingInstant } from '../mappers/civil-date';
 import { recordPublicOrderTicketFulfillmentFailure } from './record-public-order-ticket-fulfillment-failure';
 import { lockPublicEventMapReservation } from '@alusa/lib/events/map/event-map-order-operations';
@@ -348,6 +354,278 @@ function mapReservationRecord(
   };
 }
 
+export async function resolveEventMapPaymentAtExpiry(
+  input: Parameters<NonNullable<ExpireEventMapReservationsDependencies['resolveExternalPaymentAtExpiry']>>[0],
+): Promise<ExternalPaymentResolution> {
+    // A concurrent checkout may still be waiting for the Asaas POST response.
+    // Don't query a fresh claim and never interpret an empty lookup as proof
+    // that no payment exists. Unknown outcomes stay held and surface as an
+    // operational reconciliation issue.
+    const staleCreationMs = 10 * 60_000;
+    if (
+      input.paymentCreationUnresolved &&
+      input.now.getTime() - input.paymentCreationUpdatedAt.getTime() < staleCreationMs
+    )
+      return { decision: 'NOT_CANCELLABLE' };
+    const issueDedupeKey = `BILLING_OPERATION_UNCERTAIN:PAYMENT:${input.orderId}`;
+    if (input.paymentCreationUnresolved) {
+      const existingIssue = await prisma.financeReconciliationIssue.findFirst({
+        where: { contaId: input.contaId, dedupeKey: issueDedupeKey, status: 'OPEN' },
+        select: { lastSeenAt: true },
+      });
+      // A targeted Asaas reconciliation is capped to once per hour per
+      // unresolved order. Webhooks remain the immediate state-change source.
+      if (existingIssue && input.now.getTime() - existingIssue.lastSeenAt.getTime() < 60 * 60_000) {
+        return { decision: 'NOT_CANCELLABLE' };
+      }
+    }
+    const credentials = await loadDecryptedAsaasCredentials(input.contaId);
+    if (!credentials?.apiKey) {
+      throw new Error('ASAAS_CREDENTIALS_UNAVAILABLE');
+    }
+
+    const externalReference = `event-map-order:${input.orderId}`;
+    let lookup: EventAsaasPayment[];
+    try {
+      lookup = await listCompleteEventPaymentsByReference({
+        apiKey: credentials.apiKey,
+        externalReference,
+      });
+    } catch {
+      await upsertFinanceReconciliationIssue({
+        contaId: input.contaId,
+        entityType: 'PAYMENT',
+        entityId: input.orderId,
+        issueType: 'BILLING_OPERATION_UNCERTAIN',
+        severity: 'HIGH',
+        localStatus: input.paymentCreationUnresolved ? 'PAYMENT_CREATION_UNKNOWN' : 'PAYMENT_PENDING',
+        remoteStatus: 'REFERENCE_LOOKUP_INCOMPLETE',
+        metadata: {
+          orderId: input.orderId,
+          reservationId: input.reservationId,
+          externalReference,
+          lookupStatus: 'INCOMPLETE',
+          policy: 'keep_seats_held_until_provider_lookup_completes',
+        },
+      });
+      return { decision: 'NOT_CANCELLABLE' };
+    }
+    let remotePayment: EventAsaasPayment | null;
+    try {
+      remotePayment = selectUniqueActiveEventPayment(lookup);
+    } catch {
+      await upsertFinanceReconciliationIssue({
+        contaId: input.contaId,
+        entityType: 'PAYMENT',
+        entityId: input.orderId,
+        issueType: 'BILLING_OPERATION_UNCERTAIN',
+        severity: 'CRITICAL',
+        localStatus: 'PAYMENT_CREATION_UNKNOWN',
+        remoteStatus: 'MULTIPLE_PAYMENTS',
+        metadata: {
+          orderId: input.orderId,
+          reservationId: input.reservationId,
+          externalReference,
+          lookupStatus: 'COMPLETE',
+        },
+      });
+      return { decision: 'NOT_CANCELLABLE' };
+    }
+    if (!remotePayment || (input.paymentId && remotePayment.id !== input.paymentId)) {
+      if (input.paymentCreationUnresolved) {
+        await upsertFinanceReconciliationIssue({
+          contaId: input.contaId,
+          entityType: 'PAYMENT',
+          entityId: input.orderId,
+          issueType: 'BILLING_OPERATION_UNCERTAIN',
+          severity: 'HIGH',
+          localStatus: 'PAYMENT_CREATION_UNKNOWN',
+          remoteStatus: remotePayment ? 'PAYMENT_ID_MISMATCH' : 'NOT_FOUND',
+          metadata: {
+            orderId: input.orderId,
+            reservationId: input.reservationId,
+            externalReference,
+            policy: 'keep_seats_held_until_provider_outcome_is_known',
+          },
+        });
+      }
+      return { decision: 'NOT_CANCELLABLE' };
+    }
+
+    const localOrder = await prisma.eventMapOrder.findFirst({
+      where: { id: input.orderId, contaId: input.contaId, status: 'PAYMENT_PENDING' },
+      select: { totalAmount: true, paymentMethod: true, asaasCustomerId: true, buyerDocument: true },
+    });
+    const buyerDocument = localOrder?.buyerDocument?.replace(/\D/g, '') ?? '';
+    if (!buyerDocument) {
+      await upsertFinanceReconciliationIssue({
+        contaId: input.contaId,
+        entityType: 'PAYMENT',
+        entityId: input.orderId,
+        issueType: 'BILLING_OPERATION_UNCERTAIN',
+        severity: 'CRITICAL',
+        localStatus: 'PAYMENT_PENDING',
+        remoteStatus: 'BUYER_DOCUMENT_UNAVAILABLE',
+        metadata: { orderId: input.orderId, reservationId: input.reservationId, paymentId: remotePayment.id },
+      });
+      return { decision: 'NOT_CANCELLABLE', paymentId: remotePayment.id };
+    }
+    let expectedCustomerId: string;
+    try {
+      const customers = await listCompleteEventCustomersByDocument({
+        apiKey: credentials.apiKey,
+        cpfCnpj: buyerDocument,
+      });
+      const activeCustomers = customers.filter((customer) => !customer.deleted);
+      if (activeCustomers.length !== 1 || !activeCustomers[0]?.id) {
+        throw new Error(activeCustomers.length > 1 ? 'MULTIPLE_BUYER_CUSTOMERS' : 'BUYER_CUSTOMER_NOT_FOUND');
+      }
+      expectedCustomerId = activeCustomers[0].id;
+    } catch (error) {
+      await upsertFinanceReconciliationIssue({
+        contaId: input.contaId,
+        entityType: 'PAYMENT',
+        entityId: input.orderId,
+        issueType: 'BILLING_OPERATION_UNCERTAIN',
+        severity: 'CRITICAL',
+        localStatus: 'PAYMENT_PENDING',
+        remoteStatus: 'BUYER_CUSTOMER_NOT_CONFIRMED',
+        metadata: {
+          orderId: input.orderId,
+          reservationId: input.reservationId,
+          paymentId: remotePayment.id,
+          lookupError: error instanceof Error ? error.message : String(error),
+        },
+      });
+      return { decision: 'NOT_CANCELLABLE', paymentId: remotePayment.id };
+    }
+    if (localOrder?.asaasCustomerId && localOrder.asaasCustomerId !== expectedCustomerId) {
+      await upsertFinanceReconciliationIssue({
+        contaId: input.contaId,
+        entityType: 'PAYMENT',
+        entityId: input.orderId,
+        issueType: 'BILLING_OPERATION_UNCERTAIN',
+        severity: 'CRITICAL',
+        localStatus: 'PAYMENT_PENDING',
+        remoteStatus: 'STORED_CUSTOMER_DOCUMENT_MISMATCH',
+        metadata: {
+          orderId: input.orderId,
+          reservationId: input.reservationId,
+          paymentId: remotePayment.id,
+          storedCustomerId: localOrder.asaasCustomerId,
+          documentCustomerId: expectedCustomerId,
+        },
+      });
+      return { decision: 'NOT_CANCELLABLE', paymentId: remotePayment.id };
+    }
+    const paymentMatchesOrder = Boolean(
+      localOrder &&
+      remotePayment.externalReference === externalReference &&
+      Math.abs(Number(remotePayment.value) - Number(localOrder.totalAmount)) <= 0.01 &&
+      remotePayment.customer === expectedCustomerId &&
+      (!localOrder.paymentMethod || remotePayment.billingType === localOrder.paymentMethod),
+    );
+    if (!paymentMatchesOrder) {
+      await upsertFinanceReconciliationIssue({
+        contaId: input.contaId,
+        entityType: 'PAYMENT',
+        entityId: input.orderId,
+        issueType: 'BILLING_OPERATION_UNCERTAIN',
+        severity: 'CRITICAL',
+        localStatus: 'PAYMENT_CREATION_UNKNOWN',
+        remoteStatus: 'PAYMENT_MISMATCH',
+        metadata: { orderId: input.orderId, reservationId: input.reservationId, paymentId: remotePayment.id },
+      });
+      return { decision: 'NOT_CANCELLABLE' };
+    }
+
+    const paymentId = remotePayment.id;
+    if (!input.paymentId) {
+      // Preserve the provider identity discovered by reconciliation before
+      // deleting or applying its paid state, for audit and future webhooks.
+      await prisma.eventMapOrder.updateMany({
+        where: {
+          id: input.orderId,
+          contaId: input.contaId,
+          status: 'PAYMENT_PENDING',
+          asaasPaymentId: null,
+        },
+        data: {
+          asaasPaymentId: remotePayment.id,
+          paymentProvider: 'ASAAS',
+          paymentStatus: remotePayment.status ?? 'PENDING',
+          invoiceUrl: remotePayment.invoiceUrl ?? null,
+          asaasCustomerId: remotePayment.customer ?? undefined,
+        },
+      });
+    }
+    if (input.paymentCreationUnresolved) {
+      await resolveFinanceReconciliationIssueByDedupe({
+        contaId: input.contaId,
+        dedupeKey: issueDedupeKey,
+        resolution: 'Cobrança localizada pela referência externa do pedido.',
+      });
+    }
+
+    let payment = await getEventAsaasPaymentProvider().getPayment({
+      apiKey: credentials.apiKey,
+      paymentId,
+    });
+    if (payment.id !== paymentId || payment.externalReference !== externalReference || payment.customer !== expectedCustomerId) {
+      return { decision: 'NOT_CANCELLABLE', paymentId };
+    }
+    let status = (payment.status ?? '').trim().toUpperCase();
+
+    if (PAID_ASAAS_PAYMENT_STATUSES.has(status)) {
+      await confirmExpiredOrderPayment({
+        contaId: input.contaId,
+        orderId: input.orderId,
+        paymentId,
+        payment,
+        status,
+      });
+      return { decision: 'PAID', paymentId };
+    }
+
+    if (payment.deleted || status === 'DELETED') return { decision: 'DELETED', paymentId };
+    if (!CANCELLABLE_ASAAS_PAYMENT_STATUSES.has(status))
+      return { decision: 'NOT_CANCELLABLE', paymentId };
+
+    const deletion = await getEventAsaasPaymentProvider().deletePayment({
+      apiKey: credentials.apiKey,
+      paymentId,
+    });
+
+    // DELETE already returns whether the payment was deleted. Avoid a second
+    // provider read for the common successful path; only close the race when
+    // the provider could not confirm deletion in its response.
+    if (deletion.deleted) return { decision: 'DELETED', paymentId };
+
+    // Read after delete to close the race with a payment being confirmed at expiry.
+    payment = await getEventAsaasPaymentProvider().getPayment({
+      apiKey: credentials.apiKey,
+      paymentId,
+    });
+    if (payment.id !== paymentId || payment.externalReference !== externalReference || payment.customer !== expectedCustomerId) {
+      return { decision: 'NOT_CANCELLABLE', paymentId };
+    }
+    status = (payment.status ?? '').trim().toUpperCase();
+    if (PAID_ASAAS_PAYMENT_STATUSES.has(status)) {
+      await confirmExpiredOrderPayment({
+        contaId: input.contaId,
+        orderId: input.orderId,
+        paymentId,
+        payment,
+        status,
+      });
+      return { decision: 'PAID', paymentId };
+    }
+
+    return payment.deleted || status === 'DELETED'
+      ? { decision: 'DELETED', paymentId }
+      : { decision: 'NOT_CANCELLABLE', paymentId };
+}
+
 const defaultExpireEventMapReservationsDependencies = {
   resolveTargetContaIds: resolveEventMapContaIds,
   findExpiredReservations: async (input: { contaId: string; now: Date; limit: number }) => {
@@ -381,185 +659,7 @@ const defaultExpireEventMapReservationsDependencies = {
 
     return reservations.map(mapReservationRecord);
   },
-  resolveExternalPaymentAtExpiry: async (input) => {
-    // A concurrent checkout may still be waiting for the Asaas POST response.
-    // Don't query a fresh claim and never interpret an empty lookup as proof
-    // that no payment exists. Unknown outcomes stay held and surface as an
-    // operational reconciliation issue.
-    const staleCreationMs = 10 * 60_000;
-    if (
-      input.paymentCreationUnresolved &&
-      input.now.getTime() - input.paymentCreationUpdatedAt.getTime() < staleCreationMs
-    )
-      return { decision: 'NOT_CANCELLABLE' };
-    const issueDedupeKey = `BILLING_OPERATION_UNCERTAIN:PAYMENT:${input.orderId}`;
-    if (input.paymentCreationUnresolved) {
-      const existingIssue = await prisma.financeReconciliationIssue.findFirst({
-        where: { contaId: input.contaId, dedupeKey: issueDedupeKey, status: 'OPEN' },
-        select: { lastSeenAt: true },
-      });
-      // A targeted Asaas reconciliation is capped to once per hour per
-      // unresolved order. Webhooks remain the immediate state-change source.
-      if (existingIssue && input.now.getTime() - existingIssue.lastSeenAt.getTime() < 60 * 60_000) {
-        return { decision: 'NOT_CANCELLABLE' };
-      }
-    }
-    const credentials = await loadDecryptedAsaasCredentials(input.contaId);
-    if (!credentials?.apiKey) {
-      throw new Error('ASAAS_CREDENTIALS_UNAVAILABLE');
-    }
-
-    let paymentId = input.paymentId;
-    if (!paymentId) {
-      const lookup = await getEventAsaasPaymentProvider().listPayments({
-        apiKey: credentials.apiKey,
-        externalReference: `event-map-order:${input.orderId}`,
-        limit: 10,
-      });
-      const activePayments = lookup.data.filter((candidate) => !candidate.deleted);
-      if (activePayments.length > 1) {
-        await upsertFinanceReconciliationIssue({
-          contaId: input.contaId,
-          entityType: 'PAYMENT',
-          entityId: input.orderId,
-          issueType: 'BILLING_OPERATION_UNCERTAIN',
-          severity: 'CRITICAL',
-          localStatus: 'PAYMENT_CREATION_UNKNOWN',
-          remoteStatus: 'MULTIPLE_PAYMENTS',
-          metadata: { orderId: input.orderId, reservationId: input.reservationId },
-        });
-        return { decision: 'NOT_CANCELLABLE' };
-      }
-      const remotePayment = activePayments[0];
-      if (!remotePayment) {
-        if (input.paymentCreationUnresolved) {
-          await upsertFinanceReconciliationIssue({
-            contaId: input.contaId,
-            entityType: 'PAYMENT',
-            entityId: input.orderId,
-            issueType: 'BILLING_OPERATION_UNCERTAIN',
-            severity: 'HIGH',
-            localStatus: 'PAYMENT_CREATION_UNKNOWN',
-            remoteStatus: 'NOT_FOUND',
-            metadata: {
-              orderId: input.orderId,
-              reservationId: input.reservationId,
-              externalReference: `event-map-order:${input.orderId}`,
-              policy: 'keep_seats_held_until_provider_outcome_is_known',
-            },
-          });
-        }
-        return { decision: 'NOT_CANCELLABLE' };
-      }
-
-      const localOrder = await prisma.eventMapOrder.findFirst({
-        where: { id: input.orderId, contaId: input.contaId, status: 'PAYMENT_PENDING' },
-        select: { totalAmount: true, paymentMethod: true, asaasCustomerId: true },
-      });
-      const paymentMatchesOrder = Boolean(
-        localOrder &&
-        remotePayment.externalReference === `event-map-order:${input.orderId}` &&
-        Math.abs(Number(remotePayment.value) - Number(localOrder.totalAmount)) <= 0.01 &&
-        (!localOrder.asaasCustomerId || remotePayment.customer === localOrder.asaasCustomerId) &&
-        (!localOrder.paymentMethod || remotePayment.billingType === localOrder.paymentMethod),
-      );
-      if (!paymentMatchesOrder) {
-        await upsertFinanceReconciliationIssue({
-          contaId: input.contaId,
-          entityType: 'PAYMENT',
-          entityId: input.orderId,
-          issueType: 'BILLING_OPERATION_UNCERTAIN',
-          severity: 'CRITICAL',
-          localStatus: 'PAYMENT_CREATION_UNKNOWN',
-          remoteStatus: 'PAYMENT_MISMATCH',
-          metadata: {
-            orderId: input.orderId,
-            reservationId: input.reservationId,
-            paymentId: remotePayment.id,
-          },
-        });
-        return { decision: 'NOT_CANCELLABLE' };
-      }
-
-      paymentId = remotePayment.id;
-      // Preserve the provider identity discovered by reconciliation before
-      // deleting or applying its paid state, for audit and future webhooks.
-      await prisma.eventMapOrder.updateMany({
-        where: {
-          id: input.orderId,
-          contaId: input.contaId,
-          status: 'PAYMENT_PENDING',
-          asaasPaymentId: null,
-        },
-        data: {
-          asaasPaymentId: remotePayment.id,
-          paymentProvider: 'ASAAS',
-          paymentStatus: remotePayment.status ?? 'PENDING',
-          invoiceUrl: remotePayment.invoiceUrl ?? null,
-          asaasCustomerId: remotePayment.customer ?? undefined,
-        },
-      });
-      if (input.paymentCreationUnresolved) {
-        await resolveFinanceReconciliationIssueByDedupe({
-          contaId: input.contaId,
-          dedupeKey: issueDedupeKey,
-          resolution: 'Cobrança localizada pela referência externa do pedido.',
-        });
-      }
-    }
-
-    let payment = await getEventAsaasPaymentProvider().getPayment({
-      apiKey: credentials.apiKey,
-      paymentId,
-    });
-    let status = (payment.status ?? '').trim().toUpperCase();
-
-    if (PAID_ASAAS_PAYMENT_STATUSES.has(status)) {
-      await confirmExpiredOrderPayment({
-        contaId: input.contaId,
-        orderId: input.orderId,
-        paymentId,
-        payment,
-        status,
-      });
-      return { decision: 'PAID', paymentId };
-    }
-
-    if (payment.deleted || status === 'DELETED') return { decision: 'DELETED', paymentId };
-    if (!CANCELLABLE_ASAAS_PAYMENT_STATUSES.has(status))
-      return { decision: 'NOT_CANCELLABLE', paymentId };
-
-    const deletion = await getEventAsaasPaymentProvider().deletePayment({
-      apiKey: credentials.apiKey,
-      paymentId,
-    });
-
-    // DELETE already returns whether the payment was deleted. Avoid a second
-    // provider read for the common successful path; only close the race when
-    // the provider could not confirm deletion in its response.
-    if (deletion.deleted) return { decision: 'DELETED', paymentId };
-
-    // Read after delete to close the race with a payment being confirmed at expiry.
-    payment = await getEventAsaasPaymentProvider().getPayment({
-      apiKey: credentials.apiKey,
-      paymentId,
-    });
-    status = (payment.status ?? '').trim().toUpperCase();
-    if (PAID_ASAAS_PAYMENT_STATUSES.has(status)) {
-      await confirmExpiredOrderPayment({
-        contaId: input.contaId,
-        orderId: input.orderId,
-        paymentId,
-        payment,
-        status,
-      });
-      return { decision: 'PAID', paymentId };
-    }
-
-    return payment.deleted || status === 'DELETED'
-      ? { decision: 'DELETED', paymentId }
-      : { decision: 'NOT_CANCELLABLE', paymentId };
-  },
+  resolveExternalPaymentAtExpiry: resolveEventMapPaymentAtExpiry,
   expireReservation: async (input: {
     contaId: string;
     reservationId: string;

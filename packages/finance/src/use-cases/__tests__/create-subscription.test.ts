@@ -38,18 +38,19 @@ vi.mock('@alusa/asaas', () => ({
 
 vi.mock('../asaas-ops', () => ({
   getSubscription: vi.fn(),
-  listSubscriptions: vi.fn(async () => ({ data: [] })),
+  listSubscriptions: vi.fn(async (filters: { offset?: number; limit?: number } = {}) => ({ data: [], hasMore: false, totalCount: 0, offset: filters.offset ?? 0, limit: filters.limit ?? 100 })),
 }));
 
 vi.mock('../outbound-financial-operation', () => ({
   reserveOutboundFinancialOperation: vi.fn(async () => ({
     job: { id: 'job-1' },
-    payload: { remoteId: null },
+    payload: { remoteId: null, state: 'INTENT_CREATED' },
   })),
   markOutboundRemoteRequested: vi.fn(async () => true),
   markOutboundRemoteConfirmed: vi.fn(),
   markOutboundAwaitingWebhook: vi.fn(),
   markOutboundResultUnknown: vi.fn(),
+  markOutboundRequiresReconciliation: vi.fn(),
 }));
 
 vi.mock('../../foundation/audit-log.service', () => ({
@@ -69,6 +70,37 @@ vi.mock('../ensure-customer', () => ({
 vi.mock('../../billing-agreements/materialize', () => ({
   materializeBillingAgreement: vi.fn(async () => ({ id: 'agreement-1' })),
 }));
+
+async function prepareNewSubscriptionMocks() {
+  const { prisma, loadAsaasCredentials } = await import('@alusa/database');
+  const { ensureCustomer } = await import('../ensure-customer');
+  vi.mocked(prisma.matricula.findFirst).mockResolvedValue({
+    id: 'm1', alunoId: 'a1', responsavelFinanceiroId: 'r1', asaasSubscriptionId: null,
+    aluno: { id: 'a1', dataNasc: new Date('2000-01-01') },
+  } as never);
+  vi.mocked(prisma.contrato.findFirst).mockResolvedValue({ id: 'c1' } as never);
+  vi.mocked(prisma.subscription.findUnique).mockResolvedValue(null as never);
+  vi.mocked(ensureCustomer).mockResolvedValue({
+    success: true, data: { customerId: 'customer1', externalReference: 'payer1' },
+  } as never);
+  vi.mocked(loadAsaasCredentials).mockResolvedValue({ apiKey: 'api-key', contaId: 't1' } as never);
+  vi.mocked(prisma.subscription.create).mockResolvedValue({
+    id: 'sub1', externalReference: 'alusa:subscription:m1:c1', asaasSubscriptionId: null,
+    status: 'REQUESTED', createdAt: new Date('2099-01-01'), statusUpdatedAt: new Date('2099-01-01'),
+  } as never);
+  vi.mocked(prisma.subscription.update).mockResolvedValue({
+    id: 'sub1', externalReference: 'alusa:subscription:m1:c1', asaasSubscriptionId: 'remote1',
+    status: 'ACTIVE', createdAt: new Date('2099-01-01'), statusUpdatedAt: new Date('2099-01-01'),
+  } as never);
+  vi.mocked(prisma.matricula.update).mockResolvedValue({} as never);
+  return { prisma, loadAsaasCredentials };
+}
+
+const newSubscriptionInput = {
+  contaId: 't1', contratoId: 'c1', matriculaId: 'm1', value: 150,
+  nextDueDate: '2099-01-10', billingType: 'BOLETO' as const,
+  cycle: 'MONTHLY' as const, actor: { type: 'USER' as const },
+};
 
 describe('createSubscription', () => {
   it('aceita nextDueDate avançado exatamente um ciclo após materializar o primeiro pagamento', () => {
@@ -313,7 +345,7 @@ describe('createSubscription', () => {
     const call = vi.mocked(asaasCreateSubscription).mock.calls[0][0] as { idempotencyKey?: string };
     expect(call.idempotencyKey).toBeDefined();
     expect(call.idempotencyKey!.length).toBeLessThanOrEqual(47);
-    expect(call.idempotencyKey).toMatch(/^idem_[a-f0-9]{40}$/);
+    expect(call.idempotencyKey).toMatch(/^op_[a-f0-9]{40}$/);
 
     expect(prisma.subscription.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -334,6 +366,161 @@ describe('createSubscription', () => {
       expect.objectContaining({ subscriptionId: expect.any(String), contaId: 't1' }),
       expect.objectContaining({ tx: expect.any(Object) }),
     );
+  });
+
+  it('envia assinatura remota divergente para reconciliação crítica', async () => {
+    await prepareNewSubscriptionMocks();
+    const { createSubscription: asaasCreateSubscription } = await import('@alusa/asaas');
+    const { getSubscription } = await import('../asaas-ops');
+    const outbound = await import('../outbound-financial-operation');
+    vi.mocked(asaasCreateSubscription).mockResolvedValueOnce({ id: 'remote1', status: 'ACTIVE' } as never);
+    vi.mocked(getSubscription).mockResolvedValueOnce({
+      id: 'remote1', status: 'ACTIVE', deleted: false,
+      externalReference: 'alusa:subscription:m1:c1', customer: 'customer1',
+      value: 151, nextDueDate: '2099-01-10',
+    } as never);
+
+    const result = await createSubscription(newSubscriptionInput);
+
+    expect(result).toMatchObject({ success: false, error: 'ERRO_AO_CRIAR_ASSINATURA' });
+    expect(outbound.markOutboundRequiresReconciliation).toHaveBeenCalledWith(expect.objectContaining({
+      resource: 'SUBSCRIPTION', error: 'REMOTE_SUBSCRIPTION_CONFIRMATION_MISMATCH',
+    }));
+    expect(outbound.markOutboundResultUnknown).not.toHaveBeenCalled();
+  });
+
+  it('pagina o preflight até hasMore=false antes de aceitar uma única assinatura encontrada', async () => {
+    const { prisma } = await prepareNewSubscriptionMocks();
+    const { createSubscription: asaasCreateSubscription } = await import('@alusa/asaas');
+    const { getSubscription, listSubscriptions } = await import('../asaas-ops');
+    vi.mocked(listSubscriptions)
+      .mockResolvedValueOnce({
+        data: Array.from({ length: 100 }, (_, index) => ({ id: `deleted-${index}`, externalReference: 'alusa:subscription:m1:c1', deleted: true })), hasMore: true, totalCount: 101, offset: 0, limit: 100,
+      } as never)
+      .mockResolvedValueOnce({ data: [{ id: 'remote1', externalReference: 'alusa:subscription:m1:c1' }], hasMore: false, totalCount: 101, offset: 100, limit: 100 } as never);
+    vi.mocked(getSubscription).mockResolvedValue({
+      id: 'remote1', status: 'ACTIVE', deleted: false,
+      externalReference: 'alusa:subscription:m1:c1', customer: 'customer1', value: 150,
+      nextDueDate: '2099-01-10',
+    } as never);
+
+    const result = await createSubscription(newSubscriptionInput);
+    expect(result.success).toBe(false);
+    expect(asaasCreateSubscription).not.toHaveBeenCalled();
+    expect(listSubscriptions.mock.calls.map(([filters]) => filters.offset)).toEqual([0, 100]);
+    expect(listSubscriptions.mock.calls.every(([filters, options]) =>
+      filters.externalReference === 'alusa:subscription:m1:c1' && options.contaId === 't1',
+    )).toBe(true);
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+  });
+
+  it('não adota match encontrado antes do limite quando hasMore nunca termina', async () => {
+    await prepareNewSubscriptionMocks();
+    const { createSubscription: asaasCreateSubscription } = await import('@alusa/asaas');
+    const { getSubscription, listSubscriptions } = await import('../asaas-ops');
+    const { reserveOutboundFinancialOperation } = await import('../outbound-financial-operation');
+    vi.mocked(reserveOutboundFinancialOperation).mockResolvedValueOnce({
+      job: { id: 'job-1' },
+      payload: { remoteId: null, state: 'INTENT_CREATED' },
+    } as never);
+    for (let page = 0; page < 10; page += 1) {
+      vi.mocked(listSubscriptions).mockResolvedValueOnce({
+        data: Array.from({ length: 100 }, (_, index) => ({
+          id: `remote-${page}-${index}`, externalReference: page === 0 && index === 0 ? 'alusa:subscription:m1:c1' : 'other', deleted: true,
+        })),
+        hasMore: true,
+        totalCount: 10001, offset: page * 100, limit: 100,
+      } as never);
+    }
+    vi.mocked(getSubscription).mockResolvedValueOnce({
+      id: 'remote1', status: 'ACTIVE', deleted: false,
+      externalReference: 'alusa:subscription:m1:c1', customer: 'customer1', value: 150,
+      nextDueDate: '2099-01-10',
+    } as never);
+
+    const result = await createSubscription(newSubscriptionInput);
+    expect(result).toMatchObject({ success: false, error: 'ERRO_AO_CRIAR_ASSINATURA' });
+    expect(asaasCreateSubscription).not.toHaveBeenCalled();
+    expect(listSubscriptions).toHaveBeenCalledTimes(10);
+    expect(listSubscriptions.mock.calls.map(([filters]) => filters.offset)).toEqual(
+      Array.from({ length: 10 }, (_, page) => page * 100),
+    );
+  });
+
+  it('mantém operação RESULT_UNKNOWN quando nova invocação não encontra assinatura', async () => {
+    await prepareNewSubscriptionMocks();
+    const { createSubscription: asaasCreateSubscription } = await import('@alusa/asaas');
+    const { listSubscriptions } = await import('../asaas-ops');
+    const outbound = await import('../outbound-financial-operation');
+    vi.mocked(outbound.reserveOutboundFinancialOperation).mockResolvedValueOnce({
+      job: { id: 'job-1' },
+      payload: { remoteId: null, state: 'RESULT_UNKNOWN' },
+    } as never);
+    vi.mocked(listSubscriptions).mockResolvedValueOnce({ data: [], hasMore: false, totalCount: 0, offset: 0, limit: 100 } as never);
+
+    const result = await createSubscription(newSubscriptionInput);
+    expect(result).toMatchObject({ success: false, error: 'ERRO_AO_CRIAR_ASSINATURA' });
+    expect(asaasCreateSubscription).not.toHaveBeenCalled();
+    expect(outbound.markOutboundRemoteRequested).not.toHaveBeenCalled();
+    expect(outbound.markOutboundResultUnknown).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'PREVIOUS_SUBSCRIPTION_CREATE_RESULT_NOT_CONFIRMED',
+      externalReference: 'alusa:subscription:m1:c1',
+    }));
+  });
+
+  it('bloqueia POST quando o preflight de subscriptions falha', async () => {
+    await prepareNewSubscriptionMocks();
+    const { createSubscription: asaasCreateSubscription } = await import('@alusa/asaas');
+    const { listSubscriptions } = await import('../asaas-ops');
+    vi.mocked(listSubscriptions).mockRejectedValueOnce(new Error('provider read unavailable'));
+
+    const result = await createSubscription(newSubscriptionInput);
+    expect(result).toMatchObject({ success: false, error: 'ERRO_AO_CRIAR_ASSINATURA' });
+    expect(asaasCreateSubscription).not.toHaveBeenCalled();
+  });
+
+  it('mantém RESULT_UNKNOWN quando POST falha e lookup de recuperação está indisponível', async () => {
+    await prepareNewSubscriptionMocks();
+    const { createSubscription: asaasCreateSubscription } = await import('@alusa/asaas');
+    const { listSubscriptions } = await import('../asaas-ops');
+    const outbound = await import('../outbound-financial-operation');
+    vi.mocked(listSubscriptions)
+      .mockResolvedValueOnce({ data: [], hasMore: false, totalCount: 0, offset: 0, limit: 100 } as never)
+      .mockRejectedValueOnce(new Error('provider recovery read unavailable'));
+    vi.mocked(asaasCreateSubscription).mockRejectedValueOnce(new Error('POST timed out'));
+
+    const result = await createSubscription(newSubscriptionInput);
+    expect(result).toMatchObject({ success: false, error: 'ERRO_AO_CRIAR_ASSINATURA' });
+    expect(asaasCreateSubscription).toHaveBeenCalledTimes(1);
+    expect(outbound.markOutboundResultUnknown).toHaveBeenCalledWith(expect.objectContaining({
+      error: expect.any(Error),
+      externalReference: 'alusa:subscription:m1:c1',
+    }));
+  });
+
+  it('pagina a recuperação após POST até completar e adota somente a assinatura confirmada', async () => {
+    await prepareNewSubscriptionMocks();
+    const { createSubscription: asaasCreateSubscription } = await import('@alusa/asaas');
+    const { getSubscription, listSubscriptions } = await import('../asaas-ops');
+    const outbound = await import('../outbound-financial-operation');
+    vi.mocked(asaasCreateSubscription).mockRejectedValueOnce(new Error('POST timed out'));
+    vi.mocked(listSubscriptions)
+      .mockResolvedValueOnce({ data: [], hasMore: false, totalCount: 0, offset: 0, limit: 100 } as never) // preflight
+      .mockResolvedValueOnce({
+        data: Array.from({ length: 100 }, (_, index) => ({ id: `deleted-recovery-${index}`, externalReference: 'alusa:subscription:m1:c1', deleted: true })), hasMore: true, totalCount: 101, offset: 0, limit: 100,
+      } as never)
+      .mockResolvedValueOnce({ data: [{ id: 'remote1', externalReference: 'alusa:subscription:m1:c1' }], hasMore: false, totalCount: 101, offset: 100, limit: 100 } as never);
+    vi.mocked(getSubscription).mockResolvedValue({
+      id: 'remote1', status: 'ACTIVE', deleted: false,
+      externalReference: 'alusa:subscription:m1:c1', customer: 'customer1', value: 150,
+      nextDueDate: '2099-01-10',
+    } as never);
+
+    const result = await createSubscription(newSubscriptionInput);
+    expect(result.success).toBe(false);
+    expect(asaasCreateSubscription).toHaveBeenCalledTimes(1);
+    expect(listSubscriptions.mock.calls.map(([filters]) => filters.offset)).toEqual([0, 0, 100]);
+    expect(outbound.markOutboundRequiresReconciliation).toHaveBeenCalled();
   });
 
   it('deve enviar billingType CREDIT_CARD ao Asaas quando wizard solicitar CREDIT_CARD', async () => {

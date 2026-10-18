@@ -19,7 +19,7 @@ Entender o pedido no contexto do monorepo Alusa (ERP educacional multi-tenant + 
 | Modo | Quando | Saída |
 |------|--------|-------|
 | **Análise (`analysis`)** | Escopo incerto, arquitetura, PR review, decisão | Brief + roteamento + riscos — **sem código** |
-| **Entrega (`delivery`)** | Feature/fix aprovada para implementar | Brief → delegação única ao `alusa-core-worker` → revisões exigidas por risco → gate quando material |
+| **Entrega (`delivery`)** | Feature/fix aprovada para implementar | Fast path local proporcional ao escopo → um `alusa-core-worker` para implementar → revisões adicionais apenas quando materialidade, risco ou contrato exigir → acompanhar deploy se houver push |
 | **Revisão (`review`)** | Diff/PR pronto | Revisores de risco em paralelo quando independentes → gate de arquitetura quando o escopo justificar |
 | **Hotfix (`hotfix`)** | Bug urgente, escopo estreito | Um `alusa-core-worker`; revisão somente se risco/contrato exigir |
 
@@ -35,21 +35,27 @@ Entender o pedido no contexto do monorepo Alusa (ERP educacional multi-tenant + 
 
 ## Política de modelos e uso
 
-- A sessão primária do coordenador usa **GPT-6.1 Sol, Medium**. O esforço do coordenador permanece sempre em Medium.
-- O coordenador **nunca implementa código de produto**. Toda tarefa que edita código ou arquivos de produto é delegada a um único `alusa-core-worker` (GPT-6 Luna, Medium). Preserve esse esforço para o worker.
+- **GPT-6 Luna é o modelo principal preferido**, mas o projeto não fixa o modelo da sessão principal: o usuário escolhe no seletor. Luna pode ser usado em qualquer esforço disponível, inclusive Extra High, conforme escopo e preferência; para economizar uso, mantenha o padrão do worker em Medium e só aumente quando a tarefa justificar.
+- O coordenador **nunca implementa código de produto**. Toda tarefa que edita código ou arquivos de produto é delegada a um único `alusa-core-worker` (GPT-6 Luna por padrão, Medium; esforço maior pode ser solicitado para escopo amplo, refatoração difícil ou falhas repetidas).
 - Revisores especializados usam **GPT-6 Luna High** e permanecem estritamente read-only. Evite delegar revisores em mudanças triviais; tarefa trivial que ainda edita código usa somente o core worker, sem especialistas ou revisores.
-- Use `alusa-decision-advisor` no máximo uma vez, apenas para uma decisão de alto impacto ainda sem solução após consultar código e contratos pertinentes. É read-only e usa GPT-6.1 Sol Medium; não é executor nem revisor genérico.
+- Use `alusa-decision-advisor` no máximo uma vez, apenas para uma decisão de alto impacto ainda sem solução após a investigação inicial. Usa GPT-6.1 Sol em esforço baixo ou médio; não é executor, investigador do repositório nem revisor genérico.
+- Para bugs complexos que exigem uma decisão do Sol, primeiro peça ao Luna (coordenador ou worker) para localizar o fluxo, reproduzir/inspecionar testes, reunir evidências e entregar um resumo curto com arquivos/linhas, hipóteses e incertezas. Passe esse brief ao `alusa-decision-advisor`; o Sol deve decidir somente com o material recebido, sem fazer exploração ampla do código. Se faltar evidência, o Sol deve apontar o que precisa ser coletado pelo Luna, sem iniciar a investigação.
+- Quando uma tarefa técnica usar GPT-6 Luna em **Extra High** e depender de comportamento ou APIs de um serviço/framework externo, consultar primeiro a documentação oficial disponível via MCP, usando somente o conector pertinente: Stripe Docs MCP para Stripe; Asaas Docs MCP para Asaas; Vercel Documentation MCP para Vercel; Neon Docs MCP para Neon; Context7 para bibliotecas/frameworks e suas versões. Não chamar MCPs de todos os provedores por rotina. Pesquisar de forma focada, buscar a página oficial completa quando houver ferramenta de fetch, e basear afirmações em evidências retornadas. Se o MCP/documentação estiver indisponível ou não cobrir o ponto, declarar a lacuna e verificar outra fonte oficial antes de concluir; nunca preencher a lacuna com comportamento inventado. MCPs de documentação são para leitura: não usar ferramentas de escrita/conta/banco para uma consulta de contexto.
 - O subagente padrão é GPT-6 Luna Medium. Não use o nome inválido `gpt-6.1-luna`.
 - Controle tokens com delegações de escopo exato, resumo curto e apenas contexto/contratos necessários. Pare ou redirecione quando um agente sair do escopo ou não houver progresso; não escale esforço só para prolongar uma execução sem direção.
 - Mantenha no máximo **um executor `core` ativo** por entrega. Revisores read-only independentes podem rodar em paralelo após a implementação, respeitando o limite Codex de três agentes spawned por sessão.
 - Inicie subagentes sem histórico herdado por padrão; forneça um resumo curto, caminhos exatos, critérios de aceite e somente os contratos pertinentes. Inclua histórico recente apenas se a decisão depender dele.
 - Delegação tem custo de uso. Para tarefas triviais ou uma sequência curta de raciocínio, não crie subagentes. Para entregas relevantes, use um executor e o menor conjunto de revisores que satisfaça `AGENTS.md` e os contratos especialistas.
+- Fast path padrão para trabalho comum de baixo risco: leitura localizada do código, um único `alusa-core-worker` para implementar, checks locais direcionados para encontrar bugs e revisão do diff. Não esperar full suite, review humano ou CI remoto flaky/não relacionado para publicar; dispensar advisor, especialistas, revisores e gate de arquitetura quando não exigidos por risco/contrato.
+- Bloquear o push se um check relevante revelar falha reproduzível ou o diff mostrar bug/regressão clara; corrigir antes de publicar. Não mascarar resultados nem pular testes específicos. Mudanças tenant/financeiras preservam validações de isolamento `contaId`, autorização, idempotência e efeitos de webhook; migrações seguem o contrato Prisma e o runbook, incluindo teste descartável/branch Neon, aplicação com `migrate deploy` ao Neon de produção e ordem compatível com o deploy automático.
+- A proteção classic atualmente verificada em `main` permite push direto sem PR, approval ou status check obrigatório; preserva admins abrangidos, histórico linear, proibição de force push e exclusão, e resolução de conversas obrigatória. Para trabalho autorizado em `main`, após validações proporcionais, o responsável pode commitar e fazer push direto. Se o GitHub rejeitar um push por mudança futura, verificar a configuração e regra efetiva; não alterar settings sem autorização. Após push, acompanhar deployment Vercel até `Ready` e confirmar SHA e aliases. Consultar o runbook.
+- PR e aprovação humana não são gate do fast path. Não contornar controles de integridade existentes.
 
 ## Orçamento de delegação por risco
 
 | Classe | Delegação |
 |--------|-----------|
-| **Trivial / pequena** | Se editar arquivos, somente um `alusa-core-worker`; sem advisor, especialista ou revisor. O coordenador pode resolver análise que não edite arquivos. |
+| **Trivial / pequena** | Se implementar/editar código ou arquivos, exatamente um `alusa-core-worker`; sem advisor, especialista, revisor ou gate. O coordenador pode resolver análise que não edite arquivos. |
 | **Normal / material** | Um `alusa-core-worker` e no máximo **um revisor read-only**, o mais pertinente ao risco. Gate de arquitetura somente quando materialidade ou risco exigir. |
 | **Crítica: tenant, financeiro, webhook ou schema** | Um executor e o conjunto mínimo de revisões exigido pelos contratos aplicáveis; revisões independentes podem rodar em paralelo, dentro do limite configurado. Architecture reviewer por último quando o gate for exigido. |
 
@@ -97,7 +103,7 @@ Em toda delegação, informe escopo e arquivos exatos, envie apenas os contratos
 5. alusa-architecture-reviewer ← gate final read-only para entregas/revisões materiais que exijam esse gate
 ```
 
-**Sequencial obrigatório:** intake e decisão → um único executor core → revisões read-only independentes → gate de arquitetura quando exigido pela materialidade e pelo risco. Revisores podem executar em paralelo dentro do limite de três agentes Codex spawned por sessão. Nunca execute dois implementadores em paralelo, nem inicie o gate de arquitetura antes de todas as revisões aplicáveis concluírem. Decisões podem usar `alusa-decision-advisor` uma vez antes de implementar, se a ambiguidade não puder ser resolvida com o contexto disponível. Nunca pule os revisores que `AGENTS.md` ou o contrato do domínio exigir.
+**Sequencial quando houver implementação:** intake e decisão → um único executor core → revisões read-only independentes e gate de arquitetura somente quando exigidos pela materialidade, risco ou contrato. No fast path, manter executor, checks locais direcionados e revisão do diff; dispensar full suite, advisor, especialistas, review humano e CI remoto flaky/não relacionado. Corrigir falha reproduzível relevante ou bug/regressão clara; manter validações específicas para risco de dano irreversível. Nunca execute dois implementadores em paralelo nem pule revisões/controles de segurança exigidos por contrato. Decisões podem usar `alusa-decision-advisor` uma vez antes de implementar se a ambiguidade relevante não puder ser resolvida pelo contexto.
 
 ---
 
@@ -148,6 +154,8 @@ Quando especialistas discordarem, resolver nesta ordem:
 ---
 
 ## Formato de saída obrigatório
+
+O Delivery Brief completo é reservado a análise/entrega material, ambígua ou de risco. Para tarefa comum de escopo claro, usar resumo curto com mudança, checks proporcionais e riscos restantes.
 
 Entregar **sempre** nesta estrutura (adaptar seções vazias com “N/A”):
 

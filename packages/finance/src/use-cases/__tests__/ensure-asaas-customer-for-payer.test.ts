@@ -96,6 +96,12 @@ describe('ensureAsaasCustomerForPayer', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    listCustomersMock.mockReset();
+    getCustomerMock.mockReset();
+    createCustomerMock.mockReset();
+    updateCustomerMock.mockReset();
+    restoreCustomerMock.mockReset();
+    applyNotificationPreferencesMock.mockReset();
     vi.stubEnv('NODE_ENV', 'development');
     vi.stubEnv('PAYMENTS_PROVIDER_MODE', 'asaas');
     vi.stubEnv('PLAYWRIGHT_TEST', 'false');
@@ -124,18 +130,29 @@ describe('ensureAsaasCustomerForPayer', () => {
       object: 'list',
       hasMore: false,
       totalCount: 0,
-      limit: 10,
+      limit: 100,
       offset: 0,
       data: [],
     });
-    getCustomerMock.mockResolvedValue({
-      id: 'cust_local',
-      object: 'customer',
-      dateCreated: '2026-01-01',
-      name: 'Teste',
-      cpfCnpj: '39053344705',
-      deleted: false,
-      notificationDisabled: false,
+    getCustomerMock.mockImplementation(async ({ customerId }) => {
+      const created = createCustomerMock.mock.calls.at(-1)?.[0]?.data;
+      const listResults = await Promise.all(listCustomersMock.mock.results.map(async (result) => {
+        if (result.type !== 'return') return [];
+        const response = await result.value;
+        return response?.data ?? [];
+      }));
+      const listedCustomer = listResults.flat().find((customer) => customer.id === customerId);
+      return {
+        ...(listedCustomer ?? created ?? {}),
+        id: customerId,
+        object: 'customer',
+        dateCreated: '2026-01-01',
+        name: listedCustomer?.name ?? created?.name ?? 'Teste',
+        cpfCnpj: listedCustomer?.cpfCnpj ?? created?.cpfCnpj ?? '39053344705',
+        externalReference: listedCustomer?.externalReference ?? created?.externalReference,
+        deleted: listedCustomer?.deleted ?? false,
+        notificationDisabled: false,
+      } as never;
     });
     createCustomerMock.mockResolvedValue({
       id: 'cust_new',
@@ -170,6 +187,7 @@ describe('ensureAsaasCustomerForPayer', () => {
 
     await prisma.customerPayer.deleteMany({ where: { contaId } });
     await prisma.customer.deleteMany({ where: { contaId } });
+    await prisma.asaasIntegrationJob.deleteMany({ where: { contaId, type: 'CREATE_CUSTOMER' } });
     await prisma.alunoResponsavel.deleteMany({ where: { aluno: { contaId } } });
     await prisma.aluno.deleteMany({ where: { contaId } });
     await prisma.responsavel.deleteMany({ where: { contaId } });
@@ -202,6 +220,7 @@ describe('ensureAsaasCustomerForPayer', () => {
       name: aluno.nome,
       cpfCnpj: aluno.cpf!,
       email: changed ? 'old@example.com' : aluno.email!,
+      phone: '11999999999',
       mobilePhone: '11999999999',
       externalReference,
       deleted: false,
@@ -211,7 +230,10 @@ describe('ensureAsaasCustomerForPayer', () => {
       getCustomerMock.mockResolvedValueOnce(currentCustomer);
     } else {
       listCustomersMock.mockResolvedValueOnce({
-        object: 'list', hasMore: false, totalCount: 1, limit: 1, offset: 0, data: [currentCustomer],
+        object: 'list', hasMore: false, totalCount: 1, limit: 100, offset: 0, data: [currentCustomer],
+      });
+      listCustomersMock.mockResolvedValueOnce({
+        object: 'list', hasMore: false, totalCount: 1, limit: 100, offset: 0, data: [currentCustomer],
       });
     }
 
@@ -233,25 +255,18 @@ describe('ensureAsaasCustomerForPayer', () => {
   });
 
   it('reaproveita customer existente por externalReference e persiste o ID', async () => {
-    listCustomersMock.mockResolvedValueOnce({
-      object: 'list',
-      hasMore: false,
-      totalCount: 1,
-      limit: 1,
-      offset: 0,
-      data: [
-        {
-          id: 'cust_existing',
-          object: 'customer',
-          dateCreated: '2026-01-01',
-          name: 'Cliente',
-          cpfCnpj: '11144477735',
-          deleted: false,
-          notificationDisabled: false,
-        },
-      ],
-    });
-
+    listCustomersMock.mockImplementationOnce(async (params) => ({
+      object: 'list', hasMore: false, totalCount: 1, limit: 100, offset: 0,
+      data: [{ id: 'cust_existing', object: 'customer', dateCreated: '2026-01-01', name: 'Cliente',
+        cpfCnpj: '11144477735', externalReference: params.externalReference, deleted: false,
+        notificationDisabled: false }],
+    } as never));
+    listCustomersMock.mockImplementationOnce(async (params) => ({
+      object: 'list', hasMore: false, totalCount: 1, limit: 100, offset: 0,
+      data: [{ id: 'cust_existing', object: 'customer', dateCreated: '2026-01-01', name: 'Cliente',
+        cpfCnpj: '11144477735', externalReference: params.externalReference, deleted: false,
+        notificationDisabled: false }],
+    } as never));
     const aluno = await prisma.aluno.create({
       data: {
         contaId,
@@ -302,6 +317,39 @@ describe('ensureAsaasCustomerForPayer', () => {
     );
     const updateCall = updateCustomerMock.mock.calls.at(-1)?.[0];
     expect(updateCall.data).not.toHaveProperty('notificationDisabled');
+  });
+
+  it('não escolhe customer quando a página posterior revela identidade duplicada', async () => {
+    const aluno = await prisma.aluno.create({ data: {
+      contaId, nome: 'Aluno Customer Página Dois', dataNasc: new Date('2000-01-01'),
+      cpf: '52998224725', email: 'customer-page-two@example.com',
+    } });
+    const externalReference = `alusa_${contaId}_aluno_${aluno.id}`;
+    const page = (offset: number, data: unknown[], hasMore: boolean) => ({
+      object: 'list', totalCount: 101, offset, limit: 100, hasMore, data,
+    });
+    const candidates = Array.from({ length: 100 }, (_, index) => ({
+      id: `cus-page-one-${index}`, externalReference, cpfCnpj: aluno.cpf, deleted: false,
+    }));
+    listCustomersMock
+      .mockResolvedValueOnce(page(0, candidates, true) as never)
+      .mockResolvedValueOnce(page(100, [
+        { id: 'cus-page-two', externalReference, cpfCnpj: aluno.cpf, deleted: false },
+      ], false) as never);
+
+    const result = await ensureAsaasCustomerForPayer({ contaId, payer: {
+      type: 'ALUNO', id: aluno.id, name: aluno.nome, cpfCnpj: aluno.cpf!,
+    } });
+
+    expect(result).toMatchObject({ ok: false, error: 'TEMPORARY_ERROR' });
+    expect(listCustomersMock).toHaveBeenCalledTimes(2);
+    expect(listCustomersMock.mock.calls.map(([params]) => params)).toEqual([
+      expect.objectContaining({ externalReference, offset: 0, limit: 100 }),
+      expect.objectContaining({ externalReference, offset: 100, limit: 100 }),
+    ]);
+    expect(createCustomerMock).not.toHaveBeenCalled();
+    const persisted = await prisma.aluno.findUnique({ where: { id: aluno.id } });
+    expect(persisted?.asaasCustomerId).toBeNull();
   });
 
   it('reaproveita customer local por id e sincroniza dados cadastrais no Asaas', async () => {
@@ -455,6 +503,195 @@ describe('ensureAsaasCustomerForPayer', () => {
     );
   });
 
+  it('concorre para o mesmo payer usando um job durável e um único POST', async () => {
+    const aluno = await prisma.aluno.create({ data: {
+      contaId, nome: 'Aluno Customer Concorrente', dataNasc: new Date('2000-01-01'),
+      cpf: '15350946056', email: 'customer-race@example.com', telefone: '11999999999',
+    } });
+    const externalReference = `alusa_${contaId}_aluno_${aluno.id}`;
+    let releaseBarrier!: () => void;
+    const barrier = new Promise<void>((resolve) => { releaseBarrier = resolve; });
+    let outboxLookups = 0;
+    listCustomersMock.mockImplementation(async (params) => {
+      if (params.externalReference === externalReference && params.limit === 100) {
+        outboxLookups += 1;
+        if (outboxLookups === 2) releaseBarrier();
+        await barrier;
+      }
+      return { object: 'list', data: [], hasMore: false, totalCount: 0, limit: params.limit, offset: params.offset } as never;
+    });
+
+    const payer = {
+      type: 'ALUNO' as const, id: aluno.id, name: aluno.nome,
+      cpfCnpj: aluno.cpf!, email: aluno.email, phone: aluno.telefone,
+    };
+    const results = await Promise.all([
+      ensureAsaasCustomerForPayer({ contaId, payer }),
+      ensureAsaasCustomerForPayer({ contaId, payer }),
+    ]);
+
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(createCustomerMock).toHaveBeenCalledTimes(1);
+    expect(outboxLookups).toBeGreaterThanOrEqual(2);
+    const jobs = await prisma.asaasIntegrationJob.findMany({
+      where: { contaId, type: 'CREATE_CUSTOMER', payload: { path: ['externalReference'], equals: externalReference } },
+    });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]?.payload).toMatchObject({
+      resource: 'CUSTOMER', state: 'SYNCHRONIZED', externalReference,
+    });
+    const saved = await prisma.aluno.findUnique({ where: { id: aluno.id } });
+    expect(saved?.asaasCustomerId).toBe('cust_new');
+  });
+
+  it('reusa e persiste customer criado remotamente quando a resposta do POST se perde', async () => {
+    const aluno = await prisma.aluno.create({
+      data: {
+        contaId,
+        nome: 'Aluno Resposta Perdida',
+        dataNasc: new Date('2000-01-01'),
+        cpf: '15350946056',
+        email: 'lost-response@example.com',
+        telefone: '11999999999',
+      },
+    });
+    listCustomersMock
+      .mockResolvedValueOnce({ object: 'list', data: [], hasMore: false, totalCount: 0, limit: 100, offset: 0 })
+      .mockResolvedValueOnce({ object: 'list', data: [], hasMore: false, totalCount: 0, limit: 100, offset: 0 })
+      .mockResolvedValueOnce({ object: 'list', data: [], hasMore: false, totalCount: 0, limit: 100, offset: 0 })
+      .mockResolvedValueOnce({
+        object: 'list', hasMore: false, totalCount: 1, limit: 100, offset: 0,
+        data: [{
+          id: 'cust_created_before_timeout',
+          externalReference: `alusa_${contaId}_aluno_${aluno.id}`,
+          cpfCnpj: '15350946056',
+          deleted: false,
+        }],
+      });
+    createCustomerMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+    const result = await ensureAsaasCustomerForPayer({ contaId, payer: {
+      type: 'ALUNO', id: aluno.id, name: aluno.nome, cpfCnpj: aluno.cpf!, email: aluno.email,
+    } });
+
+    expect(result).toMatchObject({ ok: true, customerId: 'cust_created_before_timeout', reused: true });
+    expect(createCustomerMock).toHaveBeenCalledTimes(1);
+    expect(listCustomersMock).toHaveBeenCalledTimes(4);
+    const persisted = await prisma.aluno.findUnique({ where: { id: aluno.id } });
+    expect(persisted?.asaasCustomerId).toBe('cust_created_before_timeout');
+  });
+
+  it('não vincula customer arbitrário quando o lookup retorna múltiplas correspondências exatas', async () => {
+    const aluno = await prisma.aluno.create({
+      data: {
+        contaId,
+        nome: 'Aluno Customers Duplicados',
+        dataNasc: new Date('2000-01-01'),
+        cpf: '15350946056',
+      },
+    });
+    const externalReference = `alusa_${contaId}_aluno_${aluno.id}`;
+    listCustomersMock
+      .mockResolvedValueOnce({ object: 'list', data: [], hasMore: false, totalCount: 0, limit: 100, offset: 0 })
+      .mockResolvedValueOnce({ object: 'list', data: [], hasMore: false, totalCount: 0, limit: 100, offset: 0 })
+      .mockResolvedValueOnce({
+        object: 'list', hasMore: false, totalCount: 2, limit: 100, offset: 0,
+        data: [
+          { id: 'cust_duplicate_a', externalReference, cpfCnpj: '15350946056', deleted: false },
+          { id: 'cust_duplicate_b', externalReference, cpfCnpj: '153.509.460-56', deleted: false },
+        ],
+      });
+    createCustomerMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+    const result = await ensureAsaasCustomerForPayer({ contaId, payer: {
+      type: 'ALUNO', id: aluno.id, name: aluno.nome, cpfCnpj: aluno.cpf!,
+    } });
+
+    expect(result).toMatchObject({ ok: false, error: 'TEMPORARY_ERROR' });
+    if (!result.ok) expect(result.message).toContain('reconciliação necessária');
+    expect(createCustomerMock).toHaveBeenCalledTimes(0);
+    expect(listCustomersMock).toHaveBeenCalledTimes(3);
+    const persisted = await prisma.aluno.findUnique({ where: { id: aluno.id } });
+    expect(persisted?.asaasCustomerId).toBeNull();
+  });
+
+  it('mantém resultado ambíguo quando a leitura posterior não encontra customer', async () => {
+    const aluno = await prisma.aluno.create({
+      data: {
+        contaId,
+        nome: 'Aluno Customer Não Encontrado',
+        dataNasc: new Date('2000-01-01'),
+        cpf: '52998224725',
+      },
+    });
+    listCustomersMock
+      .mockResolvedValueOnce({ object: 'list', data: [], hasMore: false, totalCount: 0, limit: 100, offset: 0 })
+      .mockResolvedValueOnce({ object: 'list', data: [], hasMore: false, totalCount: 0, limit: 100, offset: 0 })
+      .mockResolvedValueOnce({ object: 'list', data: [], hasMore: false, totalCount: 0, limit: 100, offset: 0 });
+    createCustomerMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+    const result = await ensureAsaasCustomerForPayer({ contaId, payer: {
+      type: 'ALUNO', id: aluno.id, name: aluno.nome, cpfCnpj: aluno.cpf!,
+    } });
+
+    expect(result).toMatchObject({ ok: false, error: 'TEMPORARY_ERROR' });
+    if (!result.ok) expect(result.message).toContain('Resultado do POST incerto');
+    expect(createCustomerMock).toHaveBeenCalledTimes(1);
+    expect(listCustomersMock).toHaveBeenCalledTimes(4);
+    const persisted = await prisma.aluno.findUnique({ where: { id: aluno.id } });
+    expect(persisted?.asaasCustomerId).toBeNull();
+  });
+
+  it('retorna resultado ambíguo sem repetir POST quando a consulta pós-timeout falha', async () => {
+    const aluno = await prisma.aluno.create({
+      data: {
+        contaId,
+        nome: 'Aluno Lookup Indisponível',
+        dataNasc: new Date('2000-01-01'),
+        cpf: '11144477735',
+      },
+    });
+    listCustomersMock
+      .mockResolvedValueOnce({ object: 'list', data: [], hasMore: false, totalCount: 0, limit: 100, offset: 0 })
+      .mockResolvedValueOnce({ object: 'list', data: [], hasMore: false, totalCount: 0, limit: 100, offset: 0 })
+      .mockResolvedValueOnce({ object: 'list', data: [], hasMore: false, totalCount: 0, limit: 100, offset: 0 })
+      .mockRejectedValueOnce(new TypeError('fetch failed'));
+    createCustomerMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+
+    const result = await ensureAsaasCustomerForPayer({ contaId, payer: {
+      type: 'ALUNO', id: aluno.id, name: aluno.nome, cpfCnpj: aluno.cpf!,
+    } });
+
+    expect(result).toMatchObject({ ok: false, error: 'TEMPORARY_ERROR' });
+    if (!result.ok) expect(result.message).toContain('Resultado do POST incerto');
+    expect(createCustomerMock).toHaveBeenCalledTimes(1);
+    expect(listCustomersMock).toHaveBeenCalledTimes(4);
+    const persisted = await prisma.aluno.findUnique({ where: { id: aluno.id } });
+    expect(persisted?.asaasCustomerId).toBeNull();
+  });
+
+  it('mantém falha 4xx definitiva sem fazer lookup pós-criação', async () => {
+    const aluno = await prisma.aluno.create({
+      data: {
+        contaId,
+        nome: 'Aluno Erro Definitivo',
+        dataNasc: new Date('2000-01-01'),
+        cpf: '39053344705',
+      },
+    });
+    createCustomerMock.mockRejectedValueOnce(new AsaasHttpError(
+      'Invalid customer', 400, undefined, { errors: [{ description: 'CPF inválido.' }] },
+    ));
+
+    const result = await ensureAsaasCustomerForPayer({ contaId, payer: {
+      type: 'ALUNO', id: aluno.id, name: aluno.nome, cpfCnpj: aluno.cpf!,
+    } });
+
+    expect(result).toMatchObject({ ok: false, error: 'PAYER_INVALID' });
+    expect(createCustomerMock).toHaveBeenCalledTimes(1);
+    expect(listCustomersMock).toHaveBeenCalledTimes(3);
+  });
+
   it('mantém o ensure bem-sucedido quando a herança global falha', async () => {
     applyNotificationPreferencesMock.mockRejectedValueOnce(new Error('sync failed'));
 
@@ -495,11 +732,11 @@ describe('ensureAsaasCustomerForPayer', () => {
   });
 
   it('restaura customer removido (soft delete) antes de atualizar e persistir', async () => {
-    listCustomersMock.mockResolvedValueOnce({
+    listCustomersMock.mockImplementationOnce(async (params) => ({
       object: 'list',
       hasMore: false,
       totalCount: 1,
-      limit: 1,
+      limit: 100,
       offset: 0,
       data: [
         {
@@ -508,11 +745,18 @@ describe('ensureAsaasCustomerForPayer', () => {
           dateCreated: '2026-01-01',
           name: 'Cliente',
           cpfCnpj: '15350946056',
+          externalReference: params.externalReference,
           deleted: true,
           notificationDisabled: false,
         },
       ],
-    });
+    } as never));
+    listCustomersMock.mockImplementationOnce(async (params) => ({
+      object: 'list', hasMore: false, totalCount: 1, limit: 100, offset: 0,
+      data: [{ id: 'cust_deleted', object: 'customer', dateCreated: '2026-01-01', name: 'Cliente',
+        cpfCnpj: '15350946056', externalReference: params.externalReference, deleted: true,
+        notificationDisabled: false }],
+    } as never));
 
     const aluno = await prisma.aluno.create({
       data: {
@@ -558,7 +802,7 @@ describe('ensureAsaasCustomerForPayer', () => {
         object: 'list',
         hasMore: false,
         totalCount: 0,
-        limit: 1,
+        limit: 100,
         offset: 0,
         data: [],
       })
@@ -566,7 +810,7 @@ describe('ensureAsaasCustomerForPayer', () => {
         object: 'list',
         hasMore: false,
         totalCount: 1,
-        limit: 10,
+        limit: 100,
         offset: 0,
         data: [
           {
@@ -653,7 +897,7 @@ describe('ensureAsaasCustomerForPayer', () => {
         object: 'list',
         hasMore: false,
         totalCount: 0,
-        limit: 1,
+        limit: 100,
         offset: 0,
         data: [],
       })
@@ -661,7 +905,7 @@ describe('ensureAsaasCustomerForPayer', () => {
         object: 'list',
         hasMore: false,
         totalCount: 0,
-        limit: 1,
+        limit: 100,
         offset: 0,
         data: [],
       })
@@ -669,7 +913,7 @@ describe('ensureAsaasCustomerForPayer', () => {
         object: 'list',
         hasMore: false,
         totalCount: 0,
-        limit: 10,
+        limit: 100,
         offset: 0,
         data: [],
       });

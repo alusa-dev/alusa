@@ -1538,6 +1538,8 @@ export type {
   KycReconciliationResult,
   KycReconciliationDetail,
 } from './use-cases/kyc/kyc-reconciliation.service';
+export { enqueueKycReadModelSync, processKycReadModelSyncJobs } from './use-cases/kyc/kyc-sync-job.service';
+export type { KycReadModelSyncJobResult } from './use-cases/kyc/kyc-sync-job.service';
 
 // Errors
 export { MissingAsaasApiKeyError } from './errors/missing-asaas-api-key-error';
@@ -1704,19 +1706,6 @@ export type {
   DlqStats,
   DlqRequeueResult,
 } from './webhooks/dlq-admin.service';
-
-// Webhook Queue Adapter
-export { PostgresQueueAdapter, createQueueAdapter } from './webhooks/queue-adapter';
-export type {
-  QueueAdapter,
-  QueueItem,
-  QueueItemStatus,
-  EnqueueOptions,
-  ClaimOptions,
-  ClaimResult,
-  QueueStats,
-  QueueBackend,
-} from './webhooks/queue-adapter';
 
 // Asaas API Logger
 export {

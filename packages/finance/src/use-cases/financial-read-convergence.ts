@@ -5,8 +5,11 @@ import { mapAsaasSubscriptionStatus } from '../mappers/asaas-subscription-status
 import { handleSubscriptionWebhook } from '../webhooks/subscription-webhook-handler';
 import { getSubscription, listInstallmentPayments, listSubscriptionPayments } from './asaas-ops';
 import { syncPaymentStateFromAsaas } from './sync-payment-state-from-asaas';
+import { assertCompleteAsaasPage } from './asaas-pagination';
 
 const TERMINAL_CHARGE_STATUSES = new Set(['PAID', 'CANCELED', 'REFUNDED']);
+const INSTALLMENT_PAYMENT_PAGE_SIZE = 100;
+const INSTALLMENT_PAYMENT_MAX_PAGES = 100;
 
 type StandaloneSubscriptionMutableDelegate = {
   update?: (args: {
@@ -102,15 +105,58 @@ export async function convergeInstallmentPlansWithAsaas(params: {
 
   for (const installmentId of uniqueInstallmentIds) {
     try {
-      const remotePayments = await listInstallmentPayments(installmentId, {
-        contaId: params.contaId,
-        limit: 100,
-        offset: 0,
-      });
+      const paymentIds: string[] = [];
+      const seenPaymentIds = new Set<string>();
+      let lookupComplete = false;
+      let expectedTotalCount: number | undefined;
+      for (let page = 0; page < INSTALLMENT_PAYMENT_MAX_PAGES; page += 1) {
+        const offset = page * INSTALLMENT_PAYMENT_PAGE_SIZE;
+        const response = await listInstallmentPayments(installmentId, {
+          contaId: params.contaId,
+          limit: INSTALLMENT_PAYMENT_PAGE_SIZE,
+          offset,
+        });
+        if (
+          !response ||
+          !Array.isArray(response.data) ||
+          typeof response.hasMore !== 'boolean' ||
+          response.offset !== offset ||
+          response.limit !== INSTALLMENT_PAYMENT_PAGE_SIZE ||
+          response.data.some((payment) => {
+            const id = typeof payment?.id === 'string' ? payment.id.trim() : '';
+            if (!id || seenPaymentIds.has(id)) return true;
+            seenPaymentIds.add(id);
+            return false;
+          })
+        ) {
+          throw new Error(`INSTALLMENT_PAYMENT_LOOKUP_INCOMPLETE:${installmentId}:invalid_page:${page}`);
+        }
+        try {
+          expectedTotalCount = assertCompleteAsaasPage(response, offset, INSTALLMENT_PAYMENT_PAGE_SIZE, expectedTotalCount);
+        } catch (error) {
+          throw new Error(`INSTALLMENT_PAYMENT_LOOKUP_INCOMPLETE:${installmentId}:total_count:${page}`, { cause: error });
+        }
+        for (const payment of response.data) {
+          paymentIds.push(payment.id.trim());
+        }
+        if (!response.hasMore) {
+          lookupComplete = true;
+          break;
+        }
+        if (response.data.length === 0) {
+          throw new Error(`INSTALLMENT_PAYMENT_LOOKUP_INCOMPLETE:${installmentId}:empty_page_with_more:${page}`);
+        }
+        if (page === INSTALLMENT_PAYMENT_MAX_PAGES - 1) {
+          throw new Error(`INSTALLMENT_PAYMENT_LOOKUP_INCOMPLETE:${installmentId}:max_pages_reached:${INSTALLMENT_PAYMENT_MAX_PAGES}`);
+        }
+      }
+      if (!lookupComplete) {
+        throw new Error(`INSTALLMENT_PAYMENT_LOOKUP_INCOMPLETE:${installmentId}:not_complete`);
+      }
 
       const synced = await convergePaymentIds({
         contaId: params.contaId,
-        asaasPaymentIds: remotePayments.data.map((payment) => payment.id),
+        asaasPaymentIds: paymentIds,
       });
 
       converged = synced || converged;

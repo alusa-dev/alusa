@@ -18,6 +18,13 @@ export class AsaasResourceOriginClassificationError extends Error {
 }
 
 type Db = Prisma.TransactionClient;
+const PENDING_ENTITY_EXHAUSTED_ERROR = 'Entidade local não encontrada após tentativas máximas';
+const DEFAULT_WEBHOOK_MAX_ATTEMPTS = 5;
+
+function getWebhookMaxAttempts() {
+  const configured = Number(process.env.FINANCE_WEBHOOK_REPROCESS_MAX_ATTEMPTS ?? DEFAULT_WEBHOOK_MAX_ATTEMPTS);
+  return Number.isFinite(configured) && configured > 0 ? Math.floor(configured) : DEFAULT_WEBHOOK_MAX_ATTEMPTS;
+}
 const CANONICAL_REF_SQL = [
   "COALESCE(w.payload #>> '{subscription,externalReference}', '') LIKE 'alusa:%'",
   "COALESCE(w.payload #>> '{subscription,externalReference}', '') LIKE 'standalone-subscription:%'",
@@ -283,6 +290,365 @@ async function getInstallmentCandidate(db: Db, contaId: string, installmentId: s
   return rows[0] ?? null;
 }
 
+async function closeExhaustedExternalInboxRows(db: Db, input: AsaasOriginClassification): Promise<number> {
+  if (input.origin !== 'EXTERNAL' || !['PAYMENT', 'SUBSCRIPTION'].includes(input.resourceType)) return 0;
+  const field = input.resourceType === 'PAYMENT' ? 'asaasPaymentId' : 'asaasSubscriptionId';
+  const rows = await db.pendingInboxNotification.findMany({
+    where: {
+      contaId: input.contaId,
+      kind: 'BILLING_WEBHOOK',
+      status: 'FAILED',
+      lastError: PENDING_ENTITY_EXHAUSTED_ERROR,
+      payload: { path: [field], equals: input.asaasId.trim() },
+    },
+    select: { id: true, payload: true, dedupeKey: true, lastError: true },
+  });
+  let closed = 0;
+  for (const row of rows) {
+    const payload = row.payload as Record<string, unknown>;
+    const paymentId = typeof payload.asaasPaymentId === 'string' ? payload.asaasPaymentId : null;
+    if (input.resourceType === 'SUBSCRIPTION') {
+      const subscriptionId = typeof payload.asaasSubscriptionId === 'string' ? payload.asaasSubscriptionId : null;
+      if (subscriptionId !== input.asaasId.trim()) continue;
+      // Subscription-level notices have no payment owner to resolve. Payment
+      // notices still require the local-owner check below before closure.
+      if (!paymentId) {
+        const updated = await db.pendingInboxNotification.updateMany({
+          where: { id: row.id, contaId: input.contaId, kind: 'BILLING_WEBHOOK', status: 'FAILED', lastError: PENDING_ENTITY_EXHAUSTED_ERROR },
+          data: { status: 'DONE', processedAt: new Date(), lastError: null, processingToken: null, processingStartedAt: null, leaseUntil: null },
+        });
+        if (updated.count !== 1) continue;
+        await db.auditLog.create({ data: {
+          contaId: input.contaId,
+          actorType: 'ADMIN',
+          actorId: input.actorId,
+          action: 'finance.pending_inbox.external_origin_resolved',
+          entityType: 'PendingInboxNotification',
+          entityId: row.id,
+          metadata: {
+            resourceType: input.resourceType,
+            asaasId: input.asaasId.trim(),
+            asaasPaymentId: null,
+            asaasSubscriptionId: subscriptionId,
+            dedupeKey: row.dedupeKey,
+            previousError: row.lastError,
+            resolution: 'EXTERNAL_ORIGIN_CLASSIFIED',
+          },
+        } });
+        closed += 1;
+        continue;
+      }
+    }
+    // For a subscription classification, do not close a historical payment
+    // that acquired a local owner while it was waiting in the inbox.
+    if (input.resourceType === 'SUBSCRIPTION') {
+      if (!paymentId) continue;
+      const localPaymentOwner = await db.charge.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } })
+        ?? await db.cobranca.findFirst({ where: { contaId: input.contaId, OR: [{ asaasPaymentId: paymentId }, { asaasId: paymentId }] }, select: { id: true } })
+        ?? await db.pagamento.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } })
+        ?? await db.eventMapOrder.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } })
+        ?? await db.eventTicketSale.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } })
+        ?? await db.eventFinancialEntry.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } })
+        ?? await db.eventParticipant.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } })
+        ?? await db.eventBillingGroup.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } });
+      if (localPaymentOwner) continue;
+    }
+    const updated = await db.pendingInboxNotification.updateMany({
+      where: { id: row.id, contaId: input.contaId, kind: 'BILLING_WEBHOOK', status: 'FAILED', lastError: PENDING_ENTITY_EXHAUSTED_ERROR },
+      data: { status: 'DONE', processedAt: new Date(), lastError: null, processingToken: null, processingStartedAt: null, leaseUntil: null },
+    });
+    if (updated.count !== 1) continue;
+    await db.auditLog.create({ data: {
+      contaId: input.contaId,
+      actorType: 'ADMIN',
+      actorId: input.actorId,
+      action: 'finance.pending_inbox.external_origin_resolved',
+      entityType: 'PendingInboxNotification',
+      entityId: row.id,
+      metadata: {
+        resourceType: input.resourceType,
+        asaasId: input.asaasId.trim(),
+        asaasPaymentId: paymentId,
+        asaasSubscriptionId: typeof payload.asaasSubscriptionId === 'string' ? payload.asaasSubscriptionId : null,
+        dedupeKey: row.dedupeKey,
+        previousError: row.lastError,
+        resolution: 'EXTERNAL_ORIGIN_CLASSIFIED',
+      },
+    } });
+    closed += 1;
+  }
+  return closed;
+}
+
+async function closeExhaustedEventPaymentInboxRows(db: Db, input: AsaasOriginClassification): Promise<number> {
+  if (input.origin !== 'ALUSA' || input.resourceType !== 'PAYMENT') return 0;
+  const paymentId = input.asaasId.trim();
+  const rows = await db.pendingInboxNotification.findMany({
+    where: {
+      contaId: input.contaId,
+      kind: 'BILLING_WEBHOOK',
+      status: 'FAILED',
+      lastError: PENDING_ENTITY_EXHAUSTED_ERROR,
+      payload: { path: ['asaasPaymentId'], equals: paymentId },
+    },
+    select: { id: true, payload: true, dedupeKey: true, lastError: true },
+  });
+  if (rows.length === 0) return 0;
+
+  const [charge, cobranca, pagamento, eventMapOrder, eventTicketSale] = await Promise.all([
+    db.charge.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } }),
+    db.cobranca.findFirst({ where: { contaId: input.contaId, OR: [{ asaasPaymentId: paymentId }, { asaasId: paymentId }] }, select: { id: true } }),
+    db.pagamento.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } }),
+    db.eventMapOrder.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } }),
+    db.eventTicketSale.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true, eventMapOrderId: true } }),
+  ]);
+  // Event order/sale links are often paired, but an academic financial owner
+  // or a sale pointing at a different order makes ownership ambiguous.
+  if (charge || cobranca || pagamento || (!eventMapOrder && !eventTicketSale)) return 0;
+  if (eventTicketSale && eventMapOrder && eventTicketSale.eventMapOrderId !== eventMapOrder.id) return 0;
+  if (eventTicketSale?.eventMapOrderId && !eventMapOrder) return 0;
+
+  let closed = 0;
+  for (const row of rows) {
+    const payload = row.payload as Record<string, unknown>;
+    if (payload.asaasPaymentId !== paymentId) continue;
+    const updated = await db.pendingInboxNotification.updateMany({
+      where: { id: row.id, contaId: input.contaId, kind: 'BILLING_WEBHOOK', status: 'FAILED', lastError: PENDING_ENTITY_EXHAUSTED_ERROR },
+      data: { status: 'DONE', processedAt: new Date(), lastError: null, processingToken: null, processingStartedAt: null, leaseUntil: null },
+    });
+    if (updated.count !== 1) continue;
+    await db.auditLog.create({ data: {
+      contaId: input.contaId,
+      actorType: 'ADMIN',
+      actorId: input.actorId,
+      action: 'finance.pending_inbox.event_payment_resolved',
+      entityType: 'PendingInboxNotification',
+      entityId: row.id,
+      metadata: {
+        resourceType: 'PAYMENT',
+        asaasId: paymentId,
+        asaasPaymentId: paymentId,
+        dedupeKey: row.dedupeKey,
+        previousError: row.lastError,
+        resolution: 'EVENT_PAYMENT_NOTIFICATION_NOT_APPLICABLE',
+        eventMapOrderId: eventMapOrder?.id ?? null,
+        eventTicketSaleId: eventTicketSale?.id ?? null,
+      },
+    } });
+    closed += 1;
+  }
+  return closed;
+}
+
+async function closeClassifiedInboxRows(db: Db, input: AsaasOriginClassification): Promise<number> {
+  return (await closeExhaustedExternalInboxRows(db, input)) + (await closeExhaustedEventPaymentInboxRows(db, input));
+}
+
+const UNKNOWN_PAYMENT_ORIGIN_REASON = 'resource_origin_unknown';
+
+async function reconcileUnknownPaymentOriginReview(db: Db, input: AsaasOriginClassification, allowProcessingReplay = false) {
+  if (input.resourceType !== 'PAYMENT') return { requeued: 0, resolved: 0 };
+
+  const issue = await db.financeReconciliationIssue.findFirst({
+    where: {
+      contaId: input.contaId,
+      entityType: 'PAYMENT',
+      asaasId: input.asaasId.trim(),
+      issueType: 'PAYMENT_NEEDS_REVIEW',
+      status: 'OPEN',
+      metadata: { path: ['reason'], equals: UNKNOWN_PAYMENT_ORIGIN_REASON },
+    },
+    select: { id: true, metadata: true },
+  });
+  if (!issue) return { requeued: 0, resolved: 0 };
+
+  if (input.origin === 'ALUSA') {
+    const metadata = issue.metadata && typeof issue.metadata === 'object' && !Array.isArray(issue.metadata)
+      ? issue.metadata as Record<string, unknown>
+      : {};
+    const causeId = typeof metadata.lastCauseId === 'string' ? metadata.lastCauseId : null;
+    if (!causeId) return { requeued: 0, resolved: 0 };
+
+    const queued = await db.webhookAsaas.updateMany({
+      where: {
+        contaId: input.contaId,
+        eventId: causeId,
+        asaasPaymentId: input.asaasId.trim(),
+        evento: { startsWith: 'PAYMENT_' },
+        OR: [
+          { status: { in: [...(allowProcessingReplay ? ['PROCESSANDO' as const] : []), 'PROCESSADO', 'EXAURIDO'] } },
+          { status: 'ERRO', tentativas: { gte: getWebhookMaxAttempts() } },
+        ],
+      },
+      data: {
+        status: 'ERRO',
+        // Classification authorizes a fresh internal replay budget. Keep
+        // attemptsLog untouched so the exhausted delivery history remains auditable.
+        tentativas: 0,
+        nextRetryAt: new Date(),
+        ultimoErro: 'Origem ALUSA classificada; replay do webhook pendente',
+      },
+    });
+    if (queued.count === 1) {
+      await db.auditLog.create({ data: {
+        contaId: input.contaId,
+        actorType: 'ADMIN',
+        actorId: input.actorId,
+        action: 'finance.asaas_resource_origin.webhook_requeued',
+        entityType: 'WebhookAsaas',
+        entityId: causeId,
+        metadata: {
+          resourceType: input.resourceType,
+          asaasId: input.asaasId.trim(),
+          eventId: causeId,
+          resolution: 'ALUSA_ORIGIN_CLASSIFIED_REPLAY_PENDING',
+        },
+      } });
+    }
+    // Keep the review open until the normal webhook worker successfully applies
+    // the event. A classification decision alone is not financial convergence.
+    return { requeued: queued.count, resolved: 0 };
+  }
+
+  const metadata = issue.metadata && typeof issue.metadata === 'object' && !Array.isArray(issue.metadata)
+    ? issue.metadata as Record<string, unknown>
+    : {};
+  const causeId = typeof metadata.lastCauseId === 'string' ? metadata.lastCauseId : null;
+  const resolved = await db.financeReconciliationIssue.updateMany({
+    where: {
+      id: issue.id,
+      contaId: input.contaId,
+      status: 'OPEN',
+      AND: [
+        { metadata: { path: ['reason'], equals: UNKNOWN_PAYMENT_ORIGIN_REASON } },
+        ...(causeId ? [{ metadata: { path: ['lastCauseId'], equals: causeId } }] : []),
+      ],
+    },
+    data: {
+      status: 'RESOLVED',
+      resolvedAt: new Date(),
+      resolution: 'Origem do recurso classificada como externa; webhook mantido sem efeitos financeiros locais.',
+    },
+  });
+  if (resolved.count === 1) {
+    await db.auditLog.create({ data: {
+      contaId: input.contaId,
+      actorType: 'ADMIN',
+      actorId: input.actorId,
+      action: 'finance.asaas_resource_origin.external_review_resolved',
+      entityType: 'FinanceReconciliationIssue',
+      entityId: issue.id,
+      metadata: {
+        resourceType: input.resourceType,
+        asaasId: input.asaasId.trim(),
+        resolution: 'EXTERNAL_ORIGIN_CLASSIFIED_NO_FINANCIAL_REPLAY',
+      },
+    } });
+  }
+  return { requeued: 0, resolved: resolved.count };
+}
+
+async function reconcileUnknownSubscriptionOriginReview(db: Db, input: AsaasOriginClassification, allowProcessingReplay = false) {
+  if (input.resourceType !== 'SUBSCRIPTION') return { requeued: 0, resolved: 0 };
+
+  const asaasId = input.asaasId.trim();
+  const issue = await db.financeReconciliationIssue.findFirst({
+    where: {
+      contaId: input.contaId,
+      entityType: 'SUBSCRIPTION',
+      asaasId,
+      issueType: 'SUBSCRIPTION_NEEDS_REVIEW',
+      status: 'OPEN',
+      metadata: { path: ['reason'], equals: UNKNOWN_PAYMENT_ORIGIN_REASON },
+    },
+    select: { id: true, metadata: true },
+  });
+  if (!issue) return { requeued: 0, resolved: 0 };
+
+  if (input.origin === 'ALUSA') {
+    const metadata = issue.metadata && typeof issue.metadata === 'object' && !Array.isArray(issue.metadata)
+      ? issue.metadata as Record<string, unknown>
+      : {};
+    const causeId = typeof metadata.lastCauseId === 'string' ? metadata.lastCauseId : null;
+    if (!causeId) return { requeued: 0, resolved: 0 };
+
+    const queued = await db.webhookAsaas.updateMany({
+      where: {
+        contaId: input.contaId,
+        eventId: causeId,
+        asaasSubscriptionId: asaasId,
+        evento: { startsWith: 'SUBSCRIPTION_' },
+        OR: [
+          { status: { in: [...(allowProcessingReplay ? ['PROCESSANDO' as const] : []), 'PROCESSADO', 'EXAURIDO'] } },
+          { status: 'ERRO', tentativas: { gte: getWebhookMaxAttempts() } },
+        ],
+      },
+      data: {
+        status: 'ERRO',
+        // Classification authorizes a fresh internal replay budget. Keep
+        // attemptsLog untouched so the exhausted delivery history remains auditable.
+        tentativas: 0,
+        nextRetryAt: new Date(),
+        ultimoErro: 'Origem ALUSA classificada; replay do webhook pendente',
+      },
+    });
+    if (queued.count === 1) {
+      await db.auditLog.create({ data: {
+        contaId: input.contaId,
+        actorType: 'ADMIN',
+        actorId: input.actorId,
+        action: 'finance.asaas_resource_origin.webhook_requeued',
+        entityType: 'WebhookAsaas',
+        entityId: causeId,
+        metadata: {
+          resourceType: input.resourceType,
+          asaasId,
+          eventId: causeId,
+          resolution: 'ALUSA_ORIGIN_CLASSIFIED_REPLAY_PENDING',
+        },
+      } });
+    }
+    return { requeued: queued.count, resolved: 0 };
+  }
+
+  const externalMetadata = issue.metadata && typeof issue.metadata === 'object' && !Array.isArray(issue.metadata)
+    ? issue.metadata as Record<string, unknown>
+    : {};
+  const externalCauseId = typeof externalMetadata.lastCauseId === 'string' ? externalMetadata.lastCauseId : null;
+  const resolved = await db.financeReconciliationIssue.updateMany({
+    where: {
+      id: issue.id,
+      contaId: input.contaId,
+      status: 'OPEN',
+      AND: [
+        { metadata: { path: ['reason'], equals: UNKNOWN_PAYMENT_ORIGIN_REASON } },
+        ...(externalCauseId ? [{ metadata: { path: ['lastCauseId'], equals: externalCauseId } }] : []),
+      ],
+    },
+    data: {
+      status: 'RESOLVED',
+      resolvedAt: new Date(),
+      resolution: 'Origem da assinatura classificada como externa; webhook sem efeitos financeiros locais.',
+    },
+  });
+  if (resolved.count === 1) {
+    await db.auditLog.create({ data: {
+      contaId: input.contaId,
+      actorType: 'ADMIN',
+      actorId: input.actorId,
+      action: 'finance.asaas_resource_origin.external_review_resolved',
+      entityType: 'FinanceReconciliationIssue',
+      entityId: issue.id,
+      metadata: {
+        resourceType: input.resourceType,
+        asaasId,
+        resolution: 'EXTERNAL_ORIGIN_CLASSIFIED_NO_FINANCIAL_REPLAY',
+      },
+    } });
+  }
+  return { requeued: 0, resolved: resolved.count };
+}
+
 export type ExternalSubscriptionPreview = {
   subscriptionId: string;
   relatedPaymentCount: number;
@@ -480,11 +846,24 @@ async function classifyInTransaction(db: Db, input: AsaasOriginClassification) {
       ?? await db.eventFinancialEntry.findFirst({ where: { contaId: input.contaId, asaasPaymentId: input.asaasId }, select: { id: true } })
       ?? await db.eventParticipant.findFirst({ where: { contaId: input.contaId, asaasPaymentId: input.asaasId }, select: { id: true } })
       ?? await db.eventBillingGroup.findFirst({ where: { contaId: input.contaId, asaasPaymentId: input.asaasId }, select: { id: true } });
+  const alusaReplayResource = input.resourceType === 'SUBSCRIPTION'
+    ? await db.subscription.findFirst({ where: { contaId: input.contaId, asaasSubscriptionId: input.asaasId }, select: { id: true } })
+      ?? await db.standaloneSubscription.findFirst({ where: { contaId: input.contaId, asaasSubscriptionId: input.asaasId }, select: { id: true } })
+      ?? await db.billingAgreement.findFirst({ where: { contaId: input.contaId, asaasSubscriptionId: input.asaasId }, select: { id: true } })
+      ?? await db.enrollmentCreationOperation.findFirst({
+        where: {
+          contaId: input.contaId,
+          asaasSubscriptionId: input.asaasId,
+          status: { in: ['PROCESSING', 'REMOTE_PROVISIONED', 'REQUIRES_RECONCILIATION'] },
+        },
+        select: { id: true },
+      })
+    : localResource;
   const prior = await db.asaasResourceOrigin.findUnique({ where: {
     uq_asaas_resource_origin_tenant_resource: { contaId: input.contaId, resourceType: input.resourceType, asaasId: input.asaasId.trim() },
   } });
 
-  if (input.origin === 'ALUSA' && !localResource) throw new AsaasResourceOriginClassificationError('A origem ALUSA exige vínculo local confiável nesta conta.');
+  if (input.origin === 'ALUSA' && !alusaReplayResource) throw new AsaasResourceOriginClassificationError('A origem ALUSA exige vínculo local confiável nesta conta.');
   if (input.origin === 'EXTERNAL') {
     if (localResource) throw new AsaasResourceOriginClassificationError('O recurso já possui vínculo local nesta conta.');
     if (input.resourceType === 'SUBSCRIPTION') {
@@ -505,7 +884,19 @@ async function classifyInTransaction(db: Db, input: AsaasOriginClassification) {
     }
   }
 
-  if (prior?.origin === input.origin && prior.reason === reason) return { record: prior, changed: false, reclassified: false };
+  if (prior?.origin === input.origin && prior.reason === reason) {
+    const pendingInboxClosed = await closeClassifiedInboxRows(db, input);
+    const webhookReview = await reconcileUnknownPaymentOriginReview(db, input);
+    const subscriptionWebhookReview = await reconcileUnknownSubscriptionOriginReview(db, input);
+    return {
+      record: prior,
+      changed: false,
+      reclassified: false,
+      pendingInboxClosed,
+      requeued: webhookReview.requeued + subscriptionWebhookReview.requeued,
+      resolved: webhookReview.resolved + subscriptionWebhookReview.resolved,
+    };
+  }
   if (prior && prior.origin !== input.origin && input.origin === 'EXTERNAL' && prior.origin === 'ALUSA') {
     throw new AsaasResourceOriginClassificationError('Reclassificação para EXTERNAL não é permitida enquanto houver decisão ALUSA.');
   }
@@ -533,7 +924,18 @@ async function classifyInTransaction(db: Db, input: AsaasOriginClassification) {
     metadata: { resourceType: input.resourceType, asaasId: input.asaasId, origin: input.origin, reason,
       previousOrigin: prior?.origin ?? null },
   } });
-  return { record, changed: true, reclassified };
+  const pendingInboxClosed = await closeClassifiedInboxRows(db, input);
+  const firstAlusaClassification = input.origin === 'ALUSA' && prior?.origin !== 'ALUSA';
+  const webhookReview = await reconcileUnknownPaymentOriginReview(db, input, firstAlusaClassification);
+  const subscriptionWebhookReview = await reconcileUnknownSubscriptionOriginReview(db, input, firstAlusaClassification);
+  return {
+    record,
+    changed: true,
+    reclassified,
+    pendingInboxClosed,
+    requeued: webhookReview.requeued + subscriptionWebhookReview.requeued,
+    resolved: webhookReview.resolved + subscriptionWebhookReview.resolved,
+  };
 }
 
 export async function classifyAsaasResourceOrigin(input: AsaasOriginClassification & { db?: Db }) {

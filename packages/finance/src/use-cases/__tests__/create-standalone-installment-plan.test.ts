@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { createStandaloneInstallmentPlan } from '../create-standalone-installment-plan';
+import { buildInstallmentExternalReference, deriveDeterministicId, hashPayload } from '../../core';
 
 vi.mock('@alusa/database', () => {
   return {
@@ -27,7 +28,7 @@ vi.mock('@alusa/database', () => {
 vi.mock('@alusa/asaas', () => ({
   createInstallment: vi.fn(),
   listInstallmentPayments: vi.fn(),
-  listPayments: vi.fn(async () => ({ data: [] })),
+  listPayments: vi.fn(async (filters: { offset?: number; limit?: number } = {}) => ({ data: [], hasMore: false, totalCount: 0, offset: filters.offset ?? 0, limit: filters.limit ?? 100 })),
 }));
 
 vi.mock('../asaas-ops', () => ({
@@ -35,11 +36,14 @@ vi.mock('../asaas-ops', () => ({
 }));
 
 vi.mock('../outbound-financial-operation', () => ({
-  reserveOutboundFinancialOperation: vi.fn(async () => ({ job: { id: 'job-1' }, payload: { remoteId: null } })),
+  reserveOutboundFinancialOperation: vi.fn(async () => ({
+    job: { id: 'job-1' }, payload: { remoteId: null, state: 'INTENT_CREATED' },
+  })),
   markOutboundRemoteRequested: vi.fn(async () => true),
   markOutboundRemoteConfirmed: vi.fn(),
   markOutboundAwaitingWebhook: vi.fn(),
   markOutboundResultUnknown: vi.fn(),
+  markOutboundRequiresReconciliation: vi.fn(),
 }));
 
 vi.mock('../../foundation/feature-flags.service', () => ({
@@ -58,6 +62,10 @@ vi.mock('../../foundation/kyc-guard', () => ({
   requireKycApproved: vi.fn(),
 }));
 
+const asaasPage = <T>(data: T[], offset = 0, totalCount = data.length, hasMore = offset + data.length < totalCount) => ({
+  data, offset, limit: 100, totalCount, hasMore,
+});
+
 describe('createStandaloneInstallmentPlan', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -70,6 +78,77 @@ describe('createStandaloneInstallmentPlan', () => {
 
     const { featureFlagsService } = await import('../../foundation/feature-flags.service');
     vi.mocked(featureFlagsService.isEnabled).mockResolvedValue(true as never);
+  });
+
+  async function prepareNewPlan() {
+    const { prisma, loadAsaasCredentials } = await import('@alusa/database');
+    vi.mocked(prisma.responsavel.findFirst).mockResolvedValueOnce({ id: 'r1', nome: 'Resp' } as never);
+    vi.mocked(prisma.customer.findUnique).mockResolvedValueOnce({
+      id: 'cust1', asaasCustomerId: 'asaas_cus_1',
+    } as never);
+    vi.mocked(prisma.standaloneInstallmentPlan.findUnique).mockResolvedValueOnce(null as never);
+    vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: 'sandbox_x', contaId: 't1' } as never);
+    vi.mocked(prisma.standaloneInstallmentPlan.create).mockResolvedValueOnce({
+      id: 'sip1', externalReference: 'alusa:installment:sip1',
+      asaasInstallmentId: 'asaas_inst_1', status: 'ACTIVE',
+      createdAt: new Date('2099-01-01T00:00:00.000Z'),
+      statusUpdatedAt: new Date('2099-01-01T00:00:00.000Z'),
+    } as never);
+    return { prisma, loadAsaasCredentials };
+  }
+
+  const newPlanInput = {
+    contaId: 't1', payer: { type: 'responsavel' as const, responsavelId: 'r1' },
+    installmentCount: 2, billingType: 'BOLETO' as const, value: 100,
+    firstDueDate: '2099-01-10', uiRequestId: 'request-1', actor: { type: 'USER' as const, id: 'u1' },
+  };
+  const testExternalReference = buildInstallmentExternalReference({
+    installmentPlanId: deriveDeterministicId(
+      'sip',
+      `t1:standalone-installment:${hashPayload({ contaId: 't1', uiRequestId: 'request-1' })}`,
+    ),
+  });
+
+  it('escopa ID, referência e chave outbound por conta, mantendo retry estável na mesma conta', async () => {
+    const { prisma, loadAsaasCredentials } = await import('@alusa/database');
+    const { createInstallment } = await import('@alusa/asaas');
+    const { reserveOutboundFinancialOperation } = await import('../outbound-financial-operation');
+    const inputFor = (contaId: string) => ({ ...newPlanInput, contaId });
+
+    for (const [contaId, installmentId, planId] of [
+      ['tenant-a', 'remote-a', 'local-a'],
+      ['tenant-b', 'remote-b', 'local-b'],
+    ] as const) {
+      vi.mocked(prisma.responsavel.findFirst).mockResolvedValueOnce({ id: 'r1', nome: 'Resp' } as never);
+      vi.mocked(prisma.customer.findUnique).mockResolvedValueOnce({ id: `cust-${contaId}`, asaasCustomerId: `asaas-${contaId}` } as never);
+      vi.mocked(prisma.standaloneInstallmentPlan.findUnique).mockResolvedValueOnce(null as never);
+      vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: `key-${contaId}`, contaId } as never);
+      vi.mocked(createInstallment).mockResolvedValueOnce({ id: installmentId, installmentCount: 2, value: 50, customer: `asaas-${contaId}` } as never);
+      vi.mocked(prisma.standaloneInstallmentPlan.create).mockResolvedValueOnce({
+        id: planId, externalReference: 'placeholder', asaasInstallmentId: installmentId, status: 'ACTIVE',
+        createdAt: new Date('2099-01-01T00:00:00Z'), statusUpdatedAt: new Date('2099-01-01T00:00:00Z'),
+      } as never);
+      await createStandaloneInstallmentPlan(inputFor(contaId));
+    }
+
+    vi.mocked(prisma.responsavel.findFirst).mockResolvedValueOnce({ id: 'r1', nome: 'Resp' } as never);
+    vi.mocked(prisma.customer.findUnique).mockResolvedValueOnce({ id: 'cust-tenant-a', asaasCustomerId: 'asaas-tenant-a' } as never);
+    vi.mocked(prisma.standaloneInstallmentPlan.findUnique).mockResolvedValueOnce(null as never);
+    vi.mocked(loadAsaasCredentials).mockResolvedValueOnce({ apiKey: 'key-tenant-a', contaId: 'tenant-a' } as never);
+    const { markOutboundRemoteRequested } = await import('../outbound-financial-operation');
+    vi.mocked(markOutboundRemoteRequested).mockResolvedValueOnce(false);
+    await createStandaloneInstallmentPlan(inputFor('tenant-a'));
+
+    const reservations = vi.mocked(reserveOutboundFinancialOperation).mock.calls.map(([call]) => call);
+    expect(reservations).toHaveLength(3);
+    expect(reservations[0]?.idempotencyKey).not.toBe(reservations[1]?.idempotencyKey);
+    expect(reservations[0]?.entityId).not.toBe(reservations[1]?.entityId);
+    expect(reservations[0]?.externalReference).not.toBe(reservations[1]?.externalReference);
+    expect(reservations[0]?.idempotencyKey).toBe(reservations[2]?.idempotencyKey);
+    expect(reservations[0]?.entityId).toBe(reservations[2]?.entityId);
+    expect(reservations[0]?.externalReference).toBe(reservations[2]?.externalReference);
+    expect(reservations.map((call) => call.contaId)).toEqual(['tenant-a', 'tenant-b', 'tenant-a']);
+    expect(vi.mocked(createInstallment)).toHaveBeenCalledTimes(2);
   });
 
   it('deve bloquear quando feature flag estiver desabilitada', async () => {
@@ -161,6 +240,10 @@ describe('createStandaloneInstallmentPlan', () => {
           billingType: 'BOLETO',
         },
       ],
+      hasMore: false,
+      totalCount: 1,
+      offset: 0,
+      limit: 100,
     } as never);
 
     vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce(null as never);
@@ -231,6 +314,10 @@ describe('createStandaloneInstallmentPlan', () => {
         creditDate: '2026-02-30',
         estimatedCreditDate: '2026-02-30T00:00:00.000Z',
       }],
+      hasMore: false,
+      totalCount: 1,
+      offset: 0,
+      limit: 100,
     } as never);
     vi.mocked(prisma.charge.upsert).mockResolvedValueOnce({ id: 'charge1' } as never);
 

@@ -34,7 +34,13 @@ describe('cadastro shared financial identity', () => {
     vi.stubEnv('NODE_ENV', 'development');
     vi.stubEnv('PAYMENTS_PROVIDER_MODE', 'asaas');
     vi.stubEnv('PLAYWRIGHT_TEST', 'false');
-    mocks.list.mockResolvedValue({ data: [] });
+    mocks.list.mockImplementation(async (query) => ({
+      data: [],
+      hasMore: false,
+      totalCount: 0,
+      offset: query.offset ?? 0,
+      limit: query.limit ?? 100,
+    }));
     mocks.find.mockResolvedValue(null);
     mocks.link.mockResolvedValue({ id: 'canonical', asaasCustomerId: 'remote', externalReference: 'original-responsavel-reference' });
     mocks.get.mockResolvedValue({ id: 'remote', cpfCnpj: payer.cpfCnpj });
@@ -60,7 +66,13 @@ describe('cadastro shared financial identity', () => {
   });
 
   it('rejects external reference collision rather than overwriting CPF', async () => {
-    mocks.list.mockResolvedValueOnce({ data: [{ id: 'wrong', cpfCnpj: '52998224725' }] });
+    mocks.list.mockResolvedValueOnce({
+      data: [{ id: 'wrong', cpfCnpj: '52998224725', externalReference: 'alusa_tenant_aluno_adult' }],
+      hasMore: false,
+      totalCount: 1,
+      offset: 0,
+      limit: 100,
+    });
     expect(await ensureAsaasCustomerForPayer(input)).toMatchObject({ ok: false, error: 'PAYER_INVALID' });
     expect(mocks.update).not.toHaveBeenCalled();
     expect(mocks.restore).not.toHaveBeenCalled();
@@ -68,10 +80,18 @@ describe('cadastro shared financial identity', () => {
   });
 
   it('uses only exact normalized CPF matches from list search', async () => {
-    mocks.list.mockResolvedValueOnce({ data: [] }).mockResolvedValueOnce({ data: [
-      { id: 'wrong', cpfCnpj: '52998224725' },
-      { id: 'remote', cpfCnpj: '111.444.777-35' },
-    ] });
+    mocks.list.mockResolvedValueOnce({
+      data: [], hasMore: false, totalCount: 0, offset: 0, limit: 100,
+    }).mockResolvedValueOnce({
+      data: [
+        { id: 'wrong', cpfCnpj: '52998224725' },
+        { id: 'remote', cpfCnpj: '111.444.777-35' },
+      ],
+      hasMore: false,
+      totalCount: 2,
+      offset: 0,
+      limit: 100,
+    });
     expect(await ensureAsaasCustomerForPayer(input)).toMatchObject({ ok: true, customerId: 'remote' });
     expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({ customerId: 'remote' }));
     expect(mocks.create).not.toHaveBeenCalled();

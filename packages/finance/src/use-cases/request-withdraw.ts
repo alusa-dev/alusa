@@ -11,7 +11,7 @@ import {
 import type { TransferStatus } from '@prisma/client';
 
 import { auditLogService } from '../foundation/audit-log.service';
-import { buildSafeAsaasIdempotencyKey } from '../core/idempotency.service';
+import { buildOutboundOperationKey } from '../core/idempotency.service';
 import { classifyAsaasOperationalError } from '../foundation/asaas-operational-error';
 import { assertAsaasTenantOperational } from '../foundation/asaas-operational-guard';
 import { featureFlagsService } from '../foundation/feature-flags.service';
@@ -347,13 +347,13 @@ export async function requestWithdraw(
       },
     });
 
-    const asaasIdempotencyKey = buildSafeAsaasIdempotencyKey(input.idempotencyKey);
+    const operationKey = buildOutboundOperationKey(input.idempotencyKey);
 
     const asaasTransfer =
       normalizedDestination.type === 'PIX'
         ? await createPixTransfer({
             apiKey: credentials.apiKey,
-            idempotencyKey: asaasIdempotencyKey,
+            idempotencyKey: operationKey,
             data: buildPixTransferAsaasPayload({
               value: input.value,
               destination: normalizedDestination,
@@ -364,7 +364,7 @@ export async function requestWithdraw(
           })
         : await createBankTransfer({
             apiKey: credentials.apiKey,
-            idempotencyKey: asaasIdempotencyKey,
+            idempotencyKey: operationKey,
             data: buildBankTransferAsaasPayload({
               value: input.value,
               destination: normalizedDestination,

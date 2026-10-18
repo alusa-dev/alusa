@@ -127,6 +127,7 @@ async function cleanup(contaId: string) {
 
   await prisma.auditLog.deleteMany({ where: { contaId } });
   await prisma.financeReconciliationIssue.deleteMany({ where: { contaId } });
+  await prisma.asaasIntegrationJob.deleteMany({ where: { contaId, type: 'SYNC_KYC_STATUS' } });
 
   if (profile) {
     await prisma.asaasCredential.deleteMany({ where: { financeProfileId: profile.id } });

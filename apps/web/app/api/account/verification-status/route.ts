@@ -44,20 +44,17 @@ export async function GET(req: Request) {
 
     const url = new URL(req.url);
     const fresh = url.searchParams.get('fresh') === '1';
-    const cacheKey = contaId;
-
     if (!fresh) {
-      const cached = getAccountVerificationCache(cacheKey);
+      const cached = getAccountVerificationCache(contaId);
       if (cached.body && (cached.state === 'HIT' || cached.state === 'STALE')) {
         timer.end('GET /verification-status (cache hit)', { fresh, cacheState: cached.state });
         return json(200, cached.body, { 'x-alusa-cache': cached.state });
       }
     }
-
     const result = await withPerfTimer(
       'finance.getAccountVerificationStatus',
       'call use-case',
-      () => getAccountVerificationStatus(contaId, { fresh })
+      () => getAccountVerificationStatus(contaId, { fresh, readModelOnly: !fresh })
     );
 
     if (!result.ready) {
@@ -74,10 +71,9 @@ export async function GET(req: Request) {
     }
 
     const body = { data: result.data };
-    setAccountVerificationCache(cacheKey, body);
-
-    timer.end('GET /verification-status (cache miss)', { fresh });
-    return json(200, body, { 'x-alusa-cache': 'MISS' });
+    setAccountVerificationCache(contaId, body);
+    timer.end('GET /verification-status (read model)', { fresh });
+    return json(200, body, { 'x-alusa-cache': fresh ? 'BYPASS' : 'MISS' });
   } catch (error) {
     logApiOperationalEvent({ severity: 'error', eventName: 'api.account.verification_status.failed', route: '/api/account/verification-status', method: 'GET', requestId: getRequestId(req), error });
     return json(500, { error: 'ERRO_INTERNO' });

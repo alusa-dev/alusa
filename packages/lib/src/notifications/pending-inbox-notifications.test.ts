@@ -37,6 +37,7 @@ function row(overrides: Record<string, unknown> = {}) {
       contaId: 'conta-1',
       eventName: 'PAYMENT_CONFIRMED',
       asaasPaymentId: 'pay-1',
+      asaasSubscriptionId: 'sub-legacy',
     },
     dedupeKey: 'pending:billing:conta-1:PAYMENT_CONFIRMED:pay-1',
     attempts: 1,
@@ -67,6 +68,7 @@ describe('pending inbox notifications', () => {
     expect(mocks.createBillingWebhookNotification).toHaveBeenCalledWith(expect.objectContaining({
       contaId: 'conta-1',
       asaasPaymentId: 'pay-1',
+      asaasSubscriptionId: 'sub-legacy',
     }));
     expect(mocks.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({

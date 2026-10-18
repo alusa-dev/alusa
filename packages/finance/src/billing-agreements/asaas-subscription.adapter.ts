@@ -6,7 +6,7 @@ import {
 } from '@alusa/asaas';
 import { loadAsaasCredentials } from '@alusa/database';
 
-import { buildSafeAsaasIdempotencyKey } from '../core/idempotency.service';
+import { buildOutboundOperationKey } from '../core/idempotency.service';
 import { requireKycApproved } from '../foundation/kyc-guard';
 import {
   deletePayment,
@@ -19,6 +19,7 @@ import {
 } from '../use-cases/asaas-ops';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
 import { decimalToCents, centsToDecimal } from './money';
+import { assertCompleteAsaasPage } from '../use-cases/asaas-pagination';
 import type {
   AsaasSubscriptionPaymentSnapshot,
   AsaasSubscriptionPort,
@@ -74,30 +75,46 @@ export function createAsaasBillingAgreementPort(): AsaasSubscriptionPort {
     async listSubscriptionPayments(input) {
       const payments: AsaasSubscriptionPaymentSnapshot[] = [];
       let offset = 0;
-      for (;;) {
+      let expectedTotalCount: number | undefined;
+      for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
         const page = await listSubscriptionPayments(input.subscriptionId, {
           contaId: input.contaId,
           limit: 100,
           offset,
         });
+        expectedTotalCount = assertCompleteAsaasPage(page, offset, 100, expectedTotalCount);
         payments.push(...page.data.map(mapPayment));
         if (!page.hasMore) return payments;
-        offset += page.limit || page.data.length;
+        offset += 100;
       }
+      throw new Error('ASAAS_SUBSCRIPTION_PAYMENT_LOOKUP_INCOMPLETE:PAGE_LIMIT_REACHED');
     },
 
     async findSubscriptionByExternalReference(input) {
       const apiKey = await getApiKey(input.contaId);
-      const page = await listAsaasSubscriptions({
-        apiKey,
-        externalReference: input.externalReference,
-        includeDeleted: input.includeDeleted,
-        limit: 10,
-      });
-      const exact = page.data.find(
-        (subscription) => subscription.externalReference === input.externalReference,
-      );
-      return exact ? mapSubscription(exact) : null;
+      const subscriptions: AsaasSubscription[] = [];
+      let offset = 0;
+      let expectedTotalCount: number | undefined;
+      for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
+        const page = await listAsaasSubscriptions({
+          apiKey,
+          externalReference: input.externalReference,
+          includeDeleted: input.includeDeleted,
+          limit: 100,
+          offset,
+        });
+        expectedTotalCount = assertCompleteAsaasPage(page, offset, 100, expectedTotalCount);
+        subscriptions.push(...page.data);
+        if (!page.hasMore) {
+          const exact = subscriptions.filter(
+            (subscription) => subscription.externalReference === input.externalReference,
+          );
+          if (exact.length > 1) throw new Error('ASAAS_SUBSCRIPTION_LOOKUP_AMBIGUOUS');
+          return exact[0] ? mapSubscription(exact[0]) : null;
+        }
+        offset += 100;
+      }
+      throw new Error('ASAAS_SUBSCRIPTION_LOOKUP_INCOMPLETE:PAGE_LIMIT_REACHED');
     },
 
     async createSubscription(input) {
@@ -105,7 +122,7 @@ export function createAsaasBillingAgreementPort(): AsaasSubscriptionPort {
       const apiKey = await getApiKey(input.contaId);
       const created = await createAsaasSubscription({
         apiKey,
-        idempotencyKey: buildSafeAsaasIdempotencyKey(input.idempotencyKey),
+        idempotencyKey: buildOutboundOperationKey(input.idempotencyKey),
         data: {
           customer: input.customerId,
           value: centsToDecimal(input.valueCents),

@@ -15,6 +15,7 @@ vi.mock('@alusa/database', () => {
         update: vi.fn(),
       },
       asaasResourceOrigin: { findUnique: vi.fn(async () => null) },
+      financeReconciliationIssue: { findFirst: vi.fn(), updateMany: vi.fn(async () => ({ count: 1 })) },
       standaloneSubscription: {
         findFirst: vi.fn(),
         update: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock('@alusa/database', () => {
         findFirst: vi.fn(),
         updateMany: vi.fn(async () => ({ count: 0 })),
       },
+      acordoFinanceiroFuturo: { findFirst: vi.fn() },
       asaasIntegrationJob: {
         findMany: vi.fn(async () => []),
       },
@@ -145,6 +147,42 @@ describe('handleSubscriptionWebhook', () => {
     }));
   });
 
+  it('ignora assinatura sem vínculo no modo conta Asaas externa', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.conta.findUnique).mockResolvedValueOnce({ financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' } as never);
+    const result = await handleSubscriptionWebhook('conta-a', {
+      event: 'SUBSCRIPTION_CREATED',
+      eventId: 'evt-panel-sub',
+      subscription: { id: 'sub-panel', status: 'ACTIVE', externalReference: 'school-reference' },
+    });
+    expect(result).toEqual({ success: true });
+    expect(issueMocks.upsertFinanceReconciliationIssue).not.toHaveBeenCalled();
+  });
+
+  it('bloqueia origem EXTERNAL em conflito com referência Alusa sem projetar nem mutar subscription local', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.asaasResourceOrigin.findUnique).mockResolvedValueOnce({ origin: 'EXTERNAL' } as never);
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValue({
+      id: 'subscription-local-conflict', billingAgreementId: 'agreement-local', status: 'ACTIVE',
+      asaasSubscriptionId: 'sub-conflict', externalReference: 'alusa:subscription:mat-a:plan-a', matriculaId: 'mat-a',
+    } as never);
+
+    const result = await handleSubscriptionWebhook('conta-a', {
+      event: 'SUBSCRIPTION_UPDATED', eventId: 'evt-sub-conflict',
+      subscription: { id: 'sub-conflict', status: 'INACTIVE', externalReference: 'alusa:subscription:mat-a:plan-a' },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(prisma.billingAgreement.updateMany).not.toHaveBeenCalled();
+    expect(prisma.subscription.findFirst).not.toHaveBeenCalled();
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(issueMocks.upsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-a', entityType: 'SUBSCRIPTION', asaasId: 'sub-conflict', severity: 'HIGH',
+      metadata: expect.objectContaining({ reason: 'canonical_alusa_reference_classified_external' }),
+    }));
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValue(null as never);
+  });
+
   it('mantém alerta HIGH para referência Alusa sem entidade local', async () => {
     const { prisma } = await import('@alusa/database');
     vi.mocked(prisma.asaasResourceOrigin.findUnique).mockResolvedValueOnce(null as never);
@@ -172,6 +210,94 @@ describe('handleSubscriptionWebhook', () => {
       subscription: { id: 'sub-external', status: 'ACTIVE' },
     });
 
+    expect(issueMocks.upsertFinanceReconciliationIssue).not.toHaveBeenCalled();
+  });
+
+  it('mantém vínculo local em revisão quando uma assinatura está classificada como EXTERNAL', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.asaasResourceOrigin.findUnique).mockResolvedValueOnce({ origin: 'EXTERNAL' } as never);
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce({
+      id: 'subscription-local-1',
+      billingAgreementId: 'agreement-local-1',
+      status: 'ACTIVE',
+      asaasSubscriptionId: 'sub-external-linked',
+      externalReference: null,
+      matriculaId: null,
+    } as never);
+
+    const result = await handleSubscriptionWebhook('conta-a', {
+      event: 'SUBSCRIPTION_UPDATED',
+      eventId: 'evt-sub-external-linked',
+      subscription: { id: 'sub-external-linked', status: 'INACTIVE' },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(prisma.billingAgreement.updateMany).not.toHaveBeenCalled();
+    expect(prisma.subscription.findFirst).toHaveBeenCalledWith({
+      where: { contaId: 'conta-a', asaasSubscriptionId: 'sub-external-linked' },
+      select: { id: true },
+    });
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(issueMocks.upsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-a', entityType: 'SUBSCRIPTION', entityId: 'subscription-local-1',
+      asaasId: 'sub-external-linked', severity: 'HIGH',
+      metadata: expect.objectContaining({ reason: 'external_origin_conflicts_with_local_subscription' }),
+    }));
+  });
+
+  it.each([
+    ['Matricula', 'matricula', 'matricula-local-1'],
+    ['EnrollmentCreationOperation', 'enrollmentCreationOperation', 'enrollment-op-local-1'],
+    ['AcordoFinanceiroFuturo', 'acordoFinanceiroFuturo', 'future-agreement-local-1'],
+  ] as const)('registra conflito HIGH sem mutação quando origin EXTERNAL tem vínculo local em %s', async (_label, modelName, entityId) => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.asaasResourceOrigin.findUnique).mockResolvedValueOnce({ origin: 'EXTERNAL' } as never);
+    const model = prisma[modelName] as { findFirst: ReturnType<typeof vi.fn> };
+    model.findFirst.mockResolvedValueOnce({ id: entityId } as never);
+
+    const result = await handleSubscriptionWebhook('conta-a', {
+      event: 'SUBSCRIPTION_UPDATED',
+      eventId: `evt-external-${entityId}`,
+      subscription: { id: 'sub-mapped-local', status: 'INACTIVE' },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(model.findFirst).toHaveBeenCalledWith({
+      where: { contaId: 'conta-a', asaasSubscriptionId: 'sub-mapped-local' },
+      select: { id: true },
+    });
+    expect(prisma.billingAgreement.updateMany).not.toHaveBeenCalled();
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+    expect(prisma.standaloneSubscription.update).not.toHaveBeenCalled();
+    expect(prisma.matricula.updateMany).not.toHaveBeenCalled();
+    expect(prisma.enrollmentCreationOperation.updateMany).not.toHaveBeenCalled();
+    expect(issueMocks.upsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-a', entityType: 'SUBSCRIPTION', entityId, asaasId: 'sub-mapped-local', severity: 'HIGH',
+      metadata: expect.objectContaining({ reason: 'external_origin_conflicts_with_local_subscription' }),
+    }));
+  });
+
+  it('resolve review de origem desconhecida após projetar BillingAgreement local classificado ALUSA', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.asaasResourceOrigin.findUnique).mockResolvedValueOnce({ origin: 'ALUSA' } as never);
+    vi.mocked(prisma.billingAgreement.updateMany).mockResolvedValueOnce({ count: 1 } as never);
+    vi.mocked(prisma.financeReconciliationIssue.findFirst).mockResolvedValueOnce({ id: 'review-agreement' } as never);
+
+    const result = await handleSubscriptionWebhook('conta-a', {
+      event: 'SUBSCRIPTION_UPDATED',
+      eventId: 'evt-agreement-only',
+      subscription: { id: 'sub-agreement-only', status: 'ACTIVE' },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(prisma.billingAgreement.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { contaId: 'conta-a', asaasSubscriptionId: 'sub-agreement-only' },
+      data: expect.objectContaining({ remoteStatus: 'ACTIVE' }),
+    }));
+    expect(prisma.financeReconciliationIssue.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'review-agreement', contaId: 'conta-a', status: 'OPEN' }),
+      data: expect.objectContaining({ status: 'RESOLVED' }),
+    }));
     expect(issueMocks.upsertFinanceReconciliationIssue).not.toHaveBeenCalled();
   });
 
@@ -228,6 +354,82 @@ describe('handleSubscriptionWebhook', () => {
     expect(prisma.subscription.update).toHaveBeenCalled();
   });
 
+  it('reprocessa webhook staged após commit local da saga e aplica estado apenas uma vez', async () => {
+    const { prisma } = await import('@alusa/database');
+    const operation = { id: 'op-saga-replay', status: 'PROCESSING', asaasSubscriptionId: null as string | null };
+    const subscriptionRow: {
+      id: string;
+      status: string;
+      asaasSubscriptionId: string | null;
+      externalReference: string;
+      matriculaId: string | null;
+      billingAgreementId: string | null;
+    } = {
+      id: 'subscription-saga-replay',
+      status: 'REQUESTED',
+      asaasSubscriptionId: null,
+      externalReference: 'enrollment-op:op-saga-replay:subscription',
+      matriculaId: null,
+      billingAgreementId: null,
+    };
+
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockImplementation(async () => operation as never);
+    vi.mocked(prisma.enrollmentCreationOperation.updateMany).mockImplementation(async ({ data }) => {
+      operation.asaasSubscriptionId = data.asaasSubscriptionId ?? null;
+      return { count: 1 } as never;
+    });
+    vi.mocked(prisma.subscription.findFirst).mockImplementation(async ({ where }) => {
+      if ('asaasSubscriptionId' in where) {
+        return subscriptionRow.asaasSubscriptionId === where.asaasSubscriptionId
+          ? { id: subscriptionRow.id } as never
+          : null as never;
+      }
+      return subscriptionRow as never;
+    });
+    vi.mocked(prisma.subscription.update).mockImplementation(async ({ data }) => {
+      Object.assign(subscriptionRow, data);
+      return subscriptionRow as never;
+    });
+
+    const webhook = {
+      event: 'SUBSCRIPTION_CREATED',
+      eventId: 'evt-saga-replay',
+      subscription: {
+        id: 'asaas-sub-saga-replay',
+        status: 'ACTIVE',
+        externalReference: 'enrollment-op:op-saga-replay:subscription',
+      },
+    };
+
+    const beforeCommit = await handleSubscriptionWebhook('conta-saga', webhook);
+    expect(beforeCommit).toEqual({ success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' });
+    expect(operation.asaasSubscriptionId).toBe('asaas-sub-saga-replay');
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+
+    // The enrollment transaction commits its local Subscription and marks the
+    // saga provisioned after the webhook has safely staged the provider ID.
+    operation.status = 'REMOTE_PROVISIONED';
+    subscriptionRow.asaasSubscriptionId = operation.asaasSubscriptionId;
+
+    const replay = await handleSubscriptionWebhook('conta-saga', webhook);
+    const duplicateReplay = await handleSubscriptionWebhook('conta-saga', webhook);
+
+    expect(replay).toEqual({ success: true });
+    expect(duplicateReplay).toEqual({ success: true });
+    expect(subscriptionRow).toMatchObject({ status: 'ACTIVE', asaasSubscriptionId: 'asaas-sub-saga-replay' });
+    expect(prisma.subscription.update).toHaveBeenCalledTimes(1);
+    expect(prisma.subscription.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'subscription-saga-replay' },
+      data: expect.objectContaining({ status: 'ACTIVE' }),
+    }));
+    expect(prisma.enrollmentCreationOperation.updateMany).toHaveBeenCalledTimes(1);
+    expect(issueMocks.upsertFinanceReconciliationIssue).not.toHaveBeenCalled();
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockReset();
+    vi.mocked(prisma.enrollmentCreationOperation.updateMany).mockReset();
+    vi.mocked(prisma.subscription.findFirst).mockReset();
+    vi.mocked(prisma.subscription.update).mockReset();
+  });
+
   it('deve retornar sucesso quando não encontra Subscription', async () => {
     const { prisma } = await import('@alusa/database');
     vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce(null as never);
@@ -238,6 +440,59 @@ describe('handleSubscriptionWebhook', () => {
     });
 
     expect(res).toEqual({ success: true });
+  });
+
+  it('resolve a issue de origem desconhecida somente após replay bem-sucedido do evento correlacionado', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce({
+      id: 'subscription-local-1', status: 'ACTIVE', asaasSubscriptionId: 'sub-replay',
+      externalReference: null, matriculaId: null, billingAgreementId: null,
+    } as never);
+    vi.mocked(prisma.financeReconciliationIssue.findFirst).mockResolvedValueOnce({ id: 'review-sub-replay' } as never);
+
+    const result = await handleSubscriptionWebhook('conta-a', {
+      event: 'SUBSCRIPTION_UPDATED', eventId: 'evt-sub-replay',
+      subscription: { id: 'sub-replay', status: 'ACTIVE' },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(prisma.financeReconciliationIssue.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        contaId: 'conta-a', asaasId: 'sub-replay', status: 'OPEN',
+        AND: [
+          { metadata: { path: ['reason'], equals: 'resource_origin_unknown' } },
+          { metadata: { path: ['lastCauseId'], equals: 'evt-sub-replay' } },
+        ],
+      }),
+    }));
+    expect(prisma.financeReconciliationIssue.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: 'review-sub-replay', contaId: 'conta-a', status: 'OPEN',
+        AND: [
+          { metadata: { path: ['reason'], equals: 'resource_origin_unknown' } },
+          { metadata: { path: ['lastCauseId'], equals: 'evt-sub-replay' } },
+        ],
+      }),
+      data: expect.objectContaining({ status: 'RESOLVED' }),
+    }));
+  });
+
+  it('mantém a issue aberta quando o replay do webhook falha', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce({
+      id: 'subscription-local-1', status: 'REQUESTED', asaasSubscriptionId: null,
+      externalReference: null, matriculaId: null, billingAgreementId: null,
+    } as never);
+    vi.mocked(prisma.subscription.update).mockRejectedValueOnce(new Error('persistência indisponível'));
+
+    const result = await handleSubscriptionWebhook('conta-a', {
+      event: 'SUBSCRIPTION_UPDATED', eventId: 'evt-sub-failed',
+      subscription: { id: 'sub-replay', status: 'ACTIVE' },
+    });
+
+    expect(result.success).toBe(false);
+    expect(prisma.financeReconciliationIssue.findFirst).not.toHaveBeenCalled();
+    expect(prisma.financeReconciliationIssue.updateMany).not.toHaveBeenCalled();
   });
 
   it('roteia StandaloneSubscription familiar sem atualizar matrícula individual', async () => {

@@ -50,24 +50,22 @@ export type IdempotencyGuardScope =
   | 'reconciliation';
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ASAAS IDEMPOTENCY KEY
+// OUTBOUND OPERATION KEY
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Limite do Asaas para o header Idempotency-Key.
- * Acima de 47 caracteres o Asaas retorna 400 com body vazio.
+ * Tamanho da chave local determinística armazenada no ledger outbound.
  */
-export const ASAAS_MAX_IDEMPOTENCY_KEY_LENGTH = 47;
+export const OUTBOUND_OPERATION_KEY_LENGTH = 43;
 
 /**
- * Gera uma idempotency key segura para envio ao Asaas.
- * Aceita qualquer seed (externalReference, compound key, etc) e retorna
- * um hash determinístico de tamanho fixo, dentro do limite do Asaas.
- * Formato: idem_{sha256_hex_40chars} = 45 caracteres.
+ * Gera uma chave local estável para o ledger de operações outbound.
+ * Não é enviada ao Asaas nem representa deduplicação garantida pelo provedor.
+ * Formato: op_{sha256_hex_40chars} = 43 caracteres.
  */
-export function buildSafeAsaasIdempotencyKey(seed: string): string {
+export function buildOutboundOperationKey(seed: string): string {
   const hash = crypto.createHash('sha256').update(seed).digest('hex').slice(0, 40);
-  return `idem_${hash}`;
+  return `op_${hash}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

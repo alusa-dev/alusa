@@ -118,6 +118,9 @@ describe('events domain rules', () => {
   it('expõe as classificações financeiras canônicas usadas pelos relatórios', () => {
     expect(isEventRevenueExpectedStatus('PENDING')).toBe(true);
     expect(isEventRevenueRealizedStatus('PENDING')).toBe(true);
+    expect(isEventRevenueExpectedStatus('REFUNDED')).toBe(false);
+    expect(isEventRevenueExpectedStatus('CANCELLED')).toBe(false);
+    expect(isEventRevenueRealizedStatus('REFUNDED')).toBe(true);
     expect(isEventRevenueExpectedStatus('PAID')).toBe(false);
     expect(isEventRevenueRealizedStatus('PAID')).toBe(false);
     expect(isEventCostExpectedStatus('PARTIALLY_PAID')).toBe(true);
@@ -148,7 +151,7 @@ describe('events domain rules', () => {
       ticketLots: [],
       ticketSales: [
         { status: 'PAID', quantity: 1, totalAmount: 100 },
-        { status: 'REFUNDED', quantity: 1, totalAmount: 100 }, // should be 0 revenue and NOT subtract from PAID
+        { status: 'REFUNDED', quantity: 1, totalAmount: 100 },
       ],
       costumes: [
         { schoolCost: 50, quantity: 1 }, // Direct Cost: 50
@@ -177,8 +180,12 @@ describe('events domain rules', () => {
       ],
     });
 
-    // Receita Prevista = Ticket Sale (100) + Costume Assigned Paid (40) + Costume Assigned Pending (30) = 170
+    // Fully refunded ticket sales stay in historical receipts but leave committed revenue.
+    // Receita Prevista = Ticket Sales (100) + Costume Paid (40) + Costume Pending (30) = 170
     expect(metrics.receitaPrevista).toBe(170);
+    expect(metrics.receitaBrutaPrevista).toBe(170);
+    expect(metrics.receitaRecebidaBruta).toBe(260);
+    expect(metrics.receitaEstornada).toBe(120);
     // Receita Realizada = Ticket Sale (100) + Costume Assigned Paid (40) = 140
     expect(metrics.receitaRealizada).toBe(140);
     // Custo Previsto = Costume Cost (50) + Manual Cost (30) = 80

@@ -18,7 +18,7 @@ export interface CreateCustomerParams {
  * 
  * @param params.apiKey - API key da subconta
  * @param params.data - Dados do customer (deve incluir externalReference)
- * @param params.idempotencyKey - Chave de idempotência (ADR-009)
+ * @param params.idempotencyKey - Identificador local da operação; não é uma garantia remota do Asaas
  * @returns Customer criado
  */
 export async function createCustomer(params: CreateCustomerParams): Promise<AsaasCustomer> {
@@ -26,10 +26,7 @@ export async function createCustomer(params: CreateCustomerParams): Promise<Asaa
     apiKey: params.apiKey,
   });
 
-  const headers: Record<string, string> = {};
-  if (params.idempotencyKey) {
-    headers['Idempotency-Key'] = params.idempotencyKey;
-  }
-
-  return client.post<AsaasCustomer>('/customers', params.data, { headers });
+  // Keep the local key in the outbound operation ledger. The Asaas endpoint
+  // does not document Idempotency-Key support, so recovery uses externalReference.
+  return client.post<AsaasCustomer>('/customers', params.data);
 }

@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+import { sharedTelemetry, type TelemetryMetric } from '@alusa/observability';
 
 const mockGetServerSession = vi.hoisted(() => vi.fn());
 const mockRateLimit = vi.hoisted(() => vi.fn());
@@ -37,6 +38,15 @@ vi.mock('@alusa/finance', () => ({
 
 import { POST } from '@/app/api/cobrancas/[id]/sync-asaas/route';
 
+let restoreTelemetry: (() => void) | null = null;
+let capturedMetrics: TelemetryMetric[] = [];
+
+function captureTelemetry() {
+  capturedMetrics = [];
+  restoreTelemetry?.();
+  restoreTelemetry = sharedTelemetry.replaceSink({ metric: (record) => capturedMetrics.push(record) });
+}
+
 describe('POST /api/cobrancas/[id]/sync-asaas', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -55,13 +65,26 @@ describe('POST /api/cobrancas/[id]/sync-asaas', () => {
     });
   });
 
-  function request() {
+  afterEach(() => {
+    restoreTelemetry?.();
+    restoreTelemetry = null;
+    vi.unstubAllEnvs();
+  });
+
+  function request(source?: string) {
     return new NextRequest('http://localhost/api/cobrancas/cob-1/sync-asaas', {
       method: 'POST',
+      headers: source ? { 'x-alusa-sync-source': source } : undefined,
     });
   }
 
+  function enableTelemetryCapture() {
+    vi.stubEnv('OBSERVABILITY_METRIC_SAMPLE_RATE', '1');
+    captureTelemetry();
+  }
+
   it('retorna sucesso skipped quando a cobrança está em throttle', async () => {
+    enableTelemetryCapture();
     mockRateLimit
       .mockResolvedValueOnce({ ok: true, remaining: 29, resetAt: 1 })
       .mockResolvedValueOnce({ ok: true, remaining: 14, resetAt: 1 })
@@ -82,9 +105,10 @@ describe('POST /api/cobrancas/[id]/sync-asaas', () => {
   });
 
   it('marca sync originado pela UI com intent propria', async () => {
+    enableTelemetryCapture();
     mockRateLimit.mockResolvedValue({ ok: true, remaining: 10, resetAt: 1 });
 
-    const response = await POST(request(), { params: Promise.resolve({ id: 'cob-1' }) });
+    const response = await POST(request('automatic_fallback'), { params: Promise.resolve({ id: 'cob-1' }) });
 
     expect(response.status).toBe(200);
     expect(mockRateLimit.mock.calls.map(([key]) => key)).toEqual([

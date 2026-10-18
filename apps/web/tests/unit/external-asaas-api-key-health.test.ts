@@ -82,7 +82,7 @@ describe('external-asaas-api-key-health', () => {
     expect(
       shouldShowExternalAsaasApiKeyModal({
         ...externalAdmin,
-        externalAsaasOnboardingStatus: 'READY',
+        externalAsaasOnboardingStatus: 'PENDING_CONFIGURATION',
         asaasApiKeyStatus: 'CONNECTED',
       }),
     ).toBe(false);

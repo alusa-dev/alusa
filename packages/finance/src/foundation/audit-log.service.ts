@@ -1,5 +1,5 @@
 import { prisma } from '@alusa/database';
-import type { AuditActorType } from '@prisma/client';
+import type { AuditActorType, Prisma } from '@prisma/client';
 
 import { auditLogRecordSchema } from './schemas';
 
@@ -14,17 +14,20 @@ export type AuditActorRef = {
 };
 
 export const auditLogService = {
-  async record(params: {
-    contaId: string;
-    action: string;
-    entity?: AuditEntityRef;
-    metadata?: unknown;
-    actor?: AuditActorRef;
-    correlationId?: string;
-  }) {
+  async record(
+    params: {
+      contaId: string;
+      action: string;
+      entity?: AuditEntityRef;
+      metadata?: unknown;
+      actor?: AuditActorRef;
+      correlationId?: string;
+    },
+    db: Pick<Prisma.TransactionClient, 'auditLog'> = prisma,
+  ) {
     const validated = auditLogRecordSchema.parse(params);
 
-    return prisma.auditLog.create({
+    return db.auditLog.create({
       data: {
         contaId: validated.contaId,
         action: validated.action,

@@ -19,6 +19,7 @@ const excludedDirectories = new Set([
   'node_modules',
   'dist',
   '.next',
+  '.next-auth-verify',
   '.next-turbo',
   '.next-playwright',
   '.vercel',

@@ -33,6 +33,7 @@ const txMock = {
 };
 
 const prismaMock = {
+  conta: { findUnique: vi.fn(async () => ({ financeIntegrationMode: 'WHITELABEL_BAAS' })) },
   $transaction: vi.fn(async (callback: (_tx: typeof txMock) => unknown) => callback(txMock)),
   conta: { findUnique: vi.fn() },
   asaasResourceOrigin: { findUnique: vi.fn() },
@@ -47,6 +48,7 @@ const prismaMock = {
   },
   eventMapOrder: { findFirst: vi.fn() },
   eventTicketSale: { findMany: vi.fn() },
+  asaasResourceOrigin: { findUnique: vi.fn() },
   notificationRecipient: {
     updateMany: vi.fn(),
     findMany: vi.fn(),
@@ -97,6 +99,10 @@ describe('notifications.service', () => {
     prismaMock.charge.findUnique.mockResolvedValue(null);
     prismaMock.eventMapOrder.findFirst.mockResolvedValue(null);
     prismaMock.eventTicketSale.findMany.mockResolvedValue([]);
+    prismaMock.asaasResourceOrigin.findUnique.mockReset();
+    prismaMock.asaasResourceOrigin.findUnique.mockResolvedValue(null);
+    prismaMock.conta.findUnique.mockReset();
+    prismaMock.conta.findUnique.mockResolvedValue({ financeIntegrationMode: 'WHITELABEL_BAAS' });
     prismaMock.charge.findMany.mockResolvedValue([]);
     prismaMock.notificationRecipient.updateMany.mockResolvedValue({ count: 1 });
     prismaMock.notificationRecipient.findMany.mockResolvedValue([]);
@@ -595,6 +601,154 @@ describe('notifications.service', () => {
     });
 
     expect(result).toMatchObject({ outcome: 'entity_missing', notificationId: null });
+    expect(prismaMock.asaasResourceOrigin.findUnique).toHaveBeenCalledWith({
+      where: {
+        uq_asaas_resource_origin_tenant_resource: {
+          contaId: 'conta-a', resourceType: 'PAYMENT', asaasId: 'pay-not-yet-local',
+        },
+      },
+      select: { origin: true },
+    });
+    expect(enqueuePending).toHaveBeenCalledTimes(1);
+  });
+
+  it('não enfileira pagamento explicitamente externo', async () => {
+    prismaMock.asaasResourceOrigin.findUnique.mockResolvedValue({ origin: 'EXTERNAL' });
+
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-legacy-external',
+    });
+
+    expect(result).toMatchObject({ outcome: 'not_applicable', reason: 'external_payment' });
+    expect(enqueuePending).not.toHaveBeenCalled();
+  });
+
+  it('não cria inbox entity_missing para recorrência sem vínculo no modo conta Asaas externa', async () => {
+    prismaMock.conta.findUnique.mockResolvedValue({ financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' });
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-panel', asaasSubscriptionId: 'sub-panel',
+    });
+    expect(result).toMatchObject({ outcome: 'not_applicable', reason: 'external_subscription' });
+    expect(enqueuePending).not.toHaveBeenCalled();
+  });
+
+  it('mantém referência canônica Alusa sem entidade em revisão no modo conta Asaas externa', async () => {
+    prismaMock.conta.findUnique.mockResolvedValue({ financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' });
+    prismaMock.asaasResourceOrigin.findUnique.mockResolvedValue({ origin: 'EXTERNAL' });
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-alusa-missing',
+      externalReference: 'alusa:subscription:mat-a:plan-a',
+    });
+    expect(result).toMatchObject({ outcome: 'inconsistent', reason: 'alusa_subscription_without_local_entity' });
+    expect(enqueuePending).not.toHaveBeenCalled();
+  });
+
+  it('isola origem/modo para o mesmo Asaas ID entre tenants na classificação da inbox', async () => {
+    prismaMock.conta.findUnique.mockImplementation(async ({ where }) => ({
+      financeIntegrationMode: where.id === 'conta-externa' ? 'EXTERNAL_ASAAS_ACCOUNT' : 'WHITELABEL_BAAS',
+    }) as never);
+    prismaMock.asaasResourceOrigin.findUnique.mockImplementation(async ({ where }) => {
+      const key = where.uq_asaas_resource_origin_tenant_resource;
+      if (key.contaId === 'conta-externa' && key.asaasId === 'pay-shared') return { origin: 'EXTERNAL' };
+      if (key.contaId === 'conta-whitelabel' && key.asaasId === 'pay-shared') return { origin: 'ALUSA' };
+      return null;
+    });
+    const externalTenant = await createBillingWebhookNotification({
+      contaId: 'conta-externa', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-shared',
+    });
+    const whitelabelTenant = await createBillingWebhookNotification({
+      contaId: 'conta-whitelabel', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-shared',
+    });
+    expect(externalTenant).toMatchObject({ outcome: 'not_applicable', reason: 'external_payment' });
+    expect(whitelabelTenant).toMatchObject({ outcome: 'inconsistent', reason: 'alusa_payment_without_local_entity' });
+    expect(prismaMock.asaasResourceOrigin.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { uq_asaas_resource_origin_tenant_resource: expect.objectContaining({ contaId: 'conta-whitelabel', asaasId: 'pay-shared' }) },
+    }));
+  });
+
+  it('não enfileira pagamento de assinatura externa em conta que também tem cobrança Alusa', async () => {
+    // A cobrança acadêmica da mesma escola usa outro payment ID. A cobrança
+    // legada da assinatura não tem entidade local e deve ser reconhecida pela origem.
+    prismaMock.cobranca.findFirst.mockResolvedValue(null);
+    prismaMock.asaasResourceOrigin.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ origin: 'EXTERNAL' });
+
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-a',
+      eventName: 'PAYMENT_RECEIVED',
+      asaasPaymentId: 'pay-legacy',
+      asaasSubscriptionId: 'sub-legacy',
+    });
+
+    expect(result).toMatchObject({ outcome: 'not_applicable', reason: 'external_subscription' });
+    expect(prismaMock.cobranca.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ contaId: 'conta-a' }),
+    }));
+    expect(enqueuePending).not.toHaveBeenCalled();
+  });
+
+  it('reconhece assinatura legada externa quando a origem do payment é desconhecida', async () => {
+    prismaMock.asaasResourceOrigin.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ origin: 'EXTERNAL' });
+
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-a',
+      eventName: 'PAYMENT_RECEIVED',
+      asaasPaymentId: 'pay-legacy',
+      asaasSubscriptionId: 'sub-legacy',
+    });
+
+    expect(result).toMatchObject({ outcome: 'not_applicable', reason: 'external_subscription' });
+    expect(enqueuePending).not.toHaveBeenCalled();
+    expect(prismaMock.asaasResourceOrigin.findUnique).toHaveBeenNthCalledWith(2, {
+      where: {
+        uq_asaas_resource_origin_tenant_resource: {
+          contaId: 'conta-a', resourceType: 'SUBSCRIPTION', asaasId: 'sub-legacy',
+        },
+      },
+      select: { origin: true },
+    });
+  });
+
+  it('mantém payment Alusa sem entidade como inconsistência auditável sem retry', async () => {
+    prismaMock.asaasResourceOrigin.findUnique.mockResolvedValue({ origin: 'ALUSA' });
+
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-alusa-missing',
+    });
+
+    expect(result).toMatchObject({ outcome: 'inconsistent', reason: 'alusa_payment_without_local_entity' });
+    expect(enqueuePending).not.toHaveBeenCalled();
+  });
+
+  it('mantém assinatura Alusa sem entidade como inconsistência sem retry', async () => {
+    prismaMock.asaasResourceOrigin.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ origin: 'ALUSA' });
+
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED',
+      asaasPaymentId: 'pay-alusa-missing', asaasSubscriptionId: 'sub-alusa-missing',
+    });
+
+    expect(result).toMatchObject({ outcome: 'inconsistent', reason: 'alusa_subscription_without_local_entity' });
+    expect(enqueuePending).not.toHaveBeenCalled();
+  });
+
+  it('sinaliza conflito quando pagamento e assinatura têm classificações opostas', async () => {
+    prismaMock.asaasResourceOrigin.findUnique
+      .mockResolvedValueOnce({ origin: 'ALUSA' })
+      .mockResolvedValueOnce({ origin: 'EXTERNAL' });
+
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED',
+      asaasPaymentId: 'pay-alusa', asaasSubscriptionId: 'sub-external',
+    });
+
+    expect(result).toMatchObject({ outcome: 'inconsistent', reason: 'payment_origin_classification_conflict' });
+    expect(enqueuePending).not.toHaveBeenCalled();
   });
 
   it('conclui billing reconhecido sem destinatários com resultado explícito', async () => {

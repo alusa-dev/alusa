@@ -30,6 +30,7 @@ import { buildExpectedWebhookConfig } from './expected-webhook-config.server';
 import { hashWebhookAuthToken, resolveWebhookAuthToken } from './webhook-auth-token';
 import { ensureAsaasWebhookConfiguration } from '../../webhooks/ensure-asaas-webhook-configuration';
 import { refreshKycReadModel } from '../kyc/refresh-kyc-read-model';
+import { enqueueKycReadModelSync, enqueueKycReadModelSyncForAccount } from '../kyc/kyc-sync-job.service';
 import { reconcileAsaasAccount } from './reconcile-asaas-account';
 import {
   deriveLegacyAliasedSubaccountEmail,
@@ -970,6 +971,17 @@ export async function createAsaasAccount(params: {
   const existingConnected = await findExistingConnectedAccount(financeProfile.id);
   if (existingConnected) {
     try {
+      await enqueueKycReadModelSync(params.contaId);
+    } catch (enqueueError) {
+      logFinanceOperationalEvent({
+        severity: 'warn',
+        eventName: 'finance.use_cases.asaas_account.create_asaas_account.degraded',
+        error: enqueueError,
+        throttleMs: 60_000,
+      });
+    }
+
+    try {
       await ensureExistingWebhookConfig({
         contaId: params.contaId,
         financeProfileId: financeProfile.id,
@@ -1642,6 +1654,12 @@ async function createAsaasAccountInternal(params: {
           webhookAuthTokenHash,
           provisionLastError: null, // Limpar erro após sucesso
         },
+      });
+
+      await enqueueKycReadModelSyncForAccount(tx, {
+        contaId: params.contaId,
+        asaasAccountId: asaasAccount.id,
+        provisionedAt: now,
       });
 
       await tx.financeProfile.update({

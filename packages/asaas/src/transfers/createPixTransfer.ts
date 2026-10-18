@@ -27,13 +27,10 @@ export interface CreatePixTransferParams {
 export async function createPixTransfer(params: CreatePixTransferParams): Promise<AsaasTransfer> {
   const client = new AsaasHttp({ apiKey: params.apiKey });
 
-  const headers: Record<string, string> = {};
-  if (params.idempotencyKey) {
-    headers['Idempotency-Key'] = params.idempotencyKey;
-  }
-
+  // Transfer recovery must use the local operation ledger and provider
+  // reconciliation; this endpoint does not document Idempotency-Key support.
   return client.post<AsaasTransfer>('/transfers', {
     ...params.data,
     operationType: 'PIX',
-  }, { headers });
+  });
 }

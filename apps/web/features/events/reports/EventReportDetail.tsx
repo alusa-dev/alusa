@@ -16,17 +16,17 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { EventEmptyState } from '../shared/EventEmptyState';
 import { formatCurrency, formatDate, getEventReportDetail } from '../events-service';
+import { shouldRetryEventReportQuery } from './event-report-query';
+import { buildEventReportRevenueRows, formatEventReportDateKey } from './event-report-view-model';
 import { EventReportSection } from './EventReportSection';
 
-type ReportData = NonNullable<Awaited<ReturnType<typeof getEventReportDetail>>>;
-type RevenueRow = { id: string; source: string; planned: number; received: number; pending: number; refunded: number };
 type CategoryReportRow = { category: string; type: 'Receita' | 'Custo'; expected: number; realized: number };
 
 const currency = (value: number) => formatCurrency(value);
 const compactCurrency = (value: number) => new Intl.NumberFormat('pt-BR', {
   style: 'currency', currency: 'BRL', notation: 'compact', maximumFractionDigits: 1,
 }).format(value);
-const formatReportDay = (value: string) => formatDate(`${value}T12:00:00.000Z`);
+const formatReportDay = formatEventReportDateKey;
 const quantity = (value: number) => value.toLocaleString('pt-BR');
 const quantityAxis = (maximum: number) => {
   const targetStep = Math.max(1, maximum / 5);
@@ -241,28 +241,6 @@ function EstimatedCapacityValue({ capacity }: { capacity: number }) {
   );
 }
 
-function buildRevenueRows(data: ReportData): RevenueRow[] {
-  const { totals } = data;
-  return [
-    {
-      id: 'registrations', source: 'Inscrições', planned: totals.registrationCommitted,
-      received: totals.registrationReceived,
-      pending: Math.max(totals.registrationCommitted - totals.registrationReceived, 0),
-      refunded: totals.registrationRefunded,
-    },
-    {
-      id: 'tickets', source: 'Bilheteria', planned: totals.ticketReceivedNet + totals.ticketPendingRevenue,
-      received: totals.ticketReceivedNet, pending: totals.ticketPendingRevenue, refunded: totals.ticketRefunded,
-    },
-    {
-      id: 'other', source: 'Outras receitas', planned: totals.otherRevenueExpected,
-      received: totals.otherRevenueReceived,
-      pending: Math.max(totals.otherRevenueExpected - totals.otherRevenueReceived, 0),
-      refunded: totals.otherRevenueRefunded,
-    },
-  ];
-}
-
 function ReportFact({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="min-w-0 py-3 first:pt-0 last:pb-0">
@@ -295,6 +273,7 @@ export function EventReportDetail({ eventId }: { eventId: string }) {
     queryKey: ['events', 'report-detail', contaId ?? null, eventId],
     queryFn: () => getEventReportDetail(eventId),
     enabled: sessionStatus === 'authenticated' && Boolean(contaId),
+    retry: shouldRetryEventReportQuery,
   });
 
   if (sessionStatus === 'loading' || (sessionStatus === 'authenticated' && !contaId) || query.isLoading) return <EventReportLoading />;
@@ -330,7 +309,7 @@ export function EventReportDetail({ eventId }: { eventId: string }) {
   const copy = getEventReportCopy(event.status);
   const statusLabel = getEventStatusLabel(event.status);
   const salesAreOpen = event.status === 'ACTIVE';
-  const revenueRows = buildRevenueRows(data);
+  const revenueRows = buildEventReportRevenueRows(totals);
   const categoryTotals = new Map<string, CategoryReportRow>();
   for (const item of data.categories) {
     const key = `${item.type}-${item.category}`;

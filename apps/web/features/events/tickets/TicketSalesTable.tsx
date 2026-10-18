@@ -74,7 +74,7 @@ export function TicketSalesTable({
           const whatsapp = getWhatsAppStatus(sale.whatsappStatus);
           return <SoftBadge tone={whatsapp.tone}>{whatsapp.label}</SoftBadge>;
         } },
-        { id: 'date', header: 'Data', width: 'w-[10%]', align: 'left', render: (sale: TicketSaleDTO) => formatDate(sale.soldAt) },
+        { id: 'date', header: 'Venda', width: 'w-[10%]', align: 'left', render: (sale: TicketSaleDTO) => formatDate(sale.soldAt) },
         { id: 'actions', header: 'Ações', width: 'w-[11%]', align: 'right', render: (sale: TicketSaleDTO) => <TicketActions sale={sale} eventId={eventId} lots={lots} scopedResources={scopedResources} /> },
       ]}
       data={sales}

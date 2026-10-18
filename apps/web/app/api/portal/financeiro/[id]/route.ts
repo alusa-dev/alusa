@@ -15,6 +15,12 @@ import {
   syncPortalFinanceDetail,
 } from '@/src/server/portal/portal-finance-detail.service';
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
+import {
+  CHARGE_SYNC_SOURCE_HEADER,
+  recordChargeSyncTelemetry,
+  resolveChargeSyncSource,
+  type ChargeSyncOutcome,
+} from '@/src/server/finance/charge-sync-observability';
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -49,6 +55,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 }
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const startedAt = Date.now();
+  const source = resolveChargeSyncSource(_req.headers.get(CHARGE_SYNC_SOURCE_HEADER));
+  let outcome: ChargeSyncOutcome = 'failure';
   try {
     const auth = await requirePortalUser();
     if ('response' in auth) return auth.response;
@@ -63,6 +72,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     });
 
     if (!result.ok) {
+      outcome = result.kind === 'NOT_FOUND' ? 'skipped' : 'failure';
       return result.kind === 'NOT_FOUND'
         ? jsonNoStore(
             { success: false, error: 'Cobrança não encontrada ou sem integração Asaas' },
@@ -71,6 +81,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
         : jsonNoStore({ success: false, error: result.error }, { status: 502 });
     }
 
+    outcome = 'success';
     return jsonNoStore({
       success: true,
       asaasPaymentId: result.asaasPaymentId,
@@ -87,5 +98,12 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       error,
     });
     return jsonNoStore({ success: false, error: 'Erro ao sincronizar cobrança' }, { status: 500 });
+  } finally {
+    recordChargeSyncTelemetry(
+      source,
+      outcome,
+      Date.now() - startedAt,
+      '/api/portal/financeiro/:id',
+    );
   }
 }

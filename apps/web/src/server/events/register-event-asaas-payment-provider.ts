@@ -68,9 +68,9 @@ async function findPlaywrightPayment(paymentId: string, externalReference?: stri
 }
 
 const playwrightPaymentProvider: EventAsaasPaymentProvider = {
-  listCustomers: async ({ cpfCnpj }) => {
+  listCustomers: async ({ cpfCnpj, offset = 0, limit = 100 }) => {
     if (cpfCnpj === '11144477735') throw new Error('PLAYWRIGHT_CUSTOMER_LOOKUP_UNAVAILABLE');
-    return { data: [] };
+    return { data: [], hasMore: false, offset, limit, totalCount: 0 };
   },
   createCustomer: async ({ data }) => ({
     id: data.name === 'Comprador com resposta perdida' ? 'playwright-lost-response-customer' : 'playwright-customer',
@@ -94,15 +94,19 @@ const playwrightPaymentProvider: EventAsaasPaymentProvider = {
     return payment;
   },
   listPayments: async (params) => {
+    const offset = params.offset ?? 0;
+    const limit = params.limit ?? 100;
     const cached = [...testPayments.values()].filter((payment) =>
       !params.externalReference || payment.externalReference === params.externalReference,
     );
-    if (cached.length || !params.externalReference) return { data: cached };
+    if (cached.length || !params.externalReference) {
+      return { data: cached, hasMore: false, offset, limit, totalCount: cached.length };
+    }
     const recovered = await findPlaywrightPayment(
       `playwright-${params.externalReference}`,
       params.externalReference,
     );
-    return { data: recovered ? [recovered] : [] };
+    return { data: recovered ? [recovered] : [], hasMore: false, offset, limit, totalCount: recovered ? 1 : 0 };
   },
   getPayment: async ({ paymentId }) => {
     const payment = testPayments.get(paymentId) ?? await findPlaywrightPayment(paymentId);

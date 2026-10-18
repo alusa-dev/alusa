@@ -28,10 +28,7 @@ export async function createBankTransfer(
 ): Promise<AsaasTransfer> {
   const client = new AsaasHttp({ apiKey: params.apiKey });
 
-  const headers: Record<string, string> = {};
-  if (params.idempotencyKey) {
-    headers['Idempotency-Key'] = params.idempotencyKey;
-  }
-
-  return client.post<AsaasTransfer>('/transfers', params.data, { headers });
+  // Transfer recovery must use the local operation ledger and provider
+  // reconciliation; this endpoint does not document Idempotency-Key support.
+  return client.post<AsaasTransfer>('/transfers', params.data);
 }

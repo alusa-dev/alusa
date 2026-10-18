@@ -68,8 +68,8 @@ export {
   type IdempotencyRecordInput,
   type IdempotencyGuardScope,
   // Asaas-safe idempotency
-  ASAAS_MAX_IDEMPOTENCY_KEY_LENGTH,
-  buildSafeAsaasIdempotencyKey,
+  OUTBOUND_OPERATION_KEY_LENGTH,
+  buildOutboundOperationKey,
   // Hash Utils
   hashPayload,
   buildWebhookIdempotencyKey,

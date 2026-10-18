@@ -16,10 +16,7 @@ export interface CreateInstallmentParams {
 export async function createInstallment(params: CreateInstallmentParams): Promise<AsaasInstallment> {
   const client = new AsaasHttp({ apiKey: params.apiKey });
 
-  const headers: Record<string, string> = {};
-  if (params.idempotencyKey) {
-    headers['Idempotency-Key'] = params.idempotencyKey;
-  }
-
-  return client.post<AsaasInstallment>('/installments', params.data, { headers });
+  // The local operation key is reconciled through paymentExternalReference;
+  // this endpoint does not document provider-side Idempotency-Key support.
+  return client.post<AsaasInstallment>('/installments', params.data);
 }

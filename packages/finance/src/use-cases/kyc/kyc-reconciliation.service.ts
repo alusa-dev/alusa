@@ -22,7 +22,7 @@ import { loadAsaasCredentials, prisma } from '@alusa/database';
 
 import { auditLogService } from '../../foundation/audit-log.service';
 import { syncKycModels, deriveProcessStatus } from './kyc-persistence.service';
-import { buildCacheV2 } from './kyc-cache-utils';
+import { buildCacheV2, isCacheV2, KYC_READ_MODEL_MAX_AGE_MS } from './kyc-cache-utils';
 import { getMyAccountDocumentsCached, getMyAccountStatusCached } from './kyc-asaas-read-cache';
 import { getDocumentsReadiness } from './kyc-document-group-resolver';
 
@@ -82,6 +82,12 @@ export async function reconcileKycModels(opts?: {
       status: true,
       financeProfile: { select: { contaId: true } },
     },
+    // Repaired snapshots receive a new documentsCacheUpdatedAt and move behind
+    // untouched rows, so the bounded batch advances across the tenant set.
+    orderBy: [
+      { documentsCacheUpdatedAt: { sort: 'asc', nulls: 'first' } },
+      { createdAt: 'asc' },
+    ],
     take: 100,
   });
 
@@ -146,6 +152,23 @@ async function detectKycInconsistencies(
   _contaId: string,
 ): Promise<string[]> {
   const issues: string[] = [];
+
+  const asaasAccount = await prisma.asaasAccount.findUnique({
+    where: { id: asaasAccountId },
+    select: { provisionedAt: true, documentsCache: true, documentsCacheUpdatedAt: true },
+  });
+  if (!getDocumentsReadiness(asaasAccount?.provisionedAt ?? null).ready) return issues;
+
+  const cacheAgeMs = asaasAccount?.documentsCacheUpdatedAt
+    ? Date.now() - asaasAccount.documentsCacheUpdatedAt.getTime()
+    : null;
+  const isCacheFresh = isCacheV2(asaasAccount?.documentsCache)
+    && typeof cacheAgeMs === 'number'
+    && cacheAgeMs >= 0
+    && cacheAgeMs < KYC_READ_MODEL_MAX_AGE_MS;
+  if (!isCacheFresh) {
+    issues.push(asaasAccount?.documentsCache ? 'KYC_READ_MODEL_STALE' : 'KYC_READ_MODEL_MISSING');
+  }
 
   const kycProcess = await prisma.kycProcess.findUnique({
     where: { asaasAccountId },

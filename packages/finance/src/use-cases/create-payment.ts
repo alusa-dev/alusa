@@ -10,7 +10,7 @@ import {
   assertAsaasTenantOperational,
   FinanceBlockedError,
 } from '../foundation/asaas-operational-guard';
-import { buildSafeAsaasIdempotencyKey } from '../core';
+import { buildOutboundOperationKey } from '../core';
 
 export type CreatePaymentInput = {
   contaId: string;
@@ -76,7 +76,7 @@ export async function createAsaasPaymentDetailed(input: CreatePaymentInput): Pro
 
     const payment = await createPayment({
       apiKey: creds.apiKey,
-      idempotencyKey: buildSafeAsaasIdempotencyKey(input.idempotencyKey ?? input.externalReference),
+      idempotencyKey: buildOutboundOperationKey(input.idempotencyKey ?? input.externalReference),
       data: {
         customer: input.customer,
         billingType: input.billingType,

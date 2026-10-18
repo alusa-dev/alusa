@@ -124,4 +124,57 @@ describe('ExternalAsaasOnboarding settings', () => {
     expect(toastSuccessMock).toHaveBeenCalled();
     expect(updateMock).not.toHaveBeenCalled();
   });
+
+  it('mantem os campos e a submissao do modal com layout compartilhado do wizard', async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: {
+            schoolName: 'Escola Externa',
+            cpfCnpj: null,
+            phone: null,
+            status: 'PENDING_CONFIGURATION',
+            asaasAccountId: null,
+            asaasEmail: null,
+            hasApiKey: false,
+            apiKeyStatus: 'MISSING',
+            webhookStatus: null,
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: true,
+          summary: 'Conta conectada.',
+          status: 'READY',
+          account: { asaasAccountId: 'acc_1', asaasEmail: 'financeiro@escola.com' },
+        }),
+      });
+
+    const { ExternalAsaasOnboarding } = await import('@/features/account/components/asaas-onboarding/ExternalAsaasOnboarding');
+
+    render(<ExternalAsaasOnboarding variant="modal" />);
+
+    const input = await screen.findByPlaceholderText('Cole a API key do Asaas');
+    expect(input).toHaveClass('wizard-field-input');
+    expect(input.closest('form')).toHaveClass('external-asaas-modal');
+    expect(screen.getByRole('button', { name: 'Mostrar API key' })).toHaveClass('hover:!bg-transparent');
+    expect(screen.getByText('Conectar o Asaas permite:')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Tutorial' })).toHaveAttribute(
+      'href',
+      'https://youtu.be/tULtfD8vEfg',
+    );
+
+    fireEvent.change(input, { target: { value: '$aact_hmlg_valid_key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Conectar' }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenLastCalledWith(
+        '/api/finance/external-onboarding',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+  });
 });

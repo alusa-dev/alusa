@@ -2,7 +2,7 @@
  * Criação de cobrança (payment) no Asaas
  * 
  * ADR-006: externalReference para rastreabilidade
- * ADR-009: idempotência obrigatória
+ * ADR-009: idempotência controlada pelo protocolo local de operações
  */
 
 import { AsaasHttp } from '../client/AsaasHttp';
@@ -19,7 +19,7 @@ export interface CreatePaymentParams {
  * 
  * @param params.apiKey - API key da subconta
  * @param params.data - Dados da cobrança (deve incluir externalReference)
- * @param params.idempotencyKey - Chave de idempotência
+ * @param params.idempotencyKey - Identificador local da operação; não é uma garantia remota do Asaas
  * @returns Payment criado
  */
 export async function createPayment(params: CreatePaymentParams): Promise<AsaasPayment> {
@@ -27,10 +27,7 @@ export async function createPayment(params: CreatePaymentParams): Promise<AsaasP
     apiKey: params.apiKey,
   });
 
-  const headers: Record<string, string> = {};
-  if (params.idempotencyKey) {
-    headers['Idempotency-Key'] = params.idempotencyKey;
-  }
-
-  return client.post<AsaasPayment>('/payments', params.data, { headers });
+  // Keep the local key in the outbound operation ledger. The Asaas endpoint
+  // does not document Idempotency-Key support, so recovery uses externalReference.
+  return client.post<AsaasPayment>('/payments', params.data);
 }

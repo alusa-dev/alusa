@@ -124,7 +124,7 @@ function walkSources(directory) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     const absolutePath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      if (!['node_modules', 'dist', '.next', 'coverage', '.turbo'].includes(entry.name)) {
+      if (!['node_modules', 'dist', '.next', '.next-auth-verify', 'coverage', '.turbo'].includes(entry.name)) {
         files.push(...walkSources(absolutePath));
       }
       continue;

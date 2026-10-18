@@ -1,7 +1,6 @@
 import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import {
   AsaasHttpError,
-  createCustomer,
   getCustomer,
   listCustomers,
   updateCustomer,
@@ -23,6 +22,7 @@ import {
   AsaasCustomerEnsureError,
   type EnsureAsaasCustomerError,
 } from '../errors/asaas-customer-ensure-error';
+import { createCustomerWithOutboundOperation } from './create-customer';
 
 function digits(v: unknown): string | undefined {
   if (v == null) return undefined;
@@ -125,9 +125,7 @@ function buildExternalReference(contaId: string, payer: EnsureAsaasCustomerPayer
   if (!payer.id) {
     throw new AsaasCustomerEnsureError('PAYER_INVALID', 'Pagador sem identificador interno.');
   }
-  const type = payer.type.toLowerCase();
-  // Formato simples e estável, sem caracteres exóticos
-  return `alusa_${contaId}_${type}_${payer.id}`;
+  return `alusa_${contaId}_${payer.type.toLowerCase()}_${payer.id}`;
 }
 
 /**
@@ -382,7 +380,54 @@ export async function loadAndValidateSubaccountKey(contaId: string): Promise<Loa
 function pickExistingCustomer(list: AsaasCustomer[]): AsaasCustomer | null {
   if (!list.length) return null;
   const active = list.find((customer) => !customer.deleted);
+  const activeCustomers = list.filter((customer) => !customer.deleted);
+  if (activeCustomers.length > 1) {
+    throw new Error('CUSTOMER_LOOKUP_AMBIGUOUS:MULTIPLE_ACTIVE_MATCHES');
+  }
   return active ?? list[0] ?? null;
+}
+
+async function listAllCustomersByIdentity(
+  apiKey: string,
+  filters: { cpfCnpj?: string; externalReference?: string },
+): Promise<AsaasCustomer[]> {
+  const customers: AsaasCustomer[] = [];
+  const seenIds = new Set<string>();
+  const pageSize = 100;
+  let expectedTotalCount: number | undefined;
+  for (let page = 0; page < 100; page += 1) {
+    const offset = page * pageSize;
+    const response = await listCustomers({ apiKey, ...filters, offset, limit: pageSize });
+    if (
+      !response ||
+      !Array.isArray(response.data) ||
+      !Number.isInteger(response.totalCount) || response.totalCount < 0 ||
+      typeof response.hasMore !== 'boolean' ||
+      response.offset !== offset ||
+      response.limit !== pageSize
+    ) throw new Error('CUSTOMER_LOOKUP_INCOMPLETE:INVALID_PAGE');
+    if (expectedTotalCount !== undefined && expectedTotalCount !== response.totalCount) {
+      throw new Error('CUSTOMER_LOOKUP_INCOMPLETE:TOTAL_COUNT_CHANGED');
+    }
+    if (response.hasMore && response.data.length !== pageSize) {
+      throw new Error('CUSTOMER_LOOKUP_INCOMPLETE:SHORT_PAGE_WITH_MORE');
+    }
+    expectedTotalCount = response.totalCount;
+    const collected = offset + response.data.length;
+    if (collected > response.totalCount || response.hasMore === (collected >= response.totalCount)) {
+      throw new Error('CUSTOMER_LOOKUP_INCOMPLETE:TOTAL_COUNT_MISMATCH');
+    }
+    if (response.data.some((customer) => {
+      const id = typeof customer?.id === 'string' ? customer.id.trim() : '';
+      if (!id || seenIds.has(id)) return true;
+      seenIds.add(id);
+      return false;
+    })) throw new Error('CUSTOMER_LOOKUP_INCOMPLETE:REPEATED_OR_INVALID_ID');
+    customers.push(...response.data);
+    if (!response.hasMore) return customers;
+    if (response.data.length === 0) throw new Error('CUSTOMER_LOOKUP_INCOMPLETE:EMPTY_PAGE_WITH_MORE');
+  }
+  throw new Error('CUSTOMER_LOOKUP_INCOMPLETE:PAGE_LIMIT_REACHED');
 }
 
 async function persistCustomerId(
@@ -627,12 +672,11 @@ export async function ensureAsaasCustomerForPayer(input: {
 
     try {
       step = 'LIST_EXTERNAL_REFERENCE';
-      const byExternalReference = await listCustomers({
-        apiKey,
-        externalReference,
-        limit: 1,
-      });
-      existingCustomer = pickExistingCustomer(byExternalReference.data ?? []);
+      const byExternalReference = await listAllCustomersByIdentity(apiKey, { externalReference });
+      if (byExternalReference.some((customer) => customer.externalReference !== externalReference)) {
+        throw new Error('CUSTOMER_LOOKUP_EXTERNAL_REFERENCE_MISMATCH');
+      }
+      existingCustomer = pickExistingCustomer(byExternalReference);
       if (existingCustomer) assertCustomerIdentity(existingCustomer, cpfCnpj);
     } catch (error) {
       // Se externalReference der 400, é inválido - retornar erro claro
@@ -657,18 +701,31 @@ export async function ensureAsaasCustomerForPayer(input: {
     // 2) Se não achou por externalReference, buscar por CPF/CNPJ
     if (!existingCustomer) {
       step = 'LIST_CPF';
-      const byCpfCnpj = await listCustomers({
-        apiKey,
-        cpfCnpj,
-        limit: 5,
-      });
+      const byCpfCnpj = await listAllCustomersByIdentity(apiKey, { cpfCnpj });
       existingCustomer = pickExistingCustomer(
-        (byCpfCnpj.data ?? []).filter((customer) => digits(customer.cpfCnpj) === cpfCnpj),
+        byCpfCnpj.filter((customer) => digits(customer.cpfCnpj) === cpfCnpj),
       );
     }
 
     // 3) Se encontrou, atualizar via PUT
     if (existingCustomer?.id) {
+      if (existingCustomer.externalReference === externalReference) {
+        const identityConfirmation = await createCustomerWithOutboundOperation({
+          contaId: input.contaId,
+          apiKey,
+          data: { ...createPayload, externalReference },
+          payerIdentity: { type: input.payer.type, id: input.payer.id! },
+          lookupOnly: true,
+        });
+        if (!identityConfirmation.ok) {
+          return {
+            ok: false,
+            error: identityConfirmation.disposition === 'RECONCILIATION' ? 'TEMPORARY_ERROR' : 'TEMPORARY_ERROR',
+            message: identityConfirmation.message,
+          };
+        }
+        existingCustomer = identityConfirmation.customer;
+      }
       assertCustomerIdentity(existingCustomer, cpfCnpj);
       if (input.persist !== false) {
         externalReference = await persistCustomerId(
@@ -743,10 +800,21 @@ export async function ensureAsaasCustomerForPayer(input: {
 
     // 4) Se não existe, criar via POST único (sem minimal + update)
     step = 'CREATE_CUSTOMER';
-    const created = await createCustomer({
+    const creation = await createCustomerWithOutboundOperation({
+      contaId: input.contaId,
       apiKey,
-      data: createPayload,
+      data: { ...createPayload, externalReference },
+      payerIdentity: { type: input.payer.type, id: input.payer.id! },
     });
+    if (!creation.ok) {
+      return {
+        ok: false,
+        error: creation.status === 400 ? 'PAYER_INVALID' : creation.disposition === 'FAILED' ? 'ASAAS_ERROR' : 'TEMPORARY_ERROR',
+        message: creation.message,
+        status: creation.status,
+      };
+    }
+    const created = creation.customer;
 
     if (!created?.id) {
       return {
@@ -775,7 +843,7 @@ export async function ensureAsaasCustomerForPayer(input: {
       ok: true,
       customerId: created.id,
       externalReference,
-      reused: false,
+      reused: creation.reused,
     };
   } catch (error) {
     if (

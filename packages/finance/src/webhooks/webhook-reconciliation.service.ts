@@ -32,6 +32,7 @@ import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-sn
 import { reconcileEnrollmentFeeProjections } from '../projections/enrollment-fee-projection.service';
 import { classifyAsaasOperationalError } from '../foundation/asaas-operational-error';
 import { reconcilePaidReservedStoreSales } from '../use-cases/store-inventory';
+import { assertCompleteAsaasPage } from '../use-cases/asaas-pagination';
 import {
   createStructuredLog,
   normalizeMetricDimensions,
@@ -1054,7 +1055,13 @@ export async function recoverStuckWebhooks(
 
   const stuck = await prisma.webhookAsaas.findMany({
     where,
-    select: { id: true },
+    select: {
+      id: true,
+      tentativas: true,
+      ultimaTentativaEm: true,
+      recebidoEm: true,
+      contaId: true,
+    },
     orderBy: { recebidoEm: 'asc' },
     take: limit,
   });
@@ -1063,19 +1070,30 @@ export async function recoverStuckWebhooks(
     return { recovered: 0, ids: [], generatedAt: new Date() };
   }
 
-  const ids = stuck.map((s) => s.id);
-
-  const result = await prisma.webhookAsaas.updateMany({
-    where: { id: { in: ids } },
-    data: {
-      status: 'ERRO',
-      ultimoErro: `Recovered from stuck PROCESSANDO (timeout: ${timeoutMinutes}min)`,
-    },
-  });
+  const recoveredIds: string[] = [];
+  for (const webhook of stuck) {
+    const result = await prisma.webhookAsaas.updateMany({
+      where: {
+        id: webhook.id,
+        contaId: webhook.contaId,
+        status: 'PROCESSANDO',
+        tentativas: webhook.tentativas,
+        OR: [
+          { ultimaTentativaEm: { lt: threshold } },
+          { ultimaTentativaEm: null, recebidoEm: { lt: threshold } },
+        ],
+      },
+      data: {
+        status: 'ERRO',
+        ultimoErro: `Recovered from stuck PROCESSANDO (timeout: ${timeoutMinutes}min)`,
+      },
+    });
+    if (result.count === 1) recoveredIds.push(webhook.id);
+  }
 
   return {
-    recovered: result.count,
-    ids,
+    recovered: recoveredIds.length,
+    ids: recoveredIds,
     generatedAt: new Date(),
   };
 }
@@ -1818,6 +1836,12 @@ export async function reconcileWithAsaas(
         limit: 100,
         offset: 0,
       });
+      try {
+        assertCompleteAsaasPage(remotePayments, 0, 100);
+      } catch (error) {
+        errors.push(`INSTALLMENT:${plan.asaasInstallmentId}:PAYMENT_LOOKUP_INCOMPLETE:${safeReconciliationError(error)}`);
+        continue;
+      }
 
       const localCount = plan.source === 'ACADEMIC'
         ? await prisma.charge.count({
@@ -1957,6 +1981,7 @@ export interface BilateralDriftItem {
 export interface BilateralReconcileResult {
   contaId: string;
   dryRun: boolean;
+  complete: boolean;
   asaasPaymentsScanned: number;
   driftItems: BilateralDriftItem[];
   reconciled: number;
@@ -1993,12 +2018,16 @@ export async function reconcileBilateral(
   const driftItems: BilateralDriftItem[] = [];
   let asaasPaymentsScanned = 0;
   let reconciled = 0;
+  let paginationComplete = false;
+  let expectedPaymentCount: number | undefined;
+  const seenAsaasPaymentIds = new Set<string>();
 
   const credentials = await loadAsaasCredentials(options.contaId);
   if (!credentials?.apiKey) {
     return {
       contaId: options.contaId,
       dryRun,
+      complete: false,
       asaasPaymentsScanned: 0,
       driftItems: [],
       reconciled: 0,
@@ -2027,7 +2056,36 @@ export async function reconcileBilateral(
       break;
     }
 
+    if (
+      !response ||
+      !Array.isArray(response.data) ||
+      typeof response.hasMore !== 'boolean' ||
+      response.offset !== page * pageSize ||
+      response.limit !== pageSize
+    ) {
+      errors.push(`listPayments:page${page}:invalid_or_incomplete_response`);
+      break;
+    }
+    try {
+      expectedPaymentCount = assertCompleteAsaasPage(response, page * pageSize, pageSize, expectedPaymentCount);
+    } catch {
+      errors.push(`listPayments:page${page}:total_count_inconsistent`);
+      break;
+    }
+
     const payments: AsaasPayment[] = response.data;
+    const pagePaymentIds = new Set<string>();
+    const hasInvalidOrRepeatedId = payments.some((payment) => {
+      const id = typeof payment?.id === 'string' ? payment.id.trim() : '';
+      if (!id || pagePaymentIds.has(id) || seenAsaasPaymentIds.has(id)) return true;
+      pagePaymentIds.add(id);
+      return false;
+    });
+    if (hasInvalidOrRepeatedId) {
+      errors.push(`listPayments:page${page}:repeated_or_invalid_payment_id`);
+      break;
+    }
+    pagePaymentIds.forEach((id) => seenAsaasPaymentIds.add(id));
     asaasPaymentsScanned += payments.length;
 
     for (const payment of payments) {
@@ -2043,7 +2101,7 @@ export async function reconcileBilateral(
 
           if (localCharge && localCharge.status !== 'CANCELED') {
             if (!dryRun) {
-              await handlePaymentWebhook(options.contaId, {
+              const handlerResult = await handlePaymentWebhook(options.contaId, {
                 event: 'PAYMENT_DELETED',
                 payment: {
                   id: payment.id,
@@ -2064,6 +2122,11 @@ export async function reconcileBilateral(
                   billingType: payment.billingType ?? null,
                 },
               });
+              if (!handlerResult.success) {
+                errors.push(`reconcile:${payment.id}:${handlerResult.error ?? 'handler_returned_unsuccessful'}`);
+              } else {
+                reconciled += 1;
+              }
             }
             driftItems.push({
               asaasPaymentId: payment.id,
@@ -2146,7 +2209,7 @@ export async function reconcileBilateral(
             });
             try {
               const event = PAYMENT_EVENT_BY_STATUS[paymentStatus] ?? 'PAYMENT_UPDATED';
-              await handlePaymentWebhook(options.contaId, {
+              const handlerResult = await handlePaymentWebhook(options.contaId, {
                 event,
                 eventId: `reconciliation:${payment.id}:${paymentStatus}`,
                 source: 'RECONCILIATION',
@@ -2170,7 +2233,11 @@ export async function reconcileBilateral(
                   deleted: payment.deleted ?? false,
                 },
               });
-              reconciled += 1;
+              if (!handlerResult.success) {
+                errors.push(`reconcile:${payment.id}:${handlerResult.error ?? 'handler_returned_unsuccessful'}`);
+              } else {
+                reconciled += 1;
+              }
             } catch (error) {
               errors.push(`reconcile:${payment.id}:${error instanceof Error ? error.message : String(error)}`);
             }
@@ -2181,10 +2248,18 @@ export async function reconcileBilateral(
       }
     }
 
-    if (!response.hasMore) break;
+    if (!response.hasMore) {
+      paginationComplete = true;
+      break;
+    }
+    if (page === maxPages - 1) {
+      errors.push(`listPayments:pagination_incomplete:max_pages_reached:${maxPages}`);
+      break;
+    }
   }
 
-  if (!dryRun) {
+  const complete = paginationComplete && errors.length === 0;
+  if (!dryRun && complete) {
     await alertService
       .alertReconciliationDrift(options.contaId, {
         payments: driftItems.length,
@@ -2204,6 +2279,7 @@ export async function reconcileBilateral(
   return {
     contaId: options.contaId,
     dryRun,
+    complete,
     asaasPaymentsScanned,
     driftItems,
     reconciled,

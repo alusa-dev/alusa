@@ -11,7 +11,29 @@ vi.mock('next-auth/react', () => ({
 vi.mock('@/components/ui/dialog', () => ({
   Dialog: ({ open, children }: { open: boolean; children: React.ReactNode }) =>
     open ? <div data-testid="dialog-root">{children}</div> : null,
-  DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogContent: ({
+    children,
+    className,
+    fullScreenMobile,
+    disableBackdropBlur,
+    overlayClass,
+  }: {
+    children: React.ReactNode;
+    className?: string;
+    fullScreenMobile?: boolean;
+    disableBackdropBlur?: boolean;
+    overlayClass?: string;
+  }) => (
+    <div
+      data-testid="dialog-content"
+      data-fullscreen-mobile={fullScreenMobile ? 'true' : 'false'}
+      data-disable-backdrop-blur={disableBackdropBlur ? 'true' : 'false'}
+      data-overlay-class={overlayClass}
+      className={className}
+    >
+      {children}
+    </div>
+  ),
   DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DialogTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DialogDescription: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -27,6 +49,7 @@ describe('ExternalAsaasOnboardingPersistentModal', () => {
   beforeEach(() => {
     cleanup();
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
   });
 
   afterEach(() => {
@@ -53,6 +76,13 @@ describe('ExternalAsaasOnboardingPersistentModal', () => {
     render(<ExternalAsaasOnboardingPersistentModal />);
 
     expect(screen.getByTestId('dialog-root')).toBeInTheDocument();
+    expect(screen.getByTestId('dialog-content')).toHaveAttribute('data-fullscreen-mobile', 'true');
+    expect(screen.getByTestId('dialog-content')).toHaveAttribute('data-disable-backdrop-blur', 'true');
+    expect(screen.getByTestId('dialog-content')).toHaveAttribute(
+      'data-overlay-class',
+      'alusa-registration-wizard-overlay',
+    );
+    expect(screen.getByTestId('dialog-content')).toHaveClass('rounded-[20px]', 'max-w-[400px]');
     expect(screen.getByTestId('external-asaas-onboarding')).toHaveTextContent('variant:modal');
   });
 
@@ -63,6 +93,75 @@ describe('ExternalAsaasOnboardingPersistentModal', () => {
         user: {
           role: 'ADMIN',
           financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
+          externalAsaasOnboardingStatus: 'READY',
+          asaasApiKeyStatus: 'CONNECTED',
+        },
+      },
+    });
+
+    const { ExternalAsaasOnboardingPersistentModal } = await import(
+      '@/features/account/components/asaas-onboarding/ExternalAsaasOnboardingPersistentModal'
+    );
+
+    render(<ExternalAsaasOnboardingPersistentModal />);
+
+    expect(screen.queryByTestId('dialog-root')).not.toBeInTheDocument();
+  });
+
+  it('nao força o modal em desenvolvimento para conta BaaS', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    useSessionMock.mockReturnValue({
+      status: 'authenticated',
+      data: {
+        user: {
+          role: 'FINANCEIRO',
+          financeIntegrationMode: 'BAAS',
+          externalAsaasOnboardingStatus: 'READY',
+          asaasApiKeyStatus: 'CONNECTED',
+        },
+      },
+    });
+
+    const { ExternalAsaasOnboardingPersistentModal } = await import(
+      '@/features/account/components/asaas-onboarding/ExternalAsaasOnboardingPersistentModal'
+    );
+
+    render(<ExternalAsaasOnboardingPersistentModal />);
+
+    expect(screen.queryByTestId('dialog-root')).not.toBeInTheDocument();
+  });
+
+  it('nao abre o modal em desenvolvimento sem modo externo mesmo com papel ADMIN', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    useSessionMock.mockReturnValue({
+      status: 'authenticated',
+      data: {
+        user: {
+          role: 'USER',
+          financeIntegrationMode: 'BAAS',
+          externalAsaasOnboardingStatus: 'READY',
+          asaasApiKeyStatus: 'CONNECTED',
+        },
+      },
+    });
+
+    const { ExternalAsaasOnboardingPersistentModal } = await import(
+      '@/features/account/components/asaas-onboarding/ExternalAsaasOnboardingPersistentModal'
+    );
+
+    render(<ExternalAsaasOnboardingPersistentModal />);
+
+    expect(screen.queryByTestId('dialog-root')).not.toBeInTheDocument();
+  });
+
+  it('preserva a regra de producao quando a conta BaaS esta saudavel', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    useSessionMock.mockReturnValue({
+      status: 'authenticated',
+      data: {
+        user: {
+          role: 'ADMIN',
+          financeIntegrationMode: 'BAAS',
           externalAsaasOnboardingStatus: 'READY',
           asaasApiKeyStatus: 'CONNECTED',
         },

@@ -24,7 +24,7 @@ async function fetchVerification(
   const url = fresh ? '/api/account/verification-status?fresh=1' : '/api/account/verification-status';
   const res = await fetch(url, {
     headers: { Accept: 'application/json' },
-    cache: fresh ? 'no-store' : 'default',
+    cache: 'no-store',
   });
   const json = await res.json().catch(() => null);
   const retryAfterMs = parseRetryAfterMs(res.headers.get('Retry-After'));
@@ -123,7 +123,7 @@ export function useAccountVerification(opts?: {
             if (notReadyRetryRef.current.timer) clearTimeout(notReadyRetryRef.current.timer);
             notReadyRetryRef.current.timer = setTimeout(() => {
               if (!mountedRef.current) return;
-              void load(true, true);
+              void load(false, true);
             }, delay);
           }
         } else if (mountedRef.current) {
@@ -177,7 +177,8 @@ export function useAccountVerification(opts?: {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
         return;
       }
-      void load(true, true);
+      // Auto refresh reads the local KYC read model. Provider reconciliation is webhook/job driven.
+      void load(false, true);
     }, getPollIntervalMs(verification));
 
     return () => clearInterval(id);

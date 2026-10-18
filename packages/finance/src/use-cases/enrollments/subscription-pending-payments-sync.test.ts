@@ -18,9 +18,12 @@ describe('syncEditableSubscriptionPayments', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.listSubscriptionPayments.mockImplementation(async (_id, params) => ({
+      offset: params.offset ?? 0,
+      limit: params.limit ?? 100,
       data: params.status === 'PENDING'
         ? [{ id: 'payment-1', value: 120, dueDate: '2026-11-10', billingType: 'BOLETO' }]
         : [],
+      totalCount: params.status === 'PENDING' ? 1 : 0,
       hasMore: false,
     }));
     mocks.getPayment.mockResolvedValue({
@@ -31,6 +34,17 @@ describe('syncEditableSubscriptionPayments', () => {
       discount: { value: 0, type: 'PERCENTAGE', dueDateLimitDays: 0 },
     });
     mocks.updatePayment.mockResolvedValue({});
+  });
+
+  it('falha fechado quando hasMore está ausente e não atualiza pagamentos', async () => {
+    mocks.listSubscriptionPayments.mockResolvedValueOnce({
+      data: [{ id: 'payment-1', value: 120, dueDate: '2026-11-10', billingType: 'BOLETO' }],
+      offset: 0, limit: 100, totalCount: 1,
+    } as never);
+    await expect(syncEditableSubscriptionPayments({
+      contaId: 'conta-1', asaasSubscriptionId: 'sub-1', terms: { interest: { value: 1 } },
+    })).rejects.toThrow('ASAAS_LIST_INCOMPLETE:INVALID_PAGE');
+    expect(mocks.updatePayment).not.toHaveBeenCalled();
   });
 
   it('reporta divergência quando o Asaas mantém os termos anteriores', async () => {

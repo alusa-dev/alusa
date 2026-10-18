@@ -171,7 +171,7 @@ describe('handleInstallmentWebhook', () => {
       id: 'ip1',
       status: 'ACTIVE',
       statusUpdatedAt: new Date('2026-01-01T00:00:00.000Z'),
-      asaasInstallmentId: null,
+      asaasInstallmentId: 'asaas_inst_1',
       externalReference: 'installmentPlan:ip1',
       installmentCount: 3,
     };

@@ -90,7 +90,8 @@ describe('useAccountVerification', () => {
     await flushAsyncWork();
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/account/verification-status?fresh=1');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/account/verification-status');
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ cache: 'no-store' });
   });
 
   it('deduplica refresh concorrente enquanto já existe request fresh em voo', async () => {
@@ -172,7 +173,7 @@ describe('useAccountVerification', () => {
     await flushAsyncWork();
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/account/verification-status?fresh=1');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/account/verification-status');
   });
 
   it('expõe provisioningHint quando o endpoint 202 inclui subaccountProvisioning', async () => {

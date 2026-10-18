@@ -87,10 +87,12 @@ async function computeStatusViaAsaas(params: {
   const payments: Array<{ id: string; status: string; deleted?: boolean }> = [];
   const seenIds = new Set<string>();
   const pageSize = 100;
+  const maxPages = 100;
   let offset = 0;
   let expectedTotalCount: number | undefined;
+  let lookupComplete = false;
 
-  while (true) {
+  for (let pageIndex = 0; pageIndex <= maxPages; pageIndex += 1) {
     const page = await listInstallmentPayments({
       apiKey: credentials.apiKey,
       installmentId: params.asaasInstallmentId,
@@ -164,6 +166,7 @@ async function computeStatusViaAsaas(params: {
         });
         return { status: null, method: 'asaas', details: { lookupComplete: false } };
       }
+      lookupComplete = true;
       break;
     }
 
@@ -173,6 +176,15 @@ async function computeStatusViaAsaas(params: {
     if (offset > 10_000) {
       return { status: null, method: 'asaas', details: { lookupComplete: false } };
     }
+  }
+
+  if (!lookupComplete) {
+    logFinanceOperationalEvent({
+      severity: 'error',
+      eventName: 'finance.webhook.installment.payments_lookup.failed',
+      error: new Error('ASAAS_INSTALLMENT_PAYMENT_PAGE_LIMIT_REACHED'),
+    });
+    return { status: null, method: 'asaas', details: { lookupComplete: false } };
   }
 
   const activePayments = payments.filter((p) => !p.deleted);

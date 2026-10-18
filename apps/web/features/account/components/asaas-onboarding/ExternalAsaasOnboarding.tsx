@@ -11,6 +11,8 @@ import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { isExternalAsaasApiKeyHealthy } from '@/lib/external-asaas-api-key-health';
+import { SectionCard } from '@/components/shared/wizard/layout';
+import { wizardFieldInputClass } from '@/components/shared/wizard/field-styles';
 
 type SnapshotResponse = {
   data: {
@@ -307,7 +309,7 @@ export function ExternalAsaasOnboarding({ variant = 'page' }: ExternalAsaasOnboa
   if (loading) {
     if (isModal) {
       return (
-        <div className="flex min-h-[320px] items-center justify-center px-5 py-10">
+        <div className="flex min-h-[320px] items-center justify-center px-5 py-10 max-md:h-full max-md:min-h-0">
           <Loader2 className="h-5 w-5 animate-spin text-slate-400" aria-label="Carregando" />
         </div>
       );
@@ -318,63 +320,83 @@ export function ExternalAsaasOnboarding({ variant = 'page' }: ExternalAsaasOnboa
 
   if (isModal) {
     return (
-      <form className="flex flex-col" onSubmit={handleSubmit}>
-        <div className="relative border-b border-gray-100 px-6 py-5 text-left">
-          <span className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-accent/40 to-transparent" />
-          <h2 className="text-base font-semibold text-slate-900">Conectar Asaas à Alusa</h2>
-          <p className="mt-1.5 max-w-[22rem] text-sm leading-relaxed text-slate-600">
+      <form
+        className="external-asaas-modal flex h-full max-h-[min(640px,calc(100dvh-2rem))] min-h-[420px] flex-col overflow-hidden rounded-[20px] bg-white p-0 alusa-dark:bg-[color:var(--color-bg-card)] max-md:h-full max-md:max-h-full max-md:min-h-0 max-md:rounded-none"
+        onSubmit={handleSubmit}
+      >
+        <div className="relative shrink-0 border-b border-slate-100 bg-white px-6 pb-4 pt-6 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] max-md:px-4 max-md:pb-4 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))]">
+          <h2 className="text-lg font-medium tracking-tight text-[#0f0f0f] alusa-dark:text-[color:var(--color-text-primary)]">
+            Conectar Asaas à Alusa
+          </h2>
+          <p className="mt-1 max-w-[34rem] text-sm text-[#5c5c5c] alusa-dark:text-[color:var(--color-text-secondary)]">
             Conecte sua conta existente para concluir a etapa financeira.
           </p>
         </div>
 
-        <div className="space-y-5 px-6 py-5">
-          <label className="block space-y-2 text-left">
-            <span className="text-sm font-medium text-slate-900">API key do Asaas</span>
-            <div className="relative">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={() => setShowApiKey((current) => !current)}
-                disabled={submitFeedback === 'loading' || submitFeedback === 'success'}
-                aria-label={showApiKey ? 'Ocultar API key' : 'Mostrar API key'}
-                className="absolute right-1 top-1/2 z-10 h-8 w-8 -translate-y-1/2 text-slate-500 hover:text-slate-700"
-              >
-                {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </Button>
-              <Input
-                type={showApiKey ? 'text' : 'password'}
-                value={form.apiKey}
-                onChange={(event) => handleApiKeyChange(event.target.value)}
-                disabled={submitFeedback === 'loading' || submitFeedback === 'success'}
-                className="h-10 pr-10"
-                placeholder={maskedPlaceholder}
-                required
-              />
-            </div>
-          </label>
+        <div className="min-h-0 flex-1 overflow-y-auto bg-white px-6 py-4 alusa-dark:bg-[color:var(--color-bg-card-soft)] max-md:p-4">
+          <div className="mx-auto w-full max-w-5xl">
+            <SectionCard variant="open">
+              <label className="grid gap-2 text-left text-xs font-medium leading-4 text-[#25232a] alusa-dark:text-[color:var(--color-text-primary)]">
+                <span>API key do Asaas</span>
+                <div className="relative">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setShowApiKey((current) => !current)}
+                    disabled={submitFeedback === 'loading' || submitFeedback === 'success'}
+                    aria-label={showApiKey ? 'Ocultar API key' : 'Mostrar API key'}
+                    className="absolute right-1 top-1/2 z-10 h-8 w-8 -translate-y-1/2 text-slate-500 hover:!bg-transparent hover:text-slate-700 active:!bg-transparent focus-visible:!bg-transparent focus-visible:ring-2 focus-visible:ring-[#A94DFF]/50 focus-visible:ring-offset-2"
+                  >
+                    {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </Button>
+                  <Input
+                    name="asaas-api-key"
+                    type="text"
+                    value={form.apiKey}
+                    onChange={(event) => handleApiKeyChange(event.target.value)}
+                    disabled={submitFeedback === 'loading' || submitFeedback === 'success'}
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    className={cn(
+                      wizardFieldInputClass,
+                      showApiKey ? '[-webkit-text-security:none]' : '[-webkit-text-security:disc]',
+                      'rounded-[10px] pr-11 disabled:cursor-not-allowed disabled:opacity-60',
+                    )}
+                    placeholder={maskedPlaceholder}
+                    required
+                  />
+                </div>
+              </label>
 
-          <div>
-            <p className="text-left text-sm font-medium text-slate-900">Conectar o Asaas permite:</p>
-            <ul className="mt-2 space-y-2">
-              {CONNECT_BENEFITS.map((benefit) => (
-                <li key={benefit} className="flex items-start gap-2.5 text-left text-sm leading-snug text-slate-600">
-                  <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#f4ecfd] text-brand-accent">
-                    <Check className="h-3 w-3" strokeWidth={2.5} />
-                  </span>
-                  <span>{benefit}</span>
-                </li>
-              ))}
-            </ul>
+              <section className="rounded-[12px] border border-slate-200 bg-white px-4 py-3.5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-elevated)]">
+                <div className="mx-auto w-full max-w-[320px]">
+                  <p className="text-[13px] font-semibold leading-5 text-slate-800 alusa-dark:text-[color:var(--color-text-primary)]">
+                    Conectar o Asaas permite:
+                  </p>
+                  <ul className="mt-2.5 space-y-2">
+                    {CONNECT_BENEFITS.map((benefit) => (
+                      <li key={benefit} className="flex items-start gap-2.5 text-left text-[13px] leading-[1.45] text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
+                        <span className="mt-px inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-[#f3eafd] text-[#64339a] alusa-dark:bg-[color:var(--color-bg-card)] alusa-dark:text-[color:var(--color-sidebar-accent)]">
+                          <Check className="h-2.5 w-2.5" strokeWidth={2.75} />
+                        </span>
+                        <span>{benefit}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </section>
+            </SectionCard>
           </div>
         </div>
 
-        <div className="border-t border-slate-200 bg-slate-50 px-6 py-4">
-          <div className="flex items-center justify-between w-full">
+        <div className="flex shrink-0 flex-col-reverse items-stretch gap-2 border-t border-slate-100 bg-white px-6 pb-6 pt-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] max-md:p-4 max-md:pb-[calc(1rem+env(safe-area-inset-bottom,0px))] md:flex-row md:items-center md:justify-between md:gap-3">
             <Button
-              variant="outline"
+              variant="wizardSecondary"
               asChild
-              className="h-10 gap-2 border-slate-200 bg-white px-3.5 text-slate-600 shadow-none hover:bg-slate-100"
+              className="h-10 min-h-10 w-full min-w-0 gap-2 rounded-[10px] border border-transparent bg-[#eff3f8] px-5 font-normal text-[#303030] shadow-none hover:!border-[#2563eb] hover:!bg-[#2563eb] hover:!text-white active:!border-[#1d4ed8] active:!bg-[#1d4ed8] max-md:w-full alusa-dark:bg-[color:var(--color-bg-elevated)] alusa-dark:text-[color:var(--color-text-primary)] md:w-[120px]"
             >
               <a href="https://youtu.be/tULtfD8vEfg" target="_blank" rel="noopener noreferrer">
                 <Play className="h-3.5 w-3.5 fill-current" />
@@ -387,7 +409,12 @@ export function ExternalAsaasOnboarding({ variant = 'page' }: ExternalAsaasOnboa
               disabled={submitButtonDisabled}
               aria-busy={submitFeedback === 'loading'}
               aria-live="polite"
-              className={getSubmitButtonClassName(submitFeedback)}
+              variant="wizardPrimary"
+              className={cn(
+                getSubmitButtonClassName(submitFeedback, true),
+                'h-10 min-h-10 w-full min-w-0 rounded-[10px] px-5 font-normal shadow-none max-md:w-full md:w-[120px]',
+                submitFeedback === 'idle' && 'bg-[#512a82] hover:bg-[#512a82]',
+              )}
             >
               {submitFeedback === 'loading' ? (
                 <Loader2 className="h-4 w-4 animate-spin text-sky-200" aria-hidden="true" />
@@ -397,7 +424,6 @@ export function ExternalAsaasOnboarding({ variant = 'page' }: ExternalAsaasOnboa
               ) : null}
               {submitButtonLabel}
             </Button>
-          </div>
         </div>
       </form>
     );

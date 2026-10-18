@@ -12,8 +12,6 @@ import { AsaasSeal } from '@/components/shared/AsaasSeal';
 import {
   useAccountVerification,
   useKycUpload,
-  KycActionCard,
-  KycExternalOnboardingCard,
   KycUploadModal,
   statusBadge,
   verificationStatusBadge,
@@ -77,12 +75,26 @@ export default function VerificacaoPage() {
   const { upload, uploading, error: uploadError } = useKycUpload();
 
   const [uploadModal, setUploadModal] = useState<VerificationAction | null>(null);
+  const [approvedModalOpen, setApprovedModalOpen] = useState(false);
   const [sandboxApproving, setSandboxApproving] = useState(false);
   const sandboxApprovingRef = useRef(false);
   const [verifyingActionId, setVerifyingActionId] = useState<string | null>(null);
 
   const pendingActions = verification?.actions ?? [];
   const hasWaitingProvider = pendingActions.some((a) => a.mode === 'WAITING_PROVIDER');
+  const documentAction = pendingActions.find(
+    (action) => (action.mode !== 'WAITING_PROVIDER' || action.submissionMethod === 'EXTERNAL_ONBOARDING_URL')
+      && action.mode !== 'PROVISIONING_TIMEOUT'
+      && action.documentType?.trim().toUpperCase() !== 'IDENTIFICATION_SELFIE',
+  ) ?? null;
+  const selfieAction = pendingActions.find(
+    (action) => action.documentType?.trim().toUpperCase() === 'IDENTIFICATION_SELFIE'
+      && (action.mode !== 'WAITING_PROVIDER' || action.submissionMethod === 'EXTERNAL_ONBOARDING_URL')
+      && action.mode !== 'PROVISIONING_TIMEOUT',
+  ) ?? null;
+  const documentsApproved = verification?.areas.some(
+    (area) => area.key === 'documentation' && area.status === 'APPROVED',
+  ) ?? false;
   const provisioningBanner = provisioningHint ? provisioningCopy(provisioningHint) : null;
 
   const handleSandboxApprove = async () => {
@@ -141,6 +153,47 @@ export default function VerificacaoPage() {
     setUploadModal(action);
   };
 
+  const handleDocumentAction = () => {
+    if (documentsApproved) {
+      setUploadModal(null);
+      setApprovedModalOpen(true);
+      return;
+    }
+    if (!documentAction) {
+      return;
+    }
+    if (documentAction.mode === 'WAITING_PROVIDER') {
+      void handleVerifyExternalAction(documentAction.id);
+      return;
+    }
+    if (documentAction.mode === 'REDIRECT') {
+      if (documentAction.isRedirectExpired || !documentAction.redirectUrl) {
+        void handleVerifyExternalAction(documentAction.id);
+        return;
+      }
+      window.open(documentAction.redirectUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    void handleOpenAction(documentAction);
+  };
+
+  const handleSelfieAction = () => {
+    if (!selfieAction) return;
+    if (selfieAction.mode === 'WAITING_PROVIDER') {
+      void handleVerifyExternalAction(selfieAction.id);
+      return;
+    }
+    if (selfieAction.mode === 'REDIRECT') {
+      if (selfieAction.isRedirectExpired || !selfieAction.redirectUrl) {
+        void handleVerifyExternalAction(selfieAction.id);
+        return;
+      }
+      window.open(selfieAction.redirectUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    void handleOpenAction(selfieAction);
+  };
+
   if (!isAuthenticated || !isAdmin) {
     if (loading) return null;
     return (
@@ -170,9 +223,14 @@ export default function VerificacaoPage() {
   }
 
   const globalBadge = verification ? verificationStatusBadge(verification.status) : null;
+  const commercialArea = verification?.areas.find((area) => area.key === 'commercialInfo');
+  const documentArea = verification?.areas.find((area) => area.key === 'documentation');
+  const commercialBadge = commercialArea ? statusBadge(commercialArea.status) : null;
+  const documentBadge = documentArea ? statusBadge(documentArea.status) : null;
+  const sandboxApprovalAvailable = verification?.isSandbox && pendingActions.some((action) => action.mode === 'PROVISIONING_TIMEOUT');
 
   return (
-      <div className="space-y-6 pr-3 md:pr-5">
+    <div className="space-y-6 pr-3 md:pr-5">
       {provisioningBanner ? (
         <div
           className="rounded-lg border border-amber-200 bg-amber-50/80 p-4 text-sm dark:border-amber-900/50 dark:bg-amber-950/30"
@@ -190,92 +248,155 @@ export default function VerificacaoPage() {
           ) : null}
         </div>
       ) : null}
-      {/* Cabeçalho com status global */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold">Verificação da conta</h2>
-          {globalBadge && <Badge variant={globalBadge.variant}>{globalBadge.label}</Badge>}
+          <h2 className="text-xl font-semibold tracking-tight text-foreground">Situação cadastral</h2>
         </div>
         {loading && (
-          <span className="text-xs text-muted-foreground animate-pulse">Atualizando...</span>
+          <span className="text-xs text-muted-foreground animate-pulse" role="status">Atualizando...</span>
         )}
       </div>
 
-      {/* Motivos de rejeição */}
-      {verification && verification.rejectReasons.length > 0 && (
-        <div className="p-4 rounded-lg border bg-red-50 border-red-200">
-          <p className="font-medium text-sm">Motivos da rejeição:</p>
-          <ul className="list-disc list-inside text-sm text-muted-foreground mt-1">
-            {verification.rejectReasons.map((reason, i) => (
-              <li key={i}>{reason}</li>
-            ))}
-          </ul>
+      {!verification ? (
+        <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          <p>O estado da verificação está sendo preparado. A atualização automática virá do webhook ou da reconciliação.</p>
+          <Button type="button" variant="outline" size="sm" onClick={() => void refresh(true)}>
+            Consultar agora
+          </Button>
         </div>
-      )}
+      ) : null}
 
-      {/* Áreas de status */}
-      {verification && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {verification.areas.map((area) => {
-            const badge = statusBadge(area.status);
-            return (
-              <div key={area.key} className="flex items-center justify-between rounded-lg border p-3">
-                <div>
-                  <p className="text-sm font-medium">{area.label}</p>
-                  <p className="text-xs text-muted-foreground">{area.description}</p>
-                </div>
-                <Badge variant={badge.variant}>{badge.label}</Badge>
+      {verification ? (
+        <>
+          <section className="overflow-hidden rounded-xl border border-border bg-card" aria-label="Etapas cadastrais">
+            <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+              <div className="min-w-0 space-y-1">
+                <h3 className="text-sm font-semibold text-foreground">1. Preenchimento dos Dados Comerciais</h3>
+          <p className="text-sm text-muted-foreground">
+                  <a href="/account/profile" className="text-primary underline underline-offset-4">Clique aqui</a>
+                  {' para editar seus dados comerciais.'}
+                </p>
               </div>
-            );
-          })}
-        </div>
-      )}
+              {commercialBadge ? (
+                <Badge
+                  variant={commercialBadge.label === 'Aprovado' ? 'success' : commercialBadge.variant}
+                  className="shrink-0"
+                >
+                  {commercialBadge.label}
+                </Badge>
+              ) : null}
+            </div>
 
-      {/* Ações pendentes */}
-      <div className="space-y-3">
-        <h3 className="text-sm font-medium text-muted-foreground">Ações necessárias</h3>
+            <div className="border-t border-border/70" />
 
-        {/* Provedor ainda gerando os links — polling resolve automaticamente */}
-        {hasWaitingProvider && (
-          <p className="text-xs text-muted-foreground">
-            As etapas pendentes são verificadas automaticamente. Se um link externo ou upload interno for liberado, ele aparecerá aqui.
-          </p>
-        )}
+            <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+              <div className="min-w-0 space-y-1">
+                <h3 className="text-sm font-semibold text-foreground">2. Envio de documentos</h3>
+                <p className="text-sm text-muted-foreground">
+                  <button
+                    type="button"
+                    onClick={handleDocumentAction}
+                    disabled={(!documentAction && !documentsApproved) || (documentAction?.mode === 'REDIRECT' && verifyingActionId === documentAction.id)}
+                    aria-busy={Boolean(documentAction && verifyingActionId === documentAction.id)}
+                    className="text-left text-primary underline underline-offset-4 disabled:cursor-not-allowed disabled:text-muted-foreground"
+                  >
+                    Clique aqui
+                  </button>
+                  {' para enviar seus documentos.'}
+                </p>
+              </div>
+              {documentBadge ? (
+                <Badge
+                  variant={documentBadge.label === 'Aprovado' ? 'success' : documentBadge.variant}
+                  className="shrink-0"
+                >
+                  {documentBadge.label}
+                </Badge>
+              ) : null}
+            </div>
 
-        {pendingActions.length > 0 ? (
-          pendingActions.map((action) => (
-            action.mode === 'REDIRECT' ? (
-              <KycExternalOnboardingCard
-                key={action.id}
-                action={action}
-                verifying={verifyingActionId === action.id}
-                onVerify={async () => handleVerifyExternalAction(action.id)}
-              />
-            ) : (
-              <KycActionCard
-                key={action.id}
-                action={action}
-                onAction={handleOpenAction}
-                isSandbox={verification?.isSandbox}
-                onSandboxApprove={!sandboxApproving ? handleSandboxApprove : undefined}
-              />
-            )
-          ))
-        ) : (
-          <div className="rounded-lg border p-4 text-sm text-muted-foreground">
-            Nenhuma ação pendente no momento.
-          </div>
-        )}
-      </div>
+            {selfieAction ? (
+              <>
+                <div className="border-t border-border/70" />
+                <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+                  <div className="min-w-0 space-y-1">
+                    <h3 className="text-sm font-semibold text-foreground">3. Selfie de identificação</h3>
+                    <p className="text-sm text-muted-foreground">
+                      <button
+                        type="button"
+                        onClick={handleSelfieAction}
+                        disabled={selfieAction.mode === 'REDIRECT' && verifyingActionId === selfieAction.id}
+                        aria-busy={selfieAction.mode === 'REDIRECT' && verifyingActionId === selfieAction.id}
+                        className="text-left text-primary underline underline-offset-4 disabled:cursor-not-allowed disabled:text-muted-foreground"
+                      >
+                        Clique aqui
+                      </button>
+                      {' para enviar sua selfie de identificação.'}
+                    </p>
+                  </div>
+                  <Badge
+                    variant={selfieAction.status === 'REJECTED' ? 'destructive' : 'warning'}
+                    className="shrink-0"
+                  >
+                    {selfieAction.status === 'REJECTED' ? 'Rejeitado' : 'Pendente'}
+                  </Badge>
+                </div>
+              </>
+            ) : null}
+
+            {hasWaitingProvider ? (
+              <div className="flex flex-col gap-2 border-t border-border/70 px-4 py-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:px-5" role="status">
+                <span>As etapas pendentes são atualizadas por webhook e reconciliação. Você também pode verificar agora.</span>
+                <Button type="button" variant="outline" size="sm" onClick={() => void refresh(true)}>
+                  Verificar agora
+                </Button>
+              </div>
+            ) : null}
+            {sandboxApprovalAvailable ? (
+              <div className="border-t border-border/70 px-4 py-3 sm:px-5">
+                <Button size="sm" onClick={handleSandboxApprove} disabled={sandboxApproving}>
+                  {sandboxApproving ? 'Aprovando...' : 'Aprovar conta (sandbox)'}
+                </Button>
+              </div>
+            ) : null}
+          </section>
+
+          <section className="space-y-4 rounded-xl border border-border bg-card p-4 sm:p-5" aria-labelledby="approval-section-title">
+            <div className="flex items-center justify-between gap-3">
+              <h3 id="approval-section-title" className="text-sm font-semibold text-foreground">Aprovação geral:</h3>
+              {globalBadge && <Badge variant={globalBadge.variant}>{globalBadge.label}</Badge>}
+            </div>
+            <p className="text-sm text-muted-foreground">
+              O cadastro somente pode ir para aprovação após finalizadas as etapas anteriores.
+            </p>
+            {verification.rejectReasons.length > 0 ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4 dark:border-red-900/50 dark:bg-red-950/30">
+                <p className="text-sm font-medium text-red-950 dark:text-red-100">Motivos da rejeição:</p>
+                <ul className="mt-1 list-disc list-inside text-sm text-red-900/90 dark:text-red-200/90">
+                  {verification.rejectReasons.map((reason, i) => (
+                    <li key={i}>{reason}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </section>
+        </>
+      ) : null}
 
       <KycUploadModal
         action={uploadModal}
-        open={!!uploadModal}
-        onOpenChange={(open) => !open && setUploadModal(null)}
+        open={!!uploadModal || approvedModalOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setUploadModal(null);
+            setApprovedModalOpen(false);
+          }
+        }}
         onUpload={handleUpload}
         uploading={uploading}
         uploadError={uploadError}
         onRefreshAfterUpload={() => refresh(true)}
+        documentsApproved={documentsApproved}
       />
 
       <div className="flex justify-center pt-4 pb-2">

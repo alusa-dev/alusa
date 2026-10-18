@@ -273,6 +273,52 @@ describe('handlePaymentWebhook', () => {
     expect(mockUpsertFinanceReconciliationIssue).not.toHaveBeenCalled();
   });
 
+  it('observa payment legado classificado EXTERNAL sem afetar recursos Alusa do tenant e processa payment Alusa normalmente', async () => {
+    const { prisma } = await import('@alusa/database');
+
+    // A tenant already has local academic resources. Classification applies to
+    // this provider payment ID only and must not suppress later Alusa payments.
+    mockResolvePaymentToLocalEntity.mockResolvedValueOnce({
+      type: 'external', resourceType: 'PAYMENT', asaasId: 'pay-legacy-external',
+    });
+    const externalResult = await handlePaymentWebhook('conta-a', {
+      event: 'PAYMENT_RECEIVED',
+      payment: { id: 'pay-legacy-external', status: 'RECEIVED', value: 100 },
+    });
+
+    expect(externalResult).toEqual({
+      success: true,
+      skipped: true,
+      skipReason: 'EXTERNAL_PAYMENT_IGNORED',
+    });
+    expect(prisma.cobranca.update).not.toHaveBeenCalled();
+    expect(prisma.cobranca.updateMany).not.toHaveBeenCalled();
+    expect(prisma.charge.upsert).not.toHaveBeenCalled();
+    expect(prisma.pagamento.create).not.toHaveBeenCalled();
+    expect(prisma.financePaymentStateTransition.create).not.toHaveBeenCalled();
+
+    mockResolvePaymentToLocalEntity.mockResolvedValueOnce({ type: 'cobranca', cobrancaId: 'cobranca-a' });
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce({
+      id: 'cobranca-a', matriculaId: 'matricula-a', status: 'PENDENTE',
+      asaasPaymentId: 'pay-alusa-owned', tipo: 'MENSALIDADE', formaPagamento: 'BOLETO',
+    } as never);
+    vi.mocked(prisma.cobranca.update).mockResolvedValueOnce({} as never);
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.pagamento.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.pagamento.create).mockResolvedValueOnce({ id: 'pagamento-alusa' } as never);
+
+    const alusaResult = await handlePaymentWebhook('conta-a', {
+      event: 'PAYMENT_CONFIRMED',
+      payment: { id: 'pay-alusa-owned', status: 'CONFIRMED', value: 100, netValue: 95 },
+    });
+
+    expect(alusaResult.success).toBe(true);
+    expect(prisma.cobranca.update).toHaveBeenCalledTimes(1);
+    expect(prisma.pagamento.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ cobrancaId: 'cobranca-a', asaasPaymentId: 'pay-alusa-owned' }),
+    }));
+  });
+
   it('mantém payment da saga invisível quando webhook chega antes do commit', async () => {
     const { prisma } = await import('@alusa/database');
     vi.mocked(prisma.cobranca.findFirst).mockResolvedValue(null as never);
@@ -301,6 +347,79 @@ describe('handlePaymentWebhook', () => {
       data: { asaasEnrollmentFeePaymentId: 'pay-fee-1' },
     });
     expect(prisma.charge.upsert).not.toHaveBeenCalled();
+  });
+
+  it('reprocessa payment da saga após commit local sem duplicar Pagamento', async () => {
+    const { prisma } = await import('@alusa/database');
+    const operation: { id: string; status: string; asaasEnrollmentFeePaymentId: string | null } = {
+      id: 'op-payment-saga', status: 'PROCESSING', asaasEnrollmentFeePaymentId: null,
+    };
+    const cobranca = {
+      id: 'cobranca-payment-saga', matriculaId: 'matricula-payment-saga', status: 'PENDENTE',
+      asaasPaymentId: null as string | null, asaasId: null, tipo: 'TAXA_MATRICULA',
+      formaPagamento: 'BOLETO', estornadoValor: null,
+    };
+    let pagamento: { id: string } | null = null;
+
+    mockResolvePaymentToLocalEntity.mockResolvedValue({ type: 'not_found', reason: 'saga_test' });
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockImplementation(async () => operation as never);
+    vi.mocked(prisma.enrollmentCreationOperation.updateMany).mockImplementation(async ({ data }) => {
+      operation.asaasEnrollmentFeePaymentId = data.asaasEnrollmentFeePaymentId ?? null;
+      return { count: 1 } as never;
+    });
+    vi.mocked(prisma.cobranca.findFirst).mockImplementation(async ({ where }) => {
+      if (where.asaasPaymentId === 'pay-payment-saga' && cobranca.asaasPaymentId === 'pay-payment-saga') {
+        return cobranca as never;
+      }
+      return null as never;
+    });
+    vi.mocked(prisma.cobranca.updateMany).mockImplementation(async ({ data }) => {
+      cobranca.asaasPaymentId = data.asaasPaymentId ?? cobranca.asaasPaymentId;
+      return { count: 1 } as never;
+    });
+    vi.mocked(prisma.cobranca.update).mockImplementation(async ({ data }) => {
+      Object.assign(cobranca, data);
+      return cobranca as never;
+    });
+    vi.mocked(prisma.pagamento.findFirst).mockImplementation(async () => pagamento as never);
+    vi.mocked(prisma.pagamento.create).mockImplementation(async () => {
+      pagamento = { id: 'pagamento-payment-saga' };
+      return pagamento as never;
+    });
+    vi.mocked(prisma.pagamento.update).mockImplementation(async () => pagamento as never);
+
+    const webhook = {
+      event: 'PAYMENT_RECEIVED',
+      eventId: 'evt-payment-saga',
+      payment: {
+        id: 'pay-payment-saga', status: 'RECEIVED', value: 80, netValue: 78,
+        dueDate: '2099-01-01', externalReference: 'enrollment-op:op-payment-saga:fee',
+      },
+    };
+
+    const beforeCommit = await handlePaymentWebhook('conta-payment-saga', webhook);
+    expect(beforeCommit).toEqual({ success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' });
+    expect(operation.asaasEnrollmentFeePaymentId).toBe('pay-payment-saga');
+    expect(prisma.cobranca.update).not.toHaveBeenCalled();
+    expect(prisma.pagamento.create).not.toHaveBeenCalled();
+
+    // create-charge persists the local reservation and canonical reference before
+    // calling Asaas. This simulates the local transaction becoming visible after
+    // the early webhook staged the provider ID.
+    operation.status = 'COMMITTED';
+    cobranca.asaasPaymentId = operation.asaasEnrollmentFeePaymentId;
+    mockResolvePaymentToLocalEntity.mockResolvedValue({ type: 'cobranca', cobrancaId: cobranca.id });
+
+    const replay = await handlePaymentWebhook('conta-payment-saga', webhook);
+    const duplicateReplay = await handlePaymentWebhook('conta-payment-saga', webhook);
+
+    expect(replay.success).toBe(true);
+    expect(duplicateReplay.success).toBe(true);
+    expect(cobranca).toMatchObject({ status: 'PAGO', asaasPaymentId: 'pay-payment-saga' });
+    expect(pagamento).toEqual({ id: 'pagamento-payment-saga' });
+    expect(prisma.pagamento.create).toHaveBeenCalledTimes(1);
+    expect(prisma.pagamento.update).toHaveBeenCalledTimes(1);
+    expect(prisma.enrollmentCreationOperation.updateMany).toHaveBeenCalledTimes(1);
   });
 
   it('não materializa cobrança operacional para payment sem vínculo local', async () => {

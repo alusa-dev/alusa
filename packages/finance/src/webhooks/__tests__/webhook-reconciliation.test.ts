@@ -7,6 +7,7 @@ vi.mock('@alusa/database', () => ({
   prisma: {
     charge: {
       findMany: vi.fn(),
+      findFirst: vi.fn(),
       updateMany: vi.fn(),
     },
     cobranca: {
@@ -76,7 +77,8 @@ vi.mock('../../foundation/asaas-read-intent', () => ({
 }));
 
 import { prisma, loadAsaasCredentials } from '@alusa/database';
-import { getPayment, getSubscription } from '@alusa/asaas';
+import { getInstallment, getPayment, getSubscription, listPayments, listInstallmentPayments } from '@alusa/asaas';
+import { alertService } from '../../foundation/alert-channel';
 import { handlePaymentWebhook } from '../payment-webhook-handler';
 import { handleSubscriptionWebhook } from '../subscription-webhook-handler';
 import {
@@ -91,6 +93,7 @@ import {
   isProviderCheckDue,
   listWebhooks,
   markExhaustedWebhooks,
+  reconcileBilateral,
   reconcileWithAsaas,
 } from '../webhook-reconciliation.service';
 
@@ -488,6 +491,25 @@ describe('webhook-reconciliation.service', () => {
       expect(handlePaymentWebhook).not.toHaveBeenCalled();
     });
 
+    it('não reporta drift nem atualiza installment quando totalCount contradiz a página', async () => {
+      vi.mocked(prisma.charge.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.installmentPlan.findMany).mockResolvedValue([{
+        id: 'plan-1', asaasInstallmentId: 'inst-1',
+      }] as never);
+      vi.mocked(getInstallment).mockResolvedValue({ id: 'inst-1' } as never);
+      vi.mocked(listInstallmentPayments).mockResolvedValue({
+        data: [], hasMore: false, totalCount: 1, offset: 0, limit: 100,
+      } as never);
+
+      const result = await reconcileWithAsaas({ contaId: 'conta-1', limit: 10 });
+
+      expect(result.installmentDrift).toBe(0);
+      expect(result.errors.some((error) => error.includes('PAYMENT_LOOKUP_INCOMPLETE'))).toBe(true);
+      expect(prisma.installmentPlan.updateMany).not.toHaveBeenCalled();
+      expect(upsertFinanceReconciliationIssue).not.toHaveBeenCalled();
+    });
+
     it('não reconcilia quando status local já converge com o Asaas', async () => {
       vi.mocked(prisma.charge.findMany).mockResolvedValue([
         {
@@ -519,6 +541,161 @@ describe('webhook-reconciliation.service', () => {
       expect(resolveFinanceReconciliationIssueByDedupe).toHaveBeenCalledWith(expect.objectContaining({
         contaId: 'conta-1', dedupeKey: 'PAYMENT_STATUS_DRIFT:CHARGE:ch-1',
       }));
+    });
+  });
+
+  describe('reconcileBilateral pagination cap', () => {
+    it('conta PAYMENT_DELETED como reconciliado somente após handler success true', async () => {
+      vi.mocked(listPayments).mockResolvedValueOnce({
+        object: 'list', totalCount: 1, offset: 0, limit: 10, hasMore: false,
+        data: [{ id: 'pay-deleted-success', deleted: true, status: 'DELETED', value: 20, netValue: 20 }],
+      } as never);
+      vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
+        id: 'charge-deleted-success', status: 'OPEN', externalReference: 'charge-ref',
+      } as never);
+      vi.mocked(handlePaymentWebhook).mockResolvedValueOnce({ success: true } as never);
+
+      const result = await reconcileBilateral({ contaId: 'conta-A', pageSize: 10 });
+
+      expect(result.complete).toBe(true);
+      expect(result.reconciled).toBe(1);
+      expect(result.errors).toEqual([]);
+    });
+
+    it('preserva incompletude quando o handler PAYMENT_DELETED retorna success false', async () => {
+      vi.mocked(listPayments).mockResolvedValueOnce({
+        object: 'list', totalCount: 1, offset: 0, limit: 10, hasMore: false,
+        data: [{ id: 'pay-deleted-false', deleted: true, status: 'DELETED', value: 20, netValue: 20 }],
+      } as never);
+      vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
+        id: 'charge-deleted-false', status: 'OPEN', externalReference: 'charge-ref',
+      } as never);
+      vi.mocked(handlePaymentWebhook).mockResolvedValueOnce({
+        success: false, error: 'webhook rejected',
+      } as never);
+      const alert = vi.spyOn(alertService, 'alertReconciliationDrift').mockResolvedValue();
+
+      const result = await reconcileBilateral({ contaId: 'conta-A', pageSize: 10 });
+
+      expect(result.complete).toBe(false);
+      expect(result.reconciled).toBe(0);
+      expect(result.errors).toContain('reconcile:pay-deleted-false:webhook rejected');
+      expect(alert).not.toHaveBeenCalled();
+      alert.mockRestore();
+    });
+
+    it('preserva incompletude quando o handler de STATUS_MISMATCH retorna success false', async () => {
+      vi.mocked(listPayments).mockResolvedValueOnce({
+        object: 'list', totalCount: 1, offset: 0, limit: 10, hasMore: false,
+        data: [{ id: 'pay-status-false', status: 'CONFIRMED', value: 20, netValue: 20 }],
+      } as never);
+      vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce({
+        id: 'charge-status-false', status: 'OPEN',
+      } as never);
+      vi.mocked(handlePaymentWebhook).mockResolvedValueOnce({
+        success: false, error: 'webhook rejected',
+      } as never);
+      const alert = vi.spyOn(alertService, 'alertReconciliationDrift').mockResolvedValue();
+
+      const result = await reconcileBilateral({ contaId: 'conta-A', pageSize: 10 });
+
+      expect(result.complete).toBe(false);
+      expect(result.reconciled).toBe(0);
+      expect(result.errors).toContain('reconcile:pay-status-false:webhook rejected');
+      expect(alert).not.toHaveBeenCalled();
+      alert.mockRestore();
+    });
+
+    it('reports incomplete when the last allowed page still has more results', async () => {
+      vi.mocked(listPayments).mockResolvedValue({
+        object: 'list',
+        totalCount: 2,
+        offset: 0,
+        limit: 1,
+        hasMore: true,
+        data: [{
+          id: 'pay-1',
+          status: 'CONFIRMED',
+          value: 20,
+          netValue: 20,
+          externalReference: 'alusa:charge-1',
+        }],
+      } as never);
+      vi.mocked(prisma.charge.findFirst).mockResolvedValue({
+        id: 'charge-1',
+        status: 'OPEN',
+      } as never);
+      vi.mocked(handlePaymentWebhook).mockResolvedValue({ success: true } as never);
+      const alert = vi.spyOn(alertService, 'alertReconciliationDrift').mockResolvedValue();
+
+      const result = await reconcileBilateral({ contaId: 'conta-A', pageSize: 1, maxPages: 1 });
+
+      expect(result.complete).toBe(false);
+      expect(result.asaasPaymentsScanned).toBe(1);
+      expect(result.reconciled).toBe(1);
+      expect(result.errors).toContain('listPayments:pagination_incomplete:max_pages_reached:1');
+      expect(listPayments).toHaveBeenCalledTimes(1);
+      expect(prisma.charge.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ contaId: 'conta-A', asaasPaymentId: 'pay-1' }),
+      }));
+      expect(alert).not.toHaveBeenCalled();
+      alert.mockRestore();
+    });
+
+    it('bloqueia complete quando o mesmo payment aparece em páginas diferentes', async () => {
+      vi.mocked(listPayments)
+        .mockResolvedValueOnce({
+          object: 'list', totalCount: 2, offset: 0, limit: 1, hasMore: true,
+          data: [{ id: 'pay-repeat', status: 'PENDING', value: 20, netValue: 20 }],
+        } as never)
+        .mockResolvedValueOnce({
+          object: 'list', totalCount: 2, offset: 1, limit: 1, hasMore: false,
+          data: [{ id: 'pay-repeat', status: 'CONFIRMED', value: 20, netValue: 20 }],
+        } as never);
+      const alert = vi.spyOn(alertService, 'alertReconciliationDrift').mockResolvedValue();
+
+      const result = await reconcileBilateral({ contaId: 'conta-A', pageSize: 1 });
+
+      expect(result.complete).toBe(false);
+      expect(result.errors).toContain('listPayments:page1:repeated_or_invalid_payment_id');
+      expect(result.asaasPaymentsScanned).toBe(1);
+      expect(alert).not.toHaveBeenCalled();
+      alert.mockRestore();
+    });
+
+    it('não envia resumo agregado quando paginação completa contém erro ao processar um item', async () => {
+      vi.mocked(listPayments).mockResolvedValue({
+        object: 'list', totalCount: 1, offset: 0, limit: 10, hasMore: false,
+        data: [{ id: 'pay-item-error', status: 'CONFIRMED', value: 20, netValue: 20 }],
+      } as never);
+      vi.mocked(prisma.charge.findFirst).mockRejectedValueOnce(new Error('local read failed'));
+      const alert = vi.spyOn(alertService, 'alertReconciliationDrift').mockResolvedValue();
+
+      const result = await reconcileBilateral({ contaId: 'conta-A', pageSize: 10 });
+
+      expect(result.complete).toBe(false);
+      expect(result.errors).toContain('check:pay-item-error:local read failed');
+      expect(alert).not.toHaveBeenCalled();
+      alert.mockRestore();
+    });
+
+    it.each([
+      ['resposta inválida', { object: 'list', data: [], offset: 0, limit: 10 }],
+      ['falha de listagem', new Error('provider unavailable')],
+    ])('retorna complete=false e não alerta com %s', async (_label, outcome) => {
+      if (outcome instanceof Error) {
+        vi.mocked(listPayments).mockRejectedValueOnce(outcome);
+      } else {
+        vi.mocked(listPayments).mockResolvedValueOnce(outcome as never);
+      }
+      const alert = vi.spyOn(alertService, 'alertReconciliationDrift').mockResolvedValue();
+
+      const result = await reconcileBilateral({ contaId: 'conta-A', pageSize: 10 });
+
+      expect(result.complete).toBe(false);
+      expect(result.errors.length).toBeGreaterThan(0);
+      expect(alert).not.toHaveBeenCalled();
+      alert.mockRestore();
     });
   });
 

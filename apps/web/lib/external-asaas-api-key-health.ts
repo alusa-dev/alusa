@@ -31,5 +31,5 @@ export function shouldShowExternalAsaasApiKeyModal(
 
   if (!isAllowedRole || !isExternalMode) return false;
 
-  return !isExternalAsaasApiKeyHealthy(user);
+  return user.asaasApiKeyStatus !== 'CONNECTED';
 }

@@ -15,6 +15,9 @@ import type {
 import { isAsaasInterfaceOnlyDescription } from '../../dtos/kyc/kyc-snapshot.dto';
 import type { CommercialInfoExpiration, CommercialInfoStatus } from '../../dtos/kyc/kyc-snapshot.dto';
 
+/** A persisted KYC read model is eligible for background recovery after one day. */
+export const KYC_READ_MODEL_MAX_AGE_MS = 24 * 60 * 60_000;
+
 /** Normaliza rejectReasons (string | string[] | null → string[]). */
 export function normalizeRejectReasons(raw: string | string[] | null | undefined): string[] {
   if (!raw) return [];

@@ -11,11 +11,7 @@ export async function payPixQrCode(
   params: PayPixQrCodeParams,
 ): Promise<AsaasPixTransaction> {
   const client = new AsaasHttp({ apiKey: params.apiKey });
-  const headers: Record<string, string> = {};
-
-  if (params.idempotencyKey) {
-    headers['Idempotency-Key'] = params.idempotencyKey;
-  }
-
-  return client.post<AsaasPixTransaction>('/pix/qrCodes/pay', params.data, { headers });
+  // The local operation key is not a provider guarantee; this endpoint does
+  // not document Idempotency-Key support.
+  return client.post<AsaasPixTransaction>('/pix/qrCodes/pay', params.data);
 }

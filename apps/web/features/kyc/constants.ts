@@ -50,7 +50,7 @@ export function statusBadge(status: KycAreaStatus): { label: string; variant: Ba
 export function verificationStatusBadge(status: string): { label: string; variant: BadgeVariant } {
   switch (status) {
     case 'ACCOUNT_ACTIVE':
-      return { label: 'Ativa', variant: 'default' };
+      return { label: 'Aprovado', variant: 'success' };
     case 'ACCOUNT_UNDER_REVIEW':
       return { label: 'Em análise', variant: 'outline' };
     case 'ACCOUNT_REQUIRES_CORRECTION':

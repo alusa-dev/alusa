@@ -1,13 +1,13 @@
 import { PrivateMemoryCache, privateCacheControl } from '@/lib/private-cache';
 
 const verificationCache = new PrivateMemoryCache<unknown>({
-  maxAgeSeconds: 30,
-  staleWhileRevalidateSeconds: 120,
+  maxAgeSeconds: 10,
+  staleWhileRevalidateSeconds: 0,
 });
 
 export const accountVerificationCacheControl = privateCacheControl({
-  maxAgeSeconds: 30,
-  staleWhileRevalidateSeconds: 120,
+  maxAgeSeconds: 10,
+  staleWhileRevalidateSeconds: 0,
 });
 
 export function getAccountVerificationCache(contaId: string) {

@@ -108,6 +108,14 @@ describe('admin jobs multi-tenant isolation', () => {
       accountsChecked: 1,
       driftsFound: 0,
       driftsRepaired: 0,
+      health: {
+        checkedAccounts: 1,
+        interruptedFound: 0,
+        recoveredSuccessfully: 0,
+        recoveryFailed: 0,
+        errors: [],
+        executedAt: new Date(),
+      },
       errors: [],
       health: {
         checkedAccounts: 1,

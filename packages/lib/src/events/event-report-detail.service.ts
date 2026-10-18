@@ -22,7 +22,8 @@ export type EventReportDetail = {
     participants: number; cancelledParticipants: number; registrationGross: number; registrationDiscount: number;
     registrationCommitted: number; registrationReceived: number; registrationRefunded: number;
     ticketPaidQuantity: number; ticketPendingQuantity: number; ticketComplimentaryQuantity: number;
-    ticketReceivedGross: number; ticketRefunded: number; ticketReceivedNet: number; ticketPendingRevenue: number;
+    ticketReceivedGross: number; ticketRefunded: number; ticketReceivedNet: number;
+    ticketPendingRevenue: number; ticketCommittedRevenue: number;
     ticketManualSales: number; ticketOnlineSales: number; availableTicketQuantity: number; availableTicketPotential: number;
     checkIns: number; committedRevenue: number; receivedRevenue: number; refundedRevenueExcludingTickets: number; resultRealized: number; resultCommitted: number; pendingCommittedRevenue: number;
     costsExpected: number; costsRealized: number; otherRevenueExpected: number; otherRevenueReceived: number; otherRevenueRefunded: number;
@@ -461,6 +462,7 @@ export async function getEventReportDetail(
       ticketPaidQuantity: saleStatusSum('PAID', 'quantity'), ticketPendingQuantity: saleStatusSum('PENDING', 'quantity'),
       ticketComplimentaryQuantity: saleStatusSum('COMPLIMENTARY', 'quantity'), ticketReceivedGross,
       ticketRefunded: refundedTicketAmount, ticketReceivedNet, ticketPendingRevenue: ticketPendingGross,
+      ticketCommittedRevenue: ticketCommitted,
       ticketManualSales: sales.filter((sale) => sale.status !== 'CANCELLED' && !sale.eventMapOrderId).length,
       ticketOnlineSales: sales.filter((sale) => sale.status !== 'CANCELLED' && Boolean(sale.eventMapOrderId)).length,
       availableTicketQuantity: ticketLots.reduce((sum, lot) => sum + lot.available, 0),

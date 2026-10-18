@@ -1,4 +1,5 @@
 import { logFinanceOperationalEvent } from '../foundation/operational-log';
+import { assertCompleteAsaasPage } from '../use-cases/asaas-pagination';
 import { prisma } from '@alusa/database';
 import {
   createStandaloneCharge,
@@ -7,6 +8,7 @@ import {
 import {
   deletePayment,
   deleteSubscription,
+  getPayment,
   getSubscription,
   listPayments,
 } from '../use-cases/asaas-ops';
@@ -215,8 +217,9 @@ export async function compensateFamilyCreationRemoteEffects(
 
   const errors: string[] = [];
   const deletedPayments = new Set<string>();
+  const confirmedDeletedChargePaymentIds = new Set<string>();
   const deleteRemotePayment = async (paymentId: string) => {
-    if (deletedPayments.has(paymentId)) return;
+    if (deletedPayments.has(paymentId)) return true;
     if (ownershipGuard) await ownershipGuard();
     try {
       await deletePayment(paymentId, { contaId: payload.contaId });
@@ -224,38 +227,117 @@ export async function compensateFamilyCreationRemoteEffects(
     } catch (error) {
       // Um payment já removido é um resultado idempotentemente compensado.
       const message = error instanceof Error ? error.message : String(error);
-      if (!/not found|não encontrado|404/i.test(message))
+      if (!/not found|não encontrado|404/i.test(message)) {
         errors.push(`PAYMENT:${paymentId}:${message}`);
+        if (ownershipGuard) await ownershipGuard();
+        return false;
+      }
     }
     if (ownershipGuard) await ownershipGuard();
+    return true;
   };
 
   for (const charge of charges) {
-    if (charge.asaasPaymentId) await deleteRemotePayment(charge.asaasPaymentId);
+    if (!charge.asaasPaymentId) continue;
+    const paymentId = charge.asaasPaymentId;
+    if (ownershipGuard) await ownershipGuard();
+    let remotePayment;
+    try {
+      remotePayment = await getPayment(paymentId, { contaId: payload.contaId });
+    } catch (error) {
+      errors.push(`PAYMENT:${paymentId}:LOOKUP_FAILED:${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
+    if (ownershipGuard) await ownershipGuard();
+    const status = String(remotePayment?.status ?? '').trim().toUpperCase();
+    if (remotePayment?.id !== paymentId) {
+      errors.push(`PAYMENT:${paymentId}:NOT_CANCELLABLE_OR_UNVERIFIED:${status || 'UNKNOWN'}`);
+      continue;
+    }
+    if (remotePayment.deleted || status === 'DELETED') {
+      deletedPayments.add(paymentId);
+      confirmedDeletedChargePaymentIds.add(paymentId);
+      continue;
+    }
+    if (!['PENDING', 'OVERDUE'].includes(status)) {
+      errors.push(`PAYMENT:${paymentId}:NOT_CANCELLABLE_OR_UNVERIFIED:${status || 'UNKNOWN'}`);
+      continue;
+    }
+    if (await deleteRemotePayment(paymentId)) confirmedDeletedChargePaymentIds.add(paymentId);
   }
 
   for (const subscription of subscriptions) {
     if (!subscription.asaasSubscriptionId) continue;
-    let remotePayments: Awaited<ReturnType<typeof listPayments>>;
-    if (ownershipGuard) await ownershipGuard();
+    const remotePayments: Awaited<ReturnType<typeof listPayments>>['data'] = [];
+    const seenPaymentIds = new Set<string>();
+    let paymentLookupComplete = false;
+    let expectedPaymentCount: number | undefined;
     try {
-      remotePayments = await listPayments(
-        { subscription: subscription.asaasSubscriptionId, limit: 20, offset: 0 },
-        { contaId: payload.contaId },
-      );
+      const pageSize = 100;
+      for (let page = 0; page < 100; page += 1) {
+        if (ownershipGuard) await ownershipGuard();
+        const response = await listPayments(
+          { subscription: subscription.asaasSubscriptionId, limit: pageSize, offset: page * pageSize },
+          { contaId: payload.contaId },
+        );
+        if (
+          !response ||
+          !Array.isArray(response.data) ||
+          typeof response.hasMore !== 'boolean' ||
+          response.offset !== page * pageSize ||
+          response.limit !== pageSize ||
+          response.data.some((payment) => !payment?.id || seenPaymentIds.has(payment.id))
+        ) {
+          throw new Error(`PAYMENT_LOOKUP_INCOMPLETE:INVALID_PAGE:${page}`);
+        }
+        try {
+          expectedPaymentCount = assertCompleteAsaasPage(response, page * pageSize, pageSize, expectedPaymentCount);
+        } catch (error) {
+          throw new Error(`PAYMENT_LOOKUP_INCOMPLETE:${error instanceof Error ? error.message : 'INVALID_PAGE'}:${page}`);
+        }
+        for (const payment of response.data) {
+          seenPaymentIds.add(payment.id);
+          remotePayments.push(payment);
+        }
+        if (!response.hasMore) {
+          paymentLookupComplete = true;
+          break;
+        }
+        if (response.data.length === 0) throw new Error(`PAYMENT_LOOKUP_INCOMPLETE:EMPTY_PAGE_WITH_MORE:${page}`);
+        if (page === 99) throw new Error('PAYMENT_LOOKUP_INCOMPLETE:PAGE_LIMIT_EXCEEDED');
+      }
     } catch (error) {
       errors.push(
         `SUBSCRIPTION:${subscription.asaasSubscriptionId}:${error instanceof Error ? error.message : String(error)}`,
       );
       continue;
     }
+    if (!paymentLookupComplete) {
+      errors.push(`SUBSCRIPTION:${subscription.asaasSubscriptionId}:PAYMENT_LOOKUP_INCOMPLETE`);
+      continue;
+    }
     if (ownershipGuard) await ownershipGuard();
-    for (const payment of remotePayments.data) {
-      if (payment.id && !['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH'].includes(payment.status)) {
-        await deleteRemotePayment(payment.id);
+    let subscriptionPaymentCleanupComplete = true;
+    const knownPaymentStatuses = new Set([
+      'PENDING', 'OVERDUE', 'RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'REFUNDED',
+      'REFUND_IN_PROGRESS', 'REFUND_REQUESTED', 'CHARGEBACK_REQUESTED', 'CHARGEBACK_DISPUTE',
+      'AWAITING_CHARGEBACK_REVERSAL', 'DUNNING_REQUESTED', 'DUNNING_RECEIVED',
+      'AWAITING_RISK_ANALYSIS', 'DELETED',
+    ]);
+    for (const payment of remotePayments) {
+      if (!payment.deleted) {
+        const paymentStatus = String(payment.status ?? '').trim().toUpperCase();
+        if (!knownPaymentStatuses.has(paymentStatus)) {
+          errors.push(`SUBSCRIPTION:${subscription.asaasSubscriptionId}:PAYMENT:${payment.id}:STATUS_UNVERIFIED`);
+          subscriptionPaymentCleanupComplete = false;
+          continue;
+        }
+        if (!['PENDING', 'OVERDUE'].includes(paymentStatus)) continue;
+        if (!(await deleteRemotePayment(payment.id))) subscriptionPaymentCleanupComplete = false;
       }
     }
     if (ownershipGuard) await ownershipGuard();
+    if (!subscriptionPaymentCleanupComplete) continue;
     try {
       await deleteSubscription(subscription.asaasSubscriptionId, { contaId: payload.contaId });
     } catch (error) {
@@ -272,8 +354,11 @@ export async function compensateFamilyCreationRemoteEffects(
   }
 
   if (chargeIds.size > 0) {
-    await withOwnedTransaction(ownershipGuard, (tx) => tx.charge.updateMany({
-      where: { contaId: payload.contaId, id: { in: [...chargeIds] } },
+    const canceledChargeIds = charges
+      .filter((charge) => charge.asaasPaymentId && confirmedDeletedChargePaymentIds.has(charge.asaasPaymentId))
+      .map((charge) => charge.id);
+    if (canceledChargeIds.length > 0) await withOwnedTransaction(ownershipGuard, (tx) => tx.charge.updateMany({
+      where: { contaId: payload.contaId, id: { in: canceledChargeIds } },
       data: { status: 'CANCELED', asaasStatus: 'DELETED' },
     }));
   }

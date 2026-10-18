@@ -1,12 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
 import { CheckCircle, ErrorCircle } from '@/components/icons/icons';
-import { UploadCloud, FileText } from 'lucide-react';
+import { AlertTriangle, UploadCloud, FileText } from 'lucide-react';
 import { useDropzone, type FileRejection } from 'react-dropzone';
 
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { LoadingDots } from '@/components/ui/LoadingDots';
 import {
   Dialog,
   DialogContent,
@@ -15,6 +17,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { pushToast } from '@/components/ui/toast';
+import { StepHeader } from '@/components/shared/wizard/layout';
 import type { VerificationAction } from '../constants';
 import { UPLOAD_MAX_SIZE_MB } from '../constants';
 import { getKycDocumentGuidance } from '../document-guidance';
@@ -34,6 +37,7 @@ type Props = {
   uploadError: string | null;
   onRefreshAfterUpload?: () => Promise<void>;
   onExternalRequired?: (actionId: string) => Promise<void>;
+  documentsApproved?: boolean;
 };
 
 type SlotState = {
@@ -192,7 +196,7 @@ function UploadSlotCard({
   const labelLower = slot.label.toLowerCase();
 
   return (
-    <div className="rounded-2xl border border-border/80 bg-background p-4 shadow-sm">
+    <div className="rounded-xl bg-[#fafafa] p-4 alusa-dark:bg-[color:var(--color-bg-card)] sm:p-5">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <Label className="text-sm font-semibold text-foreground">{slot.label}</Label>
@@ -202,29 +206,35 @@ function UploadSlotCard({
               : `Envie ${slot.label === 'Frente' ? 'a frente' : 'o verso'} do documento.`}
           </p>
         </div>
-        <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs ${statusUi.className}`}>
-          {state.status === 'APPROVED' ? (
-            <CheckCircle className="h-3.5 w-3.5" />
-          ) : state.status === 'REJECTED' ? (
-            <ErrorCircle className="h-3.5 w-3.5" />
-          ) : null}
-          {statusUi.label}
-        </span>
+        {statusUi.label !== 'Pendente' ? (
+          <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs ${statusUi.className}`}>
+            {state.status === 'APPROVED' ? (
+              <CheckCircle className="h-3.5 w-3.5" />
+            ) : state.status === 'REJECTED' ? (
+              <ErrorCircle className="h-3.5 w-3.5" />
+            ) : null}
+            {statusUi.label}
+          </span>
+        ) : null}
       </div>
 
       <div
         {...getRootProps()}
         className={[
-          'rounded-2xl border-2 border-dashed p-6 transition-all',
-          isDragActive ? 'border-primary bg-primary/5' : 'border-border bg-muted/20',
-          busy || state.sending || isLocked ? 'cursor-not-allowed opacity-70' : 'hover:border-primary/60 hover:bg-primary/5',
+          'rounded-xl border border-dashed border-zinc-300 p-5 transition-colors alusa-dark:border-[color:var(--color-border-default)] sm:p-6',
+          isDragActive
+            ? 'border-primary bg-primary/10 ring-1 ring-primary/40'
+            : 'bg-zinc-100 alusa-dark:bg-[color:var(--color-bg-card-soft)]',
+          busy || state.sending || isLocked
+            ? 'cursor-not-allowed opacity-70'
+            : 'hover:bg-zinc-200 alusa-dark:hover:bg-[color:var(--color-bg-card)]',
         ].join(' ')}
       >
         <input {...getInputProps({ 'aria-describedby': inputHelpId })} />
 
         <div className="flex flex-col items-center gap-3 text-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-background shadow-sm">
-            {state.file ? <FileText className="h-6 w-6 text-primary" /> : <UploadCloud className="h-6 w-6 text-primary" />}
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-zinc-100 shadow-none alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+            {state.file ? <FileText className="h-6 w-6 text-primary" /> : <UploadCloud className="h-6 w-6 text-muted-foreground" />}
           </div>
 
           {isLocked ? (
@@ -238,7 +248,9 @@ function UploadSlotCard({
             </>
           ) : state.file ? (
             <>
-              <p className="max-w-xs break-all text-sm font-medium text-foreground">{state.file.name}</p>
+              <p className="w-full max-w-xs truncate text-sm font-medium text-foreground" title={state.file.name}>
+                {state.file.name}
+              </p>
               <p className="text-xs text-muted-foreground">{formatFileSize(state.file.size)}</p>
             </>
           ) : (
@@ -281,6 +293,7 @@ export function KycUploadModal({
   uploadError,
   onRefreshAfterUpload,
   onExternalRequired,
+  documentsApproved = false,
 }: Props) {
   const normalizedSlots = useMemo(() => buildNormalizedSlots(action), [action]);
   const uploadGroupId = action?.uploadGroupId ?? null;
@@ -288,27 +301,32 @@ export function KycUploadModal({
   const [slotStates, setSlotStates] = useState<SlotState[]>(() => buildInitialSlotStates(normalizedSlots));
   const [localError, setLocalError] = useState<string | null>(null);
   const [batchUploading, setBatchUploading] = useState(false);
+  const prefersReducedMotion = useReducedMotion();
   const isGroupIdValid = isValidKycGroupId(uploadGroupId);
   const isZeroUuid = uploadGroupId === ZERO_UUID;
 
   useEffect(() => {
     setSlotStates(buildInitialSlotStates(normalizedSlots));
-    if (isZeroUuid) {
+    if (documentsApproved) {
+      setLocalError(null);
+    } else if (isZeroUuid) {
       setLocalError('Os documentos ainda estão sendo processados pelo provedor. Aguarde alguns instantes e tente novamente.');
     } else if (!isGroupIdValid) {
       setLocalError('Grupo de documento inválido. Recarregue a página e tente novamente.');
     } else {
       setLocalError(null);
     }
-  }, [open, normalizedSlots, isGroupIdValid, isZeroUuid]);
+  }, [open, normalizedSlots, isGroupIdValid, isZeroUuid, documentsApproved]);
 
-  if (!action) return null;
-  if (action.mode === 'REDIRECT') return null;
-  if (action.mode === 'PROVIDER_PORTAL_REQUIRED') return null;
-  if (!uploadGroupId) return null;
+  if (!documentsApproved && !action) return null;
+  if (!documentsApproved && action?.mode === 'REDIRECT') return null;
+  if (!documentsApproved && action?.mode === 'PROVIDER_PORTAL_REQUIRED') return null;
+  if (!documentsApproved && !uploadGroupId) return null;
 
-  const guidance = getKycDocumentGuidance(action);
-  const allSent = slotStates.every((state) => LOCKED_SLOT_STATUSES.has(state.status));
+  const guidance = action
+    ? getKycDocumentGuidance(action)
+    : getKycDocumentGuidance({ documentType: 'IDENTIFICATION' });
+  const allSent = documentsApproved || slotStates.every((state) => LOCKED_SLOT_STATUSES.has(state.status));
   const pendingIndexes = slotStates
     .map((state, index) => ({ state, index }))
     .filter(({ state }) => state.status === 'NOT_SENT' || state.status === 'REJECTED')
@@ -326,6 +344,7 @@ export function KycUploadModal({
   };
 
   const sendSingleSlot = async (index: number) => {
+    if (documentsApproved || !action || !uploadGroupId) return;
     if (!isGroupIdValid) {
       setLocalError('Grupo de documento inválido. Recarregue a página e tente novamente.');
       return;
@@ -383,7 +402,7 @@ export function KycUploadModal({
   };
 
   const handleSendPendingDocuments = async () => {
-    if (!canSendBatch) return;
+    if (documentsApproved || !action || !uploadGroupId || !canSendBatch) return;
 
     setBatchUploading(true);
     setLocalError(null);
@@ -400,54 +419,119 @@ export function KycUploadModal({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl">
-        <DialogHeader>
-          <DialogTitle>{action.label}</DialogTitle>
-          {action.description ? <DialogDescription>{action.description}</DialogDescription> : null}
-        </DialogHeader>
-
-        <div className="mt-4 space-y-6">
-          <div className="rounded-2xl border bg-muted/20 p-4">
-            <p className="text-sm font-semibold text-foreground">{guidance.title}</p>
-            <ul className="mt-3 list-disc space-y-1.5 pl-5 text-sm text-muted-foreground">
-              {guidance.checklist.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-            {guidance.tips?.length ? (
-              <p className="mt-3 text-xs text-muted-foreground">{guidance.tips[0]}</p>
-            ) : null}
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && (batchUploading || uploading)) return;
+        onOpenChange(nextOpen);
+      }}
+    >
+      <DialogContent
+        fullScreenMobile
+        disableScaleAnimation
+        closeDisabled={batchUploading || uploading}
+        className="relative flex w-full max-w-[900px] flex-col gap-0 overflow-hidden rounded-[20px] border-0 bg-white p-0 alusa-dark:bg-[color:var(--color-bg-card)] sm:rounded-[20px] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0"
+      >
+        <motion.div
+          initial={{ y: prefersReducedMotion ? 0 : 10 }}
+          animate={{ y: 0 }}
+          transition={{ duration: prefersReducedMotion ? 0 : 0.18, ease: 'easeOut' }}
+          className="flex min-h-0 flex-1 flex-col"
+        >
+          <div className="shrink-0 border-b border-slate-100 bg-white px-6 pb-5 pt-7 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] sm:px-8 sm:pt-8">
+            <DialogHeader className="space-y-0 text-left">
+              <DialogTitle className="text-xl font-normal tracking-tight text-[#0f0f0f] alusa-dark:text-[color:var(--color-text-primary)]">
+                {action?.label ?? 'Documentos aprovados'}
+              </DialogTitle>
+              {action && (isIdentificationAction(action) || action.description) ? (
+                <DialogDescription className="mt-1 text-sm text-[#5c5c5c] alusa-dark:text-[color:var(--color-text-secondary)]">
+                  {isIdentificationAction(action)
+                    ? 'Os arquivos enviados serão usados para validar sua conta.'
+                    : action.description}
+                </DialogDescription>
+              ) : documentsApproved ? (
+                <DialogDescription className="mt-1 text-sm text-[#5c5c5c] alusa-dark:text-[color:var(--color-text-secondary)]">
+                  Os documentos enviados foram aprovados.
+                </DialogDescription>
+              ) : null}
+            </DialogHeader>
           </div>
 
-          <div className={`grid gap-4 ${normalizedSlots.length > 1 ? 'md:grid-cols-2' : 'grid-cols-1'}`}>
-            {normalizedSlots.map((slot, index) => (
-              <UploadSlotCard
-                key={`${slot.label}-${slot.slotId ?? 'pending'}-${index}`}
-                slot={slot}
-                index={index}
-                state={slotStates[index] ?? { file: null, sending: false, status: slot.status }}
-                busy={batchUploading || uploading}
-                onFileChange={handleFileChange}
-                onError={setLocalError}
-                actionId={action.id}
-              />
-            ))}
+          <div className="min-h-0 flex-1 overflow-y-auto bg-white px-4 py-5 alusa-dark:bg-[color:var(--color-bg-card-soft)] sm:px-8 sm:py-6">
+            <div className="mx-auto w-full max-w-5xl space-y-6">
+              <div className="relative isolate overflow-hidden rounded-lg bg-[#fafafa] p-4 alusa-dark:bg-[color:var(--color-bg-card)]">
+                <div
+                  aria-hidden="true"
+                  className="absolute inset-0 bg-cover bg-center"
+                  style={{ backgroundImage: "url('/images/kyc/section-kyc.webp')" }}
+                />
+                <div className="relative">
+                  <StepHeader title={guidance.title} />
+                  <ul className="list-disc space-y-1.5 pl-5 text-sm text-muted-foreground">
+                    {guidance.checklist.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                  {guidance.tips?.length ? (
+                    <p className="mt-3 flex items-center gap-1 text-xs text-muted-foreground">
+                      <AlertTriangle aria-hidden="true" className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span>{guidance.tips[0]}</span>
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+
+              {documentsApproved ? (
+                <div className="rounded-xl border border-green-200 bg-green-50 p-5 text-green-900" role="status">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="font-medium">Documentos aprovados</p>
+                      <p className="mt-2 text-sm text-green-800">
+                        Os documentos enviados foram aprovados. Nenhuma ação adicional é necessária.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className={`grid gap-4 ${normalizedSlots.length > 1 ? 'md:grid-cols-2' : 'grid-cols-1'}`}>
+                {normalizedSlots.map((slot, index) => (
+                  <UploadSlotCard
+                    key={`${slot.label}-${slot.slotId ?? 'pending'}-${index}`}
+                    slot={slot}
+                    index={index}
+                    state={slotStates[index] ?? { file: null, sending: false, status: slot.status }}
+                    busy={batchUploading || uploading}
+                    onFileChange={handleFileChange}
+                    onError={setLocalError}
+                    actionId={action?.id ?? 'approved-documents'}
+                  />
+                ))}
+                </div>
+              )}
+            </div>
           </div>
 
-          {(localError ?? uploadError) ? <p className="text-sm text-destructive">{localError ?? uploadError}</p> : null}
-
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={batchUploading || uploading}>
-              {allSent ? 'Fechar' : 'Cancelar'}
-            </Button>
-            {!allSent ? (
-              <Button onClick={() => void handleSendPendingDocuments()} disabled={!canSendBatch}>
-                {batchUploading || uploading ? 'Enviando documento...' : 'Enviar documento'}
-              </Button>
-            ) : null}
+          <div className="shrink-0 border-t border-slate-100 bg-white px-4 py-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)] sm:px-8">
+            <div className="mx-auto flex w-full max-w-5xl flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+              {(localError ?? uploadError) ? <p className="text-sm text-destructive sm:mr-auto">{localError ?? uploadError}</p> : <span />}
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => onOpenChange(false)} disabled={batchUploading || uploading}>
+                  {allSent ? 'Fechar' : 'Cancelar'}
+                </Button>
+                {!allSent ? (
+                  <Button onClick={() => void handleSendPendingDocuments()} disabled={!canSendBatch}>
+                    Enviar documento
+                  </Button>
+                ) : null}
+              </div>
+            </div>
           </div>
-        </div>
+        </motion.div>
+        {(batchUploading || uploading) ? (
+          <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/15" aria-busy="true">
+            <LoadingDots label="Enviando documento" />
+          </div>
+        ) : null}
       </DialogContent>
     </Dialog>
   );

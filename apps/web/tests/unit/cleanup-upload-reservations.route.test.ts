@@ -75,6 +75,21 @@ describe('GET /api/jobs/cleanup-upload-reservations', () => {
     expect(updateManyMock).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'inline-1', contaId: 'conta-1', status: 'COMPLETED', pendingCleanedAt: null },
     }));
+    expect(logJobResultMock).toHaveBeenCalledWith('cleanup-upload-reservations', expect.any(Number), expect.objectContaining({ storageObjectsDeleted: 2, reservationsUpdated: 2 }), expect.objectContaining({ workStatus: 'worked' }));
+  });
+
+  it('classifies scan-only reservations as unknown and a confirmed empty query as empty', async () => {
+    findManyMock.mockResolvedValue([
+      { id: 'completed-1', contaId: 'conta-1', objectKey: 'uploads/avatars/a.png', status: 'COMPLETED', finalObjectKey: null },
+    ]);
+    updateManyMock.mockResolvedValue({ count: 0 });
+    await GET(new Request('https://alusa.app/api/jobs/cleanup-upload-reservations'));
+    expect(logJobResultMock).toHaveBeenCalledWith('cleanup-upload-reservations', expect.any(Number), expect.objectContaining({ processed: 1 }), expect.objectContaining({ workStatus: 'unknown' }));
+
+    logJobResultMock.mockClear();
+    findManyMock.mockResolvedValue([]);
+    await GET(new Request('https://alusa.app/api/jobs/cleanup-upload-reservations'));
+    expect(logJobResultMock).toHaveBeenCalledWith('cleanup-upload-reservations', expect.any(Number), expect.objectContaining({ processed: 0 }), expect.objectContaining({ workStatus: 'empty' }));
   });
 
   it('records scope rejection before starting the cleanup job', async () => {

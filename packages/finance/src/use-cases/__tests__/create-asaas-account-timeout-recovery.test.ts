@@ -75,6 +75,7 @@ vi.mock('@alusa/database', async () => {
         createMany: vi.fn(),
         upsert: vi.fn(),
       },
+      asaasIntegrationJob: { upsert: vi.fn() },
       conta: {
         findUnique: vi.fn(async () => ({
           id: 'c1',

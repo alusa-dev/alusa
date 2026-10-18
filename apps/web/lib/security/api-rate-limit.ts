@@ -80,6 +80,11 @@ const REPORT_POLICY: RateLimitPolicy = {
   includeIp: false,
 };
 
+const EVENT_REPORT_POLICY: RateLimitPolicy = {
+  ...REPORT_POLICY,
+  name: 'event-report-read',
+};
+
 const ADMIN_POLICY: RateLimitPolicy = {
   name: 'tenant-admin',
   limit: 60,
@@ -173,6 +178,14 @@ function resolvePolicy(pathname: string, method: string): RateLimitPolicy | null
       (pathSegments[1] === 'events' && pathSegments[2] === 'reports'))
   ) {
     return REPORT_POLICY;
+  }
+  if (
+    normalizedMethod === 'GET' &&
+    pathSegments[0] === 'api' &&
+    pathSegments[1] === 'events' &&
+    pathSegments[2] === 'reports'
+  ) {
+    return EVENT_REPORT_POLICY;
   }
 
   const isUnsafe = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(normalizedMethod);

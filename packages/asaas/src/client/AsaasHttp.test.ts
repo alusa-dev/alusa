@@ -138,6 +138,34 @@ describe('AsaasHttp (idempotência + retry)', () => {
     expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1);
   });
 
+  it('não repete POST após falha de transporte sem Idempotency-Key', async () => {
+    const client = new AsaasHttp({ apiKey: 'k' });
+    vi.mocked(globalThis.fetch).mockRejectedValueOnce(new TypeError('fetch failed'));
+
+    await expect(client.post('/customers', { name: 'Teste' })).rejects.toThrow('fetch failed');
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1);
+  });
+
+  it('não repete falha de transporte em POST mesmo com Idempotency-Key', async () => {
+    const client = new AsaasHttp({ apiKey: 'k' });
+    vi.mocked(globalThis.fetch).mockRejectedValueOnce(new TypeError('fetch failed'));
+
+    await expect(client.post('/customers', { name: 'Teste' }, {
+      headers: { 'Idempotency-Key': 'explicit-key' },
+    })).rejects.toThrow('fetch failed');
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1);
+  });
+
+  it('não repete resposta 5xx em POST mesmo com Idempotency-Key', async () => {
+    const client = new AsaasHttp({ apiKey: 'k' });
+    mockFetchOnce(500, { error: 'server_error' });
+
+    await expect(client.post('/customers', { name: 'Teste' }, {
+      headers: { 'Idempotency-Key': 'explicit-key' },
+    })).rejects.toMatchObject({ name: 'AsaasHttpError', status: 500 });
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(1);
+  });
+
   it('registra apenas campos operacionais allowlisted em falha do provedor', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const client = new AsaasHttp({ apiKey: 'k' });

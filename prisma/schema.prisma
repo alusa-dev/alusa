@@ -1033,6 +1033,7 @@ enum FinanceWebhookSideEffectStatus {
 }
 
 enum FinanceReconciliationEntityType {
+  CUSTOMER
   PAYMENT
   CHARGE
   INVOICE
@@ -1143,6 +1144,7 @@ enum AsaasIntegrationJobType {
   CREATE_PAYMENT
   CREATE_INSTALLMENT
   CREATE_SUBSCRIPTION
+  CREATE_CUSTOMER
   PROVISION_SUBACCOUNT
   CONFIGURE_WEBHOOK
   RECONCILE_ACCOUNT
@@ -4007,7 +4009,7 @@ model LogIntegracao {
   request        Json? // Payload enviado
   response       Json? // Resposta do Asaas
   errorMessage   String?
-  idempotencyKey String? // Idempotency-Key usado na request
+  idempotencyKey String? // Chave local estável da operação outbound
   duration       Int? // Duração da request em ms
   createdAt      DateTime @default(now())
 
@@ -4315,7 +4317,7 @@ model AsaasIntegrationJob {
   contaId        String
   type           AsaasIntegrationJobType
   status         AsaasIntegrationJobStatus @default(PENDING)
-  idempotencyKey String
+  idempotencyKey String // Chave local única da operação; não garante deduplicação no Asaas
   payload        Json
   attempts       Int                       @default(0)
   nextAttemptAt  DateTime                  @default(now())

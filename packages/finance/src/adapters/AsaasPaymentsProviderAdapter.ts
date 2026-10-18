@@ -20,7 +20,6 @@ import type {
   ProviderListSubscriptionPaymentsResult,
 } from '../ports/PaymentsProviderPort';
 import {
-  createCustomer,
   listCustomers,
   deleteSubscription,
   createSubscription,
@@ -28,7 +27,9 @@ import {
   listSubscriptionPayments,
 } from '@alusa/asaas';
 import type { Cycle, BillingType } from '@alusa/asaas';
-import { buildSafeAsaasIdempotencyKey } from '../core';
+import { buildOutboundOperationKey } from '../core';
+import { isValidCpfCnpjDigits } from '@alusa/shared/validators/cpf-cnpj';
+import { createCustomerWithOutboundOperation } from '../use-cases/create-customer';
 
 export interface AsaasAdapterDeps {
   getApiKeyForConta: (contaId: string) => Promise<string>;
@@ -47,58 +48,142 @@ export interface AsaasAdapterDeps {
   }) => Promise<void>;
 }
 
+const CUSTOMER_LOOKUP_PAGE_SIZE = 100;
+const CUSTOMER_LOOKUP_MAX_PAGES = 100;
+
+function normalizeCustomerDocument(value?: string | null): string {
+  return value?.replace(/\D/g, '') ?? '';
+}
+
+async function listCompleteCustomers(params: {
+  apiKey: string;
+  cpfCnpj?: string;
+  externalReference?: string;
+}) {
+  const customers = [] as Awaited<ReturnType<typeof listCustomers>>['data'];
+  const seenIds = new Set<string>();
+  let expectedTotalCount: number | undefined;
+  for (let page = 0; page < CUSTOMER_LOOKUP_MAX_PAGES; page += 1) {
+    const offset = page * CUSTOMER_LOOKUP_PAGE_SIZE;
+    const response = await listCustomers({
+      ...params,
+      offset,
+      limit: CUSTOMER_LOOKUP_PAGE_SIZE,
+    });
+    if (
+      !response ||
+      !Array.isArray(response.data) ||
+      !Number.isInteger(response.totalCount) || response.totalCount < 0 ||
+      typeof response.hasMore !== 'boolean' ||
+      response.offset !== offset ||
+      response.limit !== CUSTOMER_LOOKUP_PAGE_SIZE
+    ) throw new Error('ASAAS_CUSTOMER_LOOKUP_INCOMPLETE:INVALID_PAGE');
+    if (expectedTotalCount !== undefined && expectedTotalCount !== response.totalCount) {
+      throw new Error('ASAAS_CUSTOMER_LOOKUP_INCOMPLETE:TOTAL_COUNT_CHANGED');
+    }
+    if (response.hasMore && response.data.length !== CUSTOMER_LOOKUP_PAGE_SIZE) {
+      throw new Error('ASAAS_CUSTOMER_LOOKUP_INCOMPLETE:SHORT_PAGE_WITH_MORE');
+    }
+    expectedTotalCount = response.totalCount;
+    const collected = offset + response.data.length;
+    if (collected > response.totalCount || response.hasMore === (collected >= response.totalCount)) {
+      throw new Error('ASAAS_CUSTOMER_LOOKUP_INCOMPLETE:TOTAL_COUNT_MISMATCH');
+    }
+    if (response.data.some((customer) => {
+      const id = typeof customer?.id === 'string' ? customer.id.trim() : '';
+      if (!id || seenIds.has(id)) return true;
+      seenIds.add(id);
+      return false;
+    })) throw new Error('ASAAS_CUSTOMER_LOOKUP_INCOMPLETE:REPEATED_OR_INVALID_ID');
+    customers.push(...response.data);
+    if (!response.hasMore) return customers;
+    if (response.data.length === 0) throw new Error('ASAAS_CUSTOMER_LOOKUP_INCOMPLETE:EMPTY_PAGE_WITH_MORE');
+  }
+  throw new Error(`ASAAS_CUSTOMER_LOOKUP_INCOMPLETE:PAGE_LIMIT_EXCEEDED:${CUSTOMER_LOOKUP_MAX_PAGES}`);
+}
+
+function selectUniqueActiveCustomer<T extends { id: string; deleted?: boolean }>(customers: T[]): T | null {
+  const active = customers.filter((customer) => !customer.deleted);
+  if (active.length > 1) throw new Error('ASAAS_CUSTOMER_LOOKUP_AMBIGUOUS:MULTIPLE_MATCHES');
+  return active[0] ?? null;
+}
+
 export class AsaasPaymentsProviderAdapter implements PaymentsProviderPort {
   constructor(private deps: AsaasAdapterDeps) {}
 
   async resolveOrCreateCustomerForPayer(
     input: ResolveOrCreateCustomerInput
   ): Promise<ResolveOrCreateCustomerResult> {
+    const cpfCnpj = normalizeCustomerDocument(input.payer.cpfCnpj);
+    if (!isValidCpfCnpjDigits(cpfCnpj)) {
+      throw new Error('ASAAS_CUSTOMER_INVALID_CPF_CNPJ');
+    }
     const apiKey = await this.deps.getApiKeyForConta(input.contaId);
 
     // 1. Buscar por externalReference (mais preciso)
-    const byRef = await listCustomers({
+    const byRef = await listCompleteCustomers({
       apiKey,
       externalReference: input.externalReference,
-      limit: 1,
     });
+    if (byRef.some((customer) => customer.externalReference !== input.externalReference)) {
+      throw new Error('ASAAS_CUSTOMER_LOOKUP_MISMATCH:EXTERNAL_REFERENCE');
+    }
+    const matchingReference = byRef.filter((customer) =>
+      customer.externalReference === input.externalReference &&
+      normalizeCustomerDocument(customer.cpfCnpj) === cpfCnpj,
+    );
+    if (byRef.some((customer) =>
+      customer.externalReference === input.externalReference &&
+      normalizeCustomerDocument(customer.cpfCnpj) !== cpfCnpj,
+    )) throw new Error('ASAAS_CUSTOMER_LOOKUP_MISMATCH:CPF_CNPJ');
+    if (matchingReference.some((customer) => customer.deleted)) {
+      throw new Error('ASAAS_CUSTOMER_DELETED_REQUIRES_RECONCILIATION');
+    }
+    const referenceCustomer = selectUniqueActiveCustomer(matchingReference);
 
-    if (byRef.data.length > 0 && !byRef.data[0].deleted) {
+    if (referenceCustomer) {
       await this.deps.logIntegration({
         contaId: input.contaId,
         operation: 'RESOLVE_CUSTOMER',
         entity: 'Customer',
         entityId: input.payer.id,
-        asaasId: byRef.data[0].id,
+        asaasId: referenceCustomer.id,
         status: 'SUCCESS',
         response: { found: true, method: 'externalReference' },
       });
-      return { customerId: byRef.data[0].id, created: false };
+      return { customerId: referenceCustomer.id, created: false };
     }
 
     // 2. Buscar por documento (fallback)
-    const byCpf = await listCustomers({
+    const byCpf = await listCompleteCustomers({
       apiKey,
       cpfCnpj: input.payer.cpfCnpj.replace(/\D/g, ''),
-      limit: 1,
     });
+    const matchingCpf = byCpf.filter((customer) =>
+      normalizeCustomerDocument(customer.cpfCnpj) === cpfCnpj,
+    );
+    if (matchingCpf.some((customer) => customer.deleted)) {
+      throw new Error('ASAAS_CUSTOMER_DELETED_REQUIRES_RECONCILIATION');
+    }
+    const cpfCustomer = selectUniqueActiveCustomer(matchingCpf);
 
-    if (byCpf.data.length > 0 && !byCpf.data[0].deleted) {
+    if (cpfCustomer) {
       await this.deps.logIntegration({
         contaId: input.contaId,
         operation: 'RESOLVE_CUSTOMER',
         entity: 'Customer',
         entityId: input.payer.id,
-        asaasId: byCpf.data[0].id,
+        asaasId: cpfCustomer.id,
         status: 'SUCCESS',
         response: { found: true, method: 'cpfCnpj' },
       });
-      return { customerId: byCpf.data[0].id, created: false };
+      return { customerId: cpfCustomer.id, created: false };
     }
 
     // 3. Criar novo customer
     const customerData = {
       name: input.payer.name,
-      cpfCnpj: input.payer.cpfCnpj.replace(/\D/g, ''),
+      cpfCnpj,
       email: input.payer.email,
       phone: input.payer.phone,
       address: input.payer.address?.street,
@@ -110,24 +195,36 @@ export class AsaasPaymentsProviderAdapter implements PaymentsProviderPort {
       notificationDisabled: false,
     };
 
-    const created = await createCustomer({
+    const creation = await createCustomerWithOutboundOperation({
+      contaId: input.contaId,
       apiKey,
       data: customerData,
-      idempotencyKey: buildSafeAsaasIdempotencyKey(`customer-${input.externalReference}`),
+      payerIdentity: { type: input.payer.type, id: input.payer.id },
     });
+    if (!creation.ok) {
+      throw new Error(`ASAAS_CUSTOMER_CREATE_${creation.disposition}:${creation.message}`);
+    }
+    if (creation.customer.deleted) {
+      throw new Error('ASAAS_CUSTOMER_DELETED_REQUIRES_RECONCILIATION');
+    }
+    if (
+      !creation.customer.id?.trim() ||
+      creation.customer.externalReference !== input.externalReference ||
+      normalizeCustomerDocument(creation.customer.cpfCnpj) !== cpfCnpj
+    ) throw new Error('ASAAS_CUSTOMER_CREATE_IDENTITY_MISMATCH');
 
     await this.deps.logIntegration({
       contaId: input.contaId,
       operation: 'CREATE_CUSTOMER',
       entity: 'Customer',
       entityId: input.payer.id,
-      asaasId: created.id,
+      asaasId: creation.customer.id,
       status: 'SUCCESS',
       request: customerData,
-      response: { id: created.id },
+      response: { id: creation.customer.id },
     });
 
-    return { customerId: created.id, created: true };
+    return { customerId: creation.customer.id, created: !creation.reused };
   }
 
   async cancelSubscription(
@@ -204,7 +301,7 @@ export class AsaasPaymentsProviderAdapter implements PaymentsProviderPort {
     const created = await createSubscription({
       apiKey,
       data: subscriptionData,
-      idempotencyKey: buildSafeAsaasIdempotencyKey(`subscription-${input.externalReference}`),
+      idempotencyKey: buildOutboundOperationKey(`subscription-${input.externalReference}`),
     });
 
     await this.deps.logIntegration({
@@ -242,7 +339,7 @@ export class AsaasPaymentsProviderAdapter implements PaymentsProviderPort {
     const created = await createPayment({
       apiKey,
       data: paymentData,
-      idempotencyKey: buildSafeAsaasIdempotencyKey(`payment-${input.externalReference}`),
+      idempotencyKey: buildOutboundOperationKey(`payment-${input.externalReference}`),
     });
 
     await this.deps.logIntegration({

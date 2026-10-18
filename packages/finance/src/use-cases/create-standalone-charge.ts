@@ -29,7 +29,7 @@ import {
 } from '../foundation/standalone-subscription-store';
 import {
   buildStandaloneExternalReference,
-  buildSafeAsaasIdempotencyKey,
+  buildOutboundOperationKey,
   deriveDeterministicId,
   hashPayload,
   isPrismaUniqueViolation,
@@ -40,8 +40,10 @@ import {
   markOutboundRemoteConfirmed,
   markOutboundRemoteRequested,
   markOutboundResultUnknown,
+  markOutboundRequiresReconciliation,
   reserveOutboundFinancialOperation,
 } from './outbound-financial-operation';
+import { assertCompleteAsaasPage } from './asaas-pagination';
 import { mapAsaasSubscriptionStatus } from '../mappers/asaas-subscription-status';
 import type { CustomerPayerType } from '@prisma/client';
 import type {
@@ -67,20 +69,28 @@ async function materializeFirstSubscriptionPayment(params: {
     // payment no GET da assinatura. Faça uma pequena janela de convergência
     // antes de desistir; isso evita deixar a cobrança fora da assinatura
     // quando o webhook vence a persistência local por poucos milissegundos.
-    let payments: Awaited<ReturnType<typeof listPayments>> | null = null;
+    let payments: Awaited<ReturnType<typeof listPayments>>['data'] = [];
     for (const delayMs of [0, 250, 750, 1500]) {
       if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
-      payments = await listPayments(
-        { subscription: params.subscriptionId, limit: 10, offset: 0 },
-        { contaId: params.contaId },
-      ).catch(() => null);
-      if (payments?.data.some((payment) => payment?.id)) break;
+      const result = await listAllPages(
+        (offset, limit) => listPayments(
+          { subscription: params.subscriptionId, limit, offset },
+          { contaId: params.contaId },
+        ),
+        'SUBSCRIPTION_PAYMENTS',
+      );
+      if (result.complete) {
+        payments = result.data;
+        if (payments.some((payment) => payment?.id)) break;
+      }
     }
 
-    const candidate =
-      payments?.data.find((payment) => payment.dueDate === params.expectedDueDate) ??
-      payments?.data.find((payment) => payment.status === 'PENDING') ??
-      payments?.data[0];
+    const dueDateMatches = params.expectedDueDate
+      ? payments.filter((payment) => payment.dueDate === params.expectedDueDate)
+      : [];
+    const pendingPayments = payments.filter((payment) => payment.status === 'PENDING');
+    const candidates = dueDateMatches.length > 0 ? dueDateMatches : pendingPayments.length > 0 ? pendingPayments : payments;
+    const candidate = candidates.length === 1 ? candidates[0] : null;
 
     if (!candidate?.id) {
       return;
@@ -113,16 +123,65 @@ async function findRemoteSubscriptionWithRetry(params: {
   contaId: string;
   externalReference: string;
 }) {
+  let lastComplete = false;
   for (const delayMs of [0, 250, 750, 1500]) {
     if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
-    const result = await listSubscriptions(
-      { externalReference: params.externalReference, limit: 10, includeDeleted: true },
-      { contaId: params.contaId },
-    ).catch(() => null);
-    const matches = result?.data ?? [];
-    if (matches.length > 0) return matches;
+    const result = await listAllPages(
+      (offset, limit) => listSubscriptions(
+        { externalReference: params.externalReference, limit, offset, includeDeleted: true },
+        { contaId: params.contaId },
+      ),
+      'SUBSCRIPTIONS',
+    );
+    if (!result.complete) continue;
+    const mismatched = result.data.some((item) => item.externalReference !== params.externalReference);
+    if (mismatched) return { matches: [], complete: false };
+    const matches = result.data.filter((item) => item.externalReference === params.externalReference);
+    lastComplete = true;
+    if (matches.length > 0) return { matches, complete: true };
   }
-  return [];
+  return { matches: [], complete: lastComplete };
+}
+
+async function listAllPages<T extends { id: string; externalReference?: string }>(
+  load: (offset: number, limit: number) => Promise<{ data: T[]; hasMore: boolean; totalCount: number; offset: number; limit: number }>,
+  label: string,
+): Promise<{ data: T[]; complete: boolean }> {
+  const data: T[] = [];
+  const seenIds = new Set<string>();
+  const seenPages = new Set<string>();
+  let expectedTotalCount: number | undefined;
+  for (let page = 0; page < 100; page += 1) {
+    let response: { data: T[]; hasMore: boolean; totalCount: number; offset: number; limit: number };
+    try {
+      response = await load(page * 100, 100);
+    } catch {
+      return { data, complete: false };
+    }
+    if (!response || !Array.isArray(response.data) || typeof response.hasMore !== 'boolean') {
+      return { data, complete: false };
+    }
+    try {
+      expectedTotalCount = assertCompleteAsaasPage(response, page * 100, 100, expectedTotalCount);
+    } catch { return { data, complete: false }; }
+    const ids = response.data.map((item) => item?.id);
+    const signature = ids.join('|');
+    if (ids.some((id) => !id || seenIds.has(id)) || seenPages.has(signature)) {
+      return { data, complete: false };
+    }
+    seenPages.add(signature);
+    ids.forEach((id) => seenIds.add(id));
+    data.push(...response.data);
+    if (!response.hasMore) return { data, complete: true };
+    if (response.data.length === 0) return { data, complete: false };
+  }
+  logFinanceOperationalEvent({
+    severity: 'warn',
+    eventName: 'finance.use_cases.create_standalone_charge.degraded',
+    error: new Error(`${label}_PAGE_LIMIT_EXCEEDED`),
+    throttleMs: 60_000,
+  });
+  return { data, complete: false };
 }
 
 // =============================================================================
@@ -848,12 +907,23 @@ export async function createStandaloneCharge(
             )
           : null;
       if (!remotePayment && !mockMode) {
-        const matches = await listPayments(
-          { externalReference, limit: 10, includeDeleted: true },
-          { contaId: input.contaId },
-        )
-          .then((result) => result.data)
-          .catch(() => []);
+        const lookup = await listAllPages(
+          (offset, limit) => listPayments(
+            { externalReference, limit, offset, includeDeleted: true },
+            { contaId: input.contaId },
+          ),
+          'PAYMENTS',
+        );
+        if (!lookup.complete || lookup.data.some((payment) => payment.externalReference !== externalReference)) {
+          if (operation.payload.state !== 'INTENT_CREATED') {
+            await markOutboundResultUnknown({
+              jobId: operation.job.id, contaId: input.contaId, resource: 'PAYMENT', entityId: chargeId,
+              externalReference, error: 'PAYMENT_RECONCILIATION_LOOKUP_INCOMPLETE',
+            });
+          }
+          return err('ERRO_AO_CRIAR_PAGAMENTO');
+        }
+        const matches = lookup.data.filter((payment) => payment.externalReference === externalReference);
         if (matches.length > 1) {
           await markOutboundResultUnknown({
             jobId: operation.job.id,
@@ -865,25 +935,60 @@ export async function createStandaloneCharge(
           });
           return err('ERRO_AO_CRIAR_PAGAMENTO');
         }
-        remotePayment = matches[0] ?? null;
+        if (matches.length === 1) {
+          remotePayment = await getPayment(matches[0]!.id, { contaId: input.contaId }).catch(() => null);
+          if (
+            !remotePayment ||
+            remotePayment.id !== matches[0]!.id ||
+            remotePayment.externalReference !== externalReference
+          ) {
+            await markOutboundResultUnknown({
+              jobId: operation.job.id, contaId: input.contaId, resource: 'PAYMENT', entityId: chargeId,
+              externalReference, error: 'REMOTE_PAYMENT_GET_CONFIRMATION_FAILED',
+            });
+            return err('ERRO_AO_CRIAR_PAGAMENTO');
+          }
+        } else if (operation.payload.state !== 'INTENT_CREATED') {
+          await markOutboundResultUnknown({
+            jobId: operation.job.id, contaId: input.contaId, resource: 'PAYMENT', entityId: chargeId,
+            externalReference, error: 'PREVIOUS_PAYMENT_CREATE_RESULT_NOT_CONFIRMED',
+          });
+          return err('ERRO_AO_CRIAR_PAGAMENTO');
+        }
       }
       if (!remotePayment && !mockMode) {
         const claimed = await markOutboundRemoteRequested(operation.job.id);
         if (!claimed) return err('ERRO_AO_CRIAR_PAGAMENTO');
         const payment = await createAsaasPayment(paymentInput);
         if (payment.success) {
-          remotePayment = await getPayment(payment.data.id, { contaId: input.contaId }).catch(
-            () =>
-              ({ ...payment.data, status: 'PENDING' }) as Awaited<ReturnType<typeof getPayment>>,
-          );
+          remotePayment = await getPayment(payment.data.id, { contaId: input.contaId }).catch(() => null);
+          if (
+            !remotePayment ||
+            remotePayment.id !== payment.data.id ||
+            remotePayment.externalReference !== externalReference
+          ) {
+            await markOutboundResultUnknown({
+              jobId: operation.job.id, contaId: input.contaId, resource: 'PAYMENT', entityId: chargeId,
+              externalReference, error: 'REMOTE_PAYMENT_GET_CONFIRMATION_FAILED',
+            });
+            return err('ERRO_AO_CRIAR_PAGAMENTO');
+          }
         } else {
-          const recovered = await listPayments(
-            { externalReference, limit: 10, includeDeleted: true },
-            { contaId: input.contaId },
-          )
-            .then((result) => result.data)
-            .catch(() => []);
-          if (recovered.length === 1) remotePayment = recovered[0]!;
+          const lookup = await listAllPages(
+            (offset, limit) => listPayments(
+              { externalReference, limit, offset, includeDeleted: true },
+              { contaId: input.contaId },
+            ),
+            'PAYMENTS_AFTER_CREATE',
+          );
+          const recovered = lookup.data.filter((item) => item.externalReference === externalReference);
+          if (lookup.complete && recovered.length === 1 && lookup.data.every((item) => item.externalReference === externalReference)) {
+            remotePayment = await getPayment(recovered[0]!.id, { contaId: input.contaId }).catch(() => null);
+            if (
+              remotePayment?.id !== recovered[0]!.id ||
+              remotePayment.externalReference !== externalReference
+            ) remotePayment = null;
+          }
           else {
             await markOutboundResultUnknown({
               jobId: operation.job.id,
@@ -897,6 +1002,13 @@ export async function createStandaloneCharge(
               return err('CREDENCIAIS_ASAAS_NAO_CONFIGURADAS');
             return err('ERRO_AO_CRIAR_PAGAMENTO');
           }
+          if (!remotePayment) {
+            await markOutboundResultUnknown({
+              jobId: operation.job.id, contaId: input.contaId, resource: 'PAYMENT', entityId: chargeId,
+              externalReference, error: payment.error,
+            });
+            return err('ERRO_AO_CRIAR_PAGAMENTO');
+          }
         }
       }
       if (!remotePayment) return err('ERRO_AO_CRIAR_PAGAMENTO');
@@ -907,7 +1019,7 @@ export async function createStandaloneCharge(
         (remotePayment.value != null && Math.abs(remotePayment.value - input.value!) > 0.001) ||
         (remotePayment.dueDate != null && remotePayment.dueDate !== input.dueDate);
       if (paymentMismatch) {
-        await markOutboundResultUnknown({
+        await markOutboundRequiresReconciliation({
           jobId: operation.job.id,
           contaId: input.contaId,
           resource: 'PAYMENT',
@@ -1044,7 +1156,7 @@ export async function createStandaloneCharge(
       const subscriptionId = deriveDeterministicId('sub', idempotencyKey);
       const subscriptionExternalReference =
         buildStandaloneSubscriptionExternalReference(subscriptionId);
-      const asaasIdempotencyKey = buildSafeAsaasIdempotencyKey(idempotencyKey);
+      const operationKey = buildOutboundOperationKey(idempotencyKey);
 
       // Verificar duplicidade local
       const existingSubscription = await findStandaloneSubscription(prisma, {
@@ -1138,7 +1250,7 @@ export async function createStandaloneCharge(
       const operation = await reserveOutboundFinancialOperation({
         contaId: input.contaId,
         type: 'CREATE_SUBSCRIPTION',
-        idempotencyKey: asaasIdempotencyKey,
+        idempotencyKey: operationKey,
         resource: 'SUBSCRIPTION',
         entityId: subscriptionId,
         externalReference: subscriptionExternalReference,
@@ -1165,10 +1277,20 @@ export async function createStandaloneCharge(
             )
           : null;
       if (!subscription && !mockMode) {
-        const matches = await findRemoteSubscriptionWithRetry({
+        const lookup = await findRemoteSubscriptionWithRetry({
           contaId: input.contaId,
           externalReference: subscriptionExternalReference,
         });
+        if (!lookup.complete) {
+          if (operation.payload.state !== 'INTENT_CREATED') {
+            await markOutboundResultUnknown({
+              jobId: operation.job.id, contaId: input.contaId, resource: 'SUBSCRIPTION', entityId: subscriptionId,
+              externalReference: subscriptionExternalReference, error: 'SUBSCRIPTION_RECONCILIATION_LOOKUP_INCOMPLETE',
+            });
+          }
+          return err('ERRO_AO_CRIAR_PAGAMENTO');
+        }
+        const matches = lookup.matches;
         if (matches.length > 1) {
           await markOutboundResultUnknown({
             jobId: operation.job.id,
@@ -1180,7 +1302,25 @@ export async function createStandaloneCharge(
           });
           return err('ERRO_AO_CRIAR_PAGAMENTO');
         }
-        subscription = matches[0] ?? null;
+        if (matches.length === 1) {
+          subscription = await getSubscription(matches[0]!.id, { contaId: input.contaId }).catch(() => null);
+          if (!subscription || subscription.id !== matches[0]!.id || subscription.externalReference !== subscriptionExternalReference) {
+            await markOutboundResultUnknown({
+              jobId: operation.job.id, contaId: input.contaId, resource: 'SUBSCRIPTION', entityId: subscriptionId,
+              externalReference: subscriptionExternalReference, error: 'REMOTE_SUBSCRIPTION_GET_CONFIRMATION_FAILED',
+            });
+            return err('ERRO_AO_CRIAR_PAGAMENTO');
+          }
+        } else if (operation.payload.state !== 'INTENT_CREATED') {
+          await markOutboundResultUnknown({
+            jobId: operation.job.id, contaId: input.contaId, resource: 'SUBSCRIPTION', entityId: subscriptionId,
+            externalReference: subscriptionExternalReference, error: 'PREVIOUS_SUBSCRIPTION_CREATE_RESULT_NOT_CONFIRMED',
+          });
+          return ok({
+            chargeId: subscriptionId, externalReference: subscriptionExternalReference,
+            status: 'PENDING_RECONCILIATION', expectedWebhooks: ['SUBSCRIPTION_CREATED', 'PAYMENT_CREATED'], notificationSync,
+          });
+        }
       }
       if (!subscription) {
         const claimed = await markOutboundRemoteRequested(operation.job.id);
@@ -1188,14 +1328,23 @@ export async function createStandaloneCharge(
           // Outro request pode estar concluindo o mesmo POST. Reconcile antes
           // de responder erro para não transformar uma operação já aceita em
           // falsa falha na tela.
-          subscription =
-            (
-              await findRemoteSubscriptionWithRetry({
-                contaId: input.contaId,
-                externalReference: subscriptionExternalReference,
-              })
-            )[0] ?? null;
+          const lookup = await findRemoteSubscriptionWithRetry({
+            contaId: input.contaId, externalReference: subscriptionExternalReference,
+          });
+          if (lookup.complete && lookup.matches.length === 1) {
+            subscription = await getSubscription(lookup.matches[0]!.id, { contaId: input.contaId }).catch(() => null);
+            if (subscription?.externalReference !== subscriptionExternalReference) subscription = null;
+          } else if (lookup.matches.length > 1) {
+            await markOutboundResultUnknown({
+              jobId: operation.job.id, contaId: input.contaId, resource: 'SUBSCRIPTION', entityId: subscriptionId,
+              externalReference: subscriptionExternalReference, error: 'MULTIPLE_REMOTE_SUBSCRIPTIONS_FOR_EXTERNAL_REFERENCE',
+            });
+          }
           if (!subscription) {
+            await markOutboundResultUnknown({
+              jobId: operation.job.id, contaId: input.contaId, resource: 'SUBSCRIPTION', entityId: subscriptionId,
+              externalReference: subscriptionExternalReference, error: 'SUBSCRIPTION_CLAIM_LOST_WITHOUT_CONFIRMED_RESOURCE',
+            });
             return ok({
               chargeId: subscriptionId,
               externalReference: subscriptionExternalReference,
@@ -1208,7 +1357,7 @@ export async function createStandaloneCharge(
           try {
             const created = await createSubscription({
               apiKey: creds.apiKey,
-              idempotencyKey: asaasIdempotencyKey,
+              idempotencyKey: operationKey,
               data: subscriptionPayload,
             });
             // A criação já devolve o recurso confirmado. A consulta seguinte é
@@ -1236,12 +1385,29 @@ export async function createStandaloneCharge(
             // depois de o POST ter sido aceito (por exemplo, retry semântico do
             // provedor). Sempre faça a reconciliação por externalReference antes
             // de informar falha ao usuário.
-            const recovered = await findRemoteSubscriptionWithRetry({
+            const lookup = await findRemoteSubscriptionWithRetry({
               contaId: input.contaId,
               externalReference: subscriptionExternalReference,
             });
-            if (recovered.length === 1) subscription = recovered[0]!;
-            else {
+            if (lookup.complete && lookup.matches.length === 1) {
+              const found = lookup.matches[0]!;
+              subscription = await getSubscription(found.id, { contaId: input.contaId }).catch(() => null);
+              if (!subscription || subscription.id !== found.id || subscription.externalReference !== subscriptionExternalReference) {
+                subscription = null;
+              }
+            }
+            if (!subscription) {
+              if (!lookup.complete || lookup.matches.length > 1) {
+                await markOutboundResultUnknown({
+                  jobId: operation.job.id, contaId: input.contaId, resource: 'SUBSCRIPTION', entityId: subscriptionId,
+                  externalReference: subscriptionExternalReference,
+                  error: lookup.complete ? 'MULTIPLE_REMOTE_SUBSCRIPTIONS_FOR_EXTERNAL_REFERENCE' : 'SUBSCRIPTION_RECONCILIATION_LOOKUP_INCOMPLETE',
+                });
+                return ok({
+                  chargeId: subscriptionId, externalReference: subscriptionExternalReference,
+                  status: 'PENDING_RECONCILIATION', expectedWebhooks: ['SUBSCRIPTION_CREATED', 'PAYMENT_CREATED'], notificationSync,
+                });
+              }
               if (
                 remoteError instanceof AsaasHttpError &&
                 remoteError.status >= 400 &&
@@ -1269,8 +1435,7 @@ export async function createStandaloneCharge(
       }
       const subscriptionMismatch =
         !subscription?.id ||
-        (subscription.externalReference != null &&
-          subscription.externalReference !== subscriptionExternalReference) ||
+        subscription.externalReference !== subscriptionExternalReference ||
         (subscription.customer != null && subscription.customer !== asaasCustomerId) ||
         (subscription.value != null && Math.abs(subscription.value - input.value!) > 0.001) ||
         !sameAsaasDate(subscription.nextDueDate, input.nextDueDate!);
@@ -1306,7 +1471,7 @@ export async function createStandaloneCharge(
           });
         }
 
-        await markOutboundResultUnknown({
+        await markOutboundRequiresReconciliation({
           jobId: operation.job.id,
           contaId: input.contaId,
           resource: 'SUBSCRIPTION',

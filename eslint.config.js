@@ -16,6 +16,7 @@ export default [
     ignores: [
       '**/dist/**',
       '**/.next/**',
+      '**/.next-auth-verify/**',
       '**/.next-turbo/**',
       '**/.next-playwright/**',
       '**/node_modules/**',

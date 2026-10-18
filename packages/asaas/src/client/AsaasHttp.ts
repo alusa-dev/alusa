@@ -472,6 +472,10 @@ async function requestWithRetry(
   const maxAttempts = 3;
   const baseDelaysMs = [200, 500, 1000];
   const timeoutMs = resolveRequestTimeoutMs(init.method);
+  const method = (init.method ?? 'GET').toUpperCase();
+  // Current Asaas endpoints do not document provider-side idempotency-key
+  // support, so mutating requests are never retried automatically.
+  const canRetryMethod = method === 'GET';
 
   let lastResponse: Response | null = null;
   let totalBackoffMs = 0;
@@ -483,7 +487,7 @@ async function requestWithRetry(
     try {
       response = await fetch(url, withTimeoutSignal(init, timeoutMs));
     } catch (error) {
-      if (!isRetryableFetchFailure(error) || attempt === maxAttempts) {
+      if (!canRetryMethod || !isRetryableFetchFailure(error) || attempt === maxAttempts) {
         throw error;
       }
 
@@ -496,10 +500,7 @@ async function requestWithRetry(
     context.onResponse(response);
 
     const status = response.status;
-    const method = (init.method ?? 'GET').toUpperCase();
-    const canRetryUnsafeMethod = method === 'GET' || hasIdempotencyKey(init.headers);
-    // POST/PUT/DELETE só são repetidos quando o caller declarou idempotência.
-    const shouldRetry = canRetryUnsafeMethod && (status === 408 || status === 429 || (status >= 500 && status <= 599));
+    const shouldRetry = canRetryMethod && (status === 408 || status === 429 || (status >= 500 && status <= 599));
     if (!shouldRetry) return { response, attempts: attempt, backoffMs: totalBackoffMs };
 
     if (attempt === maxAttempts) return { response, attempts: attempt, backoffMs: totalBackoffMs };
@@ -516,16 +517,4 @@ async function requestWithRetry(
 
   // fallback (nunca deve acontecer)
   return { response: lastResponse as Response, attempts: maxAttempts, backoffMs: totalBackoffMs };
-}
-
-function hasIdempotencyKey(headers: HeadersInit | undefined): boolean {
-  if (!headers) return false;
-  if (typeof Headers !== 'undefined' && headers instanceof Headers) {
-    return Boolean(headers.get('Idempotency-Key'));
-  }
-  if (Array.isArray(headers)) {
-    return headers.some(([name, value]) => name.toLowerCase() === 'idempotency-key' && Boolean(value));
-  }
-  return Object.entries(headers as Record<string, string>)
-    .some(([name, value]) => name.toLowerCase() === 'idempotency-key' && Boolean(value));
 }

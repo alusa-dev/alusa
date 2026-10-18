@@ -421,6 +421,105 @@ describe('getKycSnapshot', () => {
     expect(mockGetMyAccountDocuments).toHaveBeenCalled();
   });
 
+  it('usa cache v2 recente com UUID zero sem repetir leitura remota durante provisionamento', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.asaasAccount.findUnique).mockResolvedValueOnce({
+      id: 'aa_001',
+      asaasAccountId: ASAAS_ACCOUNT_ID,
+      provisionedAt: new Date(Date.now() - 120_000),
+      commercialInfoStatus: null,
+      commercialInfoScheduledDate: null,
+      documentsCache: {
+        version: 2,
+        myAccountStatus: { general: 'PENDING', documentation: 'PENDING', bankAccountInfo: 'PENDING' },
+        groups: [{ id: '00000000-0000-0000-0000-000000000000', status: 'NOT_SENT', type: 'IDENTIFICATION', title: 'Documento', description: '', hasOnboardingUrl: false }],
+        rejectReasons: [],
+        fetchedAt: new Date().toISOString(),
+      },
+      documentsCacheUpdatedAt: new Date(),
+    } as never);
+
+    const snapshot = await getKycSnapshot(FP_ID);
+    expect(snapshot).not.toBeNull();
+    expect(mockGetMyAccountStatus).not.toHaveBeenCalled();
+    expect(mockGetMyAccountDocuments).not.toHaveBeenCalled();
+  });
+
+  it('readModelOnly usa cache além do TTL normal sem consultar Asaas nem credenciais', async () => {
+    const { prisma, loadAsaasCredentials } = await import('@alusa/database');
+    vi.mocked(prisma.asaasAccount.findUnique).mockResolvedValueOnce({
+      id: 'aa_001',
+      asaasAccountId: ASAAS_ACCOUNT_ID,
+      provisionedAt: new Date(Date.now() - 2 * 60_000),
+      commercialInfoStatus: null,
+      commercialInfoScheduledDate: null,
+      documentsCache: {
+        version: 2,
+        myAccountStatus: { general: 'PENDING', documentation: 'PENDING', bankAccountInfo: 'PENDING' },
+        groups: [{
+          id: 'grp_external', status: 'NOT_SENT', type: 'IDENTIFICATION', title: 'Documento externo',
+          description: 'Enviar pelo onboarding', hasOnboardingUrl: true,
+        }],
+        rejectReasons: [],
+        fetchedAt: new Date(Date.now() - 2 * 60_000).toISOString(),
+      },
+      documentsCacheUpdatedAt: new Date(Date.now() - 2 * 60_000),
+    } as never);
+
+    const snapshot = await getKycSnapshot(FP_ID, { readModelOnly: true });
+
+    expect(snapshot).not.toBeNull();
+    expect(snapshot?.nextActions[0]).toMatchObject({ kind: 'EXTERNAL_ONBOARDING', groupId: 'grp_external' });
+    expect(mockGetMyAccountStatus).not.toHaveBeenCalled();
+    expect(mockGetMyAccountDocuments).not.toHaveBeenCalled();
+    expect(loadAsaasCredentials).not.toHaveBeenCalled();
+  });
+
+  it('readModelOnly preserva o último cache mesmo após o limite de recuperação e não consulta o provedor', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.asaasAccount.findUnique).mockResolvedValueOnce({
+      id: 'aa_001',
+      asaasAccountId: ASAAS_ACCOUNT_ID,
+      provisionedAt: new Date(Date.now() - 36 * 60 * 60_000),
+      commercialInfoStatus: null,
+      commercialInfoScheduledDate: null,
+      documentsCache: {
+        version: 2,
+        myAccountStatus: { general: 'PENDING', documentation: 'PENDING', bankAccountInfo: 'PENDING' },
+        groups: [],
+        rejectReasons: [],
+        fetchedAt: new Date(Date.now() - 36 * 60 * 60_000).toISOString(),
+      },
+      documentsCacheUpdatedAt: new Date(Date.now() - 36 * 60 * 60_000),
+    } as never);
+
+    const snapshot = await getKycSnapshot(FP_ID, { readModelOnly: true });
+
+    expect(snapshot).not.toBeNull();
+    expect(mockGetMyAccountStatus).not.toHaveBeenCalled();
+    expect(mockGetMyAccountDocuments).not.toHaveBeenCalled();
+  });
+
+  it('readModelOnly retorna null quando não existe cache persistido sem consultar o provedor', async () => {
+    const { prisma, loadAsaasCredentials } = await import('@alusa/database');
+    vi.mocked(prisma.asaasAccount.findUnique).mockResolvedValueOnce({
+      id: 'aa_001',
+      asaasAccountId: ASAAS_ACCOUNT_ID,
+      provisionedAt: new Date(Date.now() - 60_000),
+      commercialInfoStatus: null,
+      commercialInfoScheduledDate: null,
+      documentsCache: null,
+      documentsCacheUpdatedAt: null,
+    } as never);
+
+    const snapshot = await getKycSnapshot(FP_ID, { readModelOnly: true });
+
+    expect(snapshot).toBeNull();
+    expect(mockGetMyAccountStatus).not.toHaveBeenCalled();
+    expect(mockGetMyAccountDocuments).not.toHaveBeenCalled();
+    expect(loadAsaasCredentials).not.toHaveBeenCalled();
+  });
+
   // ── Cache v1 (legado) é ignorado → busca fresh ──
 
   it('ignora cache v1 (sem version: 2) e busca fresh', async () => {

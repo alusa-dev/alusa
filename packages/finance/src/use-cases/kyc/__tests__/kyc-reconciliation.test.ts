@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const {
   mockFindManyAccounts,
+  mockFindUniqueAsaasAccount,
   mockFindUniqueKycProcess,
   mockAsaasAccountUpdate,
   mockKycProcessUpsert,
@@ -15,6 +16,7 @@ const {
   mockAuditRecord,
 } = vi.hoisted(() => ({
   mockFindManyAccounts: vi.fn(),
+  mockFindUniqueAsaasAccount: vi.fn(),
   mockFindUniqueKycProcess: vi.fn(),
   mockAsaasAccountUpdate: vi.fn().mockResolvedValue({ id: 'acc-1' }),
   mockKycProcessUpsert: vi.fn().mockResolvedValue({ id: 'proc-1' }),
@@ -30,7 +32,7 @@ vi.mock('@alusa/database', () => ({
   prisma: {
     asaasAccount: {
       findMany: mockFindManyAccounts,
-      findUnique: vi.fn().mockResolvedValue({ provisionedAt: null }),
+      findUnique: mockFindUniqueAsaasAccount,
       update: mockAsaasAccountUpdate,
     },
     kycProcess: {
@@ -57,6 +59,18 @@ import type { KycReconciliationResult } from '../kyc-reconciliation.service';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockAsaasAccountUpdate.mockReset().mockResolvedValue({ id: 'acc-1' });
+  mockFindUniqueAsaasAccount.mockResolvedValue({
+    provisionedAt: null,
+    documentsCache: {
+      version: 2,
+      myAccountStatus: { general: 'PENDING', documentation: 'PENDING', bankAccountInfo: 'PENDING' },
+      groups: [],
+      rejectReasons: [],
+      fetchedAt: new Date().toISOString(),
+    },
+    documentsCacheUpdatedAt: new Date(),
+  });
   mockLoadCreds.mockResolvedValue({
     apiKey: 'sandbox_key',
     apiKeyStatus: 'CONNECTED',
@@ -65,6 +79,154 @@ beforeEach(() => {
 });
 
 describe('reconcileKycModels', () => {
+  const healthyAccount = {
+    id: 'acc-1',
+    asaasAccountId: 'ext-acc-1',
+    status: 'PENDING',
+    financeProfile: { contaId: 'conta-1' },
+  };
+
+  it('hidrata um read model ausente depois da espera de provisionamento', async () => {
+    mockFindManyAccounts.mockResolvedValue([healthyAccount]);
+    mockFindUniqueKycProcess.mockResolvedValue(null);
+    mockFindUniqueAsaasAccount.mockResolvedValue({
+      provisionedAt: new Date(Date.now() - 16_000),
+      documentsCache: null,
+      documentsCacheUpdatedAt: null,
+    });
+    mockGetStatus.mockResolvedValue({ general: 'PENDING', documentation: 'PENDING' });
+    mockGetDocs.mockResolvedValue({ data: [], rejectReasons: null });
+
+    const result = await reconcileKycModels();
+
+    expect(result.inconsistenciesFound).toBe(1);
+    expect(result.reconciled).toBe(1);
+    expect(mockGetStatus).toHaveBeenCalledTimes(1);
+    expect(mockGetDocs).toHaveBeenCalledTimes(1);
+    expect(mockAsaasAccountUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'acc-1' },
+      data: expect.objectContaining({ documentsCacheUpdatedAt: expect.any(Date) }),
+    }));
+  });
+
+  it('não consulta o provedor antes dos 15s, adiando a hidratação para uma execução posterior', async () => {
+    mockFindManyAccounts.mockResolvedValue([healthyAccount]);
+    mockFindUniqueKycProcess.mockResolvedValue(null);
+    mockFindUniqueAsaasAccount.mockResolvedValue({
+      provisionedAt: new Date(),
+      documentsCache: null,
+      documentsCacheUpdatedAt: null,
+    });
+
+    const result = await reconcileKycModels();
+
+    expect(result.inconsistenciesFound).toBe(0);
+    expect(result.reconciled).toBe(0);
+    expect(mockGetStatus).not.toHaveBeenCalled();
+    expect(mockGetDocs).not.toHaveBeenCalled();
+  });
+
+  it('refresca read model vencido e não espera inconsistência em KycProcess', async () => {
+    mockFindManyAccounts.mockResolvedValue([healthyAccount]);
+    mockFindUniqueKycProcess.mockResolvedValue(null);
+    let cacheUpdatedAt = new Date(Date.now() - 25 * 60 * 60_000);
+    const expiredCache = {
+      version: 2,
+      groups: [],
+      myAccountStatus: null,
+      rejectReasons: [],
+      fetchedAt: cacheUpdatedAt.toISOString(),
+    };
+    mockFindUniqueAsaasAccount.mockImplementation(async () => ({
+      provisionedAt: new Date(Date.now() - 60_000),
+      documentsCache: cacheUpdatedAt.getTime() < Date.now() - 24 * 60 * 60_000 ? expiredCache : {
+        ...expiredCache,
+        fetchedAt: cacheUpdatedAt.toISOString(),
+      },
+      documentsCacheUpdatedAt: cacheUpdatedAt,
+    }));
+    mockAsaasAccountUpdate.mockImplementation(async (args: { data: { documentsCacheUpdatedAt: Date } }) => {
+      cacheUpdatedAt = args.data.documentsCacheUpdatedAt;
+      return { id: 'acc-1' };
+    });
+    mockGetStatus.mockResolvedValue({ general: 'PENDING', documentation: 'PENDING' });
+    mockGetDocs.mockResolvedValue({ data: [], rejectReasons: null });
+
+    const result = await reconcileKycModels();
+    expect(result.inconsistenciesFound).toBe(1);
+    expect(result.reconciled).toBe(1);
+
+    const repeatedResult = await reconcileKycModels();
+
+    expect(repeatedResult.inconsistenciesFound).toBe(0);
+    expect(repeatedResult.reconciled).toBe(0);
+    expect(mockGetStatus).toHaveBeenCalledTimes(1);
+    expect(mockGetDocs).toHaveBeenCalledTimes(1);
+  });
+
+  it('avança o lote para contas sem cache após hidratar as primeiras 100', async () => {
+    const provisionedAt = new Date(Date.now() - 60_000);
+    const accounts = Array.from({ length: 105 }, (_, index) => ({
+      id: `acc-${String(index).padStart(3, '0')}`,
+      asaasAccountId: `ext-${index}`,
+      status: 'PENDING',
+      createdAt: new Date(Date.now() - (105 - index) * 1_000),
+      financeProfile: { contaId: `conta-${index}` },
+    }));
+    const accountStates = new Map(accounts.map((account) => [account.id, {
+      provisionedAt,
+      documentsCache: null as object | null,
+      documentsCacheUpdatedAt: null as Date | null,
+    }]));
+
+    mockFindManyAccounts.mockImplementation(async (args: { take: number; orderBy: unknown }) => {
+      expect(args.orderBy).toEqual([
+        { documentsCacheUpdatedAt: { sort: 'asc', nulls: 'first' } },
+        { createdAt: 'asc' },
+      ]);
+      return [...accounts]
+        .sort((a, b) => {
+          const aUpdated = accountStates.get(a.id)?.documentsCacheUpdatedAt ?? null;
+          const bUpdated = accountStates.get(b.id)?.documentsCacheUpdatedAt ?? null;
+          if (aUpdated === null && bUpdated !== null) return -1;
+          if (aUpdated !== null && bUpdated === null) return 1;
+          if (aUpdated && bUpdated && aUpdated.getTime() !== bUpdated.getTime()) {
+            return aUpdated.getTime() - bUpdated.getTime();
+          }
+          return a.createdAt.getTime() - b.createdAt.getTime();
+        })
+        .slice(0, args.take);
+    });
+    mockFindUniqueAsaasAccount.mockImplementation(async (args: { where: { id: string } }) => accountStates.get(args.where.id));
+    mockAsaasAccountUpdate.mockImplementation(async (args: {
+      where: { id: string };
+      data: { documentsCache: object; documentsCacheUpdatedAt: Date };
+    }) => {
+      const current = accountStates.get(args.where.id)!;
+      accountStates.set(args.where.id, {
+        ...current,
+        documentsCache: args.data.documentsCache,
+        documentsCacheUpdatedAt: args.data.documentsCacheUpdatedAt,
+      });
+      return { id: args.where.id };
+    });
+    mockFindUniqueKycProcess.mockResolvedValue(null);
+    mockGetStatus.mockResolvedValue({ general: 'PENDING', documentation: 'PENDING' });
+    mockGetDocs.mockResolvedValue({ data: [], rejectReasons: null });
+
+    const firstRun = await reconcileKycModels();
+    expect(firstRun.checkedAccounts).toBe(100);
+    expect(firstRun.reconciled).toBe(100);
+    expect(firstRun.details.some((item) => item.asaasAccountId === 'ext-104')).toBe(false);
+
+    const secondRun = await reconcileKycModels();
+    expect(secondRun.checkedAccounts).toBe(100);
+    expect(secondRun.reconciled).toBe(5);
+    expect(secondRun.details.some((item) => item.asaasAccountId === 'ext-104')).toBe(true);
+    expect(mockGetStatus).toHaveBeenCalledTimes(105);
+    expect(mockGetDocs).toHaveBeenCalledTimes(105);
+  });
+
   it('detecta KycSlot NOT_SENT em processo APPROVED', async () => {
     mockFindManyAccounts.mockResolvedValue([
       {

@@ -1,5 +1,5 @@
 import { prisma, loadAsaasCredentials } from '@alusa/database';
-import { listPayments as listAsaasPayments } from '@alusa/asaas';
+import { getCustomer as getAsaasCustomer, listCustomers as listAsaasCustomers, listPayments as listAsaasPayments } from '@alusa/asaas';
 import type { AsaasIntegrationJobType } from '@prisma/client';
 
 import { mapAsaasSubscriptionStatus } from '../mappers/asaas-subscription-status';
@@ -15,12 +15,51 @@ import {
   parseOutboundFinancialOperation,
 } from './outbound-financial-operation';
 import { syncPaymentStateFromAsaas } from './sync-payment-state-from-asaas';
+import { hashPayload } from '../core';
 import {
   linkReconciledEventRegistrationCharge,
   settleReconciledEventRegistrationCharge,
 } from '../events/reconcile-event-registration-charge';
+import { assertCompleteAsaasPage } from './asaas-pagination';
 
-const CREATE_TYPES = ['CREATE_PAYMENT', 'CREATE_SUBSCRIPTION', 'CREATE_INSTALLMENT'] as AsaasIntegrationJobType[];
+const CREATE_TYPES = ['CREATE_PAYMENT', 'CREATE_SUBSCRIPTION', 'CREATE_INSTALLMENT', 'CREATE_CUSTOMER'] as AsaasIntegrationJobType[];
+const MAX_RECONCILIATION_PAGES = 100;
+
+async function collectCompletePages<T extends { id: string }>(
+  load: (offset: number, limit: number) => Promise<{ data: T[]; hasMore: boolean; totalCount: number; offset: number; limit: number }>,
+  label: string,
+): Promise<T[]> {
+  const all: T[] = [];
+  const seenIds = new Set<string>();
+  const seenPages = new Set<string>();
+  let expectedTotalCount: number | undefined;
+  for (let page = 0; page < MAX_RECONCILIATION_PAGES; page += 1) {
+    const response = await load(page * 100, 100);
+    if (!response || !Array.isArray(response.data) || typeof response.hasMore !== 'boolean') {
+      throw new Error(`${label}_LOOKUP_INCOMPLETE`);
+    }
+    try {
+      expectedTotalCount = assertCompleteAsaasPage(response, page * 100, 100, expectedTotalCount);
+    } catch (error) {
+      throw new Error(`${label}_LOOKUP_INCOMPLETE:${error instanceof Error ? error.message : 'INVALID_PAGE'}`);
+    }
+    const pageKey = JSON.stringify(response.data.map((item) => item.id));
+    if (seenPages.has(pageKey)) throw new Error(`${label}_LOOKUP_REPEATED_PAGE`);
+    seenPages.add(pageKey);
+    for (const item of response.data) {
+      if (!item?.id || seenIds.has(item.id)) throw new Error(`${label}_LOOKUP_REPEATED_ID`);
+      seenIds.add(item.id);
+      all.push(item);
+    }
+    if (!response.hasMore) return all;
+    if (response.data.length === 0) throw new Error(`${label}_LOOKUP_INCOMPLETE`);
+  }
+  throw new Error(`${label}_LOOKUP_PAGE_LIMIT_EXCEEDED`);
+}
+
+function normalizeDocument(value: unknown): string {
+  return typeof value === 'string' ? value.replace(/\D/g, '') : '';
+}
 
 export async function reconcileOutboundFinancialOperations(input: {
   contaId?: string;
@@ -53,10 +92,14 @@ export async function reconcileOutboundFinancialOperations(input: {
       if (payload.resource === 'PAYMENT') {
         const matches = remoteId
           ? [await getPayment(remoteId, { contaId: job.contaId })]
-          : await listPayments({ externalReference: payload.externalReference, limit: 10, includeDeleted: true }, { contaId: job.contaId }).then((r) => r.data);
+          : await collectCompletePages(
+            (offset, limit) => listPayments({ externalReference: payload.externalReference, offset, limit, includeDeleted: true }, { contaId: job.contaId }),
+            'REMOTE_PAYMENTS',
+          ).then((items) => items.filter((item) => item.externalReference === payload.externalReference));
         if (matches.length > 1) throw new Error('MULTIPLE_REMOTE_PAYMENTS_FOR_EXTERNAL_REFERENCE');
         const payment = matches[0];
         if (payment) {
+          if (payment.externalReference !== payload.externalReference) throw new Error('REMOTE_PAYMENT_EXTERNAL_REFERENCE_MISMATCH');
           remoteId = payment.id;
           remoteStatus = payment.status;
           const localChargeId = job.chargeId ?? payload.entityId;
@@ -85,11 +128,15 @@ export async function reconcileOutboundFinancialOperations(input: {
         }
       } else if (payload.resource === 'SUBSCRIPTION') {
         const matches = remoteId
-          ? [await getSubscription(remoteId, { contaId: job.contaId }).catch(() => null)].filter(Boolean)
-          : await listSubscriptions({ externalReference: payload.externalReference, limit: 10, includeDeleted: true }, { contaId: job.contaId }).then((r) => r.data);
+          ? [await getSubscription(remoteId, { contaId: job.contaId })]
+          : await collectCompletePages(
+            (offset, limit) => listSubscriptions({ externalReference: payload.externalReference, offset, limit, includeDeleted: true }, { contaId: job.contaId }),
+            'REMOTE_SUBSCRIPTIONS',
+          ).then((items) => items.filter((item) => item.externalReference === payload.externalReference));
         if (matches.length > 1) throw new Error('MULTIPLE_REMOTE_SUBSCRIPTIONS_FOR_EXTERNAL_REFERENCE');
         const subscription = matches[0];
         if (subscription) {
+          if (subscription.externalReference !== payload.externalReference) throw new Error('REMOTE_SUBSCRIPTION_EXTERNAL_REFERENCE_MISMATCH');
           remoteId = subscription.id;
           remoteStatus = subscription.status;
           const status = mapAsaasSubscriptionStatus({ status: subscription.status, deleted: subscription.deleted });
@@ -98,12 +145,43 @@ export async function reconcileOutboundFinancialOperations(input: {
             prisma.standaloneSubscription.updateMany({ where: { contaId: job.contaId, externalReference: payload.externalReference }, data: { asaasSubscriptionId: subscription.id, status, statusUpdatedAt: new Date() } }),
           ]);
         }
+      } else if (payload.resource === 'CUSTOMER') {
+        const expectedDocumentFingerprint = typeof payload.metadata?.cpfCnpjFingerprint === 'string'
+          ? payload.metadata.cpfCnpjFingerprint
+          : null;
+        if (!expectedDocumentFingerprint || !/^[a-f0-9]{64}$/i.test(expectedDocumentFingerprint)) {
+          throw new Error('CUSTOMER_DOCUMENT_FINGERPRINT_MISSING_OR_INVALID');
+        }
+        const creds = await loadAsaasCredentials(job.contaId);
+        if (!creds) throw new Error('ASAAS_CREDENTIALS_NOT_CONFIGURED');
+        const customers = remoteId
+          ? [await getAsaasCustomer({ apiKey: creds.apiKey, customerId: remoteId })]
+          : await collectCompletePages(
+            (offset, limit) => listAsaasCustomers({ apiKey: creds.apiKey, externalReference: payload.externalReference, offset, limit }),
+            'REMOTE_CUSTOMERS',
+          ).then((items) => items.filter((item) => item.externalReference === payload.externalReference));
+        if (customers.length > 1) throw new Error('MULTIPLE_REMOTE_CUSTOMERS_FOR_EXTERNAL_REFERENCE');
+        const customer = customers[0];
+        if (customer) {
+          if (!customer.id || customer.externalReference !== payload.externalReference) {
+            throw new Error('REMOTE_CUSTOMER_EXTERNAL_REFERENCE_MISMATCH');
+          }
+          if (hashPayload(normalizeDocument(customer.cpfCnpj)) !== expectedDocumentFingerprint) {
+            throw new Error('REMOTE_CUSTOMER_DOCUMENT_MISMATCH');
+          }
+          remoteId = customer.id;
+          remoteStatus = 'FOUND';
+        }
       } else {
         const creds = await loadAsaasCredentials(job.contaId);
         if (!creds) throw new Error('ASAAS_CREDENTIALS_NOT_CONFIGURED');
         if (!remoteId) {
-          const payments = await listAsaasPayments({ apiKey: creds.apiKey, externalReference: payload.externalReference, limit: 100, includeDeleted: true });
-          const ids = [...new Set(payments.data.map((payment) => payment.installment).filter((id): id is string => Boolean(id)))];
+          const payments = await collectCompletePages(
+            (offset, limit) => listAsaasPayments({ apiKey: creds.apiKey, externalReference: payload.externalReference, offset, limit, includeDeleted: true }),
+            'REMOTE_INSTALLMENT_PAYMENTS',
+          ).then((items) => items.filter((item) => item.externalReference === payload.externalReference));
+          if (payments.some((payment) => !payment.installment)) throw new Error('REMOTE_INSTALLMENT_PAYMENT_WITHOUT_INSTALLMENT_ID');
+          const ids = [...new Set(payments.map((payment) => payment.installment).filter((id): id is string => Boolean(id)))];
           if (ids.length > 1) throw new Error('MULTIPLE_REMOTE_INSTALLMENTS_FOR_EXTERNAL_REFERENCE');
           remoteId = ids[0] ?? null;
         }

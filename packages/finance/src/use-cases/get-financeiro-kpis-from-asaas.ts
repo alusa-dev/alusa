@@ -1,6 +1,7 @@
 import type { AsaasPayment, PaymentStatus } from '@alusa/asaas';
 
 import { listPayments } from './asaas-ops';
+import { assertCompleteAsaasPage } from './asaas-pagination';
 
 export type FinanceiroKpiSnapshot = {
   valorBruto: number;
@@ -59,25 +60,61 @@ async function fetchAllPayments(params: {
   filters?: Record<string, string | number | boolean | undefined>;
 }): Promise<AsaasPayment[]> {
   const all: AsaasPayment[] = [];
+  const seenPaymentIds = new Set<string>();
   let offset = 0;
   let pages = 0;
+  let hasMore = true;
+  let expectedTotalCount: number | undefined;
 
   while (pages < MAX_WINDOW_PAGES) {
-    const response = await listPayments(
-      {
-        status: params.status,
-        limit: MAX_ASAAS_LIMIT,
-        offset,
-        ...params.filters,
-      },
-      { contaId: params.contaId },
-    );
+    let response: Awaited<ReturnType<typeof listPayments>>;
+    try {
+      response = await listPayments(
+        {
+          status: params.status,
+          limit: MAX_ASAAS_LIMIT,
+          offset,
+          ...params.filters,
+        },
+        { contaId: params.contaId },
+      );
+    } catch (error) {
+      throw new Error(`ASAAS_PAYMENT_LOOKUP_INCOMPLETE:${params.status}:page${pages}`, { cause: error });
+    }
+
+    if (
+      !response ||
+      !Array.isArray(response.data) ||
+      typeof response.hasMore !== 'boolean' ||
+      response.offset !== offset ||
+      response.limit !== MAX_ASAAS_LIMIT ||
+      response.data.some((payment) => {
+        const id = typeof payment?.id === 'string' ? payment.id.trim() : '';
+        if (!id || seenPaymentIds.has(id)) return true;
+        seenPaymentIds.add(id);
+        return false;
+      })
+    ) {
+      throw new Error(`ASAAS_PAYMENT_LOOKUP_INCOMPLETE:${params.status}:invalid_page${pages}`);
+    }
+    try {
+      expectedTotalCount = assertCompleteAsaasPage(response, offset, MAX_ASAAS_LIMIT, expectedTotalCount);
+    } catch (error) {
+      throw new Error(`ASAAS_PAYMENT_LOOKUP_INCOMPLETE:${params.status}:total_count${pages}`, { cause: error });
+    }
 
     all.push(...response.data);
     pages += 1;
-
-    if (!response.hasMore) break;
+    hasMore = response.hasMore;
+    if (!hasMore) break;
+    if (response.data.length === 0) {
+      throw new Error(`ASAAS_PAYMENT_LOOKUP_INCOMPLETE:${params.status}:empty_page_with_more${pages - 1}`);
+    }
     offset += MAX_ASAAS_LIMIT;
+  }
+
+  if (hasMore) {
+    throw new Error(`ASAAS_PAYMENT_LOOKUP_INCOMPLETE:${params.status}:max_pages_reached:${MAX_WINDOW_PAGES}`);
   }
 
   return all;
@@ -138,6 +175,25 @@ export async function getFinanceiroKpisFromAsaas(
       status: 'OVERDUE',
     }),
   ]);
+
+  const paymentStatusById = new Map<string, string>();
+  for (const [status, payments] of [
+    ['RECEIVED', received],
+    ['RECEIVED_IN_CASH', receivedInCash],
+    ['CONFIRMED', confirmed],
+    ['PENDING', pending],
+    ['OVERDUE', overdue],
+  ] as const) {
+    for (const payment of payments) {
+      const previousStatus = paymentStatusById.get(payment.id);
+      if (previousStatus) {
+        throw new Error(
+          `ASAAS_PAYMENT_LOOKUP_INCONSISTENT:CROSS_STATUS_DUPLICATE:${payment.id}:${previousStatus}:${status}`,
+        );
+      }
+      paymentStatusById.set(payment.id, status);
+    }
+  }
 
   const recebidas = toKpi(received);
   const recebidasEmDinheiro = toKpi(receivedInCash);

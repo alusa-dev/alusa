@@ -9,7 +9,6 @@ import type { InstallmentStatus } from '@prisma/client';
 import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
 import { resolvePayer } from '@alusa/domain';
-import crypto from 'crypto';
 
 import { auditLogService } from '../foundation/audit-log.service';
 import { featureFlagsService } from '../foundation/feature-flags.service';
@@ -21,6 +20,7 @@ import {
   buildInstallmentExternalReference,
   buildPaymentExternalReference,
   deriveDeterministicId,
+  hashPayload,
   toFormaPagamento,
 } from '../core';
 import {
@@ -31,6 +31,17 @@ import { resolveLiquidacaoFromAsaasPayment } from '../mappers/liquidacao-from-as
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
 import { normalizeAsaasPaymentSnapshotStatus } from '../mappers/asaas-payment-snapshot-status';
 import { parseCivilDatePreservingInstant, parseOptionalCivilDatePreservingInstant } from '../mappers/civil-date';
+import { getInstallment, listPayments } from './asaas-ops';
+import {
+  markOutboundAwaitingWebhook,
+  markOutboundFailed,
+  markOutboundRemoteConfirmed,
+  markOutboundRemoteRequested,
+  markOutboundRequiresReconciliation,
+  markOutboundResultUnknown,
+  reserveOutboundFinancialOperation,
+} from './outbound-financial-operation';
+import { assertCompleteAsaasPage } from './asaas-pagination';
 
 export type CreateInstallmentPlanInput = {
   contaId: string;
@@ -201,25 +212,16 @@ export async function createInstallmentPlan(
 
     const isRecreation =
       existing && (existing.status === 'COMPLETED' || existing.status === 'CANCELED');
-    // Retry: plano existe mas criação anterior falhou (sem asaasInstallmentId)
-    const isRetry = existing && !existing.asaasInstallmentId && existing.status !== 'ACTIVE';
-
     const idempotencySeed = `installment:${input.contaId}:${input.contratoId}`;
     const installmentPlanId = existing?.id ?? deriveDeterministicId('ip', idempotencySeed);
-
-    // Gerar novo externalReference quando:
-    // 1. Recriação de plano COMPLETED/CANCELED
-    // 2. Retry após criação falha (evita conflito de IdempotencyKey com dados diferentes)
-    // Usar sufixo curto (8 hex) para garantir unicidade sem estourar limite de 100 chars do Asaas
-    const needsNewExternalRef = isRecreation || isRetry;
-    const externalReference = needsNewExternalRef
-      ? buildInstallmentExternalReference({
-          installmentPlanId: `${installmentPlanId}:${crypto.randomBytes(4).toString('hex')}`,
-        })
-      : (existing?.externalReference ??
-        buildInstallmentExternalReference({
-          installmentPlanId,
-        }));
+    // Recriações têm uma intenção nova, mas a referência também precisa ser
+    // repetível enquanto o plano terminal continuar sendo o mesmo.
+    const recreationId = isRecreation
+      ? deriveDeterministicId('ipr', `${installmentPlanId}:${existing.statusUpdatedAt.toISOString()}`)
+      : installmentPlanId;
+    const externalReference = isRecreation
+      ? buildInstallmentExternalReference({ installmentPlanId: recreationId })
+      : existing?.externalReference ?? buildInstallmentExternalReference({ installmentPlanId });
 
     await ensureWebhookConfigOperational(input.contaId);
 
@@ -238,12 +240,142 @@ export async function createInstallmentPlan(
       ...(input.interest != null && { interest: input.interest }),
       ...(input.fine != null && { fine: input.fine }),
     };
+    const operation = await reserveOutboundFinancialOperation({
+      contaId: input.contaId,
+      type: 'CREATE_INSTALLMENT',
+      idempotencyKey: `${idempotencySeed}:${externalReference}`,
+      resource: 'INSTALLMENT_PLAN',
+      entityId: installmentPlanId,
+      externalReference,
+      requestFingerprint: hashPayload(asaasPayload),
+      metadata: { contratoId: input.contratoId, matriculaId: input.matriculaId },
+      links: { installmentPlanId },
+    });
 
-    const asaasInstallment = await asaasCreateInstallment({
-      apiKey: credentials.apiKey,
-      idempotencyKey: externalReference,
-      data: asaasPayload,
-    }).catch((e) => {
+    let asaasInstallment = operation.payload.remoteId
+      ? await getInstallment(operation.payload.remoteId, { contaId: input.contaId }).catch(() => null)
+      : null;
+    let remoteLookupAmbiguous = false;
+    let remoteLookupError = 'MULTIPLE_REMOTE_INSTALLMENTS_FOR_EXTERNAL_REFERENCE';
+    const findRemoteInstallment = async () => {
+      const payments: Awaited<ReturnType<typeof listPayments>>['data'] = [];
+      const seenPages = new Set<string>();
+      const seenPaymentIds = new Set<string>();
+      let expectedTotalCount: number | undefined;
+      let complete = false;
+      for (let page = 0; page < 10; page += 1) {
+        const result = await listPayments({
+          externalReference,
+          limit: 100,
+          offset: page * 100,
+          includeDeleted: true,
+        }, { contaId: input.contaId }).catch(() => null);
+        if (!result) break;
+        try {
+          expectedTotalCount = assertCompleteAsaasPage(result, page * 100, 100, expectedTotalCount);
+        } catch { break; }
+        const pageIds = result.data.map((payment) => payment.id);
+        const signature = pageIds.slice().sort().join('|');
+        if (
+          (result.hasMore && result.data.length === 0) ||
+          seenPages.has(signature) ||
+          pageIds.some((id) => seenPaymentIds.has(id))
+        ) break;
+        seenPages.add(signature);
+        pageIds.forEach((id) => seenPaymentIds.add(id));
+        payments.push(...result.data);
+        if (!result.hasMore) {
+          complete = true;
+          break;
+        }
+      }
+      const ids = [...new Set(payments.map((payment) => payment.installment).filter((id): id is string => Boolean(id)))];
+      if (ids.length > 1) remoteLookupAmbiguous = true;
+      if (payments.some((payment) => !payment.installment)) {
+        remoteLookupAmbiguous = true;
+        remoteLookupError = 'REMOTE_PAYMENTS_WITHOUT_INSTALLMENT_REFERENCE';
+      }
+      if (ids.length !== 1) {
+        return { installment: null, complete: complete && payments.length === 0 };
+      }
+      const installment = await getInstallment(ids[0]!, { contaId: input.contaId }).catch(() => null);
+      return {
+        installment: complete ? installment : null,
+        complete: complete && Boolean(installment),
+      };
+    };
+    let remoteLookupComplete = false;
+    if (!asaasInstallment) {
+      const recovered = await findRemoteInstallment();
+      asaasInstallment = recovered.installment;
+      remoteLookupComplete = recovered.complete;
+    }
+
+    if (remoteLookupAmbiguous) {
+      await markOutboundRequiresReconciliation({
+        jobId: operation.job.id,
+        contaId: input.contaId,
+        resource: 'INSTALLMENT_PLAN',
+        entityId: installmentPlanId,
+        externalReference,
+        error: remoteLookupError,
+      });
+      return err('ERRO_AO_CRIAR_PARCELAMENTO');
+    }
+
+    if (!asaasInstallment && !remoteLookupComplete) {
+      if (operation.payload.state === 'INTENT_CREATED') {
+        // Ainda não existe POST conhecido, então a intenção pode ser retomada
+        // quando o preflight voltar a responder; não declare ausência remota.
+        return err('ERRO_AO_CRIAR_PARCELAMENTO');
+      }
+      await markOutboundResultUnknown({
+        jobId: operation.job.id,
+        contaId: input.contaId,
+        resource: 'INSTALLMENT_PLAN',
+        entityId: installmentPlanId,
+        externalReference,
+        error: 'INSTALLMENT_RECONCILIATION_LOOKUP_INCOMPLETE',
+      });
+      return err('ERRO_AO_CRIAR_PARCELAMENTO');
+    }
+
+    if (!asaasInstallment && operation.payload.state !== 'INTENT_CREATED') {
+      await markOutboundResultUnknown({
+        jobId: operation.job.id,
+        contaId: input.contaId,
+        resource: 'INSTALLMENT_PLAN',
+        entityId: installmentPlanId,
+        externalReference,
+        error: remoteLookupComplete
+          ? 'PREVIOUS_INSTALLMENT_CREATE_RESULT_NOT_CONFIRMED'
+          : 'INSTALLMENT_RECONCILIATION_LOOKUP_INCOMPLETE',
+      });
+      return err('ERRO_AO_CRIAR_PARCELAMENTO');
+    }
+
+    if (!asaasInstallment) {
+      const claimed = await markOutboundRemoteRequested(operation.job.id);
+      if (!claimed) return err('ERRO_AO_CRIAR_PARCELAMENTO');
+      asaasInstallment = await asaasCreateInstallment({
+        apiKey: credentials.apiKey,
+        idempotencyKey: externalReference,
+        data: asaasPayload,
+      }).catch(async (e) => {
+        const recovered = await findRemoteInstallment();
+        if (recovered.installment) return recovered.installment;
+        remoteLookupComplete = recovered.complete;
+        if (remoteLookupAmbiguous) {
+          await markOutboundRequiresReconciliation({
+            jobId: operation.job.id,
+            contaId: input.contaId,
+            resource: 'INSTALLMENT_PLAN',
+            entityId: installmentPlanId,
+            externalReference,
+            error: remoteLookupError,
+          });
+          return null;
+        }
       // Extrair detalhes de erro do Asaas
       const asaasResponse = (e as { responseBody?: unknown })?.responseBody;
       const asaasErrors = (
@@ -267,13 +399,48 @@ export async function createInstallmentPlan(
         error: errorInfo,
         throttleMs: 60_000,
       });
-      return null;
-    });
+        const status = typeof e === 'object' && e !== null && 'status' in e
+          ? (e as { status?: unknown }).status
+          : undefined;
+        const definitiveRejection =
+          typeof status === 'number' && status >= 400 && status < 500 &&
+          ![408, 409, 425, 429].includes(status);
+        if (definitiveRejection && remoteLookupComplete) {
+          await markOutboundFailed(operation.job.id, e, { providerStatus: status });
+          return null;
+        }
+        await markOutboundResultUnknown({
+          jobId: operation.job.id,
+          contaId: input.contaId,
+          resource: 'INSTALLMENT_PLAN',
+          entityId: installmentPlanId,
+          externalReference,
+          error: e,
+        });
+        return null;
+      });
+    }
 
     if (!asaasInstallment?.id) return err('ERRO_AO_CRIAR_PARCELAMENTO');
+    const installmentMismatch =
+      (asaasInstallment.customer != null && asaasInstallment.customer !== customerResult.data.customerId) ||
+      (asaasInstallment.installmentCount != null && asaasInstallment.installmentCount !== input.installmentCount) ||
+      (asaasInstallment.value != null && Math.abs(asaasInstallment.value - input.value) > 0.001);
+    if (installmentMismatch) {
+      await markOutboundRequiresReconciliation({
+        jobId: operation.job.id,
+        contaId: input.contaId,
+        resource: 'INSTALLMENT_PLAN',
+        entityId: installmentPlanId,
+        externalReference,
+        error: 'REMOTE_INSTALLMENT_CONFIRMATION_MISMATCH',
+      });
+      return err('ERRO_AO_CRIAR_PARCELAMENTO');
+    }
+    await markOutboundRemoteConfirmed(operation.job.id, asaasInstallment.id);
 
     // Resetar status para ACTIVE quando recria ou retenta
-    const shouldResetStatus = isRecreation || isRetry;
+    const shouldResetStatus = isRecreation || Boolean(existing && !existing.asaasInstallmentId);
 
     const updated = existing
       ? await prisma.installmentPlan.update({
@@ -321,22 +488,35 @@ export async function createInstallmentPlan(
           },
         });
 
-    const paymentsResponse = await listInstallmentPayments({
-      apiKey: credentials.apiKey,
-      installmentId: asaasInstallment.id,
-      limit: 100,
-      offset: 0,
-    }).catch((e) => {
+    const payments: Awaited<ReturnType<typeof listInstallmentPayments>>['data'] = [];
+    let expectedTotalCount: number | undefined;
+    let offset = 0;
+    let complete = false;
+    try {
+      for (let pageIndex = 0; pageIndex < 100; pageIndex += 1) {
+        const page = await listInstallmentPayments({
+          apiKey: credentials.apiKey,
+          installmentId: asaasInstallment.id,
+          limit: 100,
+          offset,
+        });
+        expectedTotalCount = assertCompleteAsaasPage(page, offset, 100, expectedTotalCount);
+        payments.push(...page.data);
+        if (!page.hasMore) { complete = true; break; }
+        offset += 100;
+      }
+      if (!complete) throw new Error('ASAAS_INSTALLMENT_PAYMENTS_INCOMPLETE:PAGE_LIMIT_REACHED');
+    } catch (e) {
       logFinanceOperationalEvent({
         severity: 'error',
         eventName: 'finance.use_cases.create_installment_plan.failed',
         error: e,
         throttleMs: 60_000,
       });
-      return null;
-    });
+      return err('ERRO_AO_CRIAR_PARCELAMENTO');
+    }
 
-    const payments = paymentsResponse?.data ?? [];
+    await markOutboundAwaitingWebhook(operation.job.id, asaasInstallment.id);
 
     if (payments.length) {
       const sortedPayments = [...payments].sort((a, b) => a.dueDate.localeCompare(b.dueDate));

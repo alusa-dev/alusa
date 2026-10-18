@@ -47,6 +47,7 @@ describe('architecture boundaries — Asaas layers', () => {
       'apps/web direct @alusa/asaas imports',
       "from '@alusa/asaas'|from \"@alusa/asaas\"",
       path.join(repoRoot, 'apps/web'),
+      ['apps/web/e2e/asaas.integration.spec.ts'],
     );
   });
 

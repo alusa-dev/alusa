@@ -70,6 +70,7 @@ describe('processAsaasWebhookQueueWithInbox', () => {
         event: 'PAYMENT_RECEIVED',
         eventId: 'evt-1',
         asaasPaymentId: 'pay-1',
+        asaasSubscriptionId: null,
         occurredAt: new Date(),
       }],
       processed: 1,
@@ -84,5 +85,25 @@ describe('processAsaasWebhookQueueWithInbox', () => {
       lookbackHours: 48,
       limit: 100,
     });
+  });
+
+  it('carrega a assinatura do pagamento até o candidato da notificação', async () => {
+    processQueue.mockResolvedValue({
+      processedPayments: [{
+        contaId: 'conta-a', event: 'PAYMENT_RECEIVED', eventId: 'evt-2',
+        asaasPaymentId: 'pay-legacy', asaasSubscriptionId: 'sub-legacy', occurredAt: null,
+        externalReference: 'school-ref',
+      }],
+      processed: 1, failed: 0,
+    });
+
+    await processAsaasWebhookQueueWithInbox({ contaId: 'conta-a', drainSideEffects: false });
+
+    expect(enqueueSideEffects).toHaveBeenCalledWith(expect.objectContaining({
+      candidates: [expect.objectContaining({
+        asaasPaymentId: 'pay-legacy', asaasSubscriptionId: 'sub-legacy',
+        externalReference: 'school-ref',
+      })],
+    }));
   });
 });

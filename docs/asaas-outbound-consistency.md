@@ -5,11 +5,11 @@ Este protocolo cobre criação de pagamentos, assinaturas e parcelamentos. O Asa
 ## Protocolo
 
 1. Validar tenant, KYC, webhook e pagador.
-2. Gerar `externalReference`, `idempotencyKey` e fingerprint determinísticos.
+2. Gerar `externalReference`, chave local da operação e fingerprint determinísticos.
 3. Persistir a entidade em estado solicitado, quando aplicável, e reservar um `AsaasIntegrationJob` tenant-scoped.
 4. Consultar o Asaas por ID remoto conhecido ou `externalReference` antes de qualquer `POST`.
 5. Adquirir atomicamente o direito de enviar o `POST`; apenas um concorrente pode fazê-lo.
-6. Enviar com `Idempotency-Key` estável.
+6. Não presumir que uma chave local deduplica no Asaas. O cliente não repete mutações automaticamente; após resultado inconclusivo, pesquisar pela `externalReference` estável, vincular o ID remoto encontrado e somente considerar nova tentativa quando a reconciliação não encontrar a operação anterior.
 7. Confirmar imediatamente o recurso com `GET` e comparar referência, pagador, valor, vencimento e quantidade quando disponíveis.
 8. Persistir o ID remoto e aguardar o webhook oficial.
 9. Webhook ou reconciliação ativa concluem o job e convergem o estado local.

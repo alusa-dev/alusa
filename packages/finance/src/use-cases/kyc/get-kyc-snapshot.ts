@@ -38,7 +38,6 @@ import { syncKycModels, deriveProcessStatus } from './kyc-persistence.service';
 import {
   DOCUMENTS_READY_DELAY_MS,
   hasAnyExpiredOnboardingUrl,
-  isZeroUuid,
   resolveNextActionFromCachedGroup,
   resolveNextActionFromLiveGroup,
 } from './kyc-document-group-resolver';
@@ -148,6 +147,8 @@ function buildSnapshotFromCache(
 export type GetKycSnapshotOptions = {
   /** Força busca fresh no Asaas (ignora cache). Default: false */
   fresh?: boolean;
+  /** Usa somente documentsCache persistido; destinado ao polling, sem chamadas ao provedor. */
+  readModelOnly?: boolean;
 };
 
 /**
@@ -164,22 +165,12 @@ export async function getKycSnapshot(
   financeProfileId: string,
   opts: GetKycSnapshotOptions = {},
 ): Promise<KycSnapshot | null> {
-  // Fail-fast: ASAAS_BASE_URL
-  try {
-    getAsaasBaseUrlFromEnvOrThrow();
-  } catch {
-    return null;
-  }
-
   // Buscar conta financeira + subconta Asaas
   const financeProfile = await prisma.financeProfile.findUnique({
     where: { id: financeProfileId },
     select: { id: true, contaId: true },
   });
   if (!financeProfile) return null;
-
-  const creds = await loadAsaasCredentials(financeProfile.contaId);
-  if (!creds) return null;
 
   const asaasAccount = await prisma.asaasAccount.findUnique({
     where: { financeProfileId },
@@ -203,9 +194,8 @@ export async function getKycSnapshot(
     const cached = asaasAccount.documentsCache as unknown;
     if (!isCacheV2(cached)) return null;
 
-    const cacheHasZeroUuids = cached.groups.length > 0 && cached.groups.every((g) => isZeroUuid(g.id));
     const cacheHasExternalOnboarding = cached.groups.some((group) => group.hasOnboardingUrl === true);
-    if (cacheHasZeroUuids || cacheHasExternalOnboarding) return null;
+    if (cacheHasExternalOnboarding) return null;
 
     const cacheAgeMs = asaasAccount.documentsCacheUpdatedAt
       ? nowMs - asaasAccount.documentsCacheUpdatedAt.getTime()
@@ -243,14 +233,35 @@ export async function getKycSnapshot(
     return null;
   }
 
+  if (opts.readModelOnly && !opts.fresh) {
+    const cached = asaasAccount?.documentsCache as unknown;
+    if (!isCacheV2(cached)) return null;
+    return buildSnapshotFromCache(
+      cached,
+      resolveCommercialInfoState({
+        myAccountStatus: cached.myAccountStatus,
+        persistedStatus: asaasAccount?.commercialInfoStatus ?? null,
+        persistedScheduledDate: asaasAccount?.commercialInfoScheduledDate ?? null,
+      }),
+      asaasAccount?.provisionedAt ?? null,
+    );
+  }
+
+  // Provider access is retained for initial/manual reads and reconciliation, never for periodic read-model polling.
+  try {
+    getAsaasBaseUrlFromEnvOrThrow();
+  } catch {
+    return null;
+  }
+  const creds = await loadAsaasCredentials(financeProfile.contaId);
+  if (!creds) return null;
+
   // Cache check (v2 only)
   if (!opts.fresh && asaasAccount?.documentsCache) {
     const cached = asaasAccount.documentsCache as unknown;
     if (isCacheV2(cached)) {
-      // Cache com zero UUID = Asaas não havia provisionado ainda; força fresh.
-      const cacheHasZeroUuids = cached.groups.length > 0 && cached.groups.every((g) => isZeroUuid(g.id));
       const cacheHasExternalOnboarding = cached.groups.some((group) => group.hasOnboardingUrl === true);
-      if (!cacheHasZeroUuids && !cacheHasExternalOnboarding) {
+      if (!cacheHasExternalOnboarding) {
         const cacheAgeMs = asaasAccount.documentsCacheUpdatedAt
           ? nowMs - asaasAccount.documentsCacheUpdatedAt.getTime()
           : null;
@@ -268,7 +279,7 @@ export async function getKycSnapshot(
         }
       }
     }
-    // Cache v1 (legado) ou zero UUID → ignora, busca fresh
+    // Cache v1 (legado) → ignora, busca fresh
   }
 
   // Busca fresh no Asaas

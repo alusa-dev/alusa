@@ -1,7 +1,11 @@
 import { prisma } from '@alusa/database';
 import type { AsaasIntegrationJobType, Prisma } from '@prisma/client';
 
-import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
+import {
+  buildFinanceReconciliationIssueDedupeKey,
+  resolveFinanceReconciliationIssueByDedupe,
+  upsertFinanceReconciliationIssue,
+} from '../reconciliation/finance-reconciliation-issue.service';
 
 export type OutboundFinancialOperationState =
   | 'INTENT_CREATED'
@@ -13,7 +17,7 @@ export type OutboundFinancialOperationState =
   | 'REQUIRES_RECONCILIATION'
   | 'FAILED';
 
-export type OutboundFinancialResource = 'PAYMENT' | 'SUBSCRIPTION' | 'INSTALLMENT_PLAN';
+export type OutboundFinancialResource = 'PAYMENT' | 'SUBSCRIPTION' | 'INSTALLMENT_PLAN' | 'CUSTOMER';
 
 export type OutboundFinancialOperationPayload = {
   version: 1;
@@ -36,6 +40,17 @@ type EntityLinks = {
   cobrancaId?: string | null;
   subscriptionId?: string | null;
   installmentPlanId?: string | null;
+};
+
+const TRANSITION_PRECEDENCE: Partial<Record<OutboundFinancialOperationState, number>> = {
+  INTENT_CREATED: 0,
+  REMOTE_REQUESTED: 1,
+  RESULT_UNKNOWN: 2,
+  FAILED: 2,
+  REMOTE_CONFIRMED: 3,
+  AWAITING_WEBHOOK: 4,
+  SYNCHRONIZED: 5,
+  REQUIRES_RECONCILIATION: 6,
 };
 
 function asJson(payload: OutboundFinancialOperationPayload): Prisma.InputJsonObject {
@@ -61,7 +76,7 @@ export function parseOutboundFinancialOperation(
  */
 export async function reserveOutboundFinancialOperation(input: {
   contaId: string;
-  type: Extract<AsaasIntegrationJobType, 'CREATE_PAYMENT' | 'CREATE_SUBSCRIPTION' | 'CREATE_INSTALLMENT'>;
+  type: Extract<AsaasIntegrationJobType, 'CREATE_PAYMENT' | 'CREATE_SUBSCRIPTION' | 'CREATE_INSTALLMENT' | 'CREATE_CUSTOMER'>;
   idempotencyKey: string;
   resource: OutboundFinancialResource;
   entityId: string;
@@ -82,6 +97,9 @@ export async function reserveOutboundFinancialOperation(input: {
 
   if (existingPayload && existingPayload.requestFingerprint !== input.requestFingerprint) {
     throw new Error('OUTBOUND_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
+  }
+  if (existingPayload && existingPayload.externalReference !== input.externalReference) {
+    throw new Error('OUTBOUND_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_EXTERNAL_REFERENCE');
   }
   if (existing && existingPayload) return { job: existing, payload: existingPayload };
 
@@ -114,6 +132,9 @@ export async function reserveOutboundFinancialOperation(input: {
   if (persisted.requestFingerprint !== input.requestFingerprint) {
     throw new Error('OUTBOUND_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
   }
+  if (persisted.externalReference !== input.externalReference) {
+    throw new Error('OUTBOUND_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_EXTERNAL_REFERENCE');
+  }
   return { job, payload: persisted };
 }
 
@@ -124,53 +145,76 @@ async function transition(input: {
   error?: unknown;
   metadata?: Record<string, unknown>;
 }) {
-  const current = await prisma.asaasIntegrationJob.findUnique({
-    where: { id: input.jobId },
-    select: { payload: true, status: true },
-  });
-  const payload = current ? parseOutboundFinancialOperation(current.payload) : null;
-  if (!current || !payload) throw new Error('OUTBOUND_OPERATION_NOT_FOUND');
+  // Retry only when another nonterminal writer wins. The status predicate is
+  // a compare-and-set: a webhook changing PROCESSING to DONE makes this write
+  // lose, so its terminal payload cannot be replaced with a stale snapshot.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const current = await prisma.asaasIntegrationJob.findUnique({
+      where: { id: input.jobId },
+      select: { payload: true, status: true },
+    });
+    const payload = current ? parseOutboundFinancialOperation(current.payload) : null;
+    if (!current || !payload) throw new Error('OUTBOUND_OPERATION_NOT_FOUND');
 
-  // Um webhook pode confirmar a operação enquanto a requisição original
-  // ainda está encerrando. Nunca regrida uma operação terminal para
-  // PROCESSING/FAILED por causa dessa corrida.
-  if (current.status === 'DONE' && input.state !== 'SYNCHRONIZED') {
-    return prisma.asaasIntegrationJob.findUniqueOrThrow({ where: { id: input.jobId } });
+    if (current.status === 'DONE') {
+      return prisma.asaasIntegrationJob.findUniqueOrThrow({ where: { id: input.jobId } });
+    }
+    const currentPrecedence = TRANSITION_PRECEDENCE[payload.state];
+    const requestedPrecedence = TRANSITION_PRECEDENCE[input.state];
+    // A timeout/reconciliation worker may have read a stale snapshot while a
+    // provider confirmation advanced the same PROCESSING job. Keep the newer
+    // state; reconciliation mismatches remain an explicit operator override.
+    if (
+      input.state !== 'REQUIRES_RECONCILIATION' &&
+      (payload.state === 'REQUIRES_RECONCILIATION' ||
+      currentPrecedence !== undefined &&
+      requestedPrecedence !== undefined &&
+      currentPrecedence > requestedPrecedence)
+    ) {
+      return prisma.asaasIntegrationJob.findUniqueOrThrow({ where: { id: input.jobId } });
+    }
+    const now = new Date();
+    const message = input.error instanceof Error ? input.error.message : input.error ? String(input.error) : undefined;
+    const next: OutboundFinancialOperationPayload = {
+      ...payload,
+      state: input.state,
+      remoteId: input.remoteId ?? payload.remoteId,
+      lastError: message,
+      requestedAt: input.state === 'REMOTE_REQUESTED' ? now.toISOString() : payload.requestedAt,
+      remoteConfirmedAt:
+        input.state === 'REMOTE_CONFIRMED' || input.state === 'AWAITING_WEBHOOK' || input.state === 'SYNCHRONIZED'
+          ? payload.remoteConfirmedAt ?? now.toISOString()
+          : payload.remoteConfirmedAt,
+      webhookConfirmedAt:
+        input.state === 'SYNCHRONIZED' ? payload.webhookConfirmedAt ?? now.toISOString() : payload.webhookConfirmedAt,
+      metadata: { ...(payload.metadata ?? {}), ...(input.metadata ?? {}) },
+    };
+    const terminal = input.state === 'SYNCHRONIZED';
+    const failed = input.state === 'FAILED' || input.state === 'REQUIRES_RECONCILIATION';
+    const updated = await prisma.asaasIntegrationJob.updateMany({
+      where: { id: input.jobId, status: current.status, payload: { equals: asJson(payload) } },
+      data: {
+        status: terminal ? 'DONE' : failed ? 'FAILED' : 'PROCESSING',
+        payload: asJson(next),
+        processingAt: terminal ? undefined : now,
+        doneAt: terminal ? now : null,
+        attempts: input.state === 'REMOTE_REQUESTED' ? { increment: 1 } : undefined,
+        lastError: message ?? null,
+        lastErrorAt: message ? now : null,
+        nextAttemptAt:
+          input.state === 'RESULT_UNKNOWN' || input.state === 'REQUIRES_RECONCILIATION'
+            ? new Date(now.getTime() + 60_000)
+            : undefined,
+      },
+    });
+    if (updated.count === 1) {
+      return prisma.asaasIntegrationJob.findUniqueOrThrow({ where: { id: input.jobId } });
+    }
   }
-  const now = new Date();
-  const message = input.error instanceof Error ? input.error.message : input.error ? String(input.error) : undefined;
-  const next: OutboundFinancialOperationPayload = {
-    ...payload,
-    state: input.state,
-    remoteId: input.remoteId ?? payload.remoteId,
-    lastError: message,
-    requestedAt: input.state === 'REMOTE_REQUESTED' ? now.toISOString() : payload.requestedAt,
-    remoteConfirmedAt:
-      input.state === 'REMOTE_CONFIRMED' || input.state === 'AWAITING_WEBHOOK' || input.state === 'SYNCHRONIZED'
-        ? payload.remoteConfirmedAt ?? now.toISOString()
-        : payload.remoteConfirmedAt,
-    webhookConfirmedAt:
-      input.state === 'SYNCHRONIZED' ? payload.webhookConfirmedAt ?? now.toISOString() : payload.webhookConfirmedAt,
-    metadata: { ...(payload.metadata ?? {}), ...(input.metadata ?? {}) },
-  };
-  const terminal = input.state === 'SYNCHRONIZED';
-  const failed = input.state === 'FAILED' || input.state === 'REQUIRES_RECONCILIATION';
-  return prisma.asaasIntegrationJob.update({
-    where: { id: input.jobId },
-    data: {
-      status: terminal ? 'DONE' : failed ? 'FAILED' : 'PROCESSING',
-      payload: asJson(next),
-      processingAt: terminal ? undefined : now,
-      doneAt: terminal ? now : null,
-      attempts: input.state === 'REMOTE_REQUESTED' ? { increment: 1 } : undefined,
-      lastError: message ?? null,
-      lastErrorAt: message ? now : null,
-      nextAttemptAt:
-        input.state === 'RESULT_UNKNOWN' || input.state === 'REQUIRES_RECONCILIATION'
-          ? new Date(now.getTime() + 60_000)
-          : undefined,
-    },
-  });
+
+  // Bounded CAS retries can be exhausted by repeated concurrent writers. Read
+  // the winner and preserve it; never fall back to an unconditional update.
+  return prisma.asaasIntegrationJob.findUniqueOrThrow({ where: { id: input.jobId } });
 }
 
 /** Adquire atomicamente o direito de executar o POST; concorrentes apenas reconciliam. */
@@ -223,6 +267,14 @@ export async function markOutboundResultUnknown(input: {
   error: unknown;
 }) {
   const job = await transition({ jobId: input.jobId, state: 'RESULT_UNKNOWN', error: input.error });
+  const persistedState = parseOutboundFinancialOperation(job.payload)?.state;
+  if (
+    job.status === 'DONE' ||
+    persistedState === 'REQUIRES_RECONCILIATION' ||
+    (persistedState !== undefined && (TRANSITION_PRECEDENCE[persistedState] ?? -1) > (TRANSITION_PRECEDENCE.RESULT_UNKNOWN ?? 0))
+  ) {
+    return job;
+  }
   await upsertFinanceReconciliationIssue({
     contaId: input.contaId,
     entityType: input.resource,
@@ -238,6 +290,7 @@ export async function markOutboundResultUnknown(input: {
       source: 'outbound-financial-operation',
     },
   });
+  await reconcileOperationIssueAfterWrite(input, 'HIGH');
   return job;
 }
 
@@ -254,6 +307,9 @@ export async function markOutboundRequiresReconciliation(input: {
     state: 'REQUIRES_RECONCILIATION',
     error: input.error,
   });
+  if (job.status === 'DONE' || parseOutboundFinancialOperation(job.payload)?.state === 'SYNCHRONIZED') {
+    return job;
+  }
   await upsertFinanceReconciliationIssue({
     contaId: input.contaId,
     entityType: input.resource,
@@ -269,7 +325,48 @@ export async function markOutboundRequiresReconciliation(input: {
       source: 'outbound-financial-operation-dlq',
     },
   });
+  await reconcileOperationIssueAfterWrite(input, 'CRITICAL');
   return job;
+}
+
+async function reconcileOperationIssueAfterWrite(
+  input: { jobId: string; contaId: string; resource: OutboundFinancialResource; entityId: string },
+  requestedSeverity: 'HIGH' | 'CRITICAL',
+) {
+  // A provider event can synchronize between the caller's transition and
+  // issue persistence. Re-read after upsert so either ordering converges.
+  const current = await prisma.asaasIntegrationJob.findUnique({
+    where: { id: input.jobId },
+    select: { contaId: true, status: true, payload: true },
+  });
+  if (!current || current.contaId !== input.contaId) return;
+  const state = parseOutboundFinancialOperation(current.payload)?.state;
+  const dedupeKey = buildFinanceReconciliationIssueDedupeKey({
+    entityType: input.resource,
+    entityId: input.entityId,
+    issueType: 'BILLING_OPERATION_UNCERTAIN',
+  });
+  if (current.status === 'DONE' || state === 'SYNCHRONIZED') {
+    await resolveFinanceReconciliationIssueByDedupe({
+      contaId: input.contaId,
+      dedupeKey,
+      resolution: 'Provider confirmation synchronized the outbound operation.',
+    });
+    return;
+  }
+  if (state === 'REQUIRES_RECONCILIATION' && requestedSeverity === 'HIGH') {
+    await upsertFinanceReconciliationIssue({
+      contaId: input.contaId,
+      entityType: input.resource,
+      entityId: input.entityId,
+      asaasId: null,
+      issueType: 'BILLING_OPERATION_UNCERTAIN',
+      severity: 'CRITICAL',
+      localStatus: 'REQUIRES_RECONCILIATION',
+      remoteStatus: null,
+      metadata: { jobId: input.jobId, source: 'outbound-financial-operation-dlq' },
+    });
+  }
 }
 
 /** Confirma o comando de criação pelo canal oficial (webhook), inclusive após timeout do POST. */
@@ -284,6 +381,7 @@ export async function confirmOutboundCreateByProviderEvent(input: {
     PAYMENT: 'CREATE_PAYMENT',
     SUBSCRIPTION: 'CREATE_SUBSCRIPTION',
     INSTALLMENT_PLAN: 'CREATE_INSTALLMENT',
+    CUSTOMER: 'CREATE_CUSTOMER',
   };
   const jobs = await prisma.asaasIntegrationJob.findMany({
     where: {
@@ -299,13 +397,28 @@ export async function confirmOutboundCreateByProviderEvent(input: {
     const payload = parseOutboundFinancialOperation(job.payload);
     if (!payload) continue;
     const matchesRemote = Boolean(input.remoteId && payload.remoteId === input.remoteId);
+    // Once the job has a provider ID, the external reference cannot identify
+    // a different remote resource. Use it only to recover jobs whose POST
+    // timed out before an ID was persisted.
     const matchesReference = Boolean(
-      input.externalReference && payload.externalReference === input.externalReference,
+      !payload.remoteId && input.externalReference && payload.externalReference === input.externalReference,
     );
     if (!matchesRemote && !matchesReference) continue;
-    await markOutboundSynchronized(job.id, input.remoteId ?? payload.remoteId, {
+    const synchronizedJob = await markOutboundSynchronized(job.id, input.remoteId ?? payload.remoteId, {
       confirmedByEvent: input.eventName,
     });
+    const synchronizedPayload = parseOutboundFinancialOperation(synchronizedJob.payload);
+    if (synchronizedJob.status === 'DONE' || synchronizedPayload?.state === 'SYNCHRONIZED') {
+      await resolveFinanceReconciliationIssueByDedupe({
+        contaId: input.contaId,
+        dedupeKey: buildFinanceReconciliationIssueDedupeKey({
+          entityType: input.resource,
+          entityId: payload.entityId,
+          issueType: 'BILLING_OPERATION_UNCERTAIN',
+        }),
+        resolution: 'Provider confirmation synchronized the outbound operation.',
+      });
+    }
     confirmed += 1;
   }
   return confirmed;

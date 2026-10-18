@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { Prisma } from '@prisma/client';
+import { sharedTelemetry, type TelemetryMetric } from '@alusa/observability';
 
 const {
   prismaMock,
@@ -11,6 +12,7 @@ const {
   resolvePortalScopedPayerIdsMock,
   buildPortalStandaloneChargeOwnershipWhereMock,
   recordAsaasReadDecisionMock,
+  syncPaymentStateFromAsaasMock,
 } = vi.hoisted(() => ({
   prismaMock: {
     cobranca: { findFirst: vi.fn() },
@@ -23,6 +25,7 @@ const {
   resolvePortalScopedPayerIdsMock: vi.fn(),
   buildPortalStandaloneChargeOwnershipWhereMock: vi.fn(() => ({ OR: [] })),
   recordAsaasReadDecisionMock: vi.fn(),
+  syncPaymentStateFromAsaasMock: vi.fn(),
 }));
 
 vi.mock('@/lib/prisma', () => ({
@@ -34,7 +37,7 @@ vi.mock('@alusa/finance', () => ({
   getPayment: getPaymentMock,
   isAsaasEnabled: isAsaasEnabledMock,
   mapAsaasPaymentStatusToCobranca: vi.fn(() => 'PENDENTE'),
-  syncPaymentStateFromAsaas: vi.fn(),
+  syncPaymentStateFromAsaas: syncPaymentStateFromAsaasMock,
 }));
 
 vi.mock('@/features/portal/api-helpers', () => ({
@@ -53,7 +56,10 @@ vi.mock('@/src/server/finance/asaas-read-observability', () => ({
   recordAsaasReadDecision: recordAsaasReadDecisionMock,
 }));
 
-import { GET } from '@/app/api/portal/financeiro/[id]/route';
+import { GET, POST } from '@/app/api/portal/financeiro/[id]/route';
+
+let restoreTelemetry: (() => void) | null = null;
+let capturedMetrics: TelemetryMetric[] = [];
 
 function buildRequest(url: string): NextRequest {
   return new NextRequest(url);
@@ -67,6 +73,12 @@ describe('GET /api/portal/financeiro/[id]', () => {
       user: { id: 'user-1', contaId: 'conta-1', role: 'RESPONSAVEL' },
     });
     resolvePortalAlunoIdsMock.mockResolvedValue(['aluno-1']);
+  });
+
+  afterEach(() => {
+    restoreTelemetry?.();
+    restoreTelemetry = null;
+    vi.unstubAllEnvs();
   });
 
   it('usa snapshot local para cobrança avulsa estável sem consultar o Asaas', async () => {
@@ -241,5 +253,96 @@ describe('GET /api/portal/financeiro/[id]', () => {
       creditCardExpiryMonth: 12,
       creditCardExpiryYear: 2030,
     });
+  });
+});
+
+describe('POST /api/portal/financeiro/[id]', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv('OBSERVABILITY_METRIC_SAMPLE_RATE', '1');
+    requirePortalUserMock.mockResolvedValue({
+      user: { id: 'user-1', contaId: 'conta-1', role: 'RESPONSAVEL' },
+    });
+    resolvePortalAlunoIdsMock.mockResolvedValue(['aluno-1']);
+    prismaMock.cobranca.findFirst.mockResolvedValue({ asaasPaymentId: 'pay-1' });
+    prismaMock.charge.findFirst.mockResolvedValue(null);
+    syncPaymentStateFromAsaasMock.mockResolvedValue({
+      success: true,
+      asaasPaymentId: 'pay-1',
+      paymentStatus: 'PENDING',
+      appliedEvent: null,
+    });
+    capturedMetrics = [];
+    restoreTelemetry?.();
+    restoreTelemetry = sharedTelemetry.replaceSink({
+      metric: (record) => capturedMetrics.push(record),
+    });
+  });
+
+  afterEach(() => {
+    restoreTelemetry?.();
+    restoreTelemetry = null;
+    vi.unstubAllEnvs();
+  });
+
+  it('registra fallback do portal com dimensões fixas e sem dados da cobrança', async () => {
+    const request = new NextRequest('http://localhost/api/portal/financeiro/charge-1', {
+      method: 'POST',
+      headers: { 'x-alusa-sync-source': 'automatic_fallback' },
+    });
+    const response = await POST(request, { params: Promise.resolve({ id: 'charge-1' }) });
+    await Promise.resolve();
+
+    expect(response.status).toBe(200);
+    expect(syncPaymentStateFromAsaasMock).toHaveBeenCalledWith({
+      contaId: 'conta-1',
+      asaasPaymentId: 'pay-1',
+      intent: 'UI_FALLBACK_SYNC',
+    });
+    expect(capturedMetrics.find((metric) => metric.name === 'alusa.finance.charge_sync.request')?.dimensions).toEqual({
+      'operation.name': 'finance.charge_sync.automatic_fallback',
+      result: 'success',
+      'http.route': '/api/portal/financeiro/:id',
+    });
+    expect(JSON.stringify(capturedMetrics)).not.toMatch(/conta-1|user-1|charge-1|pay-1/i);
+  });
+
+  it('classifica cobrança sem integração como skipped', async () => {
+    prismaMock.cobranca.findFirst.mockResolvedValue({ asaasPaymentId: null });
+    const request = new NextRequest('http://localhost/api/portal/financeiro/charge-missing', {
+      method: 'POST',
+      headers: { 'x-alusa-sync-source': 'automatic_fallback' },
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: 'charge-missing' }) });
+    await Promise.resolve();
+    expect(response.status).toBe(404);
+    expect(syncPaymentStateFromAsaasMock).not.toHaveBeenCalled();
+    expect(capturedMetrics.find((metric) => metric.name === 'alusa.finance.charge_sync.request')?.dimensions).toEqual({
+      'operation.name': 'finance.charge_sync.automatic_fallback',
+      result: 'skipped',
+      'http.route': '/api/portal/financeiro/:id',
+    });
+  });
+
+  it('classifica falha do Asaas sem incluir detalhe do erro', async () => {
+    syncPaymentStateFromAsaasMock.mockResolvedValue({
+      success: false,
+      error: 'provider secret detail',
+    });
+    const request = new NextRequest('http://localhost/api/portal/financeiro/charge-1', {
+      method: 'POST',
+      headers: { 'x-alusa-sync-source': 'automatic_fallback' },
+    });
+
+    const response = await POST(request, { params: Promise.resolve({ id: 'charge-1' }) });
+    await Promise.resolve();
+    expect(response.status).toBe(502);
+    expect(capturedMetrics.find((metric) => metric.name === 'alusa.finance.charge_sync.request')?.dimensions).toEqual({
+      'operation.name': 'finance.charge_sync.automatic_fallback',
+      result: 'failure',
+      'http.route': '/api/portal/financeiro/:id',
+    });
+    expect(JSON.stringify(capturedMetrics)).not.toContain('provider secret detail');
   });
 });

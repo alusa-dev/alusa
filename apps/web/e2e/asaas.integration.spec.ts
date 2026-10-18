@@ -1,142 +1,127 @@
-/**
- * Testes E2E para fluxo de integração com Asaas
- *
- * Valida criação de customers, payments e webhooks
- */
+import { randomUUID } from 'node:crypto';
 
 import { test, expect } from '@playwright/test';
+import {
+  createCustomer,
+  createPayment,
+  deleteCustomer,
+  deletePayment,
+  getCustomer,
+  getPayment,
+  listCustomers,
+  listPayments,
+} from '@alusa/asaas';
 
-const hasSandboxCredentials =
-  Boolean(process.env.ASAAS_API_KEY) &&
-  (process.env.ASAAS_BASE_URL ?? '').includes('sandbox.asaas.com');
-const runLegacySandboxApiSuite = process.env.E2E_ASAAS_LEGACY_API === 'true';
+const sandboxOptIn = process.env.E2E_ASAAS_SANDBOX === 'true';
 
-test.describe('Integração Asaas', () => {
-  test.skip(
-    !hasSandboxCredentials || !runLegacySandboxApiSuite,
-    'A suíte legada de API Asaas requer sandbox explícito e E2E_ASAAS_LEGACY_API=true',
-  );
+test.describe('Asaas SDK Sandbox lifecycle', () => {
+  test.skip(!sandboxOptIn, 'Defina E2E_ASAAS_SANDBOX=true para habilitar chamadas ao Sandbox Asaas.');
 
-  let customerId: string;
+  test('creates, verifies and cleans up a customer and boleto payment', async () => {
+    const apiKey = process.env.ASAAS_API_KEY;
+    const baseUrl = process.env.ASAAS_BASE_URL;
+    const testDatabaseUrl = process.env.DATABASE_URL_TEST ?? process.env.DATABASE_URL;
 
-  test.beforeAll(async () => {
-    // Verificar se variáveis de ambiente estão configuradas
-    if (!process.env.ASAAS_API_KEY) {
-      throw new Error('ASAAS_API_KEY não configurada');
+    if (!apiKey) throw new Error('ASAAS_API_KEY não configurada para o Sandbox.');
+    if (!baseUrl) throw new Error('ASAAS_BASE_URL não configurada para o Sandbox.');
+
+    let parsedBaseUrl: URL;
+    try {
+      parsedBaseUrl = new URL(baseUrl);
+    } catch {
+      throw new Error('ASAAS_BASE_URL inválida; esperado host Sandbox oficial.');
     }
-  });
+    if (
+      parsedBaseUrl.protocol !== 'https:' ||
+      parsedBaseUrl.hostname !== 'api-sandbox.asaas.com' ||
+      parsedBaseUrl.username !== '' ||
+      parsedBaseUrl.password !== ''
+    ) {
+      throw new Error(
+        'Execução bloqueada: ASAAS_BASE_URL deve usar HTTPS, host api-sandbox.asaas.com e não conter credenciais.',
+      );
+    }
 
-  test('deve criar customer via API', async ({ request, baseURL }) => {
-    const response = await request.post(`${baseURL}/api/asaas/customers`, {
-      data: {
-        customData: {
-          name: 'E2E Test Customer',
-          cpfCnpj: '12345678909',
-          email: 'e2e@test.com',
-          phone: '11999999999',
+    if (!testDatabaseUrl) {
+      throw new Error('DATABASE_URL_TEST ou DATABASE_URL obrigatória; configure o banco de teste alusa_test.');
+    }
+    let databaseName: string;
+    try {
+      const pathname = new URL(testDatabaseUrl).pathname;
+      if (pathname !== '/alusa_test') throw new Error('Unexpected database pathname.');
+      databaseName = decodeURIComponent(pathname.slice(1));
+    } catch {
+      throw new Error('URL do banco de teste inválida; esperado pathname exatamente /alusa_test.');
+    }
+    if (databaseName !== 'alusa_test') {
+      throw new Error('Execução bloqueada: DATABASE_URL_TEST deve apontar exatamente para alusa_test.');
+    }
+
+    const externalReference = `e2e-asaas-${randomUUID()}`;
+    let customerId: string | undefined;
+    let paymentId: string | undefined;
+
+    try {
+      const customer = await createCustomer({
+        apiKey,
+        data: {
+          name: 'Alusa E2E Sandbox',
+          cpfCnpj: '52998224725',
+          email: 'asaas-sandbox-e2e@example.test',
+          externalReference,
+          notificationDisabled: true,
         },
-      },
-    });
+      });
+      customerId = customer.id;
+      expect(customer.externalReference).toBe(externalReference);
 
-    expect(response.status()).toBe(200);
+      const customerLookup = await getCustomer({ apiKey, customerId });
+      expect(customerLookup.id).toBe(customerId);
+      const listedCustomers = await listCustomers({ apiKey, externalReference, limit: 100 });
+      expect(listedCustomers.data.some((entry) => entry.id === customerId)).toBe(true);
 
-    const data = await response.json();
-    expect(data.success).toBe(true);
-    expect(data.customer).toBeDefined();
-    expect(data.customer.name).toBe('E2E Test Customer');
-
-    customerId = data.customer.id;
-  });
-
-  test('deve buscar customer criado', async ({ request, baseURL }) => {
-    test.skip(!customerId, 'Customer não foi criado');
-
-    const response = await request.get(`${baseURL}/api/asaas/customers/${customerId}`);
-
-    expect(response.status()).toBe(200);
-
-    const data = await response.json();
-    expect(data.success).toBe(true);
-    expect(data.customer.id).toBe(customerId);
-  });
-
-  test('deve criar payment para customer', async ({ request, baseURL }) => {
-    test.skip(!customerId, 'Customer não foi criado');
-
-    const response = await request.post(`${baseURL}/api/asaas/payments`, {
-      data: {
-        customData: {
+      const payment = await createPayment({
+        apiKey,
+        data: {
           customer: customerId,
           billingType: 'BOLETO',
-          value: 199.9,
-          dueDate: '2025-10-15',
-          description: 'Pagamento E2E Test',
+          value: 1,
+          dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+          description: 'Alusa E2E Sandbox lifecycle',
+          externalReference,
         },
-      },
-    });
+      });
+      paymentId = payment.id;
+      expect(payment.billingType).toBe('BOLETO');
+      expect(payment.externalReference).toBe(externalReference);
 
-    expect(response.status()).toBe(200);
-
-    const data = await response.json();
-    expect(data.success).toBe(true);
-    expect(data.payment).toBeDefined();
-    expect(data.payment.value).toBe(199.9);
-  });
-
-  test('deve listar payments do customer', async ({ request, baseURL }) => {
-    test.skip(!customerId, 'Customer não foi criado');
-
-    const response = await request.get(
-      `${baseURL}/api/asaas/payments?customer=${customerId}`,
-    );
-
-    expect(response.status()).toBe(200);
-
-    const data = await response.json();
-    expect(data.success).toBe(true);
-    expect(data.data).toBeDefined();
-    expect(Array.isArray(data.data)).toBe(true);
-  });
-
-  test.skip('deve deletar customer', async ({ request, baseURL }) => {
-    // SKIP: Só deletar se não houver assinaturas ativas
-    // Implementar lógica de cleanup após todos os testes
-    test.skip(!customerId, 'Customer não foi criado');
-
-    const response = await request.delete(
-      `${baseURL}/api/asaas/customers/${customerId}`,
-    );
-
-    expect(response.status()).toBe(200);
-
-    const data = await response.json();
-    expect(data.success).toBe(true);
+      const paymentLookup = await getPayment({ apiKey, paymentId });
+      expect(paymentLookup.id).toBe(paymentId);
+      const listedPayments = await listPayments({ apiKey, customer: customerId, externalReference, limit: 100 });
+      expect(listedPayments.data.some((entry) => entry.id === paymentId)).toBe(true);
+    } finally {
+      try {
+        if (paymentId) await deletePayment({ apiKey, paymentId });
+      } finally {
+        if (customerId) await deleteCustomer({ apiKey, customerId });
+      }
+    }
   });
 });
 
 test.describe('Webhook Asaas', () => {
   test('deve rejeitar webhook sem assinatura sem processar a fila', async ({ request, baseURL }) => {
     const response = await request.post(`${baseURL}/api/webhooks/asaas`, {
-      // O runtime production-like aplica a allowlist de IP antes da
-      // assinatura. Simula uma origem oficial para testar a rejeição de auth.
+      // O runtime production-like aplica a allowlist de IP antes da assinatura.
       headers: { 'x-forwarded-for': '52.67.12.206' },
       data: {
         event: 'PAYMENT_RECEIVED',
-        payment: {
-          id: 'pay_test',
-          value: 100,
-          status: 'RECEIVED',
-        },
+        payment: { id: 'pay_test', value: 100, status: 'RECEIVED' },
       },
     });
 
-    // O runtime production-like usa rejeições HTTP estritas; em dev a rota
-    // mantém 200 para evitar retries do provedor durante testes locais.
     expect(response.status()).toBe(process.env.E2E_SERVER_MODE === 'production' ? 401 : 200);
-
     const data = await response.json();
     expect(data.error).toBe('Assinatura inválida');
   });
-
-  // TODO: Adicionar teste com assinatura válida (requer calcular HMAC-SHA256)
 });

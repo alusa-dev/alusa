@@ -40,7 +40,7 @@ import {
 import { loadAsaasCredentials } from '@alusa/database';
 
 import { requireKycApproved } from '../foundation/kyc-guard';
-import { buildSafeAsaasIdempotencyKey } from '../core';
+import { buildOutboundOperationKey } from '../core';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
 
 export class AsaasEnvError extends Error {
@@ -560,12 +560,12 @@ export async function reativarAssinatura(input: {
   await ensureFinancialMutationOperational(input.contaId);
   const { apiKey } = await getCredentialsOrThrow(input.contaId);
   const billingTypeSentToAsaas: BillingType = input.billingType;
-  const safeIdempotencyKey = input.externalReference
-    ? buildSafeAsaasIdempotencyKey(input.externalReference)
+  const operationKey = input.externalReference
+    ? buildOutboundOperationKey(input.externalReference)
     : undefined;
   const subscription = await asaasCreateSubscription({
     apiKey,
-    idempotencyKey: safeIdempotencyKey,
+    idempotencyKey: operationKey,
     data: {
       customer: input.customer,
       billingType: billingTypeSentToAsaas,

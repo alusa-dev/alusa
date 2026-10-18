@@ -415,6 +415,10 @@ Coordenação com **alusa-prisma-data-integrity** para constraints, idempotênci
 - Migração segura: nullable → backfill → constraint
 - Evitar cascade delete em financeiro/acadêmico/auditável
 - Não remover campo/enum em produção sem análise
+- Toda migration versionada deve ser testada em banco descartável ou branch Neon e aplicada à branch/database Neon de produção como etapa do release; trabalho só local não conclui a migration.
+- Em produção, usar `prisma migrate deploy` com `DIRECT_URL` não pooled. Confirmar que credenciais/host apontam para a branch Neon de produção e verificar `prisma migrate status` antes e depois.
+- Como push pode disparar Vercel automaticamente, aplicar antes do push somente migrations backwards-compatible. Mudanças incompatíveis/destrutivas exigem expand/contract ou deploy em fases; falha real da migration bloqueia o código que depende dela até correção.
+- Não aplicar migration em produção sem validar target e segurança dos dados; backfills devem ser escopados e idempotentes.
 
 Detalhe: `.agents/alusa-prisma-data-integrity.md`
 
@@ -474,15 +478,26 @@ CSS: `apps/web/app/globals.css`
 
 ## Testes e qualidade
 
-- Alteração relevante → **ajustar ou criar testes**
+- Checks locais direcionados são informativos e servem para encontrar bugs. No fast path, não esperar full suite, review humano ou CI remoto flaky/não relacionado para publicar.
+- Bloquear publicação quando um check relevante mostrar falha reproduzível ou o diff revelar bug/regressão clara; corrigir antes do push. Não mascarar resultado nem pular testes específicos como atalho.
+- Alteração relevante → **ajustar ou criar testes**. Regras críticas de domínio, tenant e financeiro mantêm testes direcionados adequados ao risco.
 - Domínio puro → Vitest unitário
 - Financeiro → sucesso, erro, retry, idempotência, `contaId` — **+ cenários adversariais** (ver **alusa-test-adversarial**)
 - Webhook/fila → duplicata, out-of-order, falha parcial — não só happy path
 - Fluxo crítico → Playwright quando fizer sentido (matrícula → cobrança → webhook)
 - Fixture **Conta A + Conta B** em testes tenant-scoped
-- Rodar testes/typecheck do escopo antes de concluir
+- Usar testes/typecheck relacionados para identificar bugs; corrigir falhas reproduzíveis relevantes. Checks remotos flaky ou não relacionados não são gate do fast path.
 - Proibido: `any`, `ts-ignore`, `eslint-disable` amplo, relaxar Zod/auth para “passar build”
 - Proibido: remover testes ou usar `skip`/`only` sem justificativa
+
+### Entrega local e deploy
+
+- Fast path de desenvolvedor único: implementar, validar o escopo proporcionalmente, revisar o diff, commitar e fazer push direto em `main`. A proteção classic atualmente verificada permite isso sem PR, approval ou status check obrigatório. Não alterar branch protection ou CI para liberar um push contornando checks; mudanças deliberadas nesses controles exigem pedido explícito.
+- Não esperar full suite, review humano ou CI remoto flaky/não relacionado no fast path. Falha reproduzível de check relevante ou bug/regressão clara exige correção antes do push; não mascarar resultado nem pular teste específico.
+- A proteção classic atualmente verificada em `main` permite push direto sem PR, approval ou status check obrigatório. Mantém admins abrangidos, histórico linear, proibição de force push e exclusão, e resolução de conversas obrigatória.
+- PR e aprovação humana não são gate do fast path. Se o GitHub rejeitar push após mudança futura, verificar a configuração e a regra efetiva; não contornar force-push, exclusão ou regras de integridade.
+- Depois do push, acompanhar a implantação Vercel iniciada para o SHA enviado até `Ready`; conferir SHA implantado e aliases de produção. Push não equivale a deploy concluído.
+- Mudanças materiais ou de alto risco (tenant, financeiro, webhooks, auth, schema/migration, build/CI) exigem salvaguardas adicionais proporcionais: verificar isolamento `contaId`, autorização, idempotência e efeitos financeiros/webhook quando aplicável. Para migrations/operações de dados potencialmente irreversíveis, validar plano, escopo e segurança antes de executar; essas proteções evitam dano real, não são gates burocráticos.
 
 Detalhe adversarial: `.agents/alusa-test-adversarial.md` · Gate final: `.agents/alusa-architecture-reviewer.md`
 

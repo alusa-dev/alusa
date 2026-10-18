@@ -20,7 +20,7 @@ import { mapAsaasSubscriptionStatus } from '../mappers/asaas-subscription-status
 import {
   deriveDeterministicId,
   buildSubscriptionExternalReference,
-  buildSafeAsaasIdempotencyKey,
+  buildOutboundOperationKey,
   hashPayload,
 } from '../core';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
@@ -32,8 +32,10 @@ import {
   markOutboundRemoteConfirmed,
   markOutboundRemoteRequested,
   markOutboundResultUnknown,
+  markOutboundRequiresReconciliation,
   reserveOutboundFinancialOperation,
 } from './outbound-financial-operation';
+import { assertCompleteAsaasPage } from './asaas-pagination';
 
 export type CreateSubscriptionInput = {
   contaId: string;
@@ -341,8 +343,8 @@ export async function createSubscription(
 
     const billingTypeSentToAsaas: BillingType = input.billingType;
 
-    // Asaas limita Idempotency-Key a 47 chars; externalReference excede com CUIDs.
-    const safeIdempotencyKey = buildSafeAsaasIdempotencyKey(
+    // Chave local estável para o ledger outbound; a reconciliação remota usa externalReference.
+    const operationKey = buildOutboundOperationKey(
       input.idempotencyKey ?? externalReference,
     );
 
@@ -393,7 +395,7 @@ export async function createSubscription(
     const operation = await reserveOutboundFinancialOperation({
       contaId: input.contaId,
       type: 'CREATE_SUBSCRIPTION',
-      idempotencyKey: safeIdempotencyKey,
+      idempotencyKey: operationKey,
       resource: 'SUBSCRIPTION',
       entityId: subscriptionId,
       externalReference,
@@ -408,25 +410,87 @@ export async function createSubscription(
         contaId: input.contaId,
       }).catch(() => null);
     }
+    let remoteLookupComplete = false;
+    let remoteLookupConflict = false;
+    let remoteLookupConflictReason = 'MULTIPLE_REMOTE_SUBSCRIPTIONS_FOR_EXTERNAL_REFERENCE';
+    const findRemoteSubscriptions = async () => {
+      const matches: Awaited<ReturnType<typeof listSubscriptions>>['data'] = [];
+      const seenPages = new Set<string>();
+      const seenIds = new Set<string>();
+      let expectedTotalCount: number | undefined;
+      let complete = false;
+      for (let page = 0; page < 10; page += 1) {
+        const result = await listSubscriptions(
+          { externalReference, offset: page * 100, limit: 100, includeDeleted: true },
+          { contaId: input.contaId },
+        ).catch(() => null);
+        if (!result) break;
+        try {
+          expectedTotalCount = assertCompleteAsaasPage(result, page * 100, 100, expectedTotalCount);
+        } catch { break; }
+        const ids = result.data.map((subscription) => subscription.id);
+        const signature = ids.slice().sort().join('|');
+        if ((ids.length > 0 && seenPages.has(signature)) || ids.some((id) => seenIds.has(id))) break;
+        if (ids.length > 0) seenPages.add(signature);
+        ids.forEach((id) => seenIds.add(id));
+        if (result.data.some((subscription) => subscription.externalReference !== externalReference)) {
+          remoteLookupConflict = true;
+          remoteLookupConflictReason = 'SUBSCRIPTION_EXTERNAL_REFERENCE_MISMATCH';
+        }
+        matches.push(...result.data.filter((subscription) => subscription.externalReference === externalReference));
+        if (!result.hasMore) {
+          complete = true;
+          break;
+        }
+      }
+      if (matches.length > 1) remoteLookupConflict = true;
+      const subscription = matches.length === 1 ? matches[0]! : null;
+      const confirmed = subscription
+        ? await getSubscription(subscription.id, { contaId: input.contaId }).catch(() => null)
+        : null;
+      remoteLookupComplete = complete && (!subscription || Boolean(confirmed));
+      return { matches, subscription: confirmed, complete: remoteLookupComplete };
+    };
     if (!asaasSubscription) {
-      const matches = await listSubscriptions(
-        { externalReference, limit: 10, includeDeleted: true },
-        { contaId: input.contaId },
-      )
-        .then((result) => result.data)
-        .catch(() => []);
-      if (matches.length > 1) {
+      const recovered = await findRemoteSubscriptions();
+      // A partial page set cannot establish uniqueness, even when the first
+      // page already contains a matching subscription.
+      if (recovered.complete) asaasSubscription = recovered.subscription;
+    }
+    if (remoteLookupConflict) {
+      await markOutboundRequiresReconciliation({
+        jobId: operation.job.id,
+        contaId: input.contaId,
+        resource: 'SUBSCRIPTION',
+        entityId: subscriptionId,
+        externalReference,
+        error: remoteLookupConflictReason,
+      });
+      return err('ERRO_AO_CRIAR_ASSINATURA');
+    }
+    if (!asaasSubscription && !remoteLookupComplete) {
+      if (operation.payload.state !== 'INTENT_CREATED') {
         await markOutboundResultUnknown({
           jobId: operation.job.id,
           contaId: input.contaId,
           resource: 'SUBSCRIPTION',
           entityId: subscriptionId,
           externalReference,
-          error: 'MULTIPLE_REMOTE_SUBSCRIPTIONS_FOR_EXTERNAL_REFERENCE',
+          error: 'SUBSCRIPTION_RECONCILIATION_LOOKUP_INCOMPLETE',
         });
-        return err('ERRO_AO_CRIAR_ASSINATURA');
       }
-      asaasSubscription = matches[0] ?? null;
+      return err('ERRO_AO_CRIAR_ASSINATURA');
+    }
+    if (!asaasSubscription && operation.payload.state !== 'INTENT_CREATED') {
+      await markOutboundResultUnknown({
+        jobId: operation.job.id,
+        contaId: input.contaId,
+        resource: 'SUBSCRIPTION',
+        entityId: subscriptionId,
+        externalReference,
+        error: 'PREVIOUS_SUBSCRIPTION_CREATE_RESULT_NOT_CONFIRMED',
+      });
+      return err('ERRO_AO_CRIAR_ASSINATURA');
     }
 
     if (!asaasSubscription) {
@@ -435,21 +499,25 @@ export async function createSubscription(
       try {
         const created = await asaasCreateSubscription({
           apiKey: credentials.apiKey,
-          idempotencyKey: safeIdempotencyKey,
+          idempotencyKey: operationKey,
           data: asaasPayload,
         });
         asaasSubscription = await getSubscription(created.id, { contaId: input.contaId });
       } catch (remoteError) {
-        const recovered = await listSubscriptions(
-          { externalReference, limit: 10, includeDeleted: true },
-          { contaId: input.contaId },
-        )
-          .then((result) => result.data)
-          .catch(() => []);
-        if (recovered.length === 1) {
-          asaasSubscription = await getSubscription(recovered[0]!.id, {
+        const recovered = await findRemoteSubscriptions();
+        if (remoteLookupConflict) {
+          await markOutboundRequiresReconciliation({
+            jobId: operation.job.id,
             contaId: input.contaId,
-          }).catch(() => recovered[0]!);
+            resource: 'SUBSCRIPTION',
+            entityId: subscriptionId,
+            externalReference,
+            error: remoteLookupConflictReason,
+          });
+          return err('ERRO_AO_CRIAR_ASSINATURA');
+        }
+        if (recovered.complete && recovered.subscription) {
+          asaasSubscription = recovered.subscription;
         } else {
           await markOutboundResultUnknown({
             jobId: operation.job.id,
@@ -477,7 +545,7 @@ export async function createSubscription(
         cycle: input.cycle,
       });
     if (subscriptionMismatch) {
-      await markOutboundResultUnknown({
+      await markOutboundRequiresReconciliation({
         jobId: operation.job.id,
         contaId: input.contaId,
         resource: 'SUBSCRIPTION',

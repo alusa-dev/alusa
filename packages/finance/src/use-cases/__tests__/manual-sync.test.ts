@@ -2,6 +2,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ManualSyncError, resendTaxaMatricula } from '../manual-sync';
 
+const externalReference = (chargeId: string) => `charge:${chargeId}`;
+
+function cobrancaFixture(id: string) {
+  return {
+    id,
+    tipo: 'TAXA_MATRICULA',
+    status: 'PENDENTE',
+    vencimento: new Date('2026-04-01T03:00:00.000Z'),
+    asaasPaymentId: null,
+    matriculaId: `matricula-${id}`,
+    matricula: { aluno: { contaId: 'conta-1' }, taxaStatus: 'PENDENTE' },
+  };
+}
+
 vi.mock('@alusa/database', () => ({
   prisma: {
     cobranca: {
@@ -74,10 +88,10 @@ describe('resendTaxaMatricula', () => {
       } as never);
 
     vi.mocked(listPayments).mockResolvedValueOnce({
-      data: [{ id: 'pay_remote_1', status: 'PENDING', deleted: false }],
+      data: [{ id: 'pay_remote_1', status: 'PENDING', deleted: false, externalReference: externalReference('cobranca-1') }],
       totalCount: 1,
       hasMore: false,
-      limit: 10,
+      limit: 100,
       offset: 0,
       object: 'list',
     } as never);
@@ -115,7 +129,7 @@ describe('resendTaxaMatricula', () => {
 
     expect(createCharge).not.toHaveBeenCalled();
     expect(listPayments).toHaveBeenCalledWith(
-      { externalReference: 'charge:cobranca-1', limit: 10 },
+      { externalReference: 'charge:cobranca-1', limit: 100, offset: 0 },
       { contaId: 'conta-1' },
     );
     expect(syncPaymentStateFromAsaas).toHaveBeenCalledWith({
@@ -159,7 +173,7 @@ describe('resendTaxaMatricula', () => {
       data: [],
       totalCount: 0,
       hasMore: false,
-      limit: 10,
+      limit: 100,
       offset: 0,
       object: 'list',
     } as never);
@@ -246,12 +260,12 @@ describe('resendTaxaMatricula', () => {
 
     vi.mocked(listPayments).mockResolvedValueOnce({
       data: [
-        { id: 'pay_dup_1', status: 'PENDING', deleted: false },
-        { id: 'pay_dup_2', status: 'PENDING', deleted: false },
+        { id: 'pay_dup_1', status: 'PENDING', deleted: false, externalReference: externalReference('cobranca-3') },
+        { id: 'pay_dup_2', status: 'PENDING', deleted: false, externalReference: externalReference('cobranca-3') },
       ],
       totalCount: 2,
       hasMore: false,
-      limit: 10,
+      limit: 100,
       offset: 0,
       object: 'list',
     } as never);
@@ -266,5 +280,101 @@ describe('resendTaxaMatricula', () => {
       code: 'ASAAS_PAYMENT_DUPLICATED',
       statusCode: 409,
     });
+  });
+
+  it('adota pagamento exato encontrado na página seguinte sem criar outro', async () => {
+    const { prisma } = await import('@alusa/database');
+    const { listPayments } = await import('../asaas-ops');
+    const { createCharge } = await import('../create-charge');
+    const { syncPaymentStateFromAsaas } = await import('../sync-payment-state-from-asaas');
+    const { getAsaasPaymentDetails } = await import('../get-asaas-payment-details');
+    vi.mocked(prisma.cobranca.findUnique)
+      .mockResolvedValueOnce(cobrancaFixture('cobranca-page-2') as never)
+      .mockResolvedValueOnce({ status: 'A_VENCER', asaasPaymentId: 'pay-page-2', matricula: { taxaStatus: 'PENDENTE' } } as never);
+    vi.mocked(listPayments)
+      .mockResolvedValueOnce({
+        object: 'list', totalCount: 101, offset: 0, limit: 100, hasMore: true,
+        data: Array.from({ length: 100 }, (_, index) => ({
+          id: `pay-deleted-${index}`, externalReference: externalReference('cobranca-page-2'), deleted: true,
+        })),
+      } as never)
+      .mockResolvedValueOnce({
+        object: 'list', totalCount: 101, offset: 100, limit: 100, hasMore: false,
+        data: [{ id: 'pay-page-2', externalReference: externalReference('cobranca-page-2'), status: 'PENDING' }],
+      } as never);
+    vi.mocked(syncPaymentStateFromAsaas).mockResolvedValueOnce({ success: true, paymentStatus: 'PENDING', appliedEvent: 'PAYMENT_UPDATED' } as never);
+    vi.mocked(getAsaasPaymentDetails).mockResolvedValueOnce({
+      payment: { id: 'pay-page-2', status: 'PENDING', invoiceUrl: null, bankSlipUrl: null },
+      pixQrCode: null,
+      billingInfo: null,
+    } as never);
+
+    await resendTaxaMatricula({ cobrancaId: 'cobranca-page-2', contaId: 'conta-1', actorId: 'user-1' });
+
+    expect(listPayments.mock.calls.map(([filters, options]) => [filters.offset, options?.contaId]))
+      .toEqual([[0, 'conta-1'], [100, 'conta-1']]);
+    expect(createCharge).not.toHaveBeenCalled();
+    expect(syncPaymentStateFromAsaas).toHaveBeenCalledWith({ contaId: 'conta-1', asaasPaymentId: 'pay-page-2' });
+  });
+
+  it('bloqueia duplicate encontrado em página posterior', async () => {
+    const { prisma } = await import('@alusa/database');
+    const { listPayments } = await import('../asaas-ops');
+    const { createCharge } = await import('../create-charge');
+    vi.mocked(prisma.cobranca.findUnique).mockResolvedValueOnce(cobrancaFixture('cobranca-dup-page-2') as never);
+    vi.mocked(listPayments)
+      .mockResolvedValueOnce({
+        object: 'list', totalCount: 101, offset: 0, limit: 100, hasMore: true,
+        data: Array.from({ length: 100 }, (_, index) => ({ id: `pay-dup-first-${index}`, externalReference: externalReference('cobranca-dup-page-2'), status: 'PENDING' })),
+      } as never)
+      .mockResolvedValueOnce({
+        object: 'list', totalCount: 101, offset: 100, limit: 100, hasMore: false,
+        data: [{ id: 'pay-dup-second', externalReference: externalReference('cobranca-dup-page-2'), status: 'PENDING' }],
+      } as never);
+
+    await expect(resendTaxaMatricula({
+      cobrancaId: 'cobranca-dup-page-2', contaId: 'conta-1', actorId: 'user-1',
+    })).rejects.toMatchObject({ code: 'ASAAS_PAYMENT_DUPLICATED' });
+    expect(createCharge).not.toHaveBeenCalled();
+  });
+
+  it('não cria cobrança quando a consulta paginada falha', async () => {
+    const { prisma } = await import('@alusa/database');
+    const { listPayments } = await import('../asaas-ops');
+    const { createCharge } = await import('../create-charge');
+    vi.mocked(prisma.cobranca.findUnique).mockResolvedValueOnce(cobrancaFixture('cobranca-incomplete') as never);
+    vi.mocked(listPayments)
+      .mockResolvedValueOnce({
+        object: 'list', totalCount: 101, offset: 0, limit: 100, hasMore: true,
+        data: [{ id: 'pay-possible', externalReference: externalReference('cobranca-incomplete'), status: 'PENDING' }],
+      } as never)
+      .mockRejectedValueOnce(new Error('temporary Asaas failure'));
+
+    await expect(resendTaxaMatricula({
+      cobrancaId: 'cobranca-incomplete', contaId: 'conta-1', actorId: 'user-1',
+    })).rejects.toMatchObject({ code: 'ASAAS_PAYMENT_LOOKUP_INCOMPLETE' });
+    expect(createCharge).not.toHaveBeenCalled();
+  });
+
+  it('não cria cobrança quando a busca ultrapassa o teto seguro de páginas', async () => {
+    const { prisma } = await import('@alusa/database');
+    const { listPayments } = await import('../asaas-ops');
+    const { createCharge } = await import('../create-charge');
+    vi.mocked(listPayments).mockReset();
+    vi.mocked(prisma.cobranca.findUnique).mockResolvedValueOnce(cobrancaFixture('cobranca-page-cap') as never);
+    vi.mocked(listPayments).mockImplementation(async (filters) => ({
+      object: 'list',
+      totalCount: 10_001,
+      offset: filters.offset ?? 0,
+      limit: filters.limit ?? 100,
+      hasMore: true,
+      data: Array.from({ length: 100 }, (_, index) => ({ id: `pay-${filters.offset ?? 0}-${index}`, externalReference: externalReference('cobranca-page-cap'), deleted: true })),
+    } as never));
+
+    await expect(resendTaxaMatricula({
+      cobrancaId: 'cobranca-page-cap', contaId: 'conta-1', actorId: 'user-1',
+    })).rejects.toMatchObject({ code: 'ASAAS_PAYMENT_LOOKUP_INCOMPLETE' });
+    expect(listPayments).toHaveBeenCalledTimes(100);
+    expect(createCharge).not.toHaveBeenCalled();
   });
 });

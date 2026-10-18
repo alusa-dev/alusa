@@ -252,7 +252,7 @@ describe('requestWithdraw', () => {
     expect(createPixTransfer).toHaveBeenCalledWith(
       expect.objectContaining({
         apiKey: 'sandbox_x',
-        idempotencyKey: expect.stringMatching(/^idem_[a-f0-9]{40}$/),
+        idempotencyKey: expect.stringMatching(/^op_[a-f0-9]{40}$/),
         data: expect.objectContaining({
           externalReference: 'transfer:tr1',
           value: 10,

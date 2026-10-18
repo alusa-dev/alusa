@@ -8,10 +8,10 @@
         "path": "/api/finance",
         "owner": "packages/finance",
         "consumers": {
-          "total": 169,
+          "total": 170,
           "bySurface": {
             "scripts": 2,
-            "web": 167
+            "web": 168
           },
           "files": [
             {
@@ -195,6 +195,10 @@
               "occurrences": 8
             },
             {
+              "file": "apps/web/tests/unit/external-asaas-onboarding-settings.test.tsx",
+              "occurrences": 1
+            },
+            {
               "file": "apps/web/tests/unit/finance-external-onboarding-route.test.ts",
               "occurrences": 5
             },
@@ -267,11 +271,11 @@
           "lifecycle": "active-migration",
           "implemented": true,
           "consumers": {
-            "total": 170,
+            "total": 171,
             "bySurface": {
               "packages": 1,
               "scripts": 2,
-              "web": 167
+              "web": 168
             },
             "files": [
               {
@@ -520,7 +524,7 @@
               },
               {
                 "file": "apps/web/tests/unit/api-rate-limit.test.ts",
-                "occurrences": 2
+                "occurrences": 3
               },
               {
                 "file": "apps/web/tests/unit/auth.middleware.test.ts",

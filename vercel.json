@@ -55,6 +55,10 @@
       "schedule": "25 */2 * * *"
     },
     {
+      "path": "/api/jobs/process-kyc-sync",
+      "schedule": "* * * * *"
+    },
+    {
       "path": "/api/jobs/apply-asaas-notification-preferences?limit=50",
       "schedule": "*/15 * * * *"
     },

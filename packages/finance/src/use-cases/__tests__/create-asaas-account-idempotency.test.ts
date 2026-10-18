@@ -119,6 +119,7 @@ vi.mock('@alusa/database', async () => {
       },
       asaasAccount: {
         findUnique: vi.fn(),
+        findFirst: vi.fn(),
         create: vi.fn(),
         update: vi.fn(),
         upsert: vi.fn(),
@@ -126,6 +127,10 @@ vi.mock('@alusa/database', async () => {
       asaasCredential: {
         createMany: vi.fn(),
         upsert: vi.fn(),
+      },
+      asaasIntegrationJob: {
+        upsert: vi.fn(async () => ({ id: 'kyc-job-1' })),
+        updateMany: vi.fn(async () => ({ count: 0 })),
       },
       conta: {
         findUnique: vi.fn(),
@@ -220,6 +225,12 @@ describe('createAsaasAccount - idempotência', () => {
       apiKeyStatus: 'CONNECTED',
       webhookAuthTokenHash: 'hash123',
     } as never);
+    vi.mocked(prisma.asaasAccount.findFirst).mockResolvedValue({
+      id: 'aa1',
+      provisionedAt: new Date(Date.now() - 60_000),
+      documentsCache: null,
+      documentsCacheUpdatedAt: null,
+    } as never);
 
     const result = await createAsaasAccount({
       contaId: 'c1',
@@ -237,6 +248,15 @@ describe('createAsaasAccount - idempotência', () => {
         contaId: 'c1',
         financeProfileId: 'fp1',
         apiKey: '$aact_sub_existing',
+      }),
+    );
+    expect(prisma.asaasIntegrationJob.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ type: 'SYNC_KYC_STATUS' }) }),
+    );
+    expect(prisma.asaasIntegrationJob.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: 'FAILED', attempts: { gte: 8 } }),
+        data: expect.objectContaining({ status: 'PENDING', attempts: 0 }),
       }),
     );
   });

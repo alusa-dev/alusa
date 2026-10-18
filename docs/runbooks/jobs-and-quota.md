@@ -102,6 +102,31 @@ de `removeBackoff`/recuperação de fila exige uma chamada administrativa com
 Isso evita que uma rotina periódica reative uma fila do Asaas enquanto a causa
 da interrupção ainda está presente.
 
+## Bootstrap do read model KYC de subconta
+
+`process-kyc-sync` roda a cada minuto para consumir apenas jobs duráveis
+`SYNC_KYC_STATUS` já vencidos; não chama o Asaas a cada disparo e não substitui
+webhooks nem a reconciliação `reconcile-kyc-models` (que permanece a cada 2h).
+O enqueue é feito junto à persistência da subconta no tenant (`contaId`) e
+define `nextAttemptAt` para, no mínimo, 15 segundos após o provisionamento.
+Cada invocação processa no máximo 10 itens com claim atômico e lease de 5
+minutos. O worker tenta até 8 vezes, com backoff exponencial limitado a 15
+minutos; jobs esgotados terminam em `FAILED`. A chave inclui a geração da
+subconta. Uma nova tentativa de bootstrap depois de `FAILED` esgotado é um
+replay explícito, auditado como `finance.kyc.bootstrap_job.requeued`; não
+edite a fila diretamente no banco.
+
+Antes de chamar o provedor, o job confirma se já existe read model sanitizado
+mais recente para a geração atual. Se sim, finaliza sem GET. Caso contrário,
+consulta status/documentos pontualmente e persiste somente o read model
+sanitizado; `onboardingUrl` não é persistida. Mudanças posteriores continuam
+dependendo principalmente de webhooks. Ao investigar atraso, verifique o
+`SYNC_KYC_STATUS` pelo tenant: `PENDING`/`nextAttemptAt`, `PROCESSING`/lease,
+tentativas e erro sanitizado. Falha por credencial/configuração BaaS exige
+corrigir a configuração da conta; falhas transitórias permanecem elegíveis
+ao backoff. O retry não deve ser substituído por consultas manuais repetidas
+ao Asaas.
+
 ## Leitura operacional
 
 Os jobs em Vercel produzem logs JSON com `event.name` como `job.started`,

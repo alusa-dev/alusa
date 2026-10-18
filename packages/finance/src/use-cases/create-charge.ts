@@ -14,13 +14,16 @@ import { isPastDate } from '../foundation/date-guard';
 import { deriveDeterministicId, hashPayload } from '../core';
 import { getBillingInfo, getPayment, listPayments } from './asaas-ops';
 import {
+  parseOutboundFinancialOperation,
   markOutboundAwaitingWebhook,
   markOutboundRemoteConfirmed,
   markOutboundRemoteRequested,
   markOutboundResultUnknown,
+  markOutboundRequiresReconciliation,
   reserveOutboundFinancialOperation,
 } from './outbound-financial-operation';
 import { parseDiscountDueDateLimitDays } from './discount-rules';
+import { assertCompleteAsaasPage } from './asaas-pagination';
 
 export type CreateChargeInput = {
   contaId: string;
@@ -288,29 +291,153 @@ export async function createCharge(
     let remotePayment = operation.payload.remoteId
       ? await getPayment(operation.payload.remoteId, { contaId: input.contaId }).catch(() => null)
       : null;
+    let remoteLookupComplete = false;
+    let remoteLookupConflict = false;
+    let remoteLookupConflictReason = 'MULTIPLE_REMOTE_PAYMENTS_FOR_EXTERNAL_REFERENCE';
+    const findRemotePayment = async () => {
+      const matches: Awaited<ReturnType<typeof listPayments>>['data'] = [];
+      const seenPages = new Set<string>();
+      const seenIds = new Set<string>();
+      let expectedTotalCount: number | undefined;
+      let complete = false;
+      for (let page = 0; page < 100; page += 1) {
+        const result = await listPayments(
+          { externalReference, offset: page * 100, limit: 100, includeDeleted: true },
+          { contaId: input.contaId },
+        ).catch(() => null);
+        if (!result) break;
+        try {
+          expectedTotalCount = assertCompleteAsaasPage(result, page * 100, 100, expectedTotalCount);
+        } catch { break; }
+        const ids = result.data.map((payment) => payment.id);
+        const signature = ids.slice().sort().join('|');
+        if ((ids.length > 0 && seenPages.has(signature)) || ids.some((id) => seenIds.has(id))) break;
+        if (ids.length > 0) seenPages.add(signature);
+        ids.forEach((id) => seenIds.add(id));
+        if (result.data.some((payment) => payment.externalReference !== externalReference)) {
+          remoteLookupConflict = true;
+          remoteLookupConflictReason = 'PAYMENT_EXTERNAL_REFERENCE_MISMATCH';
+        }
+        matches.push(...result.data.filter((payment) => payment.externalReference === externalReference));
+        if (!result.hasMore) {
+          complete = true;
+          break;
+        }
+      }
+      if (matches.length > 1) remoteLookupConflict = true;
+      const match = matches.length === 1 ? matches[0]! : null;
+      const confirmed = match
+        ? await getPayment(match.id, { contaId: input.contaId }).catch(() => null)
+        : null;
+      remoteLookupComplete = complete && (!match || Boolean(confirmed));
+      return { matches, payment: confirmed, complete: remoteLookupComplete };
+    };
+    const waitForConcurrentPayment = async () => {
+      for (let attempt = 0; attempt < 5 && !remotePayment; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const persisted = await prisma.asaasIntegrationJob.findFirst({
+          where: { id: operation.job.id, contaId: input.contaId },
+          select: { payload: true },
+        });
+        const persistedOperation = persisted
+          ? parseOutboundFinancialOperation(persisted.payload)
+          : null;
+        if (persistedOperation?.remoteId) {
+          remotePayment = await getPayment(persistedOperation.remoteId, {
+            contaId: input.contaId,
+          }).catch(() => null);
+          if (remotePayment) break;
+        }
+        const recovered = await findRemotePayment();
+        if (remoteLookupConflict) break;
+        if (recovered.complete) remotePayment = recovered.payment;
+      }
+    };
     if (!remotePayment) {
-      const matches = await listPayments(
-        { externalReference, limit: 10, includeDeleted: true },
-        { contaId: input.contaId },
-      )
-        .then((result) => result.data)
-        .catch(() => []);
-      if (matches.length > 1) {
+      const recovered = await findRemotePayment();
+      // A match from a partial page set does not establish uniqueness.
+      if (recovered.complete) remotePayment = recovered.payment;
+    }
+    if (remoteLookupConflict) {
+      await markOutboundRequiresReconciliation({
+        jobId: operation.job.id,
+        contaId: input.contaId,
+        resource: 'PAYMENT',
+        entityId: cobranca.id,
+        externalReference,
+        error: remoteLookupConflictReason,
+      });
+      return err('ERRO_AO_CRIAR_PAGAMENTO');
+    }
+    const operationIsInFlight =
+      operation.payload.state === 'REMOTE_REQUESTED' ||
+      operation.payload.state === 'REMOTE_CONFIRMED' ||
+      operation.payload.state === 'AWAITING_WEBHOOK';
+    const operationHasDurableRemoteConfirmation =
+      operation.payload.state === 'REMOTE_CONFIRMED' ||
+      operation.payload.state === 'AWAITING_WEBHOOK' ||
+      operation.payload.state === 'SYNCHRONIZED';
+    if (!remotePayment && operationIsInFlight) {
+      await waitForConcurrentPayment();
+      if (remoteLookupConflict) {
+        await markOutboundRequiresReconciliation({
+          jobId: operation.job.id,
+          contaId: input.contaId,
+          resource: 'PAYMENT',
+          entityId: cobranca.id,
+          externalReference,
+          error: remoteLookupConflictReason,
+        });
+        return err('ERRO_AO_CRIAR_PAGAMENTO');
+      }
+    }
+    if (!remotePayment && operationHasDurableRemoteConfirmation) {
+      return err('ERRO_AO_CRIAR_PAGAMENTO');
+    }
+    if (!remotePayment && !remoteLookupComplete) {
+      if (operation.payload.state !== 'INTENT_CREATED') {
         await markOutboundResultUnknown({
           jobId: operation.job.id,
           contaId: input.contaId,
           resource: 'PAYMENT',
           entityId: cobranca.id,
           externalReference,
-          error: 'MULTIPLE_REMOTE_PAYMENTS_FOR_EXTERNAL_REFERENCE',
+          error: 'PAYMENT_RECONCILIATION_LOOKUP_INCOMPLETE',
         });
-        return err('ERRO_AO_CRIAR_PAGAMENTO');
       }
-      remotePayment = matches[0] ?? null;
+      return err('ERRO_AO_CRIAR_PAGAMENTO');
+    }
+    if (!remotePayment && operation.payload.state !== 'INTENT_CREATED') {
+      await markOutboundResultUnknown({
+        jobId: operation.job.id,
+        contaId: input.contaId,
+        resource: 'PAYMENT',
+        entityId: cobranca.id,
+        externalReference,
+        error: 'PREVIOUS_PAYMENT_CREATE_RESULT_NOT_CONFIRMED',
+      });
+      return err('ERRO_AO_CRIAR_PAGAMENTO');
     }
     if (!remotePayment) {
       const claimed = await markOutboundRemoteRequested(operation.job.id);
-      if (!claimed) return err('ERRO_AO_CRIAR_PAGAMENTO');
+      if (!claimed) {
+        // Another request owns the POST. Prefer the tenant-scoped durable
+        // operation record; only fall back to the provider lookup while the
+        // winner is still completing its persisted confirmation.
+        await waitForConcurrentPayment();
+        if (remoteLookupConflict) {
+          await markOutboundRequiresReconciliation({
+            jobId: operation.job.id,
+            contaId: input.contaId,
+            resource: 'PAYMENT',
+            entityId: cobranca.id,
+            externalReference,
+            error: remoteLookupConflictReason,
+          });
+          return err('ERRO_AO_CRIAR_PAGAMENTO');
+        }
+        if (!remotePayment) return err('ERRO_AO_CRIAR_PAGAMENTO');
+      } else {
       const payment = await createAsaasPayment(paymentInput);
       if (payment.success) {
         remotePayment = await getPayment(payment.data.id, { contaId: input.contaId }).catch(
@@ -321,13 +448,19 @@ export async function createCharge(
             }) as Awaited<ReturnType<typeof getPayment>>,
         );
       } else {
-        const recovered = await listPayments(
-          { externalReference, limit: 10, includeDeleted: true },
-          { contaId: input.contaId },
-        )
-          .then((result) => result.data)
-          .catch(() => []);
-        if (recovered.length === 1) remotePayment = recovered[0]!;
+        const recovered = await findRemotePayment();
+        if (remoteLookupConflict) {
+          await markOutboundRequiresReconciliation({
+            jobId: operation.job.id,
+            contaId: input.contaId,
+            resource: 'PAYMENT',
+            entityId: cobranca.id,
+            externalReference,
+            error: remoteLookupConflictReason,
+          });
+          return err('ERRO_AO_CRIAR_PAGAMENTO');
+        }
+        if (recovered.complete && recovered.payment) remotePayment = recovered.payment;
         else {
           await markOutboundResultUnknown({
             jobId: operation.job.id,
@@ -343,6 +476,7 @@ export async function createCharge(
           return err('ERRO_AO_CRIAR_PAGAMENTO');
         }
       }
+      }
     }
     const paymentMismatch =
       !remotePayment?.id ||
@@ -352,7 +486,7 @@ export async function createCharge(
         Math.abs(remotePayment.value - Number(cobranca.valor)) > 0.001) ||
       (remotePayment.dueDate != null && remotePayment.dueDate !== dueDateIso);
     if (paymentMismatch) {
-      await markOutboundResultUnknown({
+      await markOutboundRequiresReconciliation({
         jobId: operation.job.id,
         contaId: input.contaId,
         resource: 'PAYMENT',

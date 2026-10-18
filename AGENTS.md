@@ -31,9 +31,15 @@ Este arquivo (**`AGENTS.md`**) espelha as **regras universais** do agente **core
 ## Operação de deploy
 
 - Para mudanças de build, CI, Vercel, migrations ou publicação em produção, seguir o [runbook de deploy](docs/runbooks/deploy-production.md).
-- Não considerar um commit enviado para `main` como publicado até confirmar a implantação `Ready`, o commit e os aliases de produção.
-- Preferir PR com CI verde e promoção do artefato validado; não fazer push direto em `main` para contornar checks.
+- Para mudanças comuns de baixo risco, usar o fast path: checks locais direcionados servem para encontrar bugs; revisar o diff, criar commit e enviar diretamente para `main`; acompanhar o deployment Vercel até `Ready` e confirmar SHA e aliases. Não esperar full suite, review humano nem CI remoto flaky ou não relacionado para publicar.
+- Bloquear o push quando um check relevante revelar falha reproduzível ou o diff mostrar bug/regressão clara; corrigir antes de publicar. Não mascarar resultados nem pular testes específicos como atalho.
+- O estado verificado da proteção classic de `main` permite push direto sem PR, approval ou status check obrigatório. Permanecem `enforce_admins`, histórico linear obrigatório, proibição de force push e exclusão, e resolução de conversas obrigatória; não contornar essas proteções.
+- PR e aprovação humana não são caminho nem gate do fast path. Se o GitHub rejeitar um push no futuro, verificar se as configurações mudaram e qual regra aplicável bloqueou; alterar settings somente mediante autorização explícita.
+- Não considerar um commit enviado para `main` como publicado até confirmar a implantação `Ready`, o SHA esperado e os aliases de produção.
+- Reservar validação adicional para mudanças materiais ou de risco elevado, conforme o runbook. Migrações e operações de dados com potencial de dano irreversível exigem validação segura antes da execução; não tratar essas salvaguardas como burocracia opcional.
 - Em falhas de build, reproduzir o comando real da Vercel e corrigir a causa sem relaxar TypeScript, testes, autenticação ou validações.
+- Toda migration versionada exigida por uma mudança deve ser testada em banco descartável/branch Neon e aplicada à branch/database Neon de produção como etapa do release; migration local não basta. Usar `prisma migrate deploy`, `DIRECT_URL` não pooled, confirmar target de produção e `prisma migrate status`.
+- Considerar o deploy Vercel automático após push: só aplicar antes do push migrations backwards-compatible; para incompatíveis/destrutivas, usar expand/contract ou deploy em fases. Falha de migration impede publicar código que dependa dela. Não executar migration em produção sem validação e confirmação explícitas do target.
 - Migrations e backfills devem ser seguros, escopados, idempotentes e validados antes da promoção da aplicação.
 
 ## Regras universais obrigatórias
@@ -142,7 +148,7 @@ Este arquivo (**`AGENTS.md`**) espelha as **regras universais** do agente **core
 - Fluxos críticos devem ter cobertura E2E com Playwright quando fizer sentido.
 - Não remover testes para fazer a implementação passar.
 - Não mascarar falhas com `skip`, `only`, mocks frágeis ou relaxamento de validação sem justificativa.
-- Antes de concluir uma tarefa, rodar pelo menos os testes/typecheck relacionados ao escopo alterado.
+- Em mudanças de código, usar testes/typecheck relacionados como checks direcionados para encontrar bugs; falhas reproduzíveis relevantes devem ser corrigidas. Não aguardar CI remoto flaky/não relacionado como gate do fast path.
 - Se não for possível rodar testes, informar claramente o motivo e o risco.
 
 ### Confiabilidade e prevenção de regressão

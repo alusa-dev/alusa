@@ -163,4 +163,46 @@ describe('API rate limit policy', () => {
     expect(exportResponse?.status).toBe(429);
     expect(exportResponse?.headers.get('ratelimit-limit')).toBe('10');
   });
+
+  it('gives event report reads the report budget instead of the shared expensive-operation limit', async () => {
+    process.env.RATE_LIMIT_DISABLE_IN_DEV = 'false';
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    delete process.env.REDIS_URL;
+    delete process.env.REDIS_TOKEN;
+
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const token = { contaId: `event-reports-conta-${suffix}`, id: `event-reports-user-${suffix}` };
+    const path = '/api/events/reports/event-1';
+    const request = () => new Request(`https://app.example.com${path}`);
+
+    let response: Response | null = null;
+    for (let index = 0; index < 61; index += 1) {
+      response = await enforceApiRateLimit(request(), path, token);
+    }
+
+    expect(response?.status).toBe(429);
+    expect(response?.headers.get('ratelimit-limit')).toBe('60');
+  });
+
+  it('keeps event report reads independent from financial report traffic', async () => {
+    process.env.RATE_LIMIT_DISABLE_IN_DEV = 'false';
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    delete process.env.REDIS_URL;
+    delete process.env.REDIS_TOKEN;
+
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const token = { contaId: `separate-reports-conta-${suffix}`, id: `separate-reports-user-${suffix}` };
+    const financialPath = '/api/financeiro/relatorios/overview';
+    const eventPath = '/api/events/reports/event-1';
+    const financialRequest = () => new Request(`https://app.example.com${financialPath}`);
+    const eventRequest = () => new Request(`https://app.example.com${eventPath}`);
+
+    for (let index = 0; index < 61; index += 1) {
+      await enforceApiRateLimit(financialRequest(), financialPath, token);
+    }
+
+    await expect(enforceApiRateLimit(eventRequest(), eventPath, token)).resolves.toBeNull();
+  });
 });

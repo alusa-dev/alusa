@@ -313,7 +313,7 @@ export async function getAccountVerificationStatus(
   );
 
   const snapshotForActions =
-    !opts.fresh && hasRedirectWithoutUrl
+    !opts.fresh && !opts.readModelOnly && hasRedirectWithoutUrl
       ? await getKycSnapshotByContaId(contaId, { ...opts, fresh: true })
       : snapshot;
 
@@ -321,11 +321,18 @@ export async function getAccountVerificationStatus(
     return withProvisioningHint(contaId, { ready: false, reason: 'NOT_READY' });
   }
 
-  const actions = buildActions(snapshotForActions.nextActions);
+  const nextActions = opts.readModelOnly
+    ? snapshotForActions.nextActions.map((action) =>
+        action.kind === 'EXTERNAL_ONBOARDING' && !action.onboardingUrl
+          ? { ...action, kind: 'WAITING_PROVIDER' }
+          : action,
+      )
+    : snapshotForActions.nextActions;
+  const actions = buildActions(nextActions);
   const areas = buildAreas(snapshot);
 
   // Se ainda houver REDIRECT sem URL mesmo após fresh, consideramos NOT_READY.
-  const invalidRedirect = actions.some((a) => a.mode === 'REDIRECT' && !a.redirectUrl);
+  const invalidRedirect = !opts.readModelOnly && actions.some((a) => a.mode === 'REDIRECT' && !a.redirectUrl);
   if (invalidRedirect) {
     return withProvisioningHint(contaId, { ready: false, reason: 'NOT_READY' });
   }
