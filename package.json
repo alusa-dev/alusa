@@ -34,6 +34,7 @@
     "format": "prettier --write .",
     "build": "turbo run build",
     "build:web": "turbo run build --filter=@alusa/web",
+    "build:vercel": "node scripts/validate-vercel-production-schema.mjs && pnpm prisma:generate && NODE_OPTIONS=--max-old-space-size=3072 pnpm exec turbo run build --filter=@alusa/web^... --concurrency=2 && NODE_OPTIONS=--max-old-space-size=3072 pnpm --dir apps/web build:webpack",
     "build:clean": "pnpm --filter @alusa/web build:clean",
     "env:check:dev": "pnpm --filter @alusa/web env:check:dev",
     "dev": "pnpm env:check:dev && pnpm prisma:generate && pnpm exec turbo run build --filter=@alusa/web^... && pnpm --filter @alusa/web dev:raw",
