@@ -109,14 +109,14 @@ export function SiteHeader() {
               Entrar
             </ButtonLink>
             <ButtonLink
-              href="/register"
+              href="/lista-de-espera"
               variant="primary"
               tone="dark"
               event="hero_cta_clicked"
               showArrow={false}
               className="site-header-signup bg-white text-[var(--alusa-purple-dark)] shadow-sm"
             >
-              Teste grátis por 14 dias
+              Entre na lista de espera
             </ButtonLink>
           </div>
         )}
@@ -166,8 +166,8 @@ export function SiteHeader() {
               <ButtonLink href={appLoginUrl} variant="secondary" tone="dark" showArrow={false}>
                 Entrar
               </ButtonLink>
-              <ButtonLink href="/register" variant="primary" tone="dark" event="hero_cta_clicked" showArrow={false}>
-                Criar conta grátis
+              <ButtonLink href="/lista-de-espera" variant="primary" tone="dark" event="hero_cta_clicked" showArrow={false}>
+                Entre na lista de espera
               </ButtonLink>
             </div>
           </nav>

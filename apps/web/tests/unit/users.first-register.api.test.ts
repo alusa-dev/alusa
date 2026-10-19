@@ -1,233 +1,25 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-const createFirstUserMock = vi.fn();
-const checkFirstUserRegistrationAvailabilityMock = vi.fn();
-const sendEmailVerificationForUserMock = vi.fn();
-const originalExternalOnboardingFlag = process.env.FEATURE_EXTERNAL_ASAAS_ONBOARDING;
-
-vi.mock('@/lib/first-user-service', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/first-user-service')>('@/lib/first-user-service');
-  return {
-    ...actual,
-    checkFirstUserRegistrationAvailability: checkFirstUserRegistrationAvailabilityMock,
-    createFirstUser: createFirstUserMock,
-  };
-});
-
-vi.mock('@/lib/rate-limit', () => ({
-  ipFromRequest: vi.fn(() => '127.0.0.1'),
-  rateLimit: vi.fn(() => ({ ok: true, remaining: 9, resetAt: Date.now() + 1000 })),
+vi.mock('@/lib/first-user-service', () => ({
+  checkFirstUserRegistrationAvailability: vi.fn(),
+  createFirstUser: vi.fn(),
 }));
-
-vi.mock('@/lib/auth-email-flow', () => ({
-  sendEmailVerificationForUser: sendEmailVerificationForUserMock,
-}));
-
-function legalAcceptancePayload() {
-  return {
-    accepted: true,
-    locale: 'pt-BR',
-    source: 'REGISTER',
-    documents: [
-      { documentType: 'TERMS_OF_USE', documentVersion: '2026-05-27' },
-      { documentType: 'PRIVACY_POLICY', documentVersion: '2026-05-27' },
-      { documentType: 'DPA', documentVersion: '2026-05-27' },
-    ],
-  };
-}
+vi.mock('@/lib/auth-email-flow', () => ({ sendEmailVerificationForUser: vi.fn() }));
 
 describe('POST /api/users/first-register', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    checkFirstUserRegistrationAvailabilityMock.mockResolvedValue({ available: true });
-    process.env.FEATURE_EXTERNAL_ASAAS_ONBOARDING = 'false';
-  });
-
-  afterEach(() => {
-    if (typeof originalExternalOnboardingFlag === 'undefined') {
-      delete process.env.FEATURE_EXTERNAL_ASAAS_ONBOARDING;
-    } else {
-      process.env.FEATURE_EXTERNAL_ASAAS_ONBOARDING = originalExternalOnboardingFlag;
-    }
-  });
-
-  it('bloqueia cadastro quando existe conta desativada e orienta login para reativação', async () => {
-    checkFirstUserRegistrationAvailabilityMock.mockResolvedValueOnce({
-      available: false,
-      reason: 'LOCAL_DEACTIVATED',
-      userId: 'user_1',
-      email: 'inactive@example.com',
-    });
-
+  it('returns a stable 403 and does not create unaffiliated public accounts', async () => {
     const { POST } = await import('@/app/api/users/first-register/route');
-    const req = new Request('http://localhost/api/users/first-register', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'user-agent': 'vitest',
-      },
-      body: JSON.stringify({
-        nome: 'Conta Inativa',
-        firstName: 'Conta',
-        lastName: 'Inativa',
-        email: 'inactive@example.com',
-        senha: 'SenhaFort3!',
-        escolaNome: 'Conta Inativa',
-        legalAcceptance: legalAcceptancePayload(),
-      }),
-    });
-
-    const response = await POST(req);
-    const body = await response.json();
-
-    expect(response.status).toBe(409);
-    expect(body.code).toBe('ACCOUNT_DEACTIVATED');
-    expect(body.error).toContain('Faça login para iniciar a reativação');
-    expect(createFirstUserMock).not.toHaveBeenCalled();
-    expect(sendEmailVerificationForUserMock).not.toHaveBeenCalled();
-  });
-
-  it('não inclui dados do ZodError no log de rejeição', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const { POST } = await import('@/app/api/users/first-register/route');
-    const secretEmail = 'private-person@example.com';
-    const secretPassword = 'Secret-Pass-123!';
-    const req = new Request('http://localhost/api/users/first-register', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email: secretEmail, senha: secretPassword, nome: 'Private Person' }),
-    });
-
-    const response = await POST(req);
-    expect(response.status).toBe(400);
-    expect(warn).toHaveBeenCalledTimes(1);
-    const line = warn.mock.calls[0]?.[0];
-    expect(typeof line).toBe('string');
-    const event = JSON.parse(line as string) as { 'event.name': string; 'error.type': string };
-    expect(event['event.name']).toBe('api.users.request.rejected');
-    expect(event['error.type']).toBe('ZodError');
-    expect(line).not.toContain(secretEmail);
-    expect(line).not.toContain(secretPassword);
-    expect(line).not.toContain('Private Person');
-    warn.mockRestore();
-  });
-
-  it('não bloqueia o cadastro Alusa por conflito de e-mail que só existe no Asaas', async () => {
-    createFirstUserMock.mockResolvedValueOnce({
-      id: 'user_finance',
-      email: 'finance@example.com',
-      role: 'ADMIN',
-      contaId: 'conta_finance',
-      emailVerifiedAt: null,
-    });
-    const { POST } = await import('@/app/api/users/first-register/route');
-    const req = new Request('http://localhost/api/users/first-register', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'user-agent': 'vitest',
-      },
-      body: JSON.stringify({
-        nome: 'Conta Financeira',
-        firstName: 'Conta',
-        lastName: 'Financeira',
-        email: 'finance@example.com',
-        senha: 'SenhaFort3!',
-        escolaNome: 'Conta Financeira',
-        legalAcceptance: legalAcceptancePayload(),
-      }),
-    });
-
-    const response = await POST(req);
-    expect(response.status).toBe(201);
-    expect(checkFirstUserRegistrationAvailabilityMock).toHaveBeenCalledWith({
-      email: 'finance@example.com',
-    });
-    expect(createFirstUserMock).toHaveBeenCalled();
-    expect(sendEmailVerificationForUserMock).toHaveBeenCalled();
-  });
-
-  it('bloqueia o onboarding externo quando a feature flag está desabilitada', async () => {
-    const { POST } = await import('@/app/api/users/first-register/route');
-    const req = new Request('http://localhost/api/users/first-register', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'user-agent': 'vitest',
-      },
-      body: JSON.stringify({
-        nome: 'Escola Piloto',
-        firstName: 'Escola',
-        lastName: 'Piloto',
-        email: 'piloto@example.com',
-        senha: 'SenhaFort3!',
-        escolaNome: 'Escola Piloto',
-        financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
-        legalAcceptance: legalAcceptancePayload(),
-      }),
-    });
-
-    const response = await POST(req);
-    const body = await response.json();
+    const response = await POST();
 
     expect(response.status).toBe(403);
-    expect(body.code).toBe('EXTERNAL_ASAAS_ONBOARDING_DISABLED');
-    expect(createFirstUserMock).not.toHaveBeenCalled();
-    expect(sendEmailVerificationForUserMock).not.toHaveBeenCalled();
-  });
-
-  it('envia callback do wizard quando a feature flag está habilitada', async () => {
-    process.env.FEATURE_EXTERNAL_ASAAS_ONBOARDING = 'true';
-    createFirstUserMock.mockResolvedValueOnce({
-      id: 'user_asaas_external',
-      email: 'piloto@example.com',
-      role: 'ADMIN',
-      contaId: 'conta_asaas_external',
-      emailVerifiedAt: null,
+    await expect(response.json()).resolves.toEqual({
+      error: 'O cadastro público está temporariamente indisponível. Entre na lista de espera ou aceite um convite da sua escola.',
+      code: 'PUBLIC_SIGNUP_CLOSED',
     });
-
-    const { POST } = await import('@/app/api/users/first-register/route');
-    const req = new Request('http://localhost/api/users/first-register', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'user-agent': 'vitest',
-      },
-      body: JSON.stringify({
-        nome: 'Escola Piloto',
-        firstName: 'Escola',
-        lastName: 'Piloto',
-        email: 'piloto@example.com',
-        senha: 'SenhaFort3!',
-        escolaNome: 'Escola Piloto',
-        financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
-        legalAcceptance: legalAcceptancePayload(),
-      }),
-    });
-
-    const response = await POST(req);
-    const body = await response.json();
-
-    expect(response.status).toBe(201);
-    expect(body).toEqual({
-      user: {
-        id: 'user_asaas_external',
-        email: 'piloto@example.com',
-        role: 'ADMIN',
-        contaId: 'conta_asaas_external',
-        emailVerified: false,
-      },
-    });
-    expect(checkFirstUserRegistrationAvailabilityMock).toHaveBeenCalledWith({
-      email: 'piloto@example.com',
-    });
-    expect(createFirstUserMock).toHaveBeenCalledWith(
-      expect.objectContaining({ financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' }),
-    );
-    expect(sendEmailVerificationForUserMock).toHaveBeenCalledWith(
-      'user_asaas_external',
-      expect.any(Object),
-      expect.objectContaining({ callbackUrl: '/finance/wizard' }),
-    );
+    const { createFirstUser, checkFirstUserRegistrationAvailability } = await import('@/lib/first-user-service');
+    const { sendEmailVerificationForUser } = await import('@/lib/auth-email-flow');
+    expect(createFirstUser).not.toHaveBeenCalled();
+    expect(checkFirstUserRegistrationAvailability).not.toHaveBeenCalled();
+    expect(sendEmailVerificationForUser).not.toHaveBeenCalled();
   });
 });

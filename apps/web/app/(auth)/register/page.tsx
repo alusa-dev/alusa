@@ -15,6 +15,8 @@ interface RegisterPageProps {
 export default async function RegisterPage({ searchParams }: RegisterPageProps) {
   const params = await searchParams;
   const token = params.token;
+  if (!token) redirect('/lista-de-espera');
+
   const enableExternalAsaasOnboarding = isExternalAsaasOnboardingRolloutEnabled();
 
   // Se há token, validar convite
@@ -89,10 +91,4 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
     );
   }
 
-  // Sem token: fluxo direto sempre cria ADMIN (first-register)
-  return (
-    <AuthPageContainer>
-      <RegisterForm enableExternalAsaasOnboarding={enableExternalAsaasOnboarding} />
-    </AuthPageContainer>
-  );
 }

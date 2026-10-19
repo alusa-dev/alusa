@@ -7,7 +7,7 @@ export const primaryNavigation = [
   { label: 'Produto', sectionId: 'modulos' },
   { label: 'Solução', sectionId: 'financeiro' },
   { label: 'Dúvidas', sectionId: 'contato' },
-  { label: 'Fale conosco', href: 'mailto:contato@alusa.app' },
+  { label: 'Fale conosco', href: 'mailto:gestao.alusa@gmail.com' },
 ] as const satisfies readonly SiteNavItem[];
 
 export const footerGroups = [
@@ -25,7 +25,7 @@ export const footerGroups = [
     links: [
       { label: 'Sobre', sectionId: 'contato' },
       { label: 'Contato', sectionId: 'contato' },
-      { label: 'Demonstração', href: 'mailto:contato@alusa.app' },
+      { label: 'Demonstração', href: 'mailto:gestao.alusa@gmail.com' },
     ],
   },
   {
@@ -45,7 +45,7 @@ export const footerGroups = [
     title: 'Acesso',
     links: [
       { label: 'Login', href: appLoginUrl },
-      { label: 'Criar conta', href: '/register' },
+      { label: 'Entre na lista de espera', href: '/lista-de-espera' },
     ],
   },
 ] as const satisfies readonly FooterGroupDto[];
