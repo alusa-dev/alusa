@@ -1,6 +1,7 @@
 import { Prisma, PrismaClient, StatusMatricula, Status } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
-import { expect, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { seedAdminAndAuthenticate } from './auth';
 
 export const prisma = new PrismaClient();
 
@@ -9,30 +10,9 @@ export const TEST_ADMIN_EMAIL = 'primeiro@example.com';
 export const TEST_ADMIN_PASSWORD = 'SenhaFort3!';
 
 export async function registerAndLogin(page: Page) {
-  await page.goto('/auth/register');
-  await page.getByTestId('register-nome-first').fill('Admin');
-  await page.getByTestId('register-nome-last').fill(`E2E ${randomUUID().slice(0, 8)}`);
-  await page.getByTestId('register-email').fill(`admin-${randomUUID()}@example.com`);
-  await page.getByTestId('register-senha').fill(TEST_ADMIN_PASSWORD);
-  await page.getByTestId('register-senha-confirmar').fill(TEST_ADMIN_PASSWORD);
-  await page.getByTestId('register-termos-checkbox').click();
-  await page.getByTestId('legal-acceptance-inner-checkbox').click();
-  await page.getByTestId('legal-acceptance-confirm').click();
-  await page.getByTestId('register-submit').click();
-  let contaId: string | null = null;
-  await expect.poll(async () => {
-    const response = await page.request.get('/api/auth/session');
-    if (!response.ok()) return null;
-    const session = (await response.json()) as { user?: { contaId?: string } };
-    return session.user?.contaId ?? null;
-  }, { timeout: 15000 }).not.toBeNull();
-
-  const sessionResponse = await page.request.get('/api/auth/session');
-  if (sessionResponse.ok()) {
-    const session = (await sessionResponse.json()) as { user?: { contaId?: string } };
-    contaId = session.user?.contaId ?? null;
-  }
-  if (!contaId) throw new Error('Conta não encontrada após cadastro E2E');
+  const { contaId } = await seedAdminAndAuthenticate(page, {
+    email: `admin-${randomUUID()}@example.com`,
+  });
 
   await prisma.platformBillingAccount.upsert({
     where: {

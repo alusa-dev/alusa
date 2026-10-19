@@ -10,5 +10,5 @@ test('tela de autenticação usa o contrato atual', async ({ page }) => {
 
 test('login direciona quem não tem conta ao contato durante o piloto', async ({ page }) => {
   await page.goto('/auth/login');
-  await expect(page.getByRole('link', { name: 'Fale conosco' })).toHaveAttribute('href', 'mailto:gestao.alusa@gmail.com');
+  await expect(page.getByRole('link', { name: 'Fale conosco' })).toHaveAttribute('href', 'mailto:contato@alusa.app');
 });

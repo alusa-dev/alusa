@@ -36,7 +36,7 @@ export async function POST(req: Request) {
       alunosIds?: string[];
     };
     
-    // Bloquear convites para ADMIN — primeiro admin só via first-register
+    // Convites de ADMIN permanecem bloqueados; o cadastro público está fechado durante o piloto.
     if (role === 'ADMIN') {
       logApiOperationalEvent({ severity: 'warn', eventName: 'api.users.request.rejected', route: '/api/users/invite', method: 'POST', requestId: getRequestId(req) });
       return NextResponse.json({ error: 'Convites para ADMIN não são permitidos.' }, { status: 403 });

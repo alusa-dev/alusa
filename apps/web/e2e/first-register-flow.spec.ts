@@ -15,6 +15,6 @@ test.describe('public pilot acquisition links', () => {
     await page.goto('/auth/login');
 
     await expect(page.getByRole('heading', { name: 'Bem-vindo de volta!' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Fale conosco' })).toHaveAttribute('href', 'mailto:gestao.alusa@gmail.com');
+    await expect(page.getByRole('link', { name: 'Fale conosco' })).toHaveAttribute('href', 'mailto:contato@alusa.app');
   });
 });

@@ -383,7 +383,7 @@ export default function LoginClient() {
           </div>
           <p className="mt-4 w-full text-left text-[0.8125rem] font-medium min-[400px]:text-sm lg:text-center lg:text-[11px]">
             <span className="text-[#686868]">Não tem uma conta? </span>
-            <Link href="mailto:gestao.alusa@gmail.com" className="text-brand-accent hover:underline outline-none rounded">
+            <Link href="mailto:contato@alusa.app" className="text-brand-accent hover:underline outline-none rounded">
               Fale conosco
             </Link>
           </p>

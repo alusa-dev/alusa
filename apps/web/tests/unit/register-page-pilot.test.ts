@@ -1,3 +1,4 @@
+import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const { redirectMock, inviteFindUniqueMock, userFindFirstMock, getServerSessionMock } = vi.hoisted(() => ({
@@ -24,7 +25,10 @@ vi.mock('@/app/(auth)/register/SignOutForInviteButton', () => ({ default: 'SignO
 import RegisterPage from '@/app/(auth)/register/page';
 
 describe('public register page during assisted pilot', () => {
-  afterEach(() => vi.clearAllMocks());
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
 
   it('redirects unaffiliated public signup to the waitlist', async () => {
     await expect(RegisterPage({ searchParams: Promise.resolve({}) })).rejects.toThrow('redirect:/lista-de-espera');
@@ -34,6 +38,7 @@ describe('public register page during assisted pilot', () => {
   });
 
   it('continues validating invitation tokens on the registration page', async () => {
+    vi.stubGlobal('React', React);
     inviteFindUniqueMock.mockResolvedValueOnce({
       email: 'invitee@example.com', role: 'RECEPCAO', status: 'PENDING',
       expiresAt: new Date(Date.now() + 60_000),
