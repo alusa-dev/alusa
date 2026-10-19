@@ -725,10 +725,10 @@ function buildChargeAsaasSnapshotUpdate(
     ...(estimatedCreditDate === undefined ? {} : { asaasEstimatedCreditDate: estimatedCreditDate }),
     lastAsaasFetchAt: new Date(),
     ...(creditDate === undefined ? {} : {
-      liquidacaoStatus,
-      liquidadoEm: liquidacaoStatus === 'DISPONIVEL'
-        ? firstValidProviderDate(p.creditDate, p.paymentDate, p.clientPaymentDate) ?? new Date()
-        : null,
+      ...(liquidacaoStatus !== 'DISPONIVEL' ? { liquidacaoStatus, liquidadoEm: null } : {}),
+      ...(liquidacaoStatus === 'DISPONIVEL' && firstValidProviderDate(p.creditDate, p.paymentDate, p.clientPaymentDate)
+        ? { liquidacaoStatus, liquidadoEm: firstValidProviderDate(p.creditDate, p.paymentDate, p.clientPaymentDate) }
+        : {}),
     }),
     ...buildPaymentDocumentUpdate(payload),
   };
@@ -1279,7 +1279,7 @@ async function updateEventFinancialEntryFromWebhook(
   const totalRefunded = refundedCharges.reduce((sum, c) => sum + (c.value ? Number(c.value) : 0), 0);
 
   let nextStatus: 'RECEIVED' | 'PENDING' | 'REFUNDED' | 'PARTIALLY_REFUNDED' | 'CANCELLED' = 'PENDING';
-  let realizedAt: Date | null = null;
+  let realizedAt: Date | null | undefined = null;
   let cancelledAt: Date | null = null;
   let refundedAt: Date | null = null;
 
@@ -1294,11 +1294,11 @@ async function updateEventFinancialEntryFromWebhook(
     refundedAt = new Date();
   } else if (paidCharges.length + cancelledCharges.length + refundedCharges.length === charges.length) {
     nextStatus = 'RECEIVED';
-    realizedAt = firstValidProviderDate(p.clientPaymentDate, p.paymentDate, p.creditDate) ?? new Date();
+    realizedAt = firstValidProviderDate(p.clientPaymentDate, p.paymentDate, p.creditDate);
   } else {
     nextStatus = 'PENDING';
     if (paidCharges.length > 0) {
-      realizedAt = firstValidProviderDate(p.clientPaymentDate, p.paymentDate, p.creditDate) ?? new Date();
+      realizedAt = firstValidProviderDate(p.clientPaymentDate, p.paymentDate, p.creditDate);
     }
   }
 
@@ -3231,9 +3231,7 @@ async function handlePaymentWebhookCore(
     const liquidacaoStatus = computeLiquidacaoStatusFromPayload(payload);
     const feeValue = p.value - p.netValue;
     const isConfirmed = internalStatus === 'CONFIRMED' || internalStatus === 'RECEIVED_IN_CASH';
-    const hasPaymentDateCandidate = hasProviderDateCandidate(p.paymentDate, p.clientPaymentDate, p.creditDate);
-    const paymentDate = firstValidProviderDate(p.paymentDate, p.clientPaymentDate, p.creditDate)
-      ?? (hasPaymentDateCandidate ? undefined : new Date());
+    const paymentDate = firstValidProviderDate(p.paymentDate, p.clientPaymentDate, p.creditDate);
     const cobrancaSensitiveUpdate = buildCobrancaSensitiveUpdate({
       event: payload.event,
       internalStatus,
@@ -3283,8 +3281,8 @@ async function handlePaymentWebhookCore(
           lastAsaasFetchAt: new Date(),
           // Liquidação: para RECEIVED_IN_CASH, usar paymentDate como data de liquidação
           ...(parsedCreditDate === undefined ? {} : {
-            liquidacaoStatus,
-            liquidadoEm: liquidacaoStatus === 'DISPONIVEL' ? paymentDate : null,
+            ...(liquidacaoStatus !== 'DISPONIVEL' ? { liquidacaoStatus, liquidadoEm: null } : {}),
+            ...(liquidacaoStatus === 'DISPONIVEL' && paymentDate ? { liquidacaoStatus, liquidadoEm: paymentDate } : {}),
           }),
           ...buildPaymentDocumentUpdate(payload),
           ...cobrancaSensitiveUpdate,
@@ -3309,8 +3307,8 @@ async function handlePaymentWebhookCore(
           lastAsaasFetchAt: new Date(),
           // Liquidação: para RECEIVED_IN_CASH, usar paymentDate como data de liquidação
           ...(parsedCreditDate === undefined ? {} : {
-            liquidacaoStatus,
-            liquidadoEm: liquidacaoStatus === 'DISPONIVEL' ? paymentDate : null,
+            ...(liquidacaoStatus !== 'DISPONIVEL' ? { liquidacaoStatus, liquidadoEm: null } : {}),
+            ...(liquidacaoStatus === 'DISPONIVEL' && paymentDate ? { liquidacaoStatus, liquidadoEm: paymentDate } : {}),
           }),
           ...buildPaymentDocumentUpdate(payload),
           ...cobrancaSensitiveUpdate,

@@ -8,6 +8,17 @@ import {
 import { isTicketPaymentBlocked } from '@alusa/domain/events';
 import { logEventsFinance } from './events-finance-observability';
 
+const REFUND_PROCESSING_PAYMENT_STATUSES = new Set([
+  'REFUND_REQUESTED',
+  'REFUND_IN_PROGRESS',
+  'PAYMENT_REFUND_IN_PROGRESS',
+]);
+const REFUND_SUCCESS_PAYMENT_STATUSES = new Set(['REFUNDED', 'PAYMENT_REFUNDED']);
+
+function normalizedPaymentStatus(status: string | null | undefined) {
+  return (status ?? '').trim().toUpperCase();
+}
+
 export async function refundEventTicketSalesByPayment(params: {
   contaId: string;
   paymentId: string;
@@ -77,11 +88,18 @@ export async function refundEventTicketSalesByPayment(params: {
       const isFullyRefunded = params.isFinalRefund || sale.status === 'REFUNDED' ||
         (hasRefundAmount && saleAmount > 0 && refundedAmount >= saleAmount);
       if (!isFullyRefunded) allSalesFullyRefunded = false;
-      const paymentStatus = sale.status === 'REFUNDED'
-        ? sale.paymentStatus ?? params.paymentStatus
-        : isTicketPaymentBlocked(sale.paymentStatus)
+      const existingPaymentStatus = normalizedPaymentStatus(sale.paymentStatus);
+      const incomingPaymentStatus = normalizedPaymentStatus(params.paymentStatus);
+      const isExistingRefundInProgress = REFUND_PROCESSING_PAYMENT_STATUSES.has(existingPaymentStatus);
+      const isIncomingRefundSuccess = REFUND_SUCCESS_PAYMENT_STATUSES.has(incomingPaymentStatus);
+      const hasNonRefundPaymentHold = isTicketPaymentBlocked(sale.paymentStatus) && !isExistingRefundInProgress;
+      const paymentStatus = hasNonRefundPaymentHold
+        ? sale.paymentStatus
+        : REFUND_SUCCESS_PAYMENT_STATUSES.has(existingPaymentStatus)
           ? sale.paymentStatus
-          : params.paymentStatus;
+          : sale.status === 'REFUNDED'
+            ? isIncomingRefundSuccess ? params.paymentStatus : 'PAYMENT_REFUNDED'
+            : params.paymentStatus;
 
       await tx.eventTicketSale.update({
         where: { id: sale.id, contaId: params.contaId },

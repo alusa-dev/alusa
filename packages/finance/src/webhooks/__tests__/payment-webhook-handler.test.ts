@@ -325,10 +325,15 @@ describe('handlePaymentWebhook', () => {
 
   it('projeta conclusão de refund para a intenção de devolução sem confiar no HTTP', async () => {
     const { prisma } = await import('@alusa/database');
-    vi.mocked(prisma.storeSaleRefundAttempt.findMany).mockResolvedValue([{
+    const attempt = {
       id: 'attempt-1', returnId: 'return-1', requestedAmount: new Prisma.Decimal(40), providerRefundBaseline: new Prisma.Decimal(0), confirmedAmount: new Prisma.Decimal(0), status: 'IN_PROGRESS', updatedAt: new Date(),
-    }] as never);
-    vi.mocked(prisma.storeSaleRefundAttempt.updateMany).mockResolvedValue({ count: 1 } as never);
+    };
+    vi.mocked(prisma.storeSaleRefundAttempt.findMany).mockImplementation(async () => [{ ...attempt }] as never);
+    vi.mocked(prisma.storeSaleRefundAttempt.updateMany).mockImplementation(async ({ where, data }) => {
+      if (attempt.status !== where.status) return { count: 0 } as never;
+      Object.assign(attempt, data);
+      return { count: 1 } as never;
+    });
     vi.mocked(prisma.storeSaleReturn.findFirst).mockResolvedValue({
       id: 'return-1', attempts: [{ status: 'REFUNDED', confirmedAmount: { toString: () => '40' } }],
     } as never);
@@ -2787,6 +2792,9 @@ describe('handlePaymentWebhook', () => {
 
   it('preserva o maior estorno acadêmico quando chega snapshot parcial antigo', async () => {
     const { prisma } = await import('@alusa/database');
+    const { isPaymentResolutionPolicyEnabled } = await import('../../foundation/payment-resolution-policy');
+    vi.mocked(isPaymentResolutionPolicyEnabled).mockReturnValue(true);
+    mockResolvePaymentToLocalEntity.mockResolvedValueOnce({ type: 'cobranca', cobrancaId: 'c_old_refund' });
     vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce({
       id: 'c_old_refund',
       matriculaId: 'm_old_refund',
@@ -2798,9 +2806,9 @@ describe('handlePaymentWebhook', () => {
     } as never);
     vi.mocked(prisma.cobranca.update).mockResolvedValue({} as never);
     vi.mocked(prisma.charge.findFirst).mockResolvedValue({
-      id: 'charge_event_refund',
-      cobrancaId: 'c_event_refund',
-      asaasPaymentId: 'pay_event_refund',
+      id: 'charge_old_refund',
+      cobrancaId: 'c_old_refund',
+      asaasPaymentId: 'pay_old_refund',
       status: 'PENDING',
       value: 100,
       standaloneInstallmentPlanId: null,

@@ -175,4 +175,63 @@ describe('refundEventTicketSalesByPayment', () => {
       data: { paymentStatus: 'PARTIALLY_REFUNDED' },
     }));
   });
+
+  it('replaces refund-in-progress with the final refunded status on sale and ledger entry', async () => {
+    sales[0]!.paymentStatus = 'REFUND_IN_PROGRESS';
+    entries[0]!.paymentStatus = 'REFUND_IN_PROGRESS';
+
+    await refundEventTicketSalesByPayment({
+      contaId: 'tenant-a', paymentId: 'payment-a', paymentStatus: 'PAYMENT_REFUNDED',
+      isFinalRefund: true,
+    });
+
+    expect(sales[0]).toMatchObject({ status: 'REFUNDED', paymentStatus: 'PAYMENT_REFUNDED', refundedAmount: 100 });
+    expect(entries[0]).toMatchObject({ status: 'REFUNDED', paymentStatus: 'PAYMENT_REFUNDED', refundedAmount: 100, netAmount: 0 });
+  });
+
+  it('replaces refund-in-progress with an explicit denied status without refunding the sale', async () => {
+    sales[0]!.paymentStatus = 'REFUND_IN_PROGRESS';
+    entries[0]!.paymentStatus = 'REFUND_IN_PROGRESS';
+
+    await refundEventTicketSalesByPayment({
+      contaId: 'tenant-a', paymentId: 'payment-a', paymentStatus: 'REFUND_DENIED',
+      isFinalRefund: false,
+    });
+
+    expect(sales[0]).toMatchObject({ status: 'PAID', paymentStatus: 'REFUND_DENIED', refundedAmount: 0 });
+    expect(entries[0]).toMatchObject({ status: 'RECEIVED', paymentStatus: 'REFUND_DENIED', refundedAmount: 0, netAmount: 100 });
+  });
+
+  it('preserves a completed refund when a delayed refund-denied webhook arrives', async () => {
+    await refundEventTicketSalesByPayment({
+      contaId: 'tenant-a', paymentId: 'payment-a', paymentStatus: 'PAYMENT_REFUNDED',
+      isFinalRefund: true,
+    });
+
+    await refundEventTicketSalesByPayment({
+      contaId: 'tenant-a', paymentId: 'payment-a', paymentStatus: 'REFUND_DENIED',
+      isFinalRefund: false,
+    });
+
+    expect(sales[0]).toMatchObject({ status: 'REFUNDED', paymentStatus: 'PAYMENT_REFUNDED', refundedAmount: 100 });
+    expect(entries[0]).toMatchObject({ status: 'REFUNDED', paymentStatus: 'PAYMENT_REFUNDED', refundedAmount: 100, netAmount: 0 });
+  });
+
+  it('repairs a legacy refunded sale whose payment status remained in progress', async () => {
+    sales[0]!.status = 'REFUNDED';
+    sales[0]!.paymentStatus = 'REFUND_IN_PROGRESS';
+    sales[0]!.refundedAmount = 100;
+    entries[0]!.status = 'REFUNDED';
+    entries[0]!.paymentStatus = 'REFUND_IN_PROGRESS';
+    entries[0]!.refundedAmount = 100;
+    entries[0]!.netAmount = 0;
+
+    await refundEventTicketSalesByPayment({
+      contaId: 'tenant-a', paymentId: 'payment-a', paymentStatus: 'PAYMENT_REFUNDED',
+      isFinalRefund: true,
+    });
+
+    expect(sales[0]).toMatchObject({ status: 'REFUNDED', paymentStatus: 'PAYMENT_REFUNDED', refundedAmount: 100 });
+    expect(entries[0]).toMatchObject({ status: 'REFUNDED', paymentStatus: 'PAYMENT_REFUNDED', refundedAmount: 100, netAmount: 0 });
+  });
 });
