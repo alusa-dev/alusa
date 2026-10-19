@@ -3,11 +3,13 @@ import {
   AsaasHttpError,
   KycNotApprovedError,
   auditLogService,
+  claimPaymentCommandForDispatch,
   evaluatePaymentActionPolicy,
   expectedEventsForPaymentCommand,
   failPaymentCommand,
   isAsaasEnabled,
   markPaymentCommandSent,
+  markPaymentCommandNeedsReconciliation,
   normalizeAsaasPaymentSnapshotStatus,
   readPaymentFullPreflight,
   requestBankSlipRefund,
@@ -113,6 +115,8 @@ async function executeRefundCommand(params: {
   chargeId?: string | null;
   cobrancaId?: string | null;
   financialLog?: boolean;
+  storeSaleReturnId?: string;
+  storeSaleRefundAttemptId?: string;
 }): Promise<RefundCommandResult> {
   const refundValue = params.body.value;
   const command = await registerPaymentCommand({
@@ -134,10 +138,41 @@ async function executeRefundCommand(params: {
       refundValue: refundValue ?? params.paymentValue,
       isPartialRefund: refundValue !== undefined && refundValue < params.paymentValue,
       splitRefunds: params.body.splitRefunds ?? null,
+      ...(params.storeSaleReturnId ? { storeSaleReturnId: params.storeSaleReturnId } : {}),
+      ...(params.storeSaleRefundAttemptId ? { storeSaleRefundAttemptId: params.storeSaleRefundAttemptId } : {}),
     },
   });
 
+  const commandPayload = command.payload && typeof command.payload === 'object' && !Array.isArray(command.payload)
+    ? command.payload as { commandStatus?: string }
+    : null;
+  if (['SENT_TO_ASAAS', 'CONFIRMED_BY_WEBHOOK', 'NEEDS_RECONCILIATION'].includes(commandPayload?.commandStatus ?? '')) {
+    return result(202, cobrancaActionResultDTOSchema.parse(mapCobrancaActionResultToDTO({
+      success: true,
+      message: 'Estorno já solicitado. O status será atualizado via webhook.',
+      pending: true,
+      correlationId: params.correlationId,
+      refundValue: refundValue ?? params.paymentValue,
+    })));
+  }
+
   try {
+    // Claim the outbound boundary atomically: exactly one concurrent caller
+    // may send this non-idempotent provider mutation.
+    const dispatchClaim = await claimPaymentCommandForDispatch({
+      contaId: params.contaId,
+      jobId: command.id,
+      providerStatus: params.effectiveAsaasStatus,
+    });
+    if (!dispatchClaim.claimed) {
+      return result(202, cobrancaActionResultDTOSchema.parse(mapCobrancaActionResultToDTO({
+        success: true,
+        message: 'Estorno em processamento ou aguardando reconciliação.',
+        pending: true,
+        correlationId: params.correlationId,
+        refundValue: refundValue ?? params.paymentValue,
+      })));
+    }
     await refundCobranca({
       paymentId: params.asaasPayment.id,
       contaId: params.contaId,
@@ -145,9 +180,12 @@ async function executeRefundCommand(params: {
       description: params.body.description || `Estorno solicitado via Alusa - ${params.correlationId}`,
       splitRefunds: params.body.splitRefunds,
     });
-    await markPaymentCommandSent({ jobId: command.id, providerStatus: params.effectiveAsaasStatus });
   } catch (error) {
-    await failPaymentCommand({ jobId: command.id, error });
+    if (error instanceof AsaasHttpError && error.status >= 400 && error.status < 500 && error.status !== 408) {
+      await failPaymentCommand({ jobId: command.id, error });
+    } else {
+      await markPaymentCommandNeedsReconciliation({ jobId: command.id, error });
+    }
     throw error;
   }
 
@@ -412,8 +450,11 @@ export async function executeCobrancaRefund(params: {
   role?: string;
   id: string;
   body: CobrancaRefundInputDTO;
+  correlationId?: string;
+  storeSaleReturnId?: string;
+  storeSaleRefundAttemptId?: string;
 }): Promise<RefundCommandResult> {
-  const correlationId = randomUUID();
+  const correlationId = params.correlationId ?? randomUUID();
   const startedAt = Date.now();
   try {
     const records = await loadCobrancaActionRecords(params.contaId, params.id);
@@ -450,6 +491,67 @@ export async function executeCobrancaRefund(params: {
     if (!policy.canRefund) return policyFailure(policy, effectiveStatus, correlationId, false);
     if (params.body.value !== undefined && !policy.canPartialRefund) return policyFailure(policy, effectiveStatus, correlationId, true);
 
+    if ((asaasPayment.billingType ?? records.charge?.billingType)?.toUpperCase() === 'BOLETO') {
+      if (params.body.value !== undefined) {
+        return result(422, {
+          error: 'Estorno parcial de boleto não é suportado.',
+          code: 'BANK_SLIP_PARTIAL_REFUND_NOT_SUPPORTED',
+          correlationId,
+        });
+      }
+      const command = await registerPaymentCommand({
+        contaId: params.contaId,
+        type: 'PAYMENT_REFUND_COMMAND',
+        entityType: records.cobranca ? 'COBRANCA' : 'CHARGE',
+        entityId: records.cobranca?.id ?? records.charge!.id,
+        asaasPaymentId,
+        expectedEvents: expectedEventsForPaymentCommand('PAYMENT_REFUND_COMMAND'),
+        correlationId,
+        actorId: params.userId,
+        chargeId: records.charge?.id ?? null,
+        cobrancaId: records.cobranca?.id ?? null,
+        metadata: {
+          source: 'POST /api/cobrancas/[id]/refund',
+          origin: 'STORE_SALE_RETURN',
+          storeSaleReturnId: params.storeSaleReturnId ?? null,
+          storeSaleRefundAttemptId: params.storeSaleRefundAttemptId ?? null,
+          billingType: 'BOLETO',
+        },
+      });
+      const payload = command.payload && typeof command.payload === 'object' && !Array.isArray(command.payload)
+        ? command.payload as { commandStatus?: string }
+        : null;
+      if (['SENT_TO_ASAAS', 'CONFIRMED_BY_WEBHOOK', 'NEEDS_RECONCILIATION'].includes(payload?.commandStatus ?? '')) {
+        return result(202, { success: true, pending: true, correlationId, message: 'Solicitação já enviada ao pagador.', });
+      }
+      const dispatchClaim = await claimPaymentCommandForDispatch({ contaId: params.contaId, jobId: command.id, providerStatus: 'REFUND_REQUEST_SUBMITTING' });
+      if (!dispatchClaim.claimed) {
+        return result(202, { success: true, pending: true, correlationId, message: 'Solicitação em processamento ou aguardando reconciliação.' });
+      }
+      let bankSlipRequest;
+      try {
+        bankSlipRequest = await requestBankSlipRefund({ paymentId: asaasPaymentId, contaId: params.contaId });
+      } catch (error) {
+        if (error instanceof AsaasHttpError && error.status >= 400 && error.status < 500 && error.status !== 408) {
+          await failPaymentCommand({ jobId: command.id, error });
+        } else {
+          await markPaymentCommandNeedsReconciliation({ jobId: command.id, error });
+        }
+        throw error;
+      }
+      const requestUrl = new URL(bankSlipRequest.requestUrl);
+      if (requestUrl.protocol !== 'https:' || !(requestUrl.hostname === 'asaas.com' || requestUrl.hostname.endsWith('.asaas.com'))) {
+        throw new Error('ASAAS_INVALID_BANK_SLIP_REFUND_URL');
+      }
+      await auditLogService.record({
+        contaId: params.contaId,
+        action: 'finance.charge.refund_requested',
+        entity: { type: records.cobranca ? 'Cobranca' : 'Charge', id: records.cobranca?.id ?? records.charge!.id },
+        metadata: { correlationId, asaasPaymentId, billingType: 'BOLETO', requestUrl: requestUrl.toString(), buyerActionRequired: true, storeSaleReturnId: params.storeSaleReturnId ?? null },
+      });
+      return result(202, { success: true, pending: true, correlationId, requestUrl: requestUrl.toString(), message: 'Solicitação enviada; o pagador precisa informar os dados bancários.' });
+    }
+
     const paymentValue = asaasPayment.value ?? Number(records.cobranca?.valor ?? records.charge?.value ?? 0);
     const invalidValue = validateRefundValue({ value: params.body.value, paymentValue, correlationId, event: false });
     if (invalidValue) return invalidValue;
@@ -466,6 +568,8 @@ export async function executeCobrancaRefund(params: {
       chargeId: records.charge?.id ?? null,
       cobrancaId: records.cobranca?.id ?? null,
       financialLog: true,
+      storeSaleReturnId: params.storeSaleReturnId,
+      storeSaleRefundAttemptId: params.storeSaleRefundAttemptId,
     });
   } catch (error) {
     logFinanceOperationalEvent({ severity: 'error', eventName: 'finance.services.refund_charge.failed', error });

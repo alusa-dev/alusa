@@ -753,6 +753,7 @@ export type { GetAsaasPaymentDetailsResult } from './use-cases/get-asaas-payment
 export {
   StoreSaleError,
   createStoreSale,
+  retryStoreSaleCharge,
   listStoreSales,
   listStoreSaleOperationalIssues,
   getStoreSaleById,
@@ -818,6 +819,12 @@ export type {
   ReconcilePaidReservedStoreSalesResult,
 } from './use-cases/store-inventory';
 
+export { requestStoreSaleRefund, StoreSaleRefundError } from './use-cases/store-sale-refund';
+export type {
+  StoreSaleRefundDispatch,
+  StoreSaleRefundDispatchInput,
+} from './use-cases/store-sale-refund';
+
 export { processCheckoutCreditCard } from './use-cases/process-checkout-credit-card';
 export type {
   ProcessCheckoutCreditCardInput,
@@ -875,7 +882,9 @@ export {
   expectedEventsForPaymentCommand,
   registerPaymentCommand,
   markPaymentCommandSent,
+  claimPaymentCommandForDispatch,
   failPaymentCommand,
+  markPaymentCommandNeedsReconciliation,
   confirmPaymentCommandsByProviderEvent,
   markStalePaymentCommandsForReconciliation,
 } from './use-cases/payment-command-ledger';

@@ -538,7 +538,9 @@ export function CreateSaleFeature() {
             ? 'Reserva registrada. O estoque ficou comprometido até o cumprimento da venda.'
             : sale.finalizationType === 'RECEBIMENTO_PRESENCIAL'
               ? 'Recebimento presencial confirmado e estoque atualizado.'
-              : 'Cobrança gerada. O estoque ficou reservado até a confirmação.',
+              : sale.chargeProvisioningPending
+                ? 'Venda registrada e estoque reservado. A cobrança ainda está sendo preparada; acompanhe a situação operacional da venda.'
+                : 'Cobrança gerada. O estoque ficou reservado até a confirmação.',
       });
 
       resetForm();

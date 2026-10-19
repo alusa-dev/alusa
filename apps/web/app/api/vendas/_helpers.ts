@@ -14,5 +14,5 @@ export async function getStoreRequestContext() {
     });
   }
 
-  return { contaId: auth.contaId, operatorId: auth.userId };
+  return { contaId: auth.contaId, operatorId: auth.userId, role: auth.role };
 }

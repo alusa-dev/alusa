@@ -158,6 +158,7 @@ type MockState = {
     };
     saleItem: { create: ReturnType<typeof vi.fn> };
     charge: { findFirst: ReturnType<typeof vi.fn> };
+    $executeRaw: ReturnType<typeof vi.fn>;
     $transaction: ReturnType<typeof vi.fn>;
   };
 };
@@ -433,6 +434,7 @@ function createMockState(): MockState {
     $transaction: vi.fn(async (callback: (_tx: MockState['prisma']) => Promise<unknown>) =>
       callback(state.prisma),
     ),
+    $executeRaw: vi.fn(async () => 1),
   };
 
   return state;
@@ -906,9 +908,14 @@ describe('store-sales', () => {
       },
     };
 
-    await expect(createStoreSale(input)).rejects.toMatchObject<Partial<StoreSaleError>>({
-      code: 'ERRO_CRIAR_COBRANCA',
-    });
+    const pending = await createStoreSale(input);
+    expect(pending.chargeProvisioningPending).toBe(true);
+    expect(pending.charge).toBeNull();
+    const { auditLogService } = await import('../../foundation/audit-log.service');
+    expect(auditLogService.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'loja.sale.created', contaId: 'conta-1' }),
+      expect.anything(),
+    );
 
     expect(Array.from(state.responsaveis.values())).toHaveLength(1);
 

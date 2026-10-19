@@ -190,6 +190,43 @@ export async function markPaymentCommandSent(input: {
   });
 }
 
+/** Atomically claims a still-unsubmitted command so concurrent callers cannot
+ * both dispatch the same non-idempotent provider mutation. */
+export async function claimPaymentCommandForDispatch(input: {
+  contaId: string;
+  jobId: string;
+  providerStatus?: string | null;
+}) {
+  const job = await prisma.asaasIntegrationJob.findFirst({
+    where: { id: input.jobId, contaId: input.contaId },
+    select: { payload: true },
+  });
+  const payload = job ? parsePayload(job.payload) : null;
+  if (!payload || payload.commandStatus !== 'REQUESTED') return { claimed: false };
+
+  const now = new Date();
+  const nextPayload: PaymentCommandPayload = {
+    ...payload,
+    commandStatus: 'SENT_TO_ASAAS',
+    sentAt: now.toISOString(),
+    providerStatus: input.providerStatus ?? payload.providerStatus ?? null,
+  };
+  const claimed = await prisma.asaasIntegrationJob.updateMany({
+    where: {
+      id: input.jobId,
+      contaId: input.contaId,
+      status: { in: ['PENDING', 'PROCESSING'] },
+      payload: { path: ['commandStatus'], equals: 'REQUESTED' },
+    },
+    data: {
+      status: 'PROCESSING',
+      processingAt: now,
+      payload: toJsonPayload(nextPayload),
+    },
+  });
+  return { claimed: claimed.count === 1 };
+}
+
 export async function failPaymentCommand(input: {
   jobId: string;
   error: unknown;
@@ -222,6 +259,60 @@ export async function failPaymentCommand(input: {
       payload: nextPayload,
     },
   });
+}
+
+/**
+ * Records an outbound payment mutation whose provider outcome is ambiguous.
+ * Such commands must remain blocked from resubmission until reconciliation or
+ * a provider webhook establishes the outcome.
+ */
+export async function markPaymentCommandNeedsReconciliation(input: {
+  jobId: string;
+  error: unknown;
+}) {
+  const message = input.error instanceof Error ? input.error.message : String(input.error);
+  const job = await prisma.asaasIntegrationJob.findUnique({
+    where: { id: input.jobId },
+    select: { id: true, contaId: true, payload: true },
+  });
+  const payload = job ? parsePayload(job.payload) : null;
+  if (!job || !payload) return null;
+  const now = new Date();
+  await prisma.asaasIntegrationJob.update({
+    where: { id: input.jobId },
+    data: {
+      status: 'FAILED',
+      lastError: message,
+      lastErrorAt: now,
+      payload: toJsonPayload({
+        ...payload,
+        commandStatus: 'NEEDS_RECONCILIATION',
+        needsReconciliationAt: now.toISOString(),
+        metadata: { ...(payload.metadata ?? {}), ambiguousOutcome: true, failureMessage: message },
+      }),
+    },
+  });
+  await upsertFinanceReconciliationIssue({
+    contaId: job.contaId,
+    entityType: payload.entityType === 'COBRANCA' ? 'PAYMENT' : 'CHARGE',
+    entityId: payload.entityId,
+    asaasId: payload.asaasPaymentId,
+    issueType: 'PAYMENT_NEEDS_REVIEW',
+    severity: 'HIGH',
+    localStatus: 'NEEDS_RECONCILIATION',
+    remoteStatus: null,
+    metadata: { commandJobId: job.id, commandType: payload.commandType, correlationId: payload.correlationId, source: 'ambiguous-payment-command' },
+  });
+  await publishFinanceEvent({
+    contaId: job.contaId,
+    type: 'finance.command.updated',
+    entityId: payload.entityId,
+    asaasPaymentId: payload.asaasPaymentId,
+    commandType: payload.commandType,
+    commandStatus: 'NEEDS_RECONCILIATION',
+    revision: now.getTime(),
+  });
+  return { id: job.id, status: 'NEEDS_RECONCILIATION' as const };
 }
 
 export async function confirmPaymentCommandsByProviderEvent(input: {

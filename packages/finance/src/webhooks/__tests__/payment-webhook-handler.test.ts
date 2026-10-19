@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
 
-import { handlePaymentWebhook } from '../payment-webhook-handler';
+import { handlePaymentWebhook, projectStoreSaleRefundFromWebhook } from '../payment-webhook-handler';
 import { fulfillReservedSaleOnPayment } from '../../use-cases/store-inventory';
 
 const {
@@ -113,6 +114,15 @@ vi.mock('@alusa/database', () => ({
       findUnique: vi.fn(),
       update: vi.fn(),
       upsert: vi.fn(),
+    },
+    storeSaleRefundAttempt: {
+      findMany: vi.fn(),
+      findFirst: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    storeSaleReturn: {
+      findFirst: vi.fn(),
+      updateMany: vi.fn(),
     },
     financePaymentStateTransition: {
       create: vi.fn(async () => ({ id: 'state-transition-1' })),
@@ -256,6 +266,441 @@ describe('handlePaymentWebhook', () => {
     expect(prisma.charge.update).not.toHaveBeenCalled();
     expect(prisma.pagamento.create).not.toHaveBeenCalled();
     expect(prisma.lancamento.create).not.toHaveBeenCalled();
+  });
+
+  it('projeta conclusão de refund para a intenção de devolução sem confiar no HTTP', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.storeSaleRefundAttempt.findMany).mockResolvedValue([{
+      id: 'attempt-1', returnId: 'return-1', requestedAmount: new Prisma.Decimal(40), providerRefundBaseline: new Prisma.Decimal(0), confirmedAmount: new Prisma.Decimal(0), status: 'IN_PROGRESS', updatedAt: new Date(),
+    }] as never);
+    vi.mocked(prisma.storeSaleRefundAttempt.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.storeSaleReturn.findFirst).mockResolvedValue({
+      id: 'return-1', attempts: [{ status: 'REFUNDED', confirmedAmount: { toString: () => '40' } }],
+    } as never);
+    vi.mocked(prisma.storeSaleReturn.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    await projectStoreSaleRefundFromWebhook({
+      contaId: 'tenant-a',
+      asaasPaymentId: 'payment-a',
+      event: 'PAYMENT_REFUNDED',
+      refunds: [{ status: 'DONE', value: 40 }],
+    });
+    await projectStoreSaleRefundFromWebhook({
+      contaId: 'tenant-a',
+      asaasPaymentId: 'payment-a',
+      event: 'PAYMENT_REFUNDED',
+      refunds: [{ status: 'DONE', value: 40 }],
+    });
+
+    expect(prisma.storeSaleRefundAttempt.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { contaId: 'tenant-a', charge: { is: { asaasPaymentId: 'payment-a' } } },
+    }));
+    expect(prisma.storeSaleRefundAttempt.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'attempt-1', contaId: 'tenant-a', status: 'IN_PROGRESS' }),
+      data: expect.objectContaining({ status: 'REFUNDED', providerStatus: 'PAYMENT_REFUNDED' }),
+    }));
+    expect(prisma.storeSaleRefundAttempt.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.storeSaleReturn.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'return-1', contaId: 'tenant-a' }),
+      data: expect.objectContaining({ refundStatus: 'REFUNDED' }),
+    }));
+  });
+
+  it('does not regress a confirmed refund when a delayed requested event arrives', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.storeSaleRefundAttempt.findMany).mockResolvedValue([{
+      id: 'attempt-terminal', returnId: 'return-terminal', requestedAmount: new Prisma.Decimal(40),
+      providerRefundBaseline: new Prisma.Decimal(0), confirmedAmount: new Prisma.Decimal(40), status: 'REFUNDED', updatedAt: new Date(),
+    }] as never);
+    vi.mocked(prisma.storeSaleRefundAttempt.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.storeSaleReturn.findFirst).mockResolvedValue({
+      id: 'return-terminal', attempts: [{ status: 'REFUNDED', confirmedAmount: { toString: () => '40' } }],
+    } as never);
+    vi.mocked(prisma.storeSaleReturn.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    await projectStoreSaleRefundFromWebhook({
+      contaId: 'tenant-a', asaasPaymentId: 'payment-a', event: 'PAYMENT_REFUND_REQUESTED', refunds: [],
+    });
+
+    expect(prisma.storeSaleRefundAttempt.updateMany).not.toHaveBeenCalled();
+    expect(prisma.storeSaleReturn.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ refundStatus: 'REFUNDED', refundedAmount: new Prisma.Decimal(40) }),
+    }));
+  });
+
+  it('does not reduce an already confirmed partial amount on delayed in-progress event', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.storeSaleRefundAttempt.findMany).mockResolvedValue([{
+      id: 'attempt-partial', returnId: 'return-partial', requestedAmount: new Prisma.Decimal(60),
+      providerRefundBaseline: new Prisma.Decimal(0), confirmedAmount: new Prisma.Decimal(20), status: 'PARTIALLY_REFUNDED', updatedAt: new Date(),
+    }] as never);
+    vi.mocked(prisma.storeSaleRefundAttempt.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.storeSaleReturn.findFirst).mockResolvedValue({
+      id: 'return-partial', attempts: [{ status: 'PARTIALLY_REFUNDED', confirmedAmount: { toString: () => '20' } }],
+    } as never);
+    vi.mocked(prisma.storeSaleReturn.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    await projectStoreSaleRefundFromWebhook({
+      contaId: 'tenant-a', asaasPaymentId: 'payment-a', event: 'PAYMENT_REFUND_IN_PROGRESS', refunds: [],
+    });
+
+    expect(prisma.storeSaleRefundAttempt.updateMany).not.toHaveBeenCalled();
+    expect(prisma.storeSaleReturn.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ refundStatus: 'PARTIALLY_REFUNDED', refundedAmount: new Prisma.Decimal(20) }),
+    }));
+  });
+
+  it('does not apply a delayed event from a stale attempt snapshot', async () => {
+    const { prisma } = await import('@alusa/database');
+    const staleUpdatedAt = new Date('2026-10-01T00:00:00.000Z');
+    const completedUpdatedAt = new Date('2026-10-01T00:00:01.000Z');
+    const persisted = { status: 'REFUNDED', confirmedAmount: 40, updatedAt: completedUpdatedAt };
+    vi.mocked(prisma.storeSaleRefundAttempt.findMany).mockResolvedValue([{
+      id: 'attempt-race', returnId: 'return-race', requestedAmount: { toString: () => '40' },
+      providerRefundBaseline: { toString: () => '0' }, confirmedAmount: { toString: () => '0' },
+      status: 'REQUESTED', updatedAt: staleUpdatedAt,
+    }] as never);
+    vi.mocked(prisma.storeSaleRefundAttempt.updateMany).mockImplementation(async (args: unknown) => {
+      const where = (args as { where: { status: string; confirmedAmount: { toString(): string }; updatedAt: Date } }).where;
+      if (where.status !== persisted.status || where.confirmedAmount.toString() !== '0' || where.updatedAt !== staleUpdatedAt) {
+        return { count: 0 } as never;
+      }
+      return { count: 1 } as never;
+    });
+    vi.mocked(prisma.storeSaleRefundAttempt.findFirst).mockResolvedValue({
+      id: 'attempt-race', returnId: 'return-race', requestedAmount: new Prisma.Decimal(40),
+      providerRefundBaseline: new Prisma.Decimal(0), confirmedAmount: new Prisma.Decimal(40),
+      status: 'REFUNDED', updatedAt: completedUpdatedAt,
+    } as never);
+    vi.mocked(prisma.storeSaleReturn.findFirst).mockResolvedValue({
+      id: 'return-race', updatedAt: completedUpdatedAt,
+      attempts: [{ status: 'REFUNDED', confirmedAmount: new Prisma.Decimal(40) }],
+    } as never);
+    vi.mocked(prisma.storeSaleReturn.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    await projectStoreSaleRefundFromWebhook({
+      contaId: 'tenant-a', asaasPaymentId: 'payment-a', event: 'PAYMENT_REFUND_REQUESTED', refunds: [],
+    });
+
+    expect(prisma.storeSaleRefundAttempt.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: 'attempt-race', contaId: 'tenant-a', status: 'REQUESTED', updatedAt: staleUpdatedAt,
+      }),
+    }));
+    expect(prisma.storeSaleRefundAttempt.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'attempt-race', contaId: 'tenant-a' },
+    }));
+    expect(prisma.storeSaleReturn.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ refundStatus: 'REFUNDED', refundedAmount: new Prisma.Decimal(40) }),
+    }));
+    expect(persisted).toEqual({ status: 'REFUNDED', confirmedAmount: 40, updatedAt: completedUpdatedAt });
+  });
+
+  it('reapplies refund completion after an older requested event wins the first CAS', async () => {
+    const { prisma } = await import('@alusa/database');
+    const firstUpdatedAt = new Date('2026-10-01T00:00:00.000Z');
+    const requestedUpdatedAt = new Date('2026-10-01T00:00:01.000Z');
+    const persisted = {
+      id: 'attempt-inverse-race', returnId: 'return-inverse-race', requestedAmount: new Prisma.Decimal(40),
+      providerRefundBaseline: new Prisma.Decimal(0), confirmedAmount: new Prisma.Decimal(0),
+      status: 'REQUESTED', updatedAt: firstUpdatedAt,
+    };
+    vi.mocked(prisma.storeSaleRefundAttempt.findMany).mockResolvedValue([{ ...persisted }] as never);
+    vi.mocked(prisma.storeSaleRefundAttempt.updateMany).mockImplementation(async (args: unknown) => {
+      const where = (args as { where: { status: string; confirmedAmount: Prisma.Decimal; updatedAt: Date } }).where;
+      const data = (args as { data: { status: string; confirmedAmount: Prisma.Decimal } }).data;
+      if (vi.mocked(prisma.storeSaleRefundAttempt.updateMany).mock.calls.length === 1) {
+        // Concurrent REQUESTED webhook commits after REFUNDED read its snapshot.
+        persisted.status = 'AWAITING_PAYER_ACTION';
+        persisted.updatedAt = requestedUpdatedAt;
+        return { count: 0 } as never;
+      }
+      if (where.status !== persisted.status || !where.confirmedAmount.equals(persisted.confirmedAmount) || where.updatedAt !== persisted.updatedAt) {
+        return { count: 0 } as never;
+      }
+      persisted.status = data.status;
+      persisted.confirmedAmount = data.confirmedAmount;
+      persisted.updatedAt = requestedUpdatedAt;
+      return { count: 1 } as never;
+    });
+    vi.mocked(prisma.storeSaleRefundAttempt.findFirst).mockImplementation(async () => ({ ...persisted }) as never);
+    vi.mocked(prisma.storeSaleReturn.findFirst).mockImplementation(async () => ({
+      id: 'return-inverse-race', updatedAt: requestedUpdatedAt,
+      attempts: [{ status: persisted.status, confirmedAmount: persisted.confirmedAmount }],
+    }) as never);
+    vi.mocked(prisma.storeSaleReturn.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    await projectStoreSaleRefundFromWebhook({
+      contaId: 'tenant-a', asaasPaymentId: 'payment-a', event: 'PAYMENT_REFUNDED',
+      refunds: [{ status: 'DONE', value: 40 }],
+    });
+
+    expect(prisma.storeSaleRefundAttempt.updateMany).toHaveBeenCalledTimes(2);
+    expect(prisma.storeSaleRefundAttempt.updateMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: expect.objectContaining({ status: 'REQUESTED', updatedAt: firstUpdatedAt }),
+      data: expect.objectContaining({ status: 'REFUNDED' }),
+    }));
+    // Simulate REQUESTED committing first; the completion event reloads and reapplies.
+    expect(prisma.storeSaleRefundAttempt.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: expect.objectContaining({ status: 'AWAITING_PAYER_ACTION', updatedAt: requestedUpdatedAt }),
+      data: expect.objectContaining({ status: 'REFUNDED', providerStatus: 'PAYMENT_REFUNDED' }),
+    }));
+    expect(persisted.status).toBe('REFUNDED');
+    expect(Number(persisted.confirmedAmount)).toBe(40);
+    expect(prisma.storeSaleReturn.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ refundStatus: 'REFUNDED', refundedAmount: new Prisma.Decimal(40) }),
+    }));
+  });
+
+  it('throws after exhausting CAS retries so a terminal webhook remains retryable', async () => {
+    const { prisma } = await import('@alusa/database');
+    const staleAttempt = {
+      id: 'attempt-persistent-race', returnId: 'return-persistent-race', requestedAmount: new Prisma.Decimal(40),
+      providerRefundBaseline: new Prisma.Decimal(0), confirmedAmount: new Prisma.Decimal(0),
+      status: 'REQUESTED', updatedAt: new Date('2026-10-01T00:00:00.000Z'),
+    };
+    vi.mocked(prisma.storeSaleRefundAttempt.findMany).mockResolvedValue([{ ...staleAttempt }] as never);
+    vi.mocked(prisma.storeSaleRefundAttempt.updateMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.storeSaleRefundAttempt.findFirst).mockResolvedValue({ ...staleAttempt } as never);
+
+    await expect(projectStoreSaleRefundFromWebhook({
+      contaId: 'tenant-a', asaasPaymentId: 'payment-a', event: 'PAYMENT_REFUNDED',
+      refunds: [{ status: 'DONE', value: 40 }],
+    })).rejects.toThrow('Store sale refund attempt projection conflicted for attempt-persistent-race');
+
+    expect(prisma.storeSaleRefundAttempt.updateMany).toHaveBeenCalledTimes(3);
+    expect(prisma.storeSaleRefundAttempt.findFirst).toHaveBeenCalledTimes(3);
+    expect(prisma.storeSaleReturn.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('projects a successful retry over an older denied attempt for the same charge', async () => {
+    const { prisma } = await import('@alusa/database');
+    const priorCreatedAt = new Date('2026-10-01T00:00:00.000Z');
+    const retryCreatedAt = new Date('2026-10-02T00:00:00.000Z');
+    vi.mocked(prisma.storeSaleRefundAttempt.findMany).mockResolvedValue([
+      {
+        id: 'attempt-denied', chargeId: 'charge-a', returnId: 'return-a', requestedAmount: new Prisma.Decimal(40),
+        providerRefundBaseline: new Prisma.Decimal(0), confirmedAmount: new Prisma.Decimal(0), status: 'DENIED',
+        createdAt: priorCreatedAt, updatedAt: priorCreatedAt,
+      },
+      {
+        id: 'attempt-retry', chargeId: 'charge-a', returnId: 'return-a', requestedAmount: new Prisma.Decimal(40),
+        providerRefundBaseline: new Prisma.Decimal(0), confirmedAmount: new Prisma.Decimal(0), status: 'IN_PROGRESS',
+        createdAt: retryCreatedAt, updatedAt: retryCreatedAt,
+      },
+    ] as never);
+    vi.mocked(prisma.storeSaleRefundAttempt.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.storeSaleReturn.findFirst).mockResolvedValue({
+      id: 'return-a', updatedAt: retryCreatedAt,
+      attempts: [
+        { id: 'attempt-denied', chargeId: 'charge-a', status: 'DENIED', confirmedAmount: new Prisma.Decimal(0), createdAt: priorCreatedAt },
+        { id: 'attempt-retry', chargeId: 'charge-a', status: 'REFUNDED', confirmedAmount: new Prisma.Decimal(40), createdAt: retryCreatedAt },
+      ],
+    } as never);
+    vi.mocked(prisma.storeSaleReturn.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    await projectStoreSaleRefundFromWebhook({
+      contaId: 'tenant-a', asaasPaymentId: 'payment-a', event: 'PAYMENT_REFUNDED',
+      refunds: [{ status: 'DONE', value: 40 }],
+    });
+
+    expect(prisma.storeSaleRefundAttempt.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'attempt-retry', status: 'IN_PROGRESS' }),
+      data: expect.objectContaining({ status: 'REFUNDED', confirmedAmount: new Prisma.Decimal(40) }),
+    }));
+    expect(prisma.storeSaleReturn.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ refundStatus: 'REFUNDED', refundedAmount: new Prisma.Decimal(40) }),
+    }));
+  });
+
+  it('does not apply a delayed denial from a prior attempt to the newest retry', async () => {
+    const { prisma } = await import('@alusa/database');
+    const oldCreatedAt = new Date('2026-10-01T00:00:00.000Z');
+    const retryCreatedAt = new Date('2026-10-02T00:00:00.000Z');
+    vi.mocked(prisma.storeSaleRefundAttempt.findMany).mockResolvedValue([
+      {
+        id: 'attempt-old-denied', chargeId: 'charge-a', returnId: 'return-a', requestedAmount: new Prisma.Decimal(40),
+        providerRefundBaseline: new Prisma.Decimal(0), confirmedAmount: new Prisma.Decimal(0), status: 'DENIED',
+        createdAt: oldCreatedAt, updatedAt: oldCreatedAt,
+      },
+      {
+        id: 'attempt-new-retry', chargeId: 'charge-a', returnId: 'return-a', requestedAmount: new Prisma.Decimal(40),
+        providerRefundBaseline: new Prisma.Decimal(0), confirmedAmount: new Prisma.Decimal(0), status: 'IN_PROGRESS',
+        createdAt: retryCreatedAt, updatedAt: retryCreatedAt,
+      },
+    ] as never);
+    vi.mocked(prisma.storeSaleRefundAttempt.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.storeSaleReturn.findFirst).mockResolvedValue({
+      id: 'return-a', updatedAt: retryCreatedAt,
+      attempts: [
+        { id: 'attempt-old-denied', chargeId: 'charge-a', status: 'DENIED', confirmedAmount: new Prisma.Decimal(0), createdAt: oldCreatedAt },
+        { id: 'attempt-new-retry', chargeId: 'charge-a', status: 'NEEDS_RECONCILIATION', confirmedAmount: new Prisma.Decimal(0), createdAt: retryCreatedAt },
+      ],
+    } as never);
+    vi.mocked(prisma.storeSaleReturn.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    await projectStoreSaleRefundFromWebhook({
+      contaId: 'tenant-a', asaasPaymentId: 'payment-a', event: 'PAYMENT_REFUND_DENIED', refunds: [],
+    });
+
+    expect(prisma.storeSaleRefundAttempt.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        contaId: 'tenant-a', charge: { is: { asaasPaymentId: 'payment-a' } },
+        status: { in: ['REQUESTED', 'IN_PROGRESS', 'AWAITING_PAYER_ACTION', 'NEEDS_RECONCILIATION'] },
+      }),
+      data: { status: 'NEEDS_RECONCILIATION', providerStatus: 'PAYMENT_REFUND_DENIED' },
+    }));
+    expect(prisma.storeSaleReturn.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ refundStatus: 'NEEDS_RECONCILIATION' }),
+    }));
+  });
+
+  it('requires reconciliation when a delayed old completion has no refund delta for the retry', async () => {
+    const { prisma } = await import('@alusa/database');
+    const retryCreatedAt = new Date('2026-10-02T00:00:00.000Z');
+    vi.mocked(prisma.storeSaleRefundAttempt.findMany).mockResolvedValue([{
+      id: 'attempt-retry-baseline', chargeId: 'charge-a', returnId: 'return-a', requestedAmount: new Prisma.Decimal(40),
+      providerRefundBaseline: new Prisma.Decimal(30), confirmedAmount: new Prisma.Decimal(0), status: 'IN_PROGRESS',
+      createdAt: retryCreatedAt, updatedAt: retryCreatedAt,
+    }] as never);
+    vi.mocked(prisma.storeSaleRefundAttempt.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.storeSaleReturn.findFirst).mockResolvedValue({
+      id: 'return-a', updatedAt: retryCreatedAt,
+      attempts: [{ id: 'attempt-retry-baseline', chargeId: 'charge-a', status: 'NEEDS_RECONCILIATION', confirmedAmount: new Prisma.Decimal(0) }],
+    } as never);
+    vi.mocked(prisma.storeSaleReturn.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    await projectStoreSaleRefundFromWebhook({
+      contaId: 'tenant-a', asaasPaymentId: 'payment-a', event: 'PAYMENT_REFUNDED',
+      refunds: [{ status: 'DONE', value: 30 }],
+    });
+
+    expect(prisma.storeSaleRefundAttempt.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'attempt-retry-baseline', status: 'IN_PROGRESS' }),
+      data: expect.objectContaining({ status: 'NEEDS_RECONCILIATION', confirmedAmount: new Prisma.Decimal(0) }),
+    }));
+    expect(prisma.storeSaleReturn.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ refundStatus: 'NEEDS_RECONCILIATION', refundedAmount: new Prisma.Decimal(0) }),
+    }));
+  });
+
+  it('does not regress IN_PROGRESS or assign an uncorrelated old REQUESTED event to a retry', async () => {
+    const { prisma } = await import('@alusa/database');
+    const oldCreatedAt = new Date('2026-10-01T00:00:00.000Z');
+    const retryCreatedAt = new Date('2026-10-02T00:00:00.000Z');
+    vi.mocked(prisma.storeSaleRefundAttempt.findMany).mockResolvedValue([
+      {
+        id: 'attempt-old', chargeId: 'charge-a', returnId: 'return-a', requestedAmount: new Prisma.Decimal(40),
+        providerRefundBaseline: new Prisma.Decimal(0), confirmedAmount: new Prisma.Decimal(0), status: 'DENIED',
+        createdAt: oldCreatedAt, updatedAt: oldCreatedAt,
+      },
+      {
+        id: 'attempt-retry', chargeId: 'charge-a', returnId: 'return-a', requestedAmount: new Prisma.Decimal(40),
+        providerRefundBaseline: new Prisma.Decimal(0), confirmedAmount: new Prisma.Decimal(0), status: 'IN_PROGRESS',
+        createdAt: retryCreatedAt, updatedAt: retryCreatedAt,
+      },
+    ] as never);
+    vi.mocked(prisma.storeSaleRefundAttempt.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(prisma.storeSaleReturn.findFirst).mockResolvedValue({
+      id: 'return-a', updatedAt: retryCreatedAt,
+      attempts: [
+        { id: 'attempt-old', chargeId: 'charge-a', status: 'DENIED', confirmedAmount: new Prisma.Decimal(0), createdAt: oldCreatedAt },
+        { id: 'attempt-retry', chargeId: 'charge-a', status: 'NEEDS_RECONCILIATION', confirmedAmount: new Prisma.Decimal(0), createdAt: retryCreatedAt },
+      ],
+    } as never);
+    vi.mocked(prisma.storeSaleReturn.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    await projectStoreSaleRefundFromWebhook({
+      contaId: 'tenant-a', asaasPaymentId: 'payment-a', event: 'PAYMENT_REFUND_REQUESTED', refunds: [],
+    });
+
+    expect(prisma.storeSaleRefundAttempt.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: { status: 'NEEDS_RECONCILIATION', providerStatus: 'PAYMENT_REFUND_REQUESTED' },
+    }));
+    expect(prisma.storeSaleReturn.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ refundStatus: 'NEEDS_RECONCILIATION' }),
+    }));
+  });
+
+  it('does not downgrade an in-progress attempt on a later REQUESTED lifecycle event', async () => {
+    const { prisma } = await import('@alusa/database');
+    const updatedAt = new Date('2026-10-02T00:00:00.000Z');
+    vi.mocked(prisma.storeSaleRefundAttempt.findMany).mockResolvedValue([{
+      id: 'attempt-in-progress', chargeId: 'charge-a', returnId: 'return-a', requestedAmount: new Prisma.Decimal(40),
+      providerRefundBaseline: new Prisma.Decimal(0), confirmedAmount: new Prisma.Decimal(0), status: 'IN_PROGRESS',
+      createdAt: updatedAt, updatedAt,
+    }] as never);
+    vi.mocked(prisma.storeSaleReturn.findFirst).mockResolvedValue({
+      id: 'return-a', updatedAt, attempts: [{ id: 'attempt-in-progress', chargeId: 'charge-a', status: 'IN_PROGRESS', confirmedAmount: new Prisma.Decimal(0) }],
+    } as never);
+    vi.mocked(prisma.storeSaleReturn.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    await projectStoreSaleRefundFromWebhook({
+      contaId: 'tenant-a', asaasPaymentId: 'payment-a', event: 'PAYMENT_REFUND_REQUESTED', refunds: [],
+    });
+
+    expect(prisma.storeSaleRefundAttempt.updateMany).not.toHaveBeenCalled();
+    expect(prisma.storeSaleReturn.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ refundStatus: 'IN_PROGRESS' }),
+    }));
+  });
+
+  it('scopes refund projection updates to the webhook tenant', async () => {
+    const { prisma } = await import('@alusa/database');
+    const attemptA = { id: 'attempt-tenant-a', returnId: 'return-tenant-a', tenantId: 'tenant-a', requestedAmount: new Prisma.Decimal(40), providerRefundBaseline: new Prisma.Decimal(0), status: 'IN_PROGRESS', confirmedAmount: new Prisma.Decimal(0), updatedAt: new Date() };
+    const attemptB = { id: 'attempt-tenant-b', returnId: 'return-tenant-b', tenantId: 'tenant-b', requestedAmount: new Prisma.Decimal(40), providerRefundBaseline: new Prisma.Decimal(0), status: 'IN_PROGRESS', confirmedAmount: new Prisma.Decimal(0), updatedAt: new Date() };
+    const attempts = [attemptA, attemptB];
+    const returns = [
+      { id: 'return-tenant-a', tenantId: 'tenant-a', status: 'IN_PROGRESS' },
+      { id: 'return-tenant-b', tenantId: 'tenant-b', status: 'IN_PROGRESS' },
+    ];
+    vi.mocked(prisma.storeSaleRefundAttempt.findMany).mockImplementation(async (args: unknown) => {
+      const where = (args as { where: { contaId: string } }).where;
+      return attempts.filter((attempt) => attempt.tenantId === where.contaId) as never;
+    });
+    vi.mocked(prisma.storeSaleRefundAttempt.updateMany).mockImplementation(async (args: unknown) => {
+      const where = (args as { where: { id: string; contaId: string }; data: { status: string; confirmedAmount: Prisma.Decimal } }).where;
+      const data = (args as { data: { status: string; confirmedAmount: Prisma.Decimal } }).data;
+      const attempt = attempts.find((item) => item.id === where.id && item.tenantId === where.contaId);
+      if (!attempt) return { count: 0 } as never;
+      attempt.status = data.status;
+      attempt.confirmedAmount = data.confirmedAmount;
+      return { count: 1 } as never;
+    });
+    vi.mocked(prisma.storeSaleReturn.findFirst).mockImplementation(async (args: unknown) => {
+      const where = (args as { where: { id: string; contaId: string } }).where;
+      const saleReturn = returns.find((item) => item.id === where.id && item.tenantId === where.contaId);
+      if (!saleReturn) return null as never;
+      const relatedAttempts = attempts.filter((attempt) => attempt.returnId === saleReturn.id && attempt.tenantId === where.contaId);
+      return { id: saleReturn.id, attempts: relatedAttempts } as never;
+    });
+    vi.mocked(prisma.storeSaleReturn.updateMany).mockImplementation(async (args: unknown) => {
+      const where = (args as { where: { id: string; contaId: string }; data: { refundStatus: string } }).where;
+      const data = (args as { data: { refundStatus: string } }).data;
+      const saleReturn = returns.find((item) => item.id === where.id && item.tenantId === where.contaId);
+      if (!saleReturn) return { count: 0 } as never;
+      saleReturn.status = data.refundStatus;
+      return { count: 1 } as never;
+    });
+
+    await projectStoreSaleRefundFromWebhook({
+      contaId: 'tenant-a', asaasPaymentId: 'payment-a', event: 'PAYMENT_REFUNDED', refunds: [{ status: 'DONE', value: 40 }],
+    });
+
+    expect(prisma.storeSaleRefundAttempt.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { contaId: 'tenant-a', charge: { is: { asaasPaymentId: 'payment-a' } } },
+    }));
+    expect(prisma.storeSaleRefundAttempt.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'attempt-tenant-a', contaId: 'tenant-a' }),
+    }));
+    expect(prisma.storeSaleReturn.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'return-tenant-a', contaId: 'tenant-a' }),
+    }));
+    expect(attemptA.status).toBe('REFUNDED');
+    expect(Number(attemptA.confirmedAmount)).toBe(40);
+    expect(attemptB.status).toBe('IN_PROGRESS');
+    expect(Number(attemptB.confirmedAmount)).toBe(0);
+    expect(returns.find((item) => item.id === 'return-tenant-b')).toMatchObject({ status: 'IN_PROGRESS' });
   });
 
   it('observa pagamento de assinatura externa sem criar vínculos ou issues locais', async () => {

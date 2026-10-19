@@ -1,10 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 
 import type { StoreSaleDTO } from '@alusa/finance';
+import { canRequestFinancialRefund } from '@/features/finance/shared/refund-permission';
 
 import {
   ChevronLeft as ArrowLeft,
@@ -39,6 +41,8 @@ import {
   getSale,
   INVENTORY_STATUS_LABELS,
   returnSaleItems,
+  requestSaleRefund,
+  retrySaleCharge,
   SALE_FINALIZATION_LABELS,
   SALE_PAYMENT_METHOD_LABELS,
 } from './services/sales-service';
@@ -70,6 +74,9 @@ function getChargeStatusLabel(value: string | null | undefined): string {
 
 export function SaleDetailsFeature({ saleId }: SaleDetailsFeatureProps) {
   const router = useRouter();
+  const { data: session } = useSession();
+  const sessionRole = (session?.user as { role?: string } | undefined)?.role;
+  const canRequestRefund = canRequestFinancialRefund(sessionRole);
   const [sale, setSale] = useState<StoreSaleDTO | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +88,9 @@ export function SaleDetailsFeature({ saleId }: SaleDetailsFeatureProps) {
   const [cancelling, setCancelling] = useState(false);
   const [fulfilling, setFulfilling] = useState(false);
   const [returning, setReturning] = useState(false);
+  const [retryingCharge, setRetryingCharge] = useState(false);
+  const [refundActionId, setRefundActionId] = useState<string | null>(null);
+  const returnRequestIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -114,6 +124,22 @@ export function SaleDetailsFeature({ saleId }: SaleDetailsFeatureProps) {
       remaining: Math.max(item.quantity - item.returnedQuantity, 0),
     }));
   }, [saleToReturn]);
+
+  const handleRefundAction = async (returnId: string, retryDenied: boolean) => {
+    setRefundActionId(returnId);
+    try {
+      const updated = await requestSaleRefund(saleId, returnId, retryDenied ? 'RETRY_DENIED' : 'REQUEST');
+      setSale(updated);
+      toast.success({
+        title: retryDenied ? 'Nova tentativa de estorno registrada' : 'Estorno solicitado',
+        description: 'A situação financeira será atualizada após confirmação do provedor.',
+      });
+    } catch (refundError) {
+      toast.error({ title: 'Não foi possível solicitar o estorno', description: (refundError as Error).message });
+    } finally {
+      setRefundActionId(null);
+    }
+  };
 
   const handleCancel = async () => {
     if (!saleToCancel) return;
@@ -163,8 +189,23 @@ export function SaleDetailsFeature({ saleId }: SaleDetailsFeatureProps) {
     }
   };
 
+  const handleRetryCharge = async () => {
+    if (!sale) return;
+    setRetryingCharge(true);
+    try {
+      const updated = await retrySaleCharge(sale.id);
+      setSale(updated);
+      toast.success({ title: 'Cobrança retentada', description: 'A venda foi atualizada com o estado local da cobrança.' });
+    } catch (retryError) {
+      toast.error({ title: 'Não foi possível retentar a cobrança', description: (retryError as Error).message });
+    } finally {
+      setRetryingCharge(false);
+    }
+  };
+
   const handleOpenReturnDialog = () => {
     if (!sale) return;
+    returnRequestIdRef.current = crypto.randomUUID();
     setSaleToReturn(sale);
     setReturnQuantities(
       Object.fromEntries(
@@ -206,11 +247,13 @@ export function SaleDetailsFeature({ saleId }: SaleDetailsFeatureProps) {
     setReturning(true);
     try {
       const updated = await returnSaleItems(saleToReturn.id, {
+        requestId: returnRequestIdRef.current ?? (returnRequestIdRef.current = crypto.randomUUID()),
         reason: returnReason.trim() || undefined,
         items: items.map(({ saleItemId, quantity }) => ({ saleItemId, quantity })),
       });
       setSale(updated);
       setSaleToReturn(null);
+      returnRequestIdRef.current = null;
       setReturnReason('');
       setReturnQuantities({});
       toast.success({
@@ -617,6 +660,47 @@ export function SaleDetailsFeature({ saleId }: SaleDetailsFeatureProps) {
         </div>
 
         <section className={CARD_CLASS}>
+          {sale.returns.length > 0 ? (
+            <div className="border-b border-gray-100 px-6 py-5">
+              <h3 className="text-sm font-medium text-gray-900">Devoluções e situação financeira</h3>
+              <div className="mt-3 space-y-3">
+                {sale.returns.map((saleReturn) => (
+                  <div key={saleReturn.id} className="rounded-lg border border-gray-200 p-3 text-sm">
+                    <div className="flex flex-wrap justify-between gap-2">
+                      <span>{formatDateBR(saleReturn.createdAt)} · R$ {saleReturn.refundRequestedAmount.toFixed(2)}</span>
+                      <strong>{saleReturn.refundStatus === 'MANUAL_REFUND_REQUIRED'
+                        ? 'Registrar estorno no financeiro'
+                        : saleReturn.refundStatus.replaceAll('_', ' ')}</strong>
+                    </div>
+                    {saleReturn.refundIssue ? <p className="mt-1 text-gray-600">{saleReturn.refundIssue}</p> : null}
+                    {saleReturn.refundRequestUrl ? (
+                      <a className="mt-2 inline-block text-blue-700 underline" href={saleReturn.refundRequestUrl} target="_blank" rel="noreferrer">Ação do pagador no Asaas</a>
+                    ) : null}
+                    {canRequestRefund && (
+                      saleReturn.refundStatus === 'NOT_REQUESTED' ||
+                      (saleReturn.refundStatus === 'DENIED' && saleReturn.attempts.length > 0 && saleReturn.attempts.every((attempt) => attempt.status === 'DENIED'))
+                    ) ? (
+                      <Button
+                        className="mt-3"
+                        variant="outline"
+                        disabled={refundActionId !== null}
+                        onClick={() => void handleRefundAction(saleReturn.id, saleReturn.refundStatus === 'DENIED')}
+                      >
+                        {refundActionId === saleReturn.id
+                          ? 'Processando...'
+                          : saleReturn.refundStatus === 'DENIED'
+                            ? 'Tentar estorno novamente'
+                            : 'Solicitar estorno'}
+                      </Button>
+                    ) : null}
+                    {saleReturn.refundStatus === 'NEEDS_RECONCILIATION' ? (
+                      <p className="mt-2 text-amber-800">Aguardando reconciliação financeira. Uma nova solicitação automática está bloqueada.</p>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
           <div className="grid gap-6 px-6 py-6 md:grid-cols-2">
             <div>
               <div className="flex items-center gap-2 text-sm font-medium text-gray-900">
@@ -643,6 +727,11 @@ export function SaleDetailsFeature({ saleId }: SaleDetailsFeatureProps) {
         </section>
 
         <div className="flex flex-wrap justify-end gap-3">
+          {sale.chargeProvisioningPending ? (
+            <Button variant="outline" disabled={retryingCharge} onClick={() => void handleRetryCharge()}>
+              {retryingCharge ? 'Retentando cobrança...' : 'Retentar cobrança'}
+            </Button>
+          ) : null}
           {canCancelSale(sale) ? (
             <Button
               variant="outline"
@@ -727,6 +816,7 @@ export function SaleDetailsFeature({ saleId }: SaleDetailsFeatureProps) {
         onOpenChange={(open) => {
           if (!open && !returning) {
             setSaleToReturn(null);
+            returnRequestIdRef.current = null;
             setReturnReason('');
             setReturnQuantities({});
           }

@@ -324,6 +324,8 @@ export type RegisterSaleReturnInput = {
   contaId: string;
   saleId: string;
   actorUserId: string;
+  requestId: string;
+  requestFingerprint: string;
   items: Array<{
     saleItemId: string;
     quantity: number;
@@ -789,9 +791,12 @@ async function applyInventoryChange(
       ? computeWeightedAverageCost(balance.onHand, currentAverageCost, onHandDelta, input.unitCost)
       : currentAverageCost;
 
-  await tx.inventoryBalance.update({
+  const balanceUpdate = await tx.inventoryBalance.updateMany({
     where: {
       id: balance.id,
+      onHand: balance.onHand,
+      reserved: balance.reserved,
+      incoming: balance.incoming,
     },
     data: {
       onHand: nextOnHand,
@@ -800,6 +805,14 @@ async function applyInventoryChange(
       averageCost: moneyToDecimal(nextAverageCost),
     },
   });
+
+  if (balanceUpdate.count !== 1) {
+    throw new StoreInventoryError(
+      'SALDO_ESTOQUE_CONCORRENTE',
+      'O saldo de estoque mudou durante a operação. Atualize e tente novamente.',
+      409,
+    );
+  }
 
   await tx.inventoryMovement.create({
     data: {
@@ -1664,6 +1677,8 @@ export async function fulfillReservedSale(input: FulfillReservedSaleInput): Prom
       select: {
         id: true,
         status: true,
+        finalizationType: true,
+        paymentMethod: true,
         inventoryStatus: true,
         inventoryMode: true,
         items: {
@@ -1756,12 +1771,41 @@ export async function fulfillReservedSale(input: FulfillReservedSaleInput): Prom
 
 export async function registerSaleReturn(input: RegisterSaleReturnInput): Promise<{
   inventoryStatus: SaleInventoryStatus;
+  returnId: string;
+  refundAmount: number;
 }> {
   if (!Array.isArray(input.items) || input.items.length === 0) {
     throw new StoreInventoryError('ITENS_OBRIGATORIOS', 'Informe os itens devolvidos.', 422);
   }
 
-  const sale = await prisma.$transaction(async (tx) => {
+  let result: { inventoryStatus: SaleInventoryStatus; returnId: string; refundAmount: number };
+  try {
+    result = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.current_conta_id', ${input.contaId}, true)`;
+    const existingReturn = await tx.storeSaleReturn.findFirst({
+      where: { contaId: input.contaId, requestId: input.requestId },
+      select: { id: true, saleId: true, requestFingerprint: true, refundRequestedAmount: true },
+    });
+    if (existingReturn) {
+      if (existingReturn.saleId !== input.saleId || existingReturn.requestFingerprint !== input.requestFingerprint) {
+        throw new StoreInventoryError(
+          'DEVOLUCAO_IDEMPOTENCY_CONFLICT',
+          'A solicitação já foi usada para outra devolução.',
+          409,
+        );
+      }
+      const currentSale = await tx.sale.findFirst({
+        where: { id: input.saleId, contaId: input.contaId },
+        select: { inventoryStatus: true },
+      });
+      if (!currentSale) throw new StoreInventoryError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
+      return {
+        inventoryStatus: currentSale.inventoryStatus,
+        returnId: existingReturn.id,
+        refundAmount: moneyToNumber(existingReturn.refundRequestedAmount),
+      };
+    }
+
     const currentSale = await tx.sale.findFirst({
       where: {
         id: input.saleId,
@@ -1770,7 +1814,12 @@ export async function registerSaleReturn(input: RegisterSaleReturnInput): Promis
       select: {
         id: true,
         status: true,
+        finalizationType: true,
         inventoryStatus: true,
+        charge: { select: { status: true, value: true, billingType: true } },
+        standaloneInstallmentPlan: {
+          select: { charges: { select: { status: true, value: true, billingType: true }, orderBy: { dueDate: 'asc' } } },
+        },
         items: {
           orderBy: { createdAt: 'asc' },
           select: {
@@ -1781,6 +1830,10 @@ export async function registerSaleReturn(input: RegisterSaleReturnInput): Promis
             returnedQuantity: true,
             productName: true,
             unitCostAtSale: true,
+            subtotal: true,
+            unitPrice: true,
+            netSubtotalAtSale: true,
+            discountShareAtSale: true,
           },
         },
       },
@@ -1809,6 +1862,86 @@ export async function registerSaleReturn(input: RegisterSaleReturnInput): Promis
       );
     }
 
+    const returnedLines: Array<{ saleItemId: string; quantity: number; refundAmount: number }> = [];
+    let refundAmount = 0;
+    for (const rawItem of input.items) {
+      const saleItem = currentSale.items.find((item) => item.id === rawItem.saleItemId);
+      if (!saleItem || !saleItem.productId) {
+        throw new StoreInventoryError('ITEM_VENDA_NAO_ENCONTRADO', 'Item da venda não encontrado.', 404);
+      }
+      if (!Number.isInteger(rawItem.quantity) || rawItem.quantity <= 0) {
+        throw new StoreInventoryError('QUANTIDADE_INVALIDA', 'A quantidade devolvida deve ser positiva.', 422);
+      }
+      if (rawItem.quantity > saleItem.quantity - saleItem.returnedQuantity) {
+        throw new StoreInventoryError(
+          'QUANTIDADE_DEVOLUCAO_INVALIDA',
+          `A devolução de ${saleItem.productName} excede a quantidade ainda aberta.`,
+          422,
+        );
+      }
+      const lineNet = saleItem.netSubtotalAtSale != null
+        ? moneyToNumber(saleItem.netSubtotalAtSale)
+        : Math.max(moneyToNumber(saleItem.subtotal) - moneyToNumber(saleItem.discountShareAtSale), 0);
+      const previousReturnedNet = Math.round((lineNet * saleItem.returnedQuantity / saleItem.quantity + Number.EPSILON) * 100) / 100;
+      const nextReturnedNet = Math.round((lineNet * (saleItem.returnedQuantity + rawItem.quantity) / saleItem.quantity + Number.EPSILON) * 100) / 100;
+      const lineRefund = Math.max(nextReturnedNet - previousReturnedNet, 0);
+      returnedLines.push({ saleItemId: saleItem.id, quantity: rawItem.quantity, refundAmount: lineRefund });
+      refundAmount += lineRefund;
+    }
+
+    const relatedCharges = [
+      ...(currentSale.charge ? [currentSale.charge] : []),
+      ...(currentSale.standaloneInstallmentPlan?.charges ?? []),
+    ];
+    const paidBoletoCharges = relatedCharges.filter(
+      (charge) => charge.status === 'PAID' && charge.billingType?.toUpperCase() === 'BOLETO',
+    );
+    if (paidBoletoCharges.length > 0) {
+      const eligibleFullRefundAmounts = paidBoletoCharges.map((charge) => moneyToNumber(charge.value ?? 0));
+      const nonBoletoCapacity = relatedCharges
+        .filter((charge) => charge.status === 'PAID' && charge.billingType?.toUpperCase() !== 'BOLETO')
+        .reduce((sum, charge) => sum + moneyToNumber(charge.value ?? 0), 0);
+      const target = Math.round(refundAmount * 100);
+      const sums = new Set([0]);
+      for (const amount of eligibleFullRefundAmounts) {
+        const cents = Math.round(amount * 100);
+        for (const existing of [...sums]) sums.add(existing + cents);
+      }
+      const supportedByPartialNonBoleto = [...sums].some((sum) => target >= sum && target - sum <= Math.round(nonBoletoCapacity * 100));
+      if (!supportedByPartialNonBoleto) {
+        throw new StoreInventoryError(
+          'BOLETO_PARTIAL_REFUND_NOT_SUPPORTED',
+          'Estorno parcial de boleto não é suportado. Ajuste a devolução para corresponder a parcelas pagas completas.',
+          422,
+        );
+      }
+    }
+
+    const returnRecord = await tx.storeSaleReturn.create({
+      data: {
+        contaId: input.contaId,
+        saleId: input.saleId,
+        requestId: input.requestId,
+        requestFingerprint: input.requestFingerprint,
+        refundStatus: currentSale.finalizationType === 'RECEBIMENTO_PRESENCIAL'
+          ? 'MANUAL_REFUND_REQUIRED'
+          : 'NOT_REQUESTED',
+        refundRequestedAmount: moneyToDecimal(refundAmount, 2),
+        reason: normalizeText(input.reason),
+        createdById: input.actorUserId,
+        items: {
+          create: returnedLines.map((line) => ({
+            contaId: input.contaId,
+            saleId: input.saleId,
+            saleItemId: line.saleItemId,
+            quantity: line.quantity,
+            refundAmount: moneyToDecimal(line.refundAmount, 2),
+          })),
+        },
+      },
+      select: { id: true },
+    });
+
     for (const rawItem of input.items) {
       const saleItem = currentSale.items.find((item) => item.id === rawItem.saleItemId);
       if (!saleItem || !saleItem.productId) {
@@ -1836,14 +1969,26 @@ export async function registerSaleReturn(input: RegisterSaleReturnInput): Promis
         );
       }
 
-      await tx.saleItem.update({
-        where: { id: saleItem.id },
+      const returnedUpdate = await tx.saleItem.updateMany({
+        where: {
+          id: saleItem.id,
+          saleId: input.saleId,
+          returnedQuantity: saleItem.returnedQuantity,
+          quantity: { gte: saleItem.returnedQuantity + rawItem.quantity },
+        },
         data: {
           returnedQuantity: {
             increment: rawItem.quantity,
           },
         },
       });
+      if (returnedUpdate.count !== 1) {
+        throw new StoreInventoryError(
+          'DEVOLUCAO_CONCORRENTE',
+          'Este item foi devolvido em outra operação. Atualize a venda e tente novamente.',
+          409,
+        );
+      }
 
       await applyInventoryChange(tx, {
         contaId: input.contaId,
@@ -1880,7 +2025,7 @@ export async function registerSaleReturn(input: RegisterSaleReturnInput): Promis
         ? SaleInventoryStatus.RETURNED_PARTIAL
         : SaleInventoryStatus.FULFILLED;
 
-    return tx.sale.update({
+    const updatedSale = await tx.sale.update({
       where: { id: currentSale.id },
       data: {
         inventoryStatus: nextStatus,
@@ -1889,25 +2034,60 @@ export async function registerSaleReturn(input: RegisterSaleReturnInput): Promis
         inventoryStatus: true,
       },
     });
-  });
 
-  await auditLogService.record({
-    contaId: input.contaId,
-    actor: { type: 'USER', id: input.actorUserId },
-    action: 'loja.sale.returned',
-    entity: {
-      type: 'Sale',
-      id: input.saleId,
-    },
-    metadata: {
-      inventoryStatus: sale.inventoryStatus,
-      reason: normalizeText(input.reason),
-    },
-  });
+    await auditLogService.record({
+      contaId: input.contaId,
+      actor: { type: 'USER', id: input.actorUserId },
+      action: 'loja.sale.returned',
+      entity: { type: 'Sale', id: input.saleId },
+      metadata: {
+        returnId: returnRecord.id,
+        requestId: input.requestId,
+        inventoryStatus: updatedSale.inventoryStatus,
+        refundAmount,
+        reason: normalizeText(input.reason),
+        items: returnedLines,
+      },
+    }, tx);
 
-  return {
-    inventoryStatus: sale.inventoryStatus,
-  };
+    return { inventoryStatus: updatedSale.inventoryStatus, returnId: returnRecord.id, refundAmount };
+    });
+  } catch (error) {
+    const isUniqueViolation = error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+    if (!isUniqueViolation) throw error;
+
+    // Another transaction may have committed the same tenant/request key while
+    // this transaction was applying the physical return. Read after rollback
+    // and return the winner only when the original command fingerprint matches.
+    const winner = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.current_conta_id', ${input.contaId}, true)`;
+      const existingReturn = await tx.storeSaleReturn.findFirst({
+        where: { contaId: input.contaId, requestId: input.requestId },
+        select: { id: true, saleId: true, requestFingerprint: true, refundRequestedAmount: true },
+      });
+      if (!existingReturn) return null;
+      if (existingReturn.saleId !== input.saleId || existingReturn.requestFingerprint !== input.requestFingerprint) {
+        throw new StoreInventoryError(
+          'DEVOLUCAO_IDEMPOTENCY_CONFLICT',
+          'A solicitação já foi usada para outra devolução.',
+          409,
+        );
+      }
+      const sale = await tx.sale.findFirst({
+        where: { id: input.saleId, contaId: input.contaId },
+        select: { inventoryStatus: true },
+      });
+      if (!sale) throw new StoreInventoryError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
+      return {
+        inventoryStatus: sale.inventoryStatus,
+        returnId: existingReturn.id,
+        refundAmount: moneyToNumber(existingReturn.refundRequestedAmount),
+      };
+    });
+    if (!winner) throw error;
+    return winner;
+  }
+  return result;
 }
 
 export async function cancelSaleInventory(input: {

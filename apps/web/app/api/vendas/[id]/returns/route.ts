@@ -10,6 +10,7 @@ import {
 import { getStoreRequestContext, jsonError } from '../../_helpers';
 
 const requestSchema = z.object({
+  requestId: z.string().trim().min(10).max(100),
   reason: z.string().trim().optional(),
   items: z
     .array(
@@ -39,6 +40,7 @@ export async function POST(
       contaId,
       saleId: id,
       operatorId,
+      requestId: parsed.data.requestId,
       reason: parsed.data.reason,
       items: parsed.data.items,
     });

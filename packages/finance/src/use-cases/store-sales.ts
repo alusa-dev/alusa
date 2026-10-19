@@ -71,6 +71,22 @@ const SALE_ITEM_DETAIL_SELECT = (
 ) satisfies Prisma.SaleItemSelect;
 
 const SALE_DETAIL_INCLUDE = {
+  returns: {
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      requestId: true,
+      refundStatus: true,
+      refundRequestedAmount: true,
+      refundedAmount: true,
+      refundRequestUrl: true,
+      refundIssue: true,
+      reason: true,
+      createdAt: true,
+      items: { select: { saleItemId: true, quantity: true, refundAmount: true } },
+      attempts: { select: { id: true, status: true, requestedAmount: true, confirmedAmount: true, requestUrl: true, providerStatus: true } },
+    },
+  },
   items: {
     orderBy: { createdAt: 'asc' },
     select: SALE_ITEM_DETAIL_SELECT,
@@ -391,6 +407,7 @@ export type RegisterStoreSaleReturnInput = {
   contaId: string;
   saleId: string;
   operatorId: string;
+  requestId: string;
   reason?: string;
   items: Array<{
     saleItemId: string;
@@ -488,6 +505,7 @@ export type StoreSaleDTO = {
   finalizationType: SaleFinalizationType;
   inventoryMode: SaleInventoryMode;
   inventoryStatus: SaleInventoryStatus;
+  chargeProvisioningPending: boolean;
   paymentMethod: SalePaymentMethod | null;
   subtotal: number;
   discount: number;
@@ -511,6 +529,19 @@ export type StoreSaleDTO = {
     name: string;
   };
   items: StoreSaleItemDTO[];
+  returns: Array<{
+    id: string;
+    requestId: string;
+    refundStatus: string;
+    refundRequestedAmount: number;
+    refundedAmount: number;
+    refundRequestUrl: string | null;
+    refundIssue: string | null;
+    reason: string | null;
+    createdAt: string;
+    items: Array<{ saleItemId: string; quantity: number; refundAmount: number }>;
+    attempts: Array<{ id: string; status: string; requestedAmount: number; confirmedAmount: number; requestUrl: string | null; providerStatus: string | null }>;
+  }>;
 };
 
 export type ListStoreSalesOutput = {
@@ -904,6 +935,10 @@ function mapSaleRecord(record: SaleRecord): StoreSaleDTO {
     finalizationType: record.finalizationType,
     inventoryMode: record.inventoryMode,
     inventoryStatus: record.inventoryStatus,
+    chargeProvisioningPending:
+      record.finalizationType === SaleFinalizationType.COBRANCA &&
+      !record.charge &&
+      !installmentPlan,
     paymentMethod: record.paymentMethod ?? null,
     subtotal: moneyToNumber(record.subtotal),
     discount: moneyToNumber(record.discount),
@@ -1024,6 +1059,30 @@ function mapSaleRecord(record: SaleRecord): StoreSaleDTO {
           snapshotItem.marginAtSale != null ? moneyToNumber(snapshotItem.marginAtSale) : null,
       };
     }),
+    returns: record.returns.map((saleReturn) => ({
+      id: saleReturn.id,
+      requestId: saleReturn.requestId,
+      refundStatus: saleReturn.refundStatus,
+      refundRequestedAmount: moneyToNumber(saleReturn.refundRequestedAmount),
+      refundedAmount: moneyToNumber(saleReturn.refundedAmount),
+      refundRequestUrl: saleReturn.refundRequestUrl,
+      refundIssue: saleReturn.refundIssue,
+      reason: saleReturn.reason,
+      createdAt: saleReturn.createdAt.toISOString(),
+      items: saleReturn.items.map((item) => ({
+        saleItemId: item.saleItemId,
+        quantity: item.quantity,
+        refundAmount: moneyToNumber(item.refundAmount),
+      })),
+      attempts: saleReturn.attempts.map((attempt) => ({
+        id: attempt.id,
+        status: attempt.status,
+        requestedAmount: moneyToNumber(attempt.requestedAmount),
+        confirmedAmount: moneyToNumber(attempt.confirmedAmount),
+        requestUrl: attempt.requestUrl,
+        providerStatus: attempt.providerStatus,
+      })),
+    })),
   };
 }
 
@@ -1786,6 +1845,7 @@ async function createLocalSaleRecord(input: {
     try {
       const saleId = await prisma.$transaction(
         async (tx) => {
+          await tx.$executeRaw`SELECT set_config('app.current_conta_id', ${input.contaId}, true)`;
           const existing = await tx.sale.findFirst({
             where: {
               contaId: input.contaId,
@@ -1852,6 +1912,9 @@ async function createLocalSaleRecord(input: {
               grossProfit: moneyToDecimal(input.prepared.grossProfit),
               grossMargin: numberToDecimal(input.prepared.grossMargin, 4),
               finalizationType: input.prepared.finalizationType,
+              chargeConfigSnapshot: input.prepared.chargeConfig
+                ? (input.prepared.chargeConfig as unknown as Prisma.InputJsonObject)
+                : Prisma.JsonNull,
               inventoryMode: input.prepared.inventoryMode,
               inventoryStatus:
                 input.prepared.inventoryMode === SaleInventoryMode.RESERVE
@@ -1916,6 +1979,37 @@ async function createLocalSaleRecord(input: {
             items: createdItems,
             inventoryMode: input.prepared.inventoryMode,
           });
+
+          await auditLogService.record(
+            {
+              contaId: input.contaId,
+              actor: { type: 'USER', id: input.operatorId },
+              action: 'loja.sale.created',
+              entity: { type: 'Sale', id: createdSale.id },
+              metadata: {
+                saleNumber,
+                finalizationType: input.prepared.finalizationType,
+                status:
+                  input.prepared.finalizationType === SaleFinalizationType.RECEBIMENTO_PRESENCIAL
+                    ? SaleStatus.CONCLUIDA
+                    : SaleStatus.PENDENTE,
+                inventoryMode: input.prepared.inventoryMode,
+                inventoryStatus:
+                  input.prepared.inventoryMode === SaleInventoryMode.RESERVE
+                    ? SaleInventoryStatus.RESERVED
+                    : SaleInventoryStatus.FULFILLED,
+                total: input.prepared.total,
+                totalCost: input.prepared.totalCost,
+                grossProfit: input.prepared.grossProfit,
+                grossMargin: input.prepared.grossMargin,
+                chargeId: null,
+                matriculaId: input.prepared.chargeConfig?.matriculaId ?? null,
+                customerType: input.prepared.customer.type,
+                uiRequestId: input.uiRequestId,
+              },
+            },
+            tx,
+          );
 
           return createdSale.id;
         },
@@ -2280,40 +2374,30 @@ export async function createStoreSale(input: CreateStoreSaleInput): Promise<Stor
   try {
     const saleDto = mapSaleRecord(sale);
     if (prepared.chargeConfig) {
-      await ensureChargeForSale({
-        contaId: input.contaId,
-        operatorId: input.operatorId,
-        sale: saleDto,
-        prepared,
-      });
+      try {
+        await ensureChargeForSale({
+          contaId: input.contaId,
+          operatorId: input.operatorId,
+          sale: saleDto,
+          prepared,
+        });
+      } catch (error) {
+        // The sale and inventory reservation are already committed. Return the
+        // durable sale state so the client does not report a false failure and
+        // induce a duplicate checkout; the operational queue can repair billing.
+        logFinanceOperationalEvent({
+          severity: 'error',
+          eventName: 'finance.use_cases.store_sales.failed',
+          error,
+          throttleMs: 60_000,
+        });
+      }
     }
 
     const persisted = await findSaleById(input.contaId, sale.id);
     if (!persisted) {
       throw new StoreSaleError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada após criação.', 404);
     }
-
-    await auditLogService.record({
-      contaId: input.contaId,
-      actor: { type: 'USER', id: input.operatorId },
-      action: 'loja.sale.created',
-      entity: { type: 'Sale', id: sale.id },
-      metadata: {
-        saleNumber: persisted.saleNumber,
-        finalizationType: persisted.finalizationType,
-        status: persisted.status,
-        inventoryMode: persisted.inventoryMode,
-        inventoryStatus: persisted.inventoryStatus,
-        total: moneyToNumber(persisted.total),
-        totalCost: persisted.totalCost != null ? moneyToNumber(persisted.totalCost) : null,
-        grossProfit: persisted.grossProfit != null ? moneyToNumber(persisted.grossProfit) : null,
-        grossMargin: persisted.grossMargin != null ? moneyToNumber(persisted.grossMargin) : null,
-        chargeId: persisted.chargeId ?? null,
-        matriculaId: persisted.matriculaId ?? null,
-        customerType: persisted.customerType,
-        uiRequestId: persisted.uiRequestId ?? null,
-      },
-    });
 
     return mapSaleRecord(persisted);
   } catch (error) {
@@ -2326,6 +2410,79 @@ export async function createStoreSale(input: CreateStoreSaleInput): Promise<Stor
 
     throw error;
   }
+}
+
+export async function retryStoreSaleCharge(input: GetStoreSaleInput & { operatorId: string }): Promise<StoreSaleDTO> {
+  const record = await findSaleById(input.contaId, input.saleId);
+  if (!record) throw new StoreSaleError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada.', 404);
+  const saleDto = mapSaleRecord(record);
+  if (saleDto.charge || saleDto.installmentPlan) return saleDto;
+  if (record.finalizationType !== SaleFinalizationType.COBRANCA) {
+    throw new StoreSaleError('COBRANCA_NAO_APLICAVEL', 'Esta venda não possui cobrança pendente.', 409);
+  }
+  const rawConfig = record.chargeConfigSnapshot;
+  if (!rawConfig || typeof rawConfig !== 'object' || Array.isArray(rawConfig)) {
+    throw new StoreSaleError('CONFIGURACAO_COBRANCA_INDISPONIVEL', 'Não há dados suficientes para retentar a cobrança desta venda.', 409);
+  }
+  const config = rawConfig as Record<string, unknown>;
+  if (typeof config.dueDate !== 'string' || typeof config.billingType !== 'string' || typeof config.chargeType !== 'string' || typeof config.installmentCount !== 'number') {
+    throw new StoreSaleError('CONFIGURACAO_COBRANCA_INVALIDA', 'A configuração salva da cobrança é inválida.', 409);
+  }
+  const customer: PreparedCustomer = record.alunoId
+    ? { type: 'ALUNO', alunoId: record.alunoId, alunoName: record.aluno?.nome ?? saleDto.customer.displayName, responsavelId: record.responsavelId, responsavelName: record.responsavel?.nome ?? null, displayName: saleDto.customer.displayName }
+    : record.responsavelId
+      ? { type: 'RESPONSAVEL', responsavelId: record.responsavelId, responsavelName: record.responsavel?.nome ?? saleDto.customer.displayName, displayName: saleDto.customer.displayName }
+      : (() => { throw new StoreSaleError('CLIENTE_AVULSO_SEM_PAGADOR', 'A venda não possui um pagador salvo para retentar a cobrança.', 409); })();
+  const items: PreparedSaleItem[] = record.items.map((item) => {
+    const snapshot = item as typeof item & { unitCostAtSale?: Prisma.Decimal | null; totalCostAtSale?: Prisma.Decimal | null; discountShareAtSale?: Prisma.Decimal | null; netSubtotalAtSale?: Prisma.Decimal | null; grossProfitAtSale?: Prisma.Decimal | null; marginAtSale?: Prisma.Decimal | null };
+    return {
+      productId: item.productId ?? '',
+      variantId: item.variantId,
+      productName: item.productName,
+      quantity: item.quantity,
+      unitPrice: moneyToNumber(item.unitPrice),
+      subtotal: moneyToNumber(item.subtotal),
+      unitCostAtSale: moneyToNumber(snapshot.unitCostAtSale ?? 0),
+      totalCostAtSale: moneyToNumber(snapshot.totalCostAtSale ?? 0),
+      discountShareAtSale: moneyToNumber(snapshot.discountShareAtSale ?? 0),
+      netSubtotalAtSale: moneyToNumber(snapshot.netSubtotalAtSale ?? item.subtotal),
+      grossProfitAtSale: moneyToNumber(snapshot.grossProfitAtSale ?? 0),
+      marginAtSale: moneyToNumber(snapshot.marginAtSale ?? 0),
+    };
+  });
+  if (items.some((item) => !item.productId)) {
+    throw new StoreSaleError('ITENS_VENDA_INDISPONIVEIS', 'Não é possível retentar: um item não possui vínculo com produto.', 409);
+  }
+  await ensureChargeForSale({
+    contaId: input.contaId,
+    operatorId: input.operatorId,
+    sale: saleDto,
+    prepared: {
+      customer,
+      items,
+      subtotal: moneyToNumber(record.subtotal),
+      discount: moneyToNumber(record.discount),
+      total: moneyToNumber(record.total),
+      totalCost: moneyToNumber(record.totalCost ?? 0),
+      grossProfit: moneyToNumber(record.grossProfit ?? 0),
+      grossMargin: moneyToNumber(record.grossMargin ?? 0),
+      inventoryMode: record.inventoryMode,
+      finalizationType: record.finalizationType,
+      paymentMethod: record.paymentMethod,
+      amountReceived: record.amountReceived != null ? moneyToNumber(record.amountReceived) : null,
+      changeGiven: record.changeGiven != null ? moneyToNumber(record.changeGiven) : null,
+      chargeConfig: {
+        dueDate: config.dueDate,
+        billingType: config.billingType as BillingType,
+        chargeType: config.chargeType as 'ONE_TIME' | 'INSTALLMENT',
+        installmentCount: config.installmentCount,
+        matriculaId: null,
+      },
+    },
+  });
+  const updated = await findSaleById(input.contaId, input.saleId);
+  if (!updated) throw new StoreSaleError('VENDA_NAO_ENCONTRADA', 'Venda não encontrada após retentativa.', 404);
+  return mapSaleRecord(updated);
 }
 
 export async function listStoreSales(input: ListStoreSalesInput): Promise<ListStoreSalesOutput> {
@@ -2731,10 +2888,17 @@ export async function registerStoreSaleReturn(
   input: RegisterStoreSaleReturnInput,
 ): Promise<StoreSaleDTO> {
   try {
+    const requestFingerprint = hashPayload({
+      saleId: input.saleId,
+      reason: input.reason?.trim() ?? null,
+      items: [...input.items].sort((a, b) => a.saleItemId.localeCompare(b.saleItemId)),
+    });
     await registerSaleReturnInventory({
       contaId: input.contaId,
       saleId: input.saleId,
       actorUserId: input.operatorId,
+      requestId: input.requestId,
+      requestFingerprint,
       reason: input.reason,
       items: input.items,
     });

@@ -618,7 +618,7 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
           </div>
           <div>
             <h1 className="text-[26px] font-semibold leading-tight tracking-tight text-slate-900">
-              Cobrança gerada
+              {sale.chargeProvisioningPending ? 'Cobrança pendente de preparação' : 'Cobrança gerada'}
             </h1>
             <p className="mt-2 text-sm text-slate-500">
               {formatSaleNumber(sale.saleNumber)} · {sale.customer.displayName} ·{' '}
@@ -670,7 +670,13 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 p-5">
-              {charges.length > 0 ? (
+              {sale.chargeProvisioningPending ? (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  A venda e a reserva de estoque foram registradas, mas a cobrança ainda não foi
+                  materializada. A equipe pode acompanhar e reparar essa pendência na operação da
+                  Loja.
+                </p>
+              ) : charges.length > 0 ? (
                 charges.map((charge, index) => (
                   <div
                     key={charge.id}

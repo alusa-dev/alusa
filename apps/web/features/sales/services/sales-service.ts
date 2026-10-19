@@ -256,6 +256,7 @@ export async function fulfillSale(id: string): Promise<StoreSaleDTO> {
 export async function returnSaleItems(
   id: string,
   payload: {
+    requestId: string;
     reason?: string;
     items: Array<{
       saleItemId: string;
@@ -272,6 +273,29 @@ export async function returnSaleItems(
     body: JSON.stringify(payload),
   });
 
+  const json = await parseResponse<{ data: StoreSaleDTO }>(response);
+  return json.data;
+}
+
+export async function requestSaleRefund(
+  saleId: string,
+  returnId: string,
+  mode: 'REQUEST' | 'RETRY_DENIED',
+): Promise<StoreSaleDTO> {
+  const response = await fetch(`/api/vendas/${saleId}/returns/${returnId}/refund`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  });
+  const json = await parseResponse<{ data: StoreSaleDTO }>(response);
+  return json.data;
+}
+
+export async function retrySaleCharge(id: string): Promise<StoreSaleDTO> {
+  const response = await fetch(`/api/vendas/${id}/retry-charge`, {
+    method: 'POST',
+    headers: { Accept: 'application/json' },
+  });
   const json = await parseResponse<{ data: StoreSaleDTO }>(response);
   return json.data;
 }

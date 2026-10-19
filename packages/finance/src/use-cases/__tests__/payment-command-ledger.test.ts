@@ -5,7 +5,9 @@ vi.mock('@alusa/database', () => ({
     asaasIntegrationJob: {
       upsert: vi.fn(),
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       findMany: vi.fn(),
     },
   },
@@ -25,7 +27,9 @@ import { upsertFinanceReconciliationIssue } from '../../reconciliation/finance-r
 import {
   confirmPaymentCommandsByProviderEvent,
   expectedEventsForPaymentCommand,
+  claimPaymentCommandForDispatch,
   markPaymentCommandSent,
+  markPaymentCommandNeedsReconciliation,
   markStalePaymentCommandsForReconciliation,
   registerPaymentCommand,
 } from '../payment-command-ledger';
@@ -105,6 +109,58 @@ describe('payment-command-ledger', () => {
           providerStatus: 'PENDING',
         }),
       }),
+    }));
+  });
+
+  it('permite apenas um claim atômico entre duas chamadas concorrentes', async () => {
+    vi.mocked(prisma.asaasIntegrationJob.findFirst).mockResolvedValue({
+      payload: {
+        commandStatus: 'REQUESTED', commandType: 'PAYMENT_REFUND_COMMAND', entityType: 'CHARGE',
+        entityId: 'chg-1', asaasPaymentId: 'pay-1', expectedEvents: ['PAYMENT_REFUNDED'], correlationId: 'corr-1',
+      },
+    } as never);
+    vi.mocked(prisma.asaasIntegrationJob.updateMany)
+      .mockResolvedValueOnce({ count: 1 } as never)
+      .mockResolvedValueOnce({ count: 0 } as never);
+
+    const claims = await Promise.all([
+      claimPaymentCommandForDispatch({ contaId: 'tenant-a', jobId: 'job-1', providerStatus: 'RECEIVED' }),
+      claimPaymentCommandForDispatch({ contaId: 'tenant-a', jobId: 'job-1', providerStatus: 'RECEIVED' }),
+    ]);
+
+    expect(claims.filter((claim) => claim.claimed)).toHaveLength(1);
+    expect(prisma.asaasIntegrationJob.updateMany).toHaveBeenCalledTimes(2);
+    expect(prisma.asaasIntegrationJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: 'job-1', contaId: 'tenant-a', payload: { path: ['commandStatus'], equals: 'REQUESTED' },
+      }),
+    }));
+  });
+
+  it('marca timeout/resultado ambíguo para reconciliação e bloqueia novo POST', async () => {
+    vi.mocked(prisma.asaasIntegrationJob.findUnique).mockResolvedValueOnce({
+      contaId: 'conta-1',
+      payload: {
+        commandStatus: 'SENT_TO_ASAAS', commandType: 'PAYMENT_REFUND_COMMAND', entityType: 'CHARGE',
+        entityId: 'chg-1', asaasPaymentId: 'pay-1', expectedEvents: ['PAYMENT_REFUNDED'], correlationId: 'corr-1',
+      },
+    } as never);
+    vi.mocked(prisma.asaasIntegrationJob.update).mockResolvedValueOnce({ id: 'job-1' } as never);
+
+    await markPaymentCommandNeedsReconciliation({ jobId: 'job-1', error: new Error('request timeout') });
+
+    expect(prisma.asaasIntegrationJob.update).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'job-1' },
+      data: expect.objectContaining({
+        status: 'FAILED',
+        payload: expect.objectContaining({
+          commandStatus: 'NEEDS_RECONCILIATION',
+          metadata: expect.objectContaining({ ambiguousOutcome: true, failureMessage: 'request timeout' }),
+        }),
+      }),
+    }));
+    expect(upsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1', entityType: 'CHARGE', entityId: 'chg-1', asaasId: 'pay-1',
     }));
   });
 

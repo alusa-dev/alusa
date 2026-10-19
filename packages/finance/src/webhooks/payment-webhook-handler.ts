@@ -186,6 +186,151 @@ function getCompletedRefundTotal(refunds: PaymentWebhookPayload['payment']['refu
   return Math.round((total + Number.EPSILON) * 100) / 100;
 }
 
+export async function projectStoreSaleRefundFromWebhook(params: {
+  contaId: string;
+  asaasPaymentId: string;
+  event: string;
+  refunds: PaymentWebhookPayload['payment']['refunds'];
+}) {
+  await prisma.$transaction(async (tx) => {
+  await tx.$executeRaw`SELECT set_config('app.current_conta_id', ${params.contaId}, true)`;
+  const attemptsByPayment = await tx.storeSaleRefundAttempt.findMany({
+    where: { contaId: params.contaId, charge: { is: { asaasPaymentId: params.asaasPaymentId } } },
+    select: { id: true, returnId: true, chargeId: true, requestedAmount: true, providerRefundBaseline: true, confirmedAmount: true, status: true, updatedAt: true, createdAt: true },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+  });
+  const latestAttemptByCharge = new Map<string, (typeof attemptsByPayment)[number]>();
+  for (const attempt of attemptsByPayment) latestAttemptByCharge.set(attempt.chargeId, attempt);
+  const attempts = [...latestAttemptByCharge.values()];
+  if (attempts.length === 0) return;
+
+  const completedTotal = getCompletedRefundTotal(params.refunds);
+  const isLifecycleEvent = params.event === 'PAYMENT_REFUND_REQUESTED' || params.event === 'PAYMENT_REFUND_IN_PROGRESS';
+  const eventHasPriorAttempts = (params.event === 'PAYMENT_REFUND_DENIED' || isLifecycleEvent) &&
+    attemptsByPayment.some((attempt) => attemptsByPayment.filter((candidate) => candidate.chargeId === attempt.chargeId).length > 1);
+  if (attempts.length > 1 || eventHasPriorAttempts) {
+    // Asaas refund events do not carry a stable refund/attempt correlation in
+    // this path. A delayed event from an older attempt must never be assigned
+    // to a newer retry; ambiguous open attempts require reconciliation.
+    await tx.storeSaleRefundAttempt.updateMany({
+      where: {
+        contaId: params.contaId,
+        charge: { is: { asaasPaymentId: params.asaasPaymentId } },
+        status: { in: ['REQUESTED', 'IN_PROGRESS', 'AWAITING_PAYER_ACTION', 'NEEDS_RECONCILIATION'] },
+      },
+      data: { status: 'NEEDS_RECONCILIATION', providerStatus: params.event },
+    });
+  } else {
+    let currentAttempt = attempts[0]!;
+    let projected = false;
+    for (let retry = 0; retry < 3 && !projected; retry += 1) {
+      let status = currentAttempt.status;
+      let confirmedAmount = Number(currentAttempt.confirmedAmount ?? 0);
+      const isConfirmedTerminal = status === 'REFUNDED' || status === 'PARTIALLY_REFUNDED';
+      if (params.event === 'PAYMENT_REFUND_DENIED') {
+        if (!isConfirmedTerminal && confirmedAmount <= 0) status = 'DENIED';
+      } else if (isLifecycleEvent) {
+        // Delayed lifecycle events may update an open attempt, but cannot erase
+        // confirmed money or move a terminal result backwards.
+        const requestedWouldRegressProgress = params.event === 'PAYMENT_REFUND_REQUESTED' && status === 'IN_PROGRESS';
+        if (!isConfirmedTerminal && status !== 'DENIED' && confirmedAmount <= 0 && !requestedWouldRegressProgress) {
+          status = params.event === 'PAYMENT_REFUND_REQUESTED' ? 'AWAITING_PAYER_ACTION' : 'IN_PROGRESS';
+        }
+      } else if (params.event === 'PAYMENT_REFUNDED' || params.event === 'PAYMENT_PARTIALLY_REFUNDED') {
+        if (completedTotal == null) {
+          if (!isConfirmedTerminal && confirmedAmount <= 0) status = 'NEEDS_RECONCILIATION';
+        } else {
+          const thisAttemptRefundTotal = Math.max(completedTotal - Number(currentAttempt.providerRefundBaseline), 0);
+          if (thisAttemptRefundTotal <= 0 && confirmedAmount <= 0) {
+            status = 'NEEDS_RECONCILIATION';
+          } else {
+            confirmedAmount = Math.max(confirmedAmount, Math.min(thisAttemptRefundTotal, Number(currentAttempt.requestedAmount)));
+            status = confirmedAmount >= Number(currentAttempt.requestedAmount) ? 'REFUNDED' : 'PARTIALLY_REFUNDED';
+          }
+        }
+      } else return;
+
+      const currentConfirmedAmount = Number(currentAttempt.confirmedAmount ?? 0);
+      if (status === currentAttempt.status && confirmedAmount === currentConfirmedAmount) {
+        attempts[0] = currentAttempt;
+        projected = true;
+        break;
+      }
+      const attemptUpdate = await tx.storeSaleRefundAttempt.updateMany({
+        where: {
+          id: currentAttempt.id,
+          contaId: params.contaId,
+          status: currentAttempt.status,
+          confirmedAmount: currentAttempt.confirmedAmount,
+          updatedAt: currentAttempt.updatedAt,
+        },
+        data: { status, providerStatus: params.event, confirmedAmount: new Prisma.Decimal(confirmedAmount) },
+      });
+      if (attemptUpdate.count === 1) {
+        attempts[0] = { ...currentAttempt, status, confirmedAmount: new Prisma.Decimal(confirmedAmount) };
+        projected = true;
+        break;
+      }
+
+      // A stale REQUESTED event may win the first CAS while a completion event
+      // loses. Reload and reapply the same provider event, bounded to avoid
+      // holding this webhook transaction under a sustained write race.
+      const latestAttempt = await tx.storeSaleRefundAttempt.findFirst({
+        where: { id: currentAttempt.id, contaId: params.contaId },
+        select: { id: true, returnId: true, chargeId: true, requestedAmount: true, providerRefundBaseline: true, confirmedAmount: true, status: true, updatedAt: true, createdAt: true },
+      });
+      if (!latestAttempt) return;
+      currentAttempt = latestAttempt;
+    }
+    // Leave the provider event retryable if the row kept changing during all
+    // bounded CAS attempts; never write a return rollup from a stale snapshot.
+    if (!projected) throw new Error(`Store sale refund attempt projection conflicted for ${currentAttempt.id}`);
+  }
+
+  const returnIds = [...new Set(attempts.map((attempt) => attempt.returnId))];
+  for (const returnId of returnIds) {
+    let projected = false;
+    for (let retry = 0; retry < 3 && !projected; retry += 1) {
+      const saleReturn = await tx.storeSaleReturn.findFirst({
+        where: { id: returnId, contaId: params.contaId },
+        include: { attempts: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] } },
+      });
+      if (!saleReturn) {
+        projected = true;
+        break;
+      }
+      const latestByCharge = new Map<string, (typeof saleReturn.attempts)[number]>();
+      for (const attempt of saleReturn.attempts) latestByCharge.set(attempt.chargeId, attempt);
+      const effectiveAttempts = [...latestByCharge.values()];
+      const refundStatus = effectiveAttempts.every((attempt) => attempt.status === 'REFUNDED')
+        ? 'REFUNDED'
+        : effectiveAttempts.some((attempt) => attempt.status === 'DENIED')
+          ? 'DENIED'
+          : effectiveAttempts.some((attempt) => attempt.status === 'NEEDS_RECONCILIATION')
+            ? 'NEEDS_RECONCILIATION'
+            : effectiveAttempts.some((attempt) => attempt.status === 'AWAITING_PAYER_ACTION')
+              ? 'AWAITING_PAYER_ACTION'
+              : effectiveAttempts.some((attempt) => attempt.status === 'PARTIALLY_REFUNDED')
+                ? 'PARTIALLY_REFUNDED'
+                : 'IN_PROGRESS';
+      const refundedAmount = effectiveAttempts.reduce((sum, attempt) => sum + Number(attempt.confirmedAmount), 0);
+      const aggregateUpdate = await tx.storeSaleReturn.updateMany({
+        where: { id: returnId, contaId: params.contaId, updatedAt: saleReturn.updatedAt },
+        data: {
+          refundStatus,
+          refundedAmount: new Prisma.Decimal(refundedAmount),
+          refundedAt: refundStatus === 'REFUNDED' ? saleReturn.refundedAt ?? new Date() : null,
+        },
+      });
+      projected = aggregateUpdate.count === 1;
+    }
+    // Throwing keeps the webhook event retryable instead of acknowledging it
+    // while the return aggregate may still reflect an older attempt snapshot.
+    if (!projected) throw new Error(`Store sale return refund projection conflicted for ${returnId}`);
+  }
+  });
+}
+
 export type PaymentWebhookResult = {
   success: boolean;
   /** True only when the local financial state actually transitioned. */
@@ -1377,6 +1522,13 @@ async function handlePaymentWebhookCore(
     }
 
     const hasEventMapDateCandidate = hasProviderDateCandidate(...paymentDateCandidates);
+    await projectStoreSaleRefundFromWebhook({
+      contaId,
+      asaasPaymentId: payload.payment.id,
+      event: payload.event,
+      refunds: payload.payment.refunds,
+    });
+
     const paidAt = firstValidProviderDate(...paymentDateCandidates)?.toISOString()
       ?? (hasEventMapDateCandidate ? undefined : new Date().toISOString());
     const chargebackStatusByEvent: Record<string, string> = {
