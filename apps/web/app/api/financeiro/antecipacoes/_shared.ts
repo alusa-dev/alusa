@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 
 import { safeGetServerSession } from '@/lib/safe-server-session';
+import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import type { AnticipationError } from '@alusa/finance';
 
-type SessUser = { id?: string; contaId?: string; role?: string };
-type FinanceUser = { id: string; contaId: string; role: string };
+type SessUser = { id?: string; contaId?: string; role?: string; financeIntegrationMode?: string | null };
+type FinanceUser = { id: string; contaId: string; role: string; financeIntegrationMode?: string | null };
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
@@ -49,6 +50,9 @@ export async function requireFinanceUser(
     return { ok: false as const, response: json(403, { error: 'SEM_PERMISSAO' }) };
   }
 
+  const capabilityBlock = blockUnavailableFinanceCapability(user.financeIntegrationMode, 'anticipations');
+  if (capabilityBlock) return { ok: false as const, response: capabilityBlock };
+
   if (opts.checkAccountGate ?? true) {
     const gate = await guardFinancialAccountOr412(user.contaId);
     if (!gate.ok) {
@@ -62,6 +66,7 @@ export async function requireFinanceUser(
       id: user.id,
       contaId: user.contaId,
       role: user.role,
+      financeIntegrationMode: user.financeIntegrationMode,
     },
   };
 }

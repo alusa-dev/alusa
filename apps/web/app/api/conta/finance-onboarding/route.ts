@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
 import { asaasGetMyAccountCommercialInfo } from '@alusa/finance';
 import { getKycSummary } from '@alusa/finance';
 import { contaFinanceOnboardingResultDTOSchema } from '@/features/account/dtos';
@@ -19,6 +20,8 @@ export async function GET(req: Request) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const capabilityBlock = blockUnavailableFinanceCapability(auth.financeIntegrationMode, 'kyc');
+    if (capabilityBlock) return capabilityBlock;
 
     const contaId = auth.contaId;
 

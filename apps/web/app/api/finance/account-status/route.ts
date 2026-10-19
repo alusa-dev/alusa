@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
 import { financeAccountStatusQueryDTOSchema } from '@/features/finance/dtos';
 import { getKycCommercialInfo, getKycSummary, getKycSummaryFresh } from '@alusa/finance';
 
@@ -79,6 +80,8 @@ export async function GET(req: Request) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const capabilityBlock = blockUnavailableFinanceCapability(auth.financeIntegrationMode, 'kyc');
+    if (capabilityBlock) return capabilityBlock;
 
     const url = new URL(req.url);
     const query = financeAccountStatusQueryDTOSchema.safeParse(

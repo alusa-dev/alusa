@@ -61,7 +61,7 @@ vi.mock('../../foundation/operational-log', () => ({
   logFinanceOperationalEvent: vi.fn(),
 }));
 
-import { runWebhookScheduler } from '../webhook-scheduler.service';
+import { runWebhookHealthAndDriftMaintenance, runWebhookScheduler } from '../webhook-scheduler.service';
 
 describe('runWebhookScheduler', () => {
   beforeEach(() => {
@@ -167,6 +167,125 @@ describe('runWebhookScheduler', () => {
     expect(accountStatusMock).toHaveBeenCalledTimes(2);
     expect(result.steps.find((step) => step.step === 'health_check')?.ok).toBe(true);
     expect(archiveMock).toHaveBeenCalledOnce();
+  });
+
+  it('mantém drift externo visível como não suportado sem falhar o scheduler', async () => {
+    prismaMock.asaasAccount.findMany.mockResolvedValue([
+      { financeProfile: { contaId: 'conta-externa' } },
+    ]);
+    accountStatusMock.mockResolvedValue({ drift: { interrupted: true, penalized: true } });
+    repairMock.mockResolvedValue({
+      repaired: false,
+      reason: 'UNSUPPORTED_FEATURE',
+      before: { repairSupported: false, drift: { interrupted: true, penalized: true } },
+    });
+
+    const result = await runWebhookScheduler({ skipQueueDrain: true, skipHealthCheck: true });
+
+    expect(result.hasErrors).toBe(false);
+    expect(result.steps.find((step) => step.step === 'drift_check')).toMatchObject({
+      ok: true,
+      detail: { accountsChecked: 1, driftsFound: 1, driftsRepaired: 0, unsupportedDrifts: 1 },
+    });
+    expect(accountStatusMock).toHaveBeenCalledWith('conta-externa');
+    expect(repairMock).toHaveBeenCalledWith({
+      contaId: 'conta-externa',
+      actor: { type: 'SYSTEM' },
+    });
+    expect(archiveMock).toHaveBeenCalledOnce();
+  });
+
+  it('classifica rejeição de recurso Asaas como falha quando o repair era suportado', async () => {
+    prismaMock.asaasAccount.findMany.mockResolvedValue([
+      { financeProfile: { contaId: 'conta-whitelabel' } },
+    ]);
+    accountStatusMock.mockResolvedValue({ drift: { disabled: true } });
+    repairMock.mockResolvedValue({
+      repaired: false,
+      reason: 'UNSUPPORTED_FEATURE',
+      before: { repairSupported: true, drift: { disabled: true } },
+    });
+
+    const result = await runWebhookScheduler({ skipQueueDrain: true, skipHealthCheck: true });
+
+    expect(result.hasErrors).toBe(true);
+    expect(result.steps.find((step) => step.step === 'drift_check')).toMatchObject({
+      ok: false,
+      error: 'DRIFT_ACCOUNT_FAILURES',
+      detail: { accountsChecked: 1, accountFailures: 1 },
+    });
+  });
+
+  it('expõe drift sem suporte como contagem de manutenção sem erro', async () => {
+    prismaMock.asaasAccount.findMany.mockResolvedValue([
+      { financeProfile: { contaId: 'conta-externa' } },
+    ]);
+    accountStatusMock.mockResolvedValue({
+      repairSupported: false,
+      drift: { interrupted: true, penalized: true },
+    });
+    repairMock.mockResolvedValue({
+      repaired: false,
+      reason: 'UNSUPPORTED_FEATURE',
+      before: { repairSupported: false },
+    });
+
+    const result = await runWebhookHealthAndDriftMaintenance({ autoRepair: false });
+
+    expect(result).toMatchObject({
+      accountsChecked: 1,
+      driftsFound: 1,
+      driftsRepaired: 0,
+      unsupportedDrifts: 1,
+      errors: [],
+    });
+    expect(repairMock).toHaveBeenCalledWith({
+      contaId: 'conta-externa',
+      actor: { type: 'SYSTEM' },
+    });
+  });
+
+  it('reporta falha ao persistir drift não suportado', async () => {
+    prismaMock.asaasAccount.findMany.mockResolvedValue([
+      { financeProfile: { contaId: 'conta-externa' } },
+    ]);
+    accountStatusMock.mockResolvedValue({
+      repairSupported: false,
+      drift: { interrupted: true },
+    });
+    repairMock.mockResolvedValue({
+      repaired: false,
+      reason: 'PROVIDER_ERROR',
+      failureCategory: 'database_unavailable',
+    });
+
+    const result = await runWebhookHealthAndDriftMaintenance({ autoRepair: false });
+
+    expect(result.unsupportedDrifts).toBe(0);
+    expect(result.errors).toEqual([
+      { contaId: 'conta-externa', error: 'database_unavailable' },
+    ]);
+  });
+
+  it('reporta credenciais ausentes ao tentar reparar drift suportado', async () => {
+    prismaMock.asaasAccount.findMany.mockResolvedValue([
+      { financeProfile: { contaId: 'conta-whitelabel' } },
+    ]);
+    accountStatusMock.mockResolvedValue({
+      repairSupported: true,
+      drift: { disabled: true },
+    });
+    repairMock.mockResolvedValue({
+      repaired: false,
+      reason: 'CREDENTIALS_MISSING',
+      before: { repairSupported: true },
+    });
+
+    const result = await runWebhookHealthAndDriftMaintenance({ autoRepair: true });
+
+    expect(result.errors).toEqual([
+      { contaId: 'conta-whitelabel', error: 'CREDENTIALS_MISSING' },
+    ]);
   });
 
   it('conta falha retornada pelo repair da Conta A e continua reparando a Conta B', async () => {

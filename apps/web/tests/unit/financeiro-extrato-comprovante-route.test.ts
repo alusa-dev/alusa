@@ -21,7 +21,13 @@ async function mockSession(user: Record<string, string> | null) {
   const mod = await import('@/lib/api/with-tenant-session');
   vi.mocked(mod.resolveTenantSession).mockResolvedValue(
     user
-      ? ({ ok: true, contaId: user.contaId, userId: user.id, role: user.role } as never)
+      ? ({
+          ok: true,
+          contaId: user.contaId,
+          userId: user.id,
+          role: user.role,
+          financeIntegrationMode: user.financeIntegrationMode,
+        } as never)
       : { ok: false, reason: 'UNAUTHENTICATED' },
   );
 }
@@ -55,6 +61,24 @@ describe('GET /api/financeiro/extrato/[paymentId]/comprovante', () => {
     const res = await GET(req, { params: Promise.resolve({ paymentId: 'pay_123' }) });
 
     expect(res.status).toBe(401);
+  });
+
+  it('bloqueia comprovante de conta Asaas externa antes do preflight remoto', async () => {
+    await mockSession({ id: 'u1', contaId: 't1', role: 'ADMIN', financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' });
+    const { getPayment, recordAsaasReadIntent } = await import('@alusa/finance');
+    const gate = await import('@/lib/finance/financial-account-gate');
+
+    const response = await GET(
+      new NextRequest('http://localhost:3000/api/financeiro/extrato/pay_123/comprovante'),
+      { params: Promise.resolve({ paymentId: 'pay_123' }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toEqual({ error: 'FINANCE_CAPABILITY_UNAVAILABLE', capability: 'statement' });
+    expect(gate.guardFinancialAccountOr412).not.toHaveBeenCalled();
+    expect(getPayment).not.toHaveBeenCalled();
+    expect(recordAsaasReadIntent).not.toHaveBeenCalled();
   });
 
   it('deve redirecionar para transactionReceiptUrl quando disponível', async () => {

@@ -4,6 +4,7 @@ import { ZodError } from 'zod';
 import { AsaasHttpError, financeProfileOnboardingDataSchema } from '@alusa/finance';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
 import {
   AsaasSandboxSubaccountDailyLimitError,
   MissingAsaasAccountIdError,
@@ -13,7 +14,7 @@ import {
   submitKycData,
 } from '@alusa/finance';
 
-type SessionUser = { id?: string; role?: string; contaId?: string };
+type SessionUser = { id?: string; role?: string; contaId?: string; financeIntegrationMode?: string | null };
 
 const allowedRoles = new Set(['ADMIN']);
 
@@ -50,7 +51,7 @@ function json(status: number, body: unknown) {
 
 async function resolveAuth(): Promise<SessionUser | null> {
   const auth = await resolveTenantSession();
-  return auth.ok ? { id: auth.userId, contaId: auth.contaId, role: auth.role } : null;
+  return auth.ok ? { id: auth.userId, contaId: auth.contaId, role: auth.role, financeIntegrationMode: auth.financeIntegrationMode } : null;
 }
 
 export async function POST(req: Request) {
@@ -59,6 +60,8 @@ export async function POST(req: Request) {
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
       return json(403, { error: 'SEM_PERMISSAO' });
+    const capabilityBlock = blockUnavailableFinanceCapability(user.financeIntegrationMode, 'kyc');
+    if (capabilityBlock) return capabilityBlock;
 
     const payload = financeProfileOnboardingDataSchema.parse(await req.json());
 

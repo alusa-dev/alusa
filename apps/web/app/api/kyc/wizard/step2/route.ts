@@ -3,9 +3,10 @@ import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
 import { saveWizardStep2, wizardStep2Schema } from '@alusa/finance';
 
-type SessionUser = { id?: string; role?: string; contaId?: string };
+type SessionUser = { id?: string; role?: string; contaId?: string; financeIntegrationMode?: string | null };
 
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
@@ -13,7 +14,7 @@ function json(status: number, body: unknown) {
 
 async function resolveAuth(): Promise<SessionUser | null> {
   const auth = await resolveTenantSession();
-  return auth.ok ? { id: auth.userId, contaId: auth.contaId, role: auth.role } : null;
+  return auth.ok ? { id: auth.userId, contaId: auth.contaId, role: auth.role, financeIntegrationMode: auth.financeIntegrationMode } : null;
 }
 
 /**
@@ -26,6 +27,8 @@ export async function POST(req: Request) {
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!user.role || user.role.toUpperCase() !== 'ADMIN')
       return json(403, { error: 'SEM_PERMISSAO' });
+    const capabilityBlock = blockUnavailableFinanceCapability(user.financeIntegrationMode, 'kyc');
+    if (capabilityBlock) return capabilityBlock;
 
     const payload = wizardStep2Schema.parse(await req.json());
 

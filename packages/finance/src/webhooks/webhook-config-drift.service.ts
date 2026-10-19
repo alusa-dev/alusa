@@ -123,6 +123,7 @@ export interface WebhookConfigDriftStatus {
     extraEvents: string[];
   };
   canRepair: boolean;
+  repairSupported: boolean;
 }
 
 export interface RepairWebhookConfigDriftResult {
@@ -145,6 +146,7 @@ export interface RepairWebhookConfigDriftResult {
 function computeDrift(params: {
   account: {
     contaId: string;
+    financeIntegrationMode: string | null;
     asaasAccountId: string;
     financeProfileId: string;
     webhookId: string | null;
@@ -195,7 +197,8 @@ function computeDrift(params: {
       events: [...remoteEvents],
     },
     drift,
-    canRepair: webhook !== null,
+    repairSupported: params.account.financeIntegrationMode !== 'EXTERNAL_ASAAS_ACCOUNT',
+    canRepair: webhook !== null && params.account.financeIntegrationMode !== 'EXTERNAL_ASAAS_ACCOUNT',
   };
 }
 
@@ -211,7 +214,12 @@ export async function getWebhookConfigDriftStatus(contaId: string): Promise<Webh
       financeProfileId: true,
       webhookId: true,
       webhookAuthTokenHash: true,
-      financeProfile: { select: { contaId: true } },
+      financeProfile: {
+        select: {
+          contaId: true,
+          conta: { select: { financeIntegrationMode: true } },
+        },
+      },
     },
   });
 
@@ -232,6 +240,7 @@ export async function getWebhookConfigDriftStatus(contaId: string): Promise<Webh
   return computeDrift({
     account: {
       contaId: account.financeProfile.contaId,
+      financeIntegrationMode: account.financeProfile.conta.financeIntegrationMode,
       asaasAccountId: account.asaasAccountId,
       financeProfileId: account.financeProfileId,
       webhookId: account.webhookId,
@@ -269,6 +278,10 @@ export async function repairWebhookConfigDrift(params: {
     }
 
     await recordWebhookConfigDriftIssue(before);
+    if (!before.repairSupported) {
+      return { repaired: false, reason: 'UNSUPPORTED_FEATURE', before, after: before };
+    }
+
     const credentials = await loadAsaasCredentials(params.contaId);
     if (!credentials?.apiKey) {
       return { repaired: false, reason: 'CREDENTIALS_MISSING', before, after: before };

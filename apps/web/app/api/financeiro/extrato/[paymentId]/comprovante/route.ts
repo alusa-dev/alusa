@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getPayment, recordAsaasReadIntent } from '@alusa/finance';
 
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
+import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
@@ -20,6 +21,8 @@ export async function GET(
     const auth = await resolveTenantSession();
     if (!auth.ok) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const capabilityBlock = blockUnavailableFinanceCapability(auth.financeIntegrationMode, 'statement');
+    if (capabilityBlock) return capabilityBlock;
 
     const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;

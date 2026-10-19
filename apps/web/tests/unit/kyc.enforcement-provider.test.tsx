@@ -94,4 +94,20 @@ describe('KycEnforcementProvider', () => {
       poll: true,
     });
   });
+
+  it('desabilita enforcement KYC para conta Asaas externa', () => {
+    usePathnameMock.mockReturnValue('/dashboard');
+    useSessionMock.mockReturnValue({
+      status: 'authenticated',
+      data: { user: { id: 'u1', role: 'ADMIN', financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' } },
+    });
+
+    render(
+      <KycEnforcementProvider>
+        <div>child</div>
+      </KycEnforcementProvider>,
+    );
+
+    expect(useAccountVerificationMock).toHaveBeenCalledWith({ enabled: false, poll: false });
+  });
 });

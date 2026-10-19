@@ -40,6 +40,7 @@ async function run(req: Request) {
       accountsChecked: result.accountsChecked,
       driftsFound: result.driftsFound,
       driftsRepaired: result.driftsRepaired,
+      unsupportedDrifts: result.unsupportedDrifts,
       checkedAccounts: result.health.checkedAccounts,
       recovered: result.health.recoveredSuccessfully,
       failed,

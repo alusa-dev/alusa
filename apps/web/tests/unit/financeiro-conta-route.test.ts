@@ -4,6 +4,21 @@ import { NextResponse } from 'next/server';
 
 import { GET } from '@/app/api/financeiro/conta/route';
 
+const tenantCacheMock = vi.hoisted(() => ({
+  isCacheLayerEnabled: vi.fn(() => false),
+  buildTenantCacheKey: vi.fn(() => 'tenant-cache-key'),
+  get: vi.fn(),
+  set: vi.fn(),
+}));
+
+vi.mock('@/lib/cache/tenant-cache', () => ({
+  isCacheLayerEnabled: tenantCacheMock.isCacheLayerEnabled,
+  buildTenantCacheKey: tenantCacheMock.buildTenantCacheKey,
+}));
+vi.mock('@/lib/cache/server-cache', () => ({
+  getTenantCacheAdapter: vi.fn(() => ({ get: tenantCacheMock.get, set: tenantCacheMock.set })),
+}));
+
 vi.mock('@/lib/api/with-tenant-session', () => ({
   resolveTenantSession: vi.fn(),
 }));
@@ -24,7 +39,13 @@ async function mockSession(user: Record<string, string> | null) {
   const mod = await import('@/lib/api/with-tenant-session');
   vi.mocked(mod.resolveTenantSession).mockResolvedValue(
     user
-      ? ({ ok: true, contaId: user.contaId, userId: user.id, role: user.role } as never)
+      ? ({
+          ok: true,
+          contaId: user.contaId,
+          userId: user.id,
+          role: user.role,
+          financeIntegrationMode: user.financeIntegrationMode,
+        } as never)
       : ({ ok: false, reason: 'UNAUTHENTICATED' } as never),
   );
 }
@@ -32,6 +53,9 @@ async function mockSession(user: Record<string, string> | null) {
 describe('GET /api/financeiro/conta', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    tenantCacheMock.isCacheLayerEnabled.mockReturnValue(false);
+    tenantCacheMock.get.mockResolvedValue({ state: 'MISS' });
+    tenantCacheMock.set.mockResolvedValue(undefined);
   });
 
   it('retorna 401 quando nao autenticado', async () => {
@@ -46,6 +70,26 @@ describe('GET /api/financeiro/conta', () => {
 
     const response = await GET();
     expect(response.status).toBe(403);
+  });
+
+  it('bloqueia saldo de conta Asaas externa antes do cache ou leitura financeira', async () => {
+    await mockSession({ id: 'u1', contaId: 'c1', role: 'ADMIN', financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' });
+    const finance = await import('@alusa/finance');
+    tenantCacheMock.isCacheLayerEnabled.mockReturnValue(true);
+    tenantCacheMock.get.mockResolvedValue({ state: 'HIT', body: { data: { balance: { available: 999 } } } });
+
+    for (const mode of ['summary', 'overview']) {
+      const response = await GET(new NextRequest(`http://localhost/api/financeiro/conta?mode=${mode}`));
+      const body = await response.json();
+
+      expect(response.status).toBe(409);
+      expect(body).toEqual({ error: 'FINANCE_CAPABILITY_UNAVAILABLE', capability: 'balance' });
+    }
+
+    expect(tenantCacheMock.get).not.toHaveBeenCalled();
+    expect(tenantCacheMock.set).not.toHaveBeenCalled();
+    expect(finance.getAccountBalanceSummary).not.toHaveBeenCalled();
+    expect(finance.getAccountOverview).not.toHaveBeenCalled();
   });
 
   it('repassa bloqueio do gate financeiro', async () => {

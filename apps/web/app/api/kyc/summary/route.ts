@@ -2,8 +2,9 @@ import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-lo
 import { NextResponse } from 'next/server';
 import { getKycSummary } from '@alusa/finance';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
 
-type SessionUser = { id?: string; role?: string; contaId?: string };
+type SessionUser = { id?: string; role?: string; contaId?: string; financeIntegrationMode?: string | null };
 
 const allowedRoles = new Set(['ADMIN']);
 
@@ -13,7 +14,14 @@ function json(status: number, body: unknown) {
 
 async function resolveAuth(): Promise<SessionUser | null> {
   const auth = await resolveTenantSession();
-  return auth.ok ? { id: auth.userId, contaId: auth.contaId, role: auth.role } : null;
+  return auth.ok
+    ? {
+        id: auth.userId,
+        contaId: auth.contaId,
+        role: auth.role,
+        financeIntegrationMode: auth.financeIntegrationMode,
+      }
+    : null;
 }
 
 export async function GET(request: Request = new Request('http://localhost/api/kyc/summary')) {
@@ -22,6 +30,8 @@ export async function GET(request: Request = new Request('http://localhost/api/k
     if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
       return json(403, { error: 'SEM_PERMISSAO' });
+    const capabilityBlock = blockUnavailableFinanceCapability(user.financeIntegrationMode, 'kyc');
+    if (capabilityBlock) return capabilityBlock;
 
     const summary = await getKycSummary(user.contaId);
     return json(200, { data: summary });

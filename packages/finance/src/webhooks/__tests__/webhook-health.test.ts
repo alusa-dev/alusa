@@ -90,7 +90,7 @@ describe('checkWebhookHealth', () => {
       {
         id: 'acc-1',
         asaasAccountId: 'ext-acc-1',
-        financeProfile: { contaId: 'conta-1' },
+        financeProfile: { contaId: 'conta-1', conta: { financeIntegrationMode: 'WHITELABEL_BAAS' } },
       },
     ]);
 
@@ -115,7 +115,7 @@ describe('checkWebhookHealth', () => {
       {
         id: 'internal-account-id',
         asaasAccountId: 'asaas-account-secret-id',
-        financeProfile: { contaId: 'tenant-sensitive-id' },
+        financeProfile: { contaId: 'tenant-sensitive-id', conta: { financeIntegrationMode: 'WHITELABEL_BAAS' } },
       },
     ]);
     mockListWebhooks.mockResolvedValue({ data: [] });
@@ -134,7 +134,7 @@ describe('checkWebhookHealth', () => {
       {
         id: 'acc-1',
         asaasAccountId: 'ext-acc-1',
-        financeProfile: { contaId: 'conta-1' },
+        financeProfile: { contaId: 'conta-1', conta: { financeIntegrationMode: 'WHITELABEL_BAAS' } },
       },
     ]);
 
@@ -175,7 +175,7 @@ describe('checkWebhookHealth', () => {
       {
         id: 'acc-1',
         asaasAccountId: 'ext-acc-1',
-        financeProfile: { contaId: 'conta-1' },
+        financeProfile: { contaId: 'conta-1', conta: { financeIntegrationMode: 'WHITELABEL_BAAS' } },
       },
     ]);
 
@@ -202,7 +202,7 @@ describe('checkWebhookHealth', () => {
       {
         id: 'acc-1',
         asaasAccountId: 'ext-acc-1',
-        financeProfile: { contaId: 'conta-1' },
+        financeProfile: { contaId: 'conta-1', conta: { financeIntegrationMode: 'WHITELABEL_BAAS' } },
       },
     ]);
 
@@ -215,6 +215,51 @@ describe('checkWebhookHealth', () => {
     expect(result.interruptedFound).toBe(1);
     expect(result.recoveredSuccessfully).toBe(0);
     expect(mockRemoveBackoff).not.toHaveBeenCalled();
+  });
+
+  it('mantém recovery opt-in e não tenta por padrão', async () => {
+    const alertSpy = vi.spyOn(alertService, 'alertInterruptedQueue').mockResolvedValue({ channelResults: [] });
+    mockFindMany.mockResolvedValue([
+      {
+        id: 'acc-1',
+        asaasAccountId: 'ext-acc-1',
+        financeProfile: { contaId: 'conta-1', conta: { financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' } },
+      },
+    ]);
+    mockListWebhooks.mockResolvedValue({
+      data: [{ id: 'wh-1', url: 'https://example.com', enabled: true, interrupted: true, penalizedRequestsCount: 4 }],
+    });
+
+    const result = await checkWebhookHealth();
+
+    expect(result.interruptedFound).toBe(1);
+    expect(result.recoveredSuccessfully).toBe(0);
+    expect(mockRemoveBackoff).not.toHaveBeenCalled();
+    expect(alertSpy).toHaveBeenCalledWith('conta-1', ['wh-1']);
+  });
+
+  it('não recupera backoff de conta externa mesmo com autoRecover explícito', async () => {
+    const alertSpy = vi.spyOn(alertService, 'alertInterruptedQueue').mockResolvedValue({ channelResults: [] });
+    mockFindMany.mockResolvedValue([{
+      id: 'acc-external',
+      asaasAccountId: 'asaas-ext-1',
+      financeProfile: { contaId: 'conta-ext', conta: { financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' } },
+    }]);
+    mockListWebhooks.mockResolvedValue({
+      data: [{ id: 'wh-ext', url: 'https://example.com', enabled: true, interrupted: true, penalizedRequestsCount: 5 }],
+    });
+
+    const result = await checkWebhookHealth({ contaId: 'conta-ext', autoRecover: true });
+
+    expect(result).toMatchObject({ checkedAccounts: 1, interruptedFound: 1, recoveredSuccessfully: 0, recoveryFailed: 0 });
+    expect(result.errors).toEqual([]);
+    expect(mockRemoveBackoff).not.toHaveBeenCalled();
+    expect(mockAuditRecord).not.toHaveBeenCalled();
+    expect(alertSpy).toHaveBeenCalledWith('conta-ext', ['wh-ext']);
+    expect(mockCreateNotification).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-ext',
+      message: expect.stringContaining('Intervenção manual necessária.'),
+    }));
   });
 
   it('repete alerta após falha de canal e para após persistir sucesso', async () => {
@@ -230,7 +275,7 @@ describe('checkWebhookHealth', () => {
     mockFindMany.mockResolvedValue([{
       id: 'acc-1',
       asaasAccountId: 'ext-acc-1',
-      financeProfile: { contaId: 'conta-1' },
+      financeProfile: { contaId: 'conta-1', conta: { financeIntegrationMode: 'WHITELABEL_BAAS' } },
     }]);
     mockListWebhooks.mockResolvedValue({
       data: [{ id: 'wh-1', url: 'https://example.com', enabled: true, interrupted: true }],
@@ -267,7 +312,7 @@ describe('checkWebhookHealth', () => {
       {
         id: 'acc-1',
         asaasAccountId: 'ext-acc-1',
-        financeProfile: { contaId: 'conta-1' },
+        financeProfile: { contaId: 'conta-1', conta: { financeIntegrationMode: 'WHITELABEL_BAAS' } },
       },
     ]);
 
@@ -285,7 +330,7 @@ describe('checkWebhookHealth', () => {
       {
         id: 'acc-1',
         asaasAccountId: 'ext-acc-1',
-        financeProfile: { contaId: 'conta-1' },
+        financeProfile: { contaId: 'conta-1', conta: { financeIntegrationMode: 'WHITELABEL_BAAS' } },
       },
     ]);
 

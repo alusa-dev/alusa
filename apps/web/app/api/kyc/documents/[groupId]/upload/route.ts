@@ -1,6 +1,7 @@
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
 import { isValidKycGroupId } from '@/features/kyc/utils/group-id';
 import { DocumentsNotReadyError } from '@alusa/finance/errors/documents-not-ready-error';
 import { getKycSnapshotByContaId } from '@alusa/finance/use-cases/kyc/get-kyc-snapshot';
@@ -15,7 +16,7 @@ import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { withTenantUploadQuota } from '@/lib/upload-quota.server';
 import { randomUUID } from 'node:crypto';
 
-type SessionUser = { id?: string; role?: string; contaId?: string };
+type SessionUser = { id?: string; role?: string; contaId?: string; financeIntegrationMode?: string | null };
 
 const allowedRoles = new Set(['ADMIN']);
 
@@ -33,7 +34,7 @@ function json(status: number, body: unknown, headers?: Record<string, string>) {
 
 async function resolveAuth(): Promise<SessionUser | null> {
   const auth = await resolveTenantSession();
-  return auth.ok ? { id: auth.userId, contaId: auth.contaId, role: auth.role } : null;
+  return auth.ok ? { id: auth.userId, contaId: auth.contaId, role: auth.role, financeIntegrationMode: auth.financeIntegrationMode } : null;
 }
 
 function isValidOpaqueId(value: unknown): value is string {
@@ -61,6 +62,8 @@ export async function POST(req: Request, context: RouteContext) {
   if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
   if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
     return json(403, { error: 'SEM_PERMISSAO' });
+  const capabilityBlock = blockUnavailableFinanceCapability(user.financeIntegrationMode, 'kyc');
+  if (capabilityBlock) return capabilityBlock;
   const rate = await rateLimitAsync(
     `kyc-upload:${user.contaId}:${user.id}:${ipFromRequest(req)}`,
     12,

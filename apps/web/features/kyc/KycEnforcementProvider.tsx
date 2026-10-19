@@ -7,6 +7,7 @@ import { useAccountVerification } from './hooks/use-account-verification';
 import { KycBlockingModal } from './components/KycBlockingModal';
 import type { AccountVerificationResponse } from './constants';
 import { isPendingDocumentsBlockBypassedForTesting } from './test-bypass';
+import { resolveFinancialCapabilities } from '@/lib/finance/financial-capabilities';
 
 // ── Context ──────────────────────────────────────────────────────────────
 
@@ -48,11 +49,15 @@ export function KycEnforcementProvider({ children }: { children?: React.ReactNod
   const session = sessionResult?.data;
   const authStatus = sessionResult?.status ?? 'unauthenticated';
   const bypassPendingDocumentsBlock = isPendingDocumentsBlockBypassedForTesting();
+  const financeIntegrationMode =
+    (session?.user as { financeIntegrationMode?: string | null } | undefined)?.financeIntegrationMode;
+  const canUseKyc = resolveFinancialCapabilities(financeIntegrationMode).canUseKyc;
 
   const isAuthenticated = authStatus === 'authenticated' && Boolean(session?.user?.id);
   const role = (session?.user as { role?: string } | undefined)?.role;
   const isAdmin = typeof role === 'string' && role.toUpperCase() === 'ADMIN';
-  const shouldEnable = !bypassPendingDocumentsBlock && shouldEnableKycEnforcement(pathname);
+  const shouldEnable =
+    !bypassPendingDocumentsBlock && canUseKyc && shouldEnableKycEnforcement(pathname);
 
   const { verification, loading, isApproved, refresh } = useAccountVerification({
     enabled: isAuthenticated && isAdmin && shouldEnable,

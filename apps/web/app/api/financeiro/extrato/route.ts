@@ -4,6 +4,7 @@ import { ZodError } from 'zod';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
+import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
 import { getExtrato, extratoQueryInputSchema } from '@alusa/finance';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
@@ -17,6 +18,8 @@ export async function GET(req: NextRequest) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const capabilityBlock = blockUnavailableFinanceCapability(auth.financeIntegrationMode, 'statement');
+    if (capabilityBlock) return capabilityBlock;
 
     const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;

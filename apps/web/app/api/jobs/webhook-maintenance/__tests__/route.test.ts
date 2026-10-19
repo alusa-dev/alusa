@@ -52,4 +52,33 @@ describe('webhook-maintenance failure telemetry', () => {
     );
     expect(mocks.logJobResult).not.toHaveBeenCalled();
   });
+
+  it('registra drift sem suporte como trabalho visível sem falha operacional', async () => {
+    mocks.maintenance.mockResolvedValue({
+      accountsChecked: 1,
+      driftsFound: 1,
+      driftsRepaired: 0,
+      unsupportedDrifts: 1,
+      errors: [],
+      health: {
+        checkedAccounts: 1,
+        interruptedFound: 0,
+        recoveredSuccessfully: 0,
+        recoveryFailed: 0,
+        errors: [],
+      },
+    });
+
+    const response = await GET(new Request('http://localhost/api/jobs/webhook-maintenance'));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.result.unsupportedDrifts).toBe(1);
+    expect(mocks.logJobResult).toHaveBeenCalledWith(
+      'webhook-maintenance',
+      expect.objectContaining({ correlationId: 'test-run-id' }),
+      expect.objectContaining({ unsupportedDrifts: 1 }),
+      expect.objectContaining({ partialFailure: false, workStatus: 'worked' }),
+    );
+  });
 });

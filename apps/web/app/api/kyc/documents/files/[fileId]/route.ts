@@ -3,12 +3,13 @@ import { NextResponse } from 'next/server';
 import { deleteKycDocumentFile, updateKycDocumentFile, viewKycDocumentFile } from '@alusa/finance';
 import { validateUploadBuffer } from '@/lib/upload-security';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
 import { readBoundedFormData } from '@/lib/upload-request';
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { withTenantUploadQuota } from '@/lib/upload-quota.server';
 import { randomUUID } from 'node:crypto';
 
-type SessionUser = { id?: string; role?: string; contaId?: string };
+type SessionUser = { id?: string; role?: string; contaId?: string; financeIntegrationMode?: string | null };
 
 const allowedRoles = new Set(['ADMIN']);
 const MAX_ID_LEN = 200;
@@ -23,7 +24,7 @@ function json(status: number, body: unknown) {
 
 async function resolveAuth(): Promise<SessionUser | null> {
   const auth = await resolveTenantSession();
-  return auth.ok ? { id: auth.userId, contaId: auth.contaId, role: auth.role } : null;
+  return auth.ok ? { id: auth.userId, contaId: auth.contaId, role: auth.role, financeIntegrationMode: auth.financeIntegrationMode } : null;
 }
 
 function isValidOpaqueId(value: unknown): value is string {
@@ -44,6 +45,8 @@ export async function GET(_req: Request, context: RouteContext) {
   if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
   if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
     return json(403, { error: 'SEM_PERMISSAO' });
+  const capabilityBlock = blockUnavailableFinanceCapability(user.financeIntegrationMode, 'kyc');
+  if (capabilityBlock) return capabilityBlock;
 
   const { fileId } = await Promise.resolve(context.params);
   if (!isValidOpaqueId(fileId)) {
@@ -79,6 +82,8 @@ export async function DELETE(_req: Request, context: RouteContext) {
   if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
   if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
     return json(403, { error: 'SEM_PERMISSAO' });
+  const capabilityBlock = blockUnavailableFinanceCapability(user.financeIntegrationMode, 'kyc');
+  if (capabilityBlock) return capabilityBlock;
 
   const { fileId } = await Promise.resolve(context.params);
   if (!isValidOpaqueId(fileId)) {
@@ -125,6 +130,8 @@ export async function POST(req: Request, context: RouteContext) {
   if (!user?.id || !user?.contaId) return json(401, { error: 'NAO_AUTENTICADO' });
   if (!user.role || !allowedRoles.has(user.role.toUpperCase()))
     return json(403, { error: 'SEM_PERMISSAO' });
+  const capabilityBlock = blockUnavailableFinanceCapability(user.financeIntegrationMode, 'kyc');
+  if (capabilityBlock) return capabilityBlock;
   const rate = await rateLimitAsync(
     `kyc-upload:${user.contaId}:${user.id}:${ipFromRequest(req)}`,
     12,

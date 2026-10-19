@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
+import { useSession } from 'next-auth/react';
 import Link from 'next/link';
 import {
   fetchCurrentProfile,
@@ -127,6 +128,10 @@ const profileEditingBadgeClassName =
   'flex items-center gap-2 rounded-lg bg-indigo-50 px-3 py-1.5 text-indigo-700 alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-brand-300)]';
 
 export default function ContaPerfilPage() {
+  const { data: session, status: sessionStatus } = useSession();
+  const financeIntegrationMode =
+    (session?.user as { financeIntegrationMode?: string | null } | undefined)?.financeIntegrationMode;
+  const isExternalAsaasAccount = financeIntegrationMode === 'EXTERNAL_ASAAS_ACCOUNT';
   const [profile, setProfile] = useState<UserProfileWithSchool | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -265,6 +270,7 @@ export default function ContaPerfilPage() {
   useEffect(() => {
     if (!profile) return;
     if (profile.role?.toUpperCase() !== 'ADMIN') return;
+    if (sessionStatus === 'loading' || isExternalAsaasAccount) return;
 
     let mounted = true;
     setFinanceLoading(true);
@@ -292,7 +298,7 @@ export default function ContaPerfilPage() {
     return () => {
       mounted = false;
     };
-  }, [profile]);
+  }, [profile, sessionStatus, isExternalAsaasAccount]);
 
   const reloadFinanceSnapshot = useCallback(async () => {
     const res = await fetch('/api/conta/finance-onboarding', { method: 'GET', cache: 'no-store' });
@@ -1096,7 +1102,7 @@ export default function ContaPerfilPage() {
         </CardContent>
       </Card>
 
-      {profile.role?.toUpperCase() === 'ADMIN' && (
+      {profile.role?.toUpperCase() === 'ADMIN' && !isExternalAsaasAccount && (
         <Card
           className={`${profileCardClassName} transition-all duration-200 ${
             isEditingFinance

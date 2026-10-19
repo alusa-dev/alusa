@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
+import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
 import { getAccountBalanceSummary, getAccountOverview } from '@alusa/finance';
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
 import { PrivateMemoryCache, privateJson, type CacheState } from '@/lib/private-cache';
@@ -40,6 +41,8 @@ export async function GET(req?: NextRequest) {
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO' });
     }
+    const capabilityBlock = blockUnavailableFinanceCapability(auth.financeIntegrationMode, 'balance');
+    if (capabilityBlock) return capabilityBlock;
 
     if (mode === 'summary') {
       if (isCacheLayerEnabled()) {

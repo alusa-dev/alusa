@@ -91,6 +91,7 @@ export interface WebhookMaintenanceResult {
   accountsChecked: number;
   driftsFound: number;
   driftsRepaired: number;
+  unsupportedDrifts: number;
   health: Awaited<ReturnType<typeof checkWebhookHealth>>;
   errors: Array<{ contaId: string; error: string }>;
   skippedDueToLock?: boolean;
@@ -118,6 +119,7 @@ const STEP_DETAIL_FIELDS = [
   'accountFailures',
   'driftsFound',
   'driftsRepaired',
+  'unsupportedDrifts',
   'archived',
   'selected',
   'marked',
@@ -332,7 +334,7 @@ async function runWebhookSchedulerUnlocked(
         take: 50,
       });
 
-      const results: Array<{ contaId: string; hasDrift: boolean; repaired: boolean }> = [];
+      const results: Array<{ contaId: string; hasDrift: boolean; repaired: boolean; unsupported: boolean }> = [];
       let accountFailures = 0;
 
       for (const account of accounts) {
@@ -357,16 +359,20 @@ async function runWebhookSchedulerUnlocked(
               contaId,
               actor: { type: 'SYSTEM' },
             });
-            if (!repair.repaired && repair.reason !== 'NO_DRIFT') {
+            const unsupported =
+              !repair.repaired &&
+              repair.reason === 'UNSUPPORTED_FEATURE' &&
+              repair.before?.repairSupported === false;
+            if (!repair.repaired && repair.reason !== 'NO_DRIFT' && !unsupported) {
               accountFailures += 1;
             }
-            results.push({ contaId, hasDrift: true, repaired: repair.repaired });
+            results.push({ contaId, hasDrift: true, repaired: repair.repaired, unsupported });
           } else {
-            results.push({ contaId, hasDrift: false, repaired: false });
+            results.push({ contaId, hasDrift: false, repaired: false, unsupported: false });
           }
         } catch {
           accountFailures += 1;
-          results.push({ contaId, hasDrift: false, repaired: false });
+          results.push({ contaId, hasDrift: false, repaired: false, unsupported: false });
         }
       }
 
@@ -381,6 +387,7 @@ async function runWebhookSchedulerUnlocked(
         accountsChecked: accounts.length,
         driftsFound: results.filter((r) => r.hasDrift).length,
         driftsRepaired: results.filter((r) => r.repaired).length,
+        unsupportedDrifts: results.filter((r) => r.unsupported).length,
       };
     });
     steps.push(driftStep);
@@ -486,6 +493,7 @@ export async function runWebhookHealthAndDriftMaintenance(options: {
       accountsChecked: 0,
       driftsFound: 0,
       driftsRepaired: 0,
+      unsupportedDrifts: 0,
       health: {
         checkedAccounts: 0,
         interruptedFound: 0,
@@ -528,6 +536,7 @@ async function runWebhookHealthAndDriftMaintenanceUnlocked(options: {
 
   let driftsFound = 0;
   let driftsRepaired = 0;
+  let unsupportedDrifts = 0;
 
   for (const account of accounts) {
     const contaId = account.financeProfile.contaId;
@@ -549,14 +558,29 @@ async function runWebhookHealthAndDriftMaintenanceUnlocked(options: {
       if (!hasDrift) continue;
 
       driftsFound++;
-      if (autoRepair) {
+      if (!status.repairSupported) {
+        // Persist the known drift issue without making a remote repair call.
+        const repair = await repairWebhookConfigDrift({
+          contaId,
+          actor: { type: 'SYSTEM' },
+        });
+        if (
+          !repair.repaired &&
+          repair.reason === 'UNSUPPORTED_FEATURE' &&
+          repair.before?.repairSupported === false
+        ) {
+          unsupportedDrifts++;
+        } else if (!repair.repaired && repair.reason !== 'NO_DRIFT') {
+          errors.push({ contaId, error: repair.failureCategory ?? repair.reason ?? 'DRIFT_REPAIR_NOT_COMPLETED' });
+        }
+      } else if (autoRepair) {
         const repair = await repairWebhookConfigDrift({
           contaId,
           actor: { type: 'SYSTEM' },
         });
         if (repair.repaired) driftsRepaired++;
-        if (repair.failureCategory) {
-          errors.push({ contaId, error: repair.failureCategory });
+        if (!repair.repaired && repair.reason !== 'NO_DRIFT') {
+          errors.push({ contaId, error: repair.failureCategory ?? repair.reason ?? 'DRIFT_REPAIR_NOT_COMPLETED' });
         }
       }
     } catch (error) {
@@ -573,6 +597,7 @@ async function runWebhookHealthAndDriftMaintenanceUnlocked(options: {
     accountsChecked: accounts.length,
     driftsFound,
     driftsRepaired,
+    unsupportedDrifts,
     health,
     errors: [...errors, ...health.errors.map((item) => ({ contaId: item.contaId, error: item.error }))],
   };

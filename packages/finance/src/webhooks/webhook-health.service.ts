@@ -80,7 +80,7 @@ export interface WebhookHealthStatus {
 
 /**
  * Verifica o estado dos webhooks de todas as subcontas ativas.
- * Se encontrar `interrupted=true`, tenta remover a penalização.
+ * Recovery remoto é limitado às contas gerenciadas e exige opt-in explícito.
  */
 export async function checkWebhookHealth(opts?: {
   contaId?: string;
@@ -112,7 +112,12 @@ export async function checkWebhookHealth(opts?: {
       id: true,
       asaasAccountId: true,
       apiKeyStatus: true,
-      financeProfile: { select: { contaId: true } },
+      financeProfile: {
+        select: {
+          contaId: true,
+          conta: { select: { financeIntegrationMode: true } },
+        },
+      },
     },
   });
 
@@ -120,6 +125,8 @@ export async function checkWebhookHealth(opts?: {
 
   for (const account of accounts) {
     const contaId = account.financeProfile.contaId;
+    const canRecover =
+      autoRecover && account.financeProfile.conta.financeIntegrationMode !== 'EXTERNAL_ASAAS_ACCOUNT';
 
     try {
       const creds = await loadAsaasCredentials(contaId);
@@ -145,7 +152,7 @@ export async function checkWebhookHealth(opts?: {
         category: NotificationCategory.SYSTEM,
         severity: NotificationSeverity.CRITICAL,
         title: 'Fila de webhook interrompida',
-        message: `${interrupted.length} webhook(s) interrompido(s) no Asaas. Eventos financeiros podem não estar chegando. ${autoRecover ? 'Recuperação automática em andamento.' : 'Intervenção manual necessária.'}`,
+        message: `${interrupted.length} webhook(s) interrompido(s) no Asaas. Eventos financeiros podem não estar chegando. ${canRecover ? 'Recuperação automática em andamento.' : 'Intervenção manual necessária.'}`,
         dedupeKey: `webhook_interrupted:${contaId}:${interruptedFingerprint}`,
         sourceType: 'SYSTEM',
         sourceId: null,
@@ -240,7 +247,7 @@ export async function checkWebhookHealth(opts?: {
         }
       }
 
-      if (!autoRecover) continue;
+      if (!canRecover) continue;
 
       for (const webhook of interrupted) {
         try {

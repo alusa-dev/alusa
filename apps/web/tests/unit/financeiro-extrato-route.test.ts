@@ -44,6 +44,7 @@ async function mockSession(user: Record<string, string> | null) {
           contaId: user.contaId,
           userId: user.id,
           role: user.role,
+          financeIntegrationMode: user.financeIntegrationMode,
         } as never)
       : { ok: false, reason: 'UNAUTHENTICATED' },
   );
@@ -81,6 +82,20 @@ describe('GET /api/financeiro/extrato', () => {
     const req = new NextRequest('http://localhost:3000/api/financeiro/extrato');
     const res = await GET(req);
     expect(res.status).toBe(403);
+  });
+
+  it('bloqueia extrato de conta Asaas externa antes do gate e da consulta', async () => {
+    await mockSession({ id: 'u1', contaId: 't1', role: 'ADMIN', financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' });
+    const { getExtrato } = await import('@alusa/finance');
+    const gate = await import('@/lib/finance/financial-account-gate');
+
+    const response = await GET(new NextRequest('http://localhost:3000/api/financeiro/extrato'));
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toEqual({ error: 'FINANCE_CAPABILITY_UNAVAILABLE', capability: 'statement' });
+    expect(gate.guardFinancialAccountOr412).not.toHaveBeenCalled();
+    expect(getExtrato).not.toHaveBeenCalled();
   });
 
   it('deve retornar extrato com novo contrato', async () => {

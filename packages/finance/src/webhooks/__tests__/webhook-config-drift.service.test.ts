@@ -93,7 +93,10 @@ describe('webhook-config-drift.service', () => {
       financeProfileId: 'fp_1',
       webhookId: 'wh_1',
       webhookAuthTokenHash: 'hash-1',
-      financeProfile: { contaId: 'conta-1' },
+      financeProfile: {
+        contaId: 'conta-1',
+        conta: { financeIntegrationMode: 'WHITELABEL_BAAS' },
+      },
     });
     mocks.loadCredentials.mockResolvedValue({ apiKey: 'key_1' });
     mocks.issueUpsert.mockResolvedValue({ id: 'issue_1' });
@@ -174,6 +177,57 @@ describe('webhook-config-drift.service', () => {
       actor: { type: 'SYSTEM' },
     });
     expect(mocks.listWebhooks).toHaveBeenCalledTimes(2);
+  });
+
+  it('mantém drift visível, mas não repara webhook remoto de conta Asaas externa', async () => {
+    mocks.findFirst.mockResolvedValueOnce({
+      id: 'acc_1',
+      asaasAccountId: 'asaas_acc_1',
+      financeProfileId: 'fp_1',
+      webhookId: 'wh_1',
+      webhookAuthTokenHash: 'hash-1',
+      financeProfile: {
+        contaId: 'conta-1',
+        conta: { financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' },
+      },
+    });
+    mocks.listWebhooks.mockResolvedValue({
+      data: [remoteWebhook({ interrupted: true, penalizedRequestsCount: 4 })],
+      hasMore: false,
+    });
+
+    const result = await repairWebhookConfigDrift({ contaId: 'conta-1', actor: { type: 'SYSTEM' } });
+
+    expect(result).toMatchObject({ repaired: false, reason: 'UNSUPPORTED_FEATURE' });
+    expect(result.before?.drift).toMatchObject({ interrupted: true, penalized: true });
+    expect(result.before?.canRepair).toBe(false);
+    expect(mocks.issueUpsert).toHaveBeenCalled();
+    expect(mocks.ensureWebhook).not.toHaveBeenCalled();
+    expect(mocks.listWebhooks).toHaveBeenCalledTimes(1);
+  });
+
+  it('não cria webhook remoto ausente em conta Asaas externa', async () => {
+    mocks.findFirst.mockResolvedValueOnce({
+      id: 'acc_1',
+      asaasAccountId: 'asaas_acc_1',
+      financeProfileId: 'fp_1',
+      webhookId: null,
+      webhookAuthTokenHash: 'hash-1',
+      financeProfile: {
+        contaId: 'conta-1',
+        conta: { financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT' },
+      },
+    });
+    mocks.listWebhooks.mockResolvedValue({ data: [], hasMore: false });
+
+    const result = await repairWebhookConfigDrift({ contaId: 'conta-1' });
+
+    expect(result).toMatchObject({ repaired: false, reason: 'UNSUPPORTED_FEATURE' });
+    expect(result.before?.drift.remoteMissing).toBe(true);
+    expect(result.before?.repairSupported).toBe(false);
+    expect(mocks.issueUpsert).toHaveBeenCalled();
+    expect(mocks.ensureWebhook).not.toHaveBeenCalled();
+    expect(mocks.listWebhooks).toHaveBeenCalledTimes(1);
   });
 
   it('classifica 400 do Asaas como erro do provedor e preserva detalhes seguros', async () => {
