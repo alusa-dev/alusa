@@ -38,7 +38,7 @@ export function SiteLanding() {
             </h1>
             <div className="site-hero-actions">
               <PillLink href="#modulos" variant="primary">Conhecer a Alusa</PillLink>
-              <PillLink href="/register" variant="secondary">Teste grátis por 14 dias</PillLink>
+              <PillLink href="/lista-de-espera" variant="secondary">Entre na lista de espera</PillLink>
             </div>
           </div>
 
@@ -71,7 +71,7 @@ export function SiteLanding() {
                 <br className="site-mobile-visible-break" />
                 {' '}organizando a escola.
               </h2>
-              <PillLink href="/register" variant="primary">Conhecer a Alusa</PillLink>
+              <PillLink href="#modulos" variant="primary">Conhecer a Alusa</PillLink>
             </div>
             <p>
               A Alusa reúne as informações que sua equipe precisa para acompanhar alunos, famílias, turmas e o dia a dia sem depender de vários lugares diferentes.
@@ -136,7 +136,7 @@ export function SiteLanding() {
             <p>
               Acompanhe mensalidades, pagamentos e pendências de forma clara, sem transformar todo começo de mês em uma conferência manual.
             </p>
-            <PillLink href="/register" variant="primary">Conhecer a Alusa</PillLink>
+            <PillLink href="#financeiro" variant="primary">Conhecer a Alusa</PillLink>
           </div>
         </div>
       </section>
