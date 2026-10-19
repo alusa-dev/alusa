@@ -69,6 +69,50 @@ function stableValue(prefix: string, returnId: string, chargeId: string): string
   return `${prefix}-${digest}`;
 }
 
+const openRefundAttemptStatuses = ['REQUESTED', 'IN_PROGRESS', 'AWAITING_PAYER_ACTION', 'NEEDS_RECONCILIATION'] as const;
+
+async function lockAndCheckRefundCapacity(params: {
+  tx: Prisma.TransactionClient;
+  contaId: string;
+  returnId: string;
+  chargeId: string;
+  chargeValue: number;
+  requestedAmount: number;
+  providerRefundBaseline: number;
+  allowExistingReservation?: boolean;
+}) {
+  const { tx, contaId, returnId, chargeId } = params;
+  // Different returns can point at the same payment. Serialize by the tenant/payment
+  // pair, then include confirmed and still-open attempts across every return.
+  await tx.$queryRaw<unknown[]>`SELECT pg_advisory_xact_lock(hashtext(${contaId}), hashtext(${chargeId}))`;
+  const attempts = await tx.storeSaleRefundAttempt.findMany({
+    where: { contaId, chargeId },
+    select: { returnId: true, status: true, requestedAmount: true, confirmedAmount: true },
+  });
+  const existing = attempts.find((attempt) => attempt.returnId === returnId
+    && ['REQUESTED', ...openRefundAttemptStatuses.slice(1)].includes(attempt.status));
+  if (params.allowExistingReservation && existing) return;
+  const confirmed = attempts.reduce((sum, attempt) => {
+    const confirmedAmount = toRefundAmount(attempt.confirmedAmount);
+    // A legacy fully-refunded attempt may have no confirmedAmount persisted.
+    const effectiveConfirmed = attempt.status === 'REFUNDED' && confirmedAmount <= 0
+      ? toRefundAmount(attempt.requestedAmount)
+      : confirmedAmount;
+    return sum + effectiveConfirmed;
+  }, 0);
+  const reserved = attempts
+    .filter((attempt) => openRefundAttemptStatuses.includes(attempt.status as typeof openRefundAttemptStatuses[number]))
+    .reduce((sum, attempt) => {
+      const outstanding = Math.max(toRefundAmount(attempt.requestedAmount) - toRefundAmount(attempt.confirmedAmount), 0);
+      return sum + outstanding;
+    }, 0);
+  const alreadyConsumed = Math.max(params.providerRefundBaseline, confirmed) + reserved;
+  const available = Math.max(0, Number((params.chargeValue - alreadyConsumed).toFixed(2)));
+  if (params.requestedAmount > available + 0.001) {
+    throw new StoreSaleRefundError('SALDO_REEMBOLSO_INSUFICIENTE', 'O saldo disponível para estorno deste pagamento já foi reservado por outra devolução.');
+  }
+}
+
 export async function requestStoreSaleRefund(input: Input) {
   const saleReturn = await withTenant(input.contaId, (tx) => tx.storeSaleReturn.findFirst({
     where: { id: input.returnId, saleId: input.saleId, contaId: input.contaId },
@@ -185,6 +229,11 @@ export async function requestStoreSaleRefund(input: Input) {
         const idempotencyKey = `store-return-retry-${randomUUID()}`;
         const correlationId = randomUUID();
         const allocation = toRefundAmount(deniedAttempt.requestedAmount);
+        await lockAndCheckRefundCapacity({
+          tx, contaId: input.contaId, returnId: saleReturn.id, chargeId: charge.id,
+          chargeValue: toRefundAmount(charge.value), requestedAmount: allocation,
+          providerRefundBaseline: refundBaselinesByCharge.get(charge.id) ?? 0,
+        });
         const attempt = await tx.storeSaleRefundAttempt.create({
           data: {
             contaId: input.contaId,
@@ -221,10 +270,15 @@ export async function requestStoreSaleRefund(input: Input) {
       : Math.min(value, remaining);
     if (allocation <= 0) continue;
     const existingRetryAttempt = input.mode === 'RETRY_DENIED' ? retryAttemptsByCharge.get(charge.id) : undefined;
-    const attempt = existingRetryAttempt ?? await withTenant(input.contaId, (tx) => {
+    const attempt = existingRetryAttempt ?? await withTenant(input.contaId, async (tx) => {
       const attemptKey = stableValue('store-return', saleReturn.id, charge.id);
       const correlationId = stableValue('store-return-correlation', saleReturn.id, charge.id);
       const providerRefundBaseline = refundBaselinesByCharge.get(charge.id) ?? 0;
+      await lockAndCheckRefundCapacity({
+        tx, contaId: input.contaId, returnId: saleReturn.id, chargeId: charge.id,
+        chargeValue: value, requestedAmount: allocation, providerRefundBaseline,
+        allowExistingReservation: true,
+      });
       return tx.storeSaleRefundAttempt.upsert({
         where: { uq_store_sale_refund_attempt_conta_key: { contaId: input.contaId, idempotencyKey: attemptKey } },
         create: {

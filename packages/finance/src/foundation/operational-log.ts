@@ -69,6 +69,7 @@ export type FinanceOperationalEventName =
   | 'finance.use_cases.create_installment_plan.failed'
   | 'finance.use_cases.create_payment.degraded'
   | 'finance.use_cases.create_standalone_charge.degraded'
+  | 'finance.store_sale.return_refund_dispatch.failed'
   | 'finance.use_cases.create_standalone_charge.failed'
   | 'finance.use_cases.create_standalone_installment_plan.failed'
   | 'finance.use_cases.create_subscription.degraded'

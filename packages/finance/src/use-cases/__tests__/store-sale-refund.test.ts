@@ -4,8 +4,9 @@ import { Prisma } from '@prisma/client';
 const { tx, prismaMock, preflightMock, auditMock } = vi.hoisted(() => {
   const tx = {
     $executeRaw: vi.fn(async () => 1),
+    $queryRaw: vi.fn(async () => []),
     storeSaleReturn: { findFirst: vi.fn(), updateMany: vi.fn() },
-    storeSaleRefundAttempt: { create: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
+    storeSaleRefundAttempt: { create: vi.fn(), findMany: vi.fn(), updateMany: vi.fn(), upsert: vi.fn() },
   };
   return {
     tx,
@@ -45,6 +46,8 @@ describe('requestStoreSaleRefund', () => {
     vi.clearAllMocks();
     tx.storeSaleReturn.findFirst.mockResolvedValue(saleReturn());
     tx.storeSaleRefundAttempt.create.mockResolvedValue({ id: 'attempt-retry', correlationId: 'new-correlation', status: 'REQUESTED' });
+    tx.storeSaleRefundAttempt.upsert.mockResolvedValue({ id: 'attempt-request', correlationId: 'request-correlation', status: 'REQUESTED' });
+    tx.storeSaleRefundAttempt.findMany.mockResolvedValue([]);
     tx.storeSaleRefundAttempt.updateMany.mockResolvedValue({ count: 1 });
     tx.storeSaleRefundAttempt.findMany.mockResolvedValue([{
       id: 'attempt-retry', contaId: 'tenant-a', returnId: 'return-a', chargeId: 'charge-a',
@@ -129,6 +132,7 @@ describe('requestStoreSaleRefund', () => {
       { id: 'attempt-refunded-a', chargeId: 'charge-a', status: 'REFUNDED', requestedAmount: new Prisma.Decimal(40), confirmedAmount: new Prisma.Decimal(40), correlationId: 'old-a' },
       { id: 'attempt-retry-b', chargeId: 'charge-b', status: 'IN_PROGRESS', requestedAmount: new Prisma.Decimal(25), confirmedAmount: new Prisma.Decimal(0), correlationId: 'retry-b' },
     ]);
+    tx.storeSaleRefundAttempt.findMany.mockResolvedValueOnce([]);
     const dispatch = vi.fn().mockResolvedValue({ status: 202, body: { success: true } });
 
     const result = await requestStoreSaleRefund({
@@ -156,6 +160,48 @@ describe('requestStoreSaleRefund', () => {
       contaId: 'tenant-a', saleId: 'sale-a', returnId: 'return-a', actorId: 'user-a', role: 'FINANCEIRO',
       mode: 'RETRY_DENIED', dispatch,
     })).rejects.toBeInstanceOf(StoreSaleRefundError);
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(tx.storeSaleRefundAttempt.create).not.toHaveBeenCalled();
+  });
+
+  it('reserves the same payment capacity across different returns under the payment lock', async () => {
+    tx.storeSaleRefundAttempt.findMany.mockResolvedValue([{
+      returnId: 'return-other', chargeId: 'charge-a', status: 'IN_PROGRESS',
+      requestedAmount: new Prisma.Decimal(50), confirmedAmount: new Prisma.Decimal(0),
+    }]);
+    const dispatch = vi.fn();
+
+    await expect(requestStoreSaleRefund({
+      contaId: 'tenant-a', saleId: 'sale-a', returnId: 'return-a', actorId: 'user-a', role: 'ADMIN',
+      mode: 'RETRY_DENIED', dispatch,
+    })).rejects.toMatchObject({ code: 'SALDO_REEMBOLSO_INSUFICIENTE' });
+
+    expect(tx.$queryRaw.mock.calls.some(([query]) => String(query).includes('pg_advisory_xact_lock'))).toBe(true);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(tx.storeSaleRefundAttempt.create).not.toHaveBeenCalled();
+  });
+
+  it('counts confirmed partial refunds and only reserves the unconfirmed part of open attempts', async () => {
+    tx.storeSaleRefundAttempt.findMany.mockResolvedValue([
+      {
+        returnId: 'return-partial', chargeId: 'charge-a', status: 'PARTIALLY_REFUNDED',
+        requestedAmount: new Prisma.Decimal(40), confirmedAmount: new Prisma.Decimal(20),
+      },
+      {
+        returnId: 'return-open', chargeId: 'charge-a', status: 'IN_PROGRESS',
+        requestedAmount: new Prisma.Decimal(25), confirmedAmount: new Prisma.Decimal(10),
+      },
+    ]);
+    const dispatch = vi.fn();
+
+    // Charge value 80 - confirmed 30 - open remainder 15 leaves 35, below this
+    // return's requested 40. Counting only REFUNDED or reserving full 25 would
+    // each miss part of the capacity already consumed.
+    await expect(requestStoreSaleRefund({
+      contaId: 'tenant-a', saleId: 'sale-a', returnId: 'return-a', actorId: 'user-a', role: 'ADMIN',
+      mode: 'RETRY_DENIED', dispatch,
+    })).rejects.toMatchObject({ code: 'SALDO_REEMBOLSO_INSUFICIENTE' });
 
     expect(dispatch).not.toHaveBeenCalled();
     expect(tx.storeSaleRefundAttempt.create).not.toHaveBeenCalled();

@@ -9,6 +9,7 @@ import { requestStoreSaleRefund } from '../store-sale-refund';
 vi.mock('../payment-command-preflight', () => ({
   readPaymentFullPreflight: vi.fn(async () => ({ refunds: [] })),
 }));
+vi.mock('../../foundation/audit-log.service', () => ({ auditLogService: { record: vi.fn(async () => ({ id: 'audit' })) } }));
 
 describe('store sale return idempotency (PostgreSQL)', () => {
   const createdContaIds: string[] = [];
@@ -172,4 +173,71 @@ describe('store sale return idempotency (PostgreSQL)', () => {
     })).toEqual({ refundStatus: 'DENIED' });
     expect(await prisma.storeSaleRefundAttempt.count({ where: { contaId: conta.id, returnId: saleReturn.id } })).toBe(1);
   }, 30_000);
+
+  it('serializes refund reservations for different returns sharing one payment', async () => {
+    const suffix = randomUUID();
+    const conta = await prisma.conta.create({ data: { nome: `Refund capacity ${suffix}` } });
+    createdContaIds.push(conta.id);
+    const charge = await prisma.charge.create({
+      data: {
+        contaId: conta.id,
+        externalReference: `store-refund-capacity-${suffix}`,
+        asaasPaymentId: `payment-refund-capacity-${suffix}`,
+        status: 'PAID',
+        value: new Prisma.Decimal(50),
+        billingType: 'PIX',
+      },
+    });
+    const sale = await prisma.sale.create({
+      data: {
+        contaId: conta.id,
+        saleNumber: Math.floor(Math.random() * 1_000_000_000),
+        status: 'CONCLUIDA',
+        customerType: 'AVULSO',
+        subtotal: new Prisma.Decimal(50),
+        total: new Prisma.Decimal(50),
+        finalizationType: 'COBRANCA',
+        chargeId: charge.id,
+      },
+    });
+    const returns = await Promise.all([0, 1].map((index) => prisma.storeSaleReturn.create({
+      data: {
+        contaId: conta.id,
+        saleId: sale.id,
+        requestId: `refund-capacity-${suffix}-${index}`,
+        requestFingerprint: `fingerprint-${suffix}-${index}`,
+        refundStatus: 'NOT_REQUESTED',
+        refundRequestedAmount: new Prisma.Decimal(40),
+      },
+    })));
+
+    let releaseFirstDispatch!: () => void;
+    let firstDispatchStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { firstDispatchStarted = resolve; });
+    const firstDispatchGate = new Promise<void>((resolve) => { releaseFirstDispatch = resolve; });
+    const dispatchedAmounts: number[] = [];
+    const dispatch = vi.fn(async (input: { value?: number }) => {
+      dispatchedAmounts.push(input.value ?? 50);
+      if (dispatchedAmounts.length === 1) {
+        firstDispatchStarted();
+        await firstDispatchGate;
+      }
+      return { status: 202, body: { success: true, pending: true } };
+    });
+    const firstRequest = requestStoreSaleRefund({
+      contaId: conta.id, saleId: sale.id, returnId: returns[0]!.id, actorId: 'integration-test-actor',
+      role: 'FINANCEIRO', mode: 'REQUEST', dispatch,
+    });
+    await firstStarted;
+    const secondRequest = requestStoreSaleRefund({
+      contaId: conta.id, saleId: sale.id, returnId: returns[1]!.id, actorId: 'integration-test-actor',
+      role: 'FINANCEIRO', mode: 'REQUEST', dispatch,
+    });
+    await expect(secondRequest).rejects.toMatchObject({ code: 'SALDO_REEMBOLSO_INSUFICIENTE' });
+    releaseFirstDispatch();
+    await expect(firstRequest).resolves.toMatchObject({ status: 'IN_PROGRESS', pending: true });
+    expect(dispatchedAmounts).toEqual([40]);
+    expect(dispatchedAmounts.reduce((sum, amount) => sum + amount, 0)).toBeLessThanOrEqual(50);
+  }, 30_000);
+
 });
