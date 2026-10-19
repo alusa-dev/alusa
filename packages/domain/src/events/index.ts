@@ -645,8 +645,6 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
         receitaBrutaPrevista += gross;
         descontosPrevistos += discount;
         receitaPrevista += expected;
-        receitaBrutaPrevista += gross;
-        descontosPrevistos += discount;
       }
       if (isEventRevenueRealizedStatus(entry.status)) {
         if (entry.actualAmount != null) {
@@ -657,10 +655,6 @@ export function calculateEventMetrics(input: EventMetricsInput): EventMetrics {
           receitaEstornada += effectiveRefunded;
           receitaRealizada += getEventNetRealizedAmount(actual, effectiveRefunded);
         }
-      }
-      if (entry.status === 'REFUNDED' && entry.actualAmount != null) {
-        receitaRecebidaBruta += actual;
-        receitaEstornada += Math.max(refunded, actual);
       }
     }
 
