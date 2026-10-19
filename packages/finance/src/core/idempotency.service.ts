@@ -151,6 +151,10 @@ export async function acquireGuardLock(params: {
   await params.tx.$queryRaw`SELECT pg_advisory_xact_lock(${lockKey})::text`;
 }
 
+export function normalizeAdvisoryLockKeys(key: string, additionalKeys: string[] = []): string[] {
+  return [...new Set([key, ...additionalKeys])].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
 /**
  * Serializa processamento de entidade usando advisory lock transacional.
  *
@@ -162,18 +166,22 @@ export async function withSessionAdvisoryLock<T>(params: {
   contaId: string;
   scope: IdempotencyGuardScope;
   key: string;
+  additionalKeys?: string[];
   fn: () => Promise<T>;
 }): Promise<T> {
-  const compoundKey = buildGuardKey({
-    contaId: params.contaId,
-    scope: params.scope,
-    key: params.key,
-  });
-  const lockKey = advisoryLockKey(compoundKey);
+  const lockKeys = normalizeAdvisoryLockKeys(params.key, params.additionalKeys);
 
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SET LOCAL lock_timeout = '5000ms'`;
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(${lockKey})::text`;
+    for (const key of lockKeys) {
+      const compoundKey = buildGuardKey({
+        contaId: params.contaId,
+        scope: params.scope,
+        key,
+      });
+      const lockKey = advisoryLockKey(compoundKey);
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(${lockKey})::text`;
+    }
     return await params.fn();
   }, {
     maxWait: 5000,

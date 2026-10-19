@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   buildGuardKey,
   acquireGuardLock,
+  normalizeAdvisoryLockKeys,
 } from '../../core/idempotency.service';
 
 describe('idempotency advisory lock (transacional)', () => {
@@ -16,6 +17,11 @@ describe('idempotency advisory lock (transacional)', () => {
     const key1 = buildGuardKey({ contaId: 'c1', scope: 'charge-create', key: 'k1' });
     const key2 = buildGuardKey({ contaId: 'c1', scope: 'installment-create', key: 'k1' });
     expect(key1).not.toBe(key2);
+  });
+
+  it('normaliza múltiplas chaves removendo duplicatas e ordenando deterministicamente', () => {
+    expect(normalizeAdvisoryLockKeys('payment:2', ['cycle:a', 'payment:2', 'cycle:b']))
+      .toEqual(['cycle:a', 'cycle:b', 'payment:2']);
   });
 
   it('acquireGuardLock deve chamar pg_advisory_xact_lock com bigint', async () => {

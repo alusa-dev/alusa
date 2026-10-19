@@ -5,6 +5,9 @@ import { handlePaymentWebhook, projectStoreSaleRefundFromWebhook } from '../paym
 import { fulfillReservedSaleOnPayment } from '../../use-cases/store-inventory';
 
 const {
+  mockWithSessionAdvisoryLock,
+  mockSerializeWebhookLocks,
+  mockWebhookLockTails,
   mockUpdateFinanceStatusFromPayment,
   mockResolvePaymentToLocalEntity,
   mockConfirmPaymentCommandsByProviderEvent,
@@ -20,7 +23,42 @@ const {
   mockMarkEventMapRefundProcessing,
   mockCancelEventMapOrder,
   mockRefundTicketSales,
-} = vi.hoisted(() => ({
+  mockHandleChargeInvoicePaymentEvent,
+} = vi.hoisted(() => {
+  const mockWebhookLockTails = new Map<string, Promise<void>>();
+  const mockSerializeWebhookLocks = async (params: {
+    contaId: string;
+    scope: string;
+    key: string;
+    additionalKeys?: string[];
+    fn: () => Promise<unknown>;
+  }) => {
+    const keys = [...new Set([params.key, ...(params.additionalKeys ?? [])])]
+      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const acquired: Array<{ key: string; tail: Promise<void>; release: () => void }> = [];
+    try {
+      for (const key of keys) {
+        const lockKey = `${params.contaId}:${params.scope}:${key}`;
+        const previous = mockWebhookLockTails.get(lockKey) ?? Promise.resolve();
+        let release = () => {};
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        const tail = previous.then(() => gate);
+        mockWebhookLockTails.set(lockKey, tail);
+        await previous;
+        acquired.push({ key: lockKey, tail, release });
+      }
+      return await params.fn();
+    } finally {
+      for (const lock of acquired.reverse()) {
+        lock.release();
+        if (mockWebhookLockTails.get(lock.key) === lock.tail) mockWebhookLockTails.delete(lock.key);
+      }
+    }
+  };
+  return {
+  mockWebhookLockTails,
+  mockSerializeWebhookLocks,
+  mockWithSessionAdvisoryLock: vi.fn(mockSerializeWebhookLocks),
   mockUpdateFinanceStatusFromPayment: vi.fn(async () => ({ success: true })),
   mockResolvePaymentToLocalEntity: vi.fn(async () => ({ type: 'not_found', reason: 'test_default' })),
   mockConfirmPaymentCommandsByProviderEvent: vi.fn(async () => ({ confirmed: 0 })),
@@ -36,6 +74,12 @@ const {
   mockMarkEventMapRefundProcessing: vi.fn(async () => null),
   mockCancelEventMapOrder: vi.fn(async () => null),
   mockRefundTicketSales: vi.fn(async () => null),
+  mockHandleChargeInvoicePaymentEvent: vi.fn(async () => undefined),
+  };
+});
+
+vi.mock('../../core/idempotency.service', () => ({
+  withSessionAdvisoryLock: mockWithSessionAdvisoryLock,
 }));
 
 vi.mock('../../events/refund-event-ticket-sales-by-payment', () => ({
@@ -59,6 +103,10 @@ vi.mock('../../foundation/payment-resolution-policy', () => {
     isPaymentResolutionPolicyEnabled: vi.fn(() => false),
   };
 });
+
+vi.mock('../../use-cases/handle-charge-invoice-payment-event', () => ({
+  handleChargeInvoicePaymentEvent: mockHandleChargeInvoicePaymentEvent,
+}));
 
 vi.mock('../payment-resolver', () => ({
   resolvePaymentToLocalEntity: mockResolvePaymentToLocalEntity,
@@ -192,10 +240,16 @@ vi.mock('@alusa/database', () => ({
 describe('handlePaymentWebhook', () => {
   beforeEach(async () => {
     vi.resetAllMocks();
+    mockWebhookLockTails.clear();
+    mockWithSessionAdvisoryLock.mockImplementation(mockSerializeWebhookLocks);
     mockUpdateFinanceStatusFromPayment.mockResolvedValue({ success: true });
 
     const { isPaymentResolutionPolicyEnabled } = await import('../../foundation/payment-resolution-policy');
     const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.storeSaleRefundAttempt.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.storeSaleRefundAttempt.updateMany).mockResolvedValue({ count: 0 } as never);
+    vi.mocked(prisma.storeSaleReturn.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.storeSaleReturn.updateMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(isPaymentResolutionPolicyEnabled).mockReturnValue(false);
     vi.mocked(prisma.eventMapOrder.findMany).mockResolvedValue([]);
     mockResolvePaymentToLocalEntity.mockResolvedValue({ type: 'not_found', reason: 'test_default' });
@@ -212,6 +266,7 @@ describe('handlePaymentWebhook', () => {
     mockMarkEventMapRefundProcessing.mockResolvedValue(null);
     mockCancelEventMapOrder.mockResolvedValue(null);
     mockRefundTicketSales.mockResolvedValue(null);
+    mockHandleChargeInvoicePaymentEvent.mockResolvedValue(undefined);
     vi.mocked(prisma.$transaction).mockImplementation(
       async (callback: (_tx: unknown) => Promise<unknown>) => callback(prisma),
     );
@@ -1466,6 +1521,10 @@ describe('handlePaymentWebhook', () => {
     expect(second).toMatchObject({
       success: true, skipped: true, skipReason: 'UNMATCHED_PAYMENT_REQUIRES_RECONCILIATION',
     });
+    expect(mockWithSessionAdvisoryLock.mock.calls.map(([params]) => params.additionalKeys)).toEqual([
+      ['subscription-cycle:sub-a:2026-04-05'],
+      ['subscription-cycle:sub-a:2026-04-05'],
+    ]);
     expect(prisma.cobranca.updateMany).toHaveBeenCalledTimes(1);
     expect(prisma.cobranca.create).not.toHaveBeenCalled();
     expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
@@ -2738,7 +2797,14 @@ describe('handlePaymentWebhook', () => {
       estornadoValor: 25,
     } as never);
     vi.mocked(prisma.cobranca.update).mockResolvedValue({} as never);
-    vi.mocked(prisma.charge.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.charge.findFirst).mockResolvedValue({
+      id: 'charge_event_refund',
+      cobrancaId: 'c_event_refund',
+      asaasPaymentId: 'pay_event_refund',
+      status: 'PENDING',
+      value: 100,
+      standaloneInstallmentPlanId: null,
+    } as never);
     vi.mocked(prisma.pagamento.findFirst).mockResolvedValue({ id: 'pg_old_refund' } as never);
     vi.mocked(prisma.pagamento.update).mockResolvedValue({ id: 'pg_old_refund' } as never);
     vi.mocked(prisma.lancamento.findFirst).mockResolvedValue(null as never);
@@ -2780,7 +2846,11 @@ describe('handlePaymentWebhook', () => {
       estornadoValor: 0,
     } as never);
     vi.mocked(prisma.cobranca.update).mockResolvedValue({} as never);
-    vi.mocked(prisma.charge.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.charge.findFirst).mockResolvedValue({
+      id: 'charge_event_refund', cobrancaId: 'c_event_refund',
+      asaasPaymentId: 'pay_event_refund', status: 'PENDING', value: 100,
+      standaloneInstallmentPlanId: null,
+    } as never);
     vi.mocked(prisma.pagamento.findFirst).mockResolvedValue({ id: 'payment-event-refund' } as never);
     vi.mocked(prisma.pagamento.update).mockResolvedValue({ id: 'payment-event-refund' } as never);
     vi.mocked(prisma.lancamento.findFirst).mockResolvedValue(null as never);
@@ -2805,14 +2875,148 @@ describe('handlePaymentWebhook', () => {
       where: { id: 'event-entry-stale-received' },
       data: expect.objectContaining({
         status: 'PARTIALLY_REFUNDED',
+        actualAmount: expect.objectContaining({ toNumber: expect.any(Function) }),
         refundedAmount: expect.objectContaining({ toNumber: expect.any(Function) }),
         netAmount: expect.objectContaining({ toNumber: expect.any(Function) }),
       }),
     }));
-    const data = (updateArg as { data: { refundedAmount: { toNumber?: () => number }; netAmount: { toNumber?: () => number } } }).data;
+    const data = (updateArg as { data: { actualAmount: { toNumber?: () => number }; refundedAmount: { toNumber?: () => number }; netAmount: { toNumber?: () => number } } }).data;
+    expect(data.actualAmount.toNumber?.()).toBe(100);
     expect(data.refundedAmount.toNumber?.()).toBe(25);
     expect(data.netAmount.toNumber?.()).toBe(75);
     expect(entryState.status).toBe('PARTIALLY_REFUNDED');
+    },
+  );
+
+  it.each([[25, 40], [40, 25]])(
+    'serializa estornos parciais concorrentes de %s e %s sem reduzir o total confirmado',
+    async (firstRefund, secondRefund) => {
+      const { prisma } = await import('@alusa/database');
+      const entryState: {
+        id: string;
+        status: string;
+        refundedAmount: unknown;
+        actualAmount: unknown;
+        netAmount: unknown;
+      } = {
+        id: 'event-entry-concurrent-refund',
+        status: 'REFUNDED',
+        refundedAmount: new Prisma.Decimal(0),
+        actualAmount: new Prisma.Decimal(100),
+        netAmount: new Prisma.Decimal(100),
+      };
+      vi.mocked(prisma.eventFinancialEntry.findFirst).mockImplementation(async () => ({ ...entryState }) as never);
+      vi.mocked(prisma.eventFinancialEntry.update).mockImplementation(async ({ data }) => {
+        Object.assign(entryState, data);
+        return { ...entryState } as never;
+      });
+      vi.mocked(prisma.cobranca.findFirst).mockResolvedValue({
+        id: 'c_concurrent_refund', matriculaId: 'm_concurrent_refund', status: 'PAGO',
+        asaasPaymentId: 'pay_concurrent_refund', tipo: 'MENSALIDADE', formaPagamento: 'PIX',
+        estornadoValor: 0,
+      } as never);
+      vi.mocked(prisma.cobranca.update).mockResolvedValue({} as never);
+      vi.mocked(prisma.charge.findFirst).mockResolvedValue({
+        id: 'charge_concurrent_refund', cobrancaId: 'c_concurrent_refund',
+        asaasPaymentId: 'pay_concurrent_refund', status: 'PENDING', value: 100,
+        standaloneInstallmentPlanId: null,
+      } as never);
+      vi.mocked(prisma.pagamento.findFirst).mockResolvedValue({ id: 'payment-concurrent-refund' } as never);
+      vi.mocked(prisma.pagamento.update).mockResolvedValue({ id: 'payment-concurrent-refund' } as never);
+      vi.mocked(prisma.lancamento.findFirst).mockResolvedValue(null as never);
+
+      const dispatchRefund = (amount: number, dueDate: string) => handlePaymentWebhook('conta-1', {
+        event: 'PAYMENT_PARTIALLY_REFUNDED',
+        payment: {
+          id: 'pay_concurrent_refund', subscription: 'sub_concurrent_refund', dueDate,
+          status: 'RECEIVED', value: 100, netValue: 100 - amount,
+          refunds: [{ status: 'DONE', value: amount }],
+        },
+      });
+
+      const results = await Promise.all([
+        dispatchRefund(firstRefund, '2026-10-01'),
+        dispatchRefund(secondRefund, '2026-11-01'),
+      ]);
+
+      expect(results.every((result) => result.success)).toBe(true);
+      expect(mockWithSessionAdvisoryLock.mock.calls.map(([params]) => params.key)).toEqual([
+        'payment:pay_concurrent_refund',
+        'payment:pay_concurrent_refund',
+      ]);
+      expect(Number(entryState.actualAmount)).toBe(100);
+      expect(Number(entryState.refundedAmount)).toBe(40);
+      expect(Number(entryState.netAmount)).toBe(60);
+      expect(entryState.status).toBe('REFUNDED');
+    },
+  );
+
+  it.each(['PAYMENT_RECEIVED', 'PAYMENT_PARTIALLY_REFUNDED'] as const)(
+    'serializa PAYMENT_RECEIVED e PAYMENT_PARTIALLY_REFUNDED quando %s chega primeiro',
+    async (firstEvent) => {
+      const { prisma } = await import('@alusa/database');
+      const entryState: {
+        id: string;
+        status: string;
+        refundedAmount: unknown;
+        actualAmount: unknown;
+        netAmount: unknown;
+      } = {
+        id: 'event-entry-paid-refund-race',
+        status: 'RECEIVED',
+        refundedAmount: new Prisma.Decimal(0),
+        actualAmount: new Prisma.Decimal(100),
+        netAmount: new Prisma.Decimal(100),
+      };
+      vi.mocked(prisma.eventFinancialEntry.findFirst).mockImplementation(async () => ({ ...entryState }) as never);
+      vi.mocked(prisma.eventFinancialEntry.update).mockImplementation(async ({ data }) => {
+        Object.assign(entryState, data);
+        return { ...entryState } as never;
+      });
+      vi.mocked(prisma.cobranca.findFirst).mockResolvedValue({
+        id: 'c_paid_refund_race', matriculaId: 'm_paid_refund_race', status: 'PAGO',
+        asaasPaymentId: 'pay_paid_refund_race', tipo: 'MENSALIDADE', formaPagamento: 'PIX',
+        estornadoValor: 0,
+      } as never);
+      vi.mocked(prisma.cobranca.update).mockResolvedValue({} as never);
+      vi.mocked(prisma.charge.findFirst).mockResolvedValue({
+        id: 'charge_paid_refund_race', cobrancaId: 'c_paid_refund_race',
+        asaasPaymentId: 'pay_paid_refund_race', status: 'PENDING', value: 100,
+        standaloneInstallmentPlanId: null,
+      } as never);
+      vi.mocked(prisma.pagamento.findFirst).mockResolvedValue({ id: 'payment-paid-refund-race' } as never);
+      vi.mocked(prisma.pagamento.update).mockResolvedValue({ id: 'payment-paid-refund-race' } as never);
+      vi.mocked(prisma.lancamento.findFirst).mockResolvedValue(null as never);
+
+      const received = () => handlePaymentWebhook('conta-1', {
+        event: 'PAYMENT_RECEIVED',
+        payment: {
+          id: 'pay_paid_refund_race', subscription: 'sub_paid_refund_race', dueDate: '2026-11-01',
+          status: 'RECEIVED', value: 100, netValue: 100,
+        },
+      });
+      const partialRefund = () => handlePaymentWebhook('conta-1', {
+        event: 'PAYMENT_PARTIALLY_REFUNDED',
+        payment: {
+          id: 'pay_paid_refund_race', subscription: 'sub_paid_refund_race', dueDate: '2026-11-01',
+          status: 'RECEIVED', value: 100, netValue: 60,
+          refunds: [{ status: 'DONE', value: 40 }],
+        },
+      });
+      const results = await Promise.all(firstEvent === 'PAYMENT_RECEIVED'
+        ? [received(), partialRefund()]
+        : [partialRefund(), received()]);
+
+      expect(results.every((result) => result.success)).toBe(true);
+      expect(mockWithSessionAdvisoryLock.mock.calls).toHaveLength(2);
+      expect(mockWithSessionAdvisoryLock.mock.calls.map(([params]) => [params.key, params.additionalKeys])).toEqual([
+        ['payment:pay_paid_refund_race', ['subscription-cycle:sub_paid_refund_race:2026-11-01']],
+        ['payment:pay_paid_refund_race', ['subscription-cycle:sub_paid_refund_race:2026-11-01']],
+      ]);
+      expect(Number(entryState.actualAmount)).toBe(100);
+      expect(Number(entryState.refundedAmount)).toBe(40);
+      expect(Number(entryState.netAmount)).toBe(60);
+      expect(entryState.status).toBe('PARTIALLY_REFUNDED');
     },
   );
 

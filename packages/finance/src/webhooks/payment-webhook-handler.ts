@@ -1214,7 +1214,7 @@ async function updateEventFinancialEntryFromWebhook(
         ...(subscriptionId ? [{ asaasPaymentId: subscriptionId }] : []),
       ],
     },
-    select: { id: true, refundedAmount: true, status: true },
+    select: { id: true, refundedAmount: true, actualAmount: true, status: true },
   });
 
   if (!entry) return;
@@ -1302,13 +1302,27 @@ async function updateEventFinancialEntryFromWebhook(
     }
   }
 
-  const actualAmount = totalPaid > 0 ? totalPaid : null;
+  const currentCharge = charges.find((charge) => charge.asaasPaymentId === paymentId);
+  const partialRefundGross = payload.event === 'PAYMENT_PARTIALLY_REFUNDED'
+    ? totalPaid + (
+      currentCharge && !paidStatus.includes(currentCharge.status)
+        ? Number(currentCharge.value ?? p.value ?? 0)
+        : totalPaid === 0
+          ? Number(p.value ?? 0)
+          : 0
+    )
+    : 0;
+  const actualAmount = Math.max(
+    totalPaid,
+    partialRefundGross,
+    Number(entry.actualAmount ?? 0),
+  ) || null;
   const completedRefundTotal = getCompletedRefundTotal(p.refunds);
-  const refundedAmount = payload.event === 'PAYMENT_PARTIALLY_REFUNDED'
-    ? completedRefundTotal == null
-      ? Number(entry.refundedAmount ?? 0)
-      : Math.max(Number(entry.refundedAmount ?? 0), completedRefundTotal)
+  const persistedRefundedAmount = Number(entry.refundedAmount ?? 0);
+  const incomingRefundedAmount = payload.event === 'PAYMENT_PARTIALLY_REFUNDED'
+    ? completedRefundTotal ?? persistedRefundedAmount
     : totalRefunded;
+  const refundedAmount = Math.max(persistedRefundedAmount, incomingRefundedAmount);
   const netAmount = actualAmount == null ? null : Math.max(actualAmount - refundedAmount, 0);
 
   await prisma.eventFinancialEntry.update({
@@ -1362,14 +1376,17 @@ export async function handlePaymentWebhook(
     return { success: false, error: 'Payment ID ausente' };
   }
 
+  const subscriptionCycleKey = payload.payment.subscription
+    ? `subscription-cycle:${payload.payment.subscription}:${payload.payment.dueDate ?? 'unknown'}`
+    : payload.payment.externalReference?.startsWith('alusa:subscription:')
+      ? `subscription-cycle:${payload.payment.externalReference}:${payload.payment.dueDate ?? 'unknown'}`
+      : null;
+
   return withSessionAdvisoryLock({
     contaId,
     scope: 'webhook-process',
-    key: payload.payment.subscription
-      ? `subscription-cycle:${payload.payment.subscription}:${payload.payment.dueDate ?? 'unknown'}`
-      : payload.payment.externalReference?.startsWith('alusa:subscription:')
-        ? `subscription-cycle:${payload.payment.externalReference}:${payload.payment.dueDate ?? 'unknown'}`
-        : `payment:${paymentId}`,
+    key: `payment:${paymentId}`,
+    additionalKeys: subscriptionCycleKey ? [subscriptionCycleKey] : [],
     fn: () => handlePaymentWebhookCore(contaId, payload),
   });
 }
