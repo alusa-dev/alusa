@@ -6,6 +6,7 @@ import { expirePlatformBillingTrials } from '@/src/server/platform-billing/trial
 import { reconcilePlatformBilling } from '@/src/server/platform-billing/reconciliation';
 import { drainStripeWebhookWorker } from '@/src/server/platform-billing/webhook-worker';
 import { applyDuePlatformPlanChanges } from '@/src/server/platform-billing/plan-change-actions';
+import { hasCronSecret } from '@/lib/security/route-protection-registry';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -21,12 +22,7 @@ export async function POST(req: Request) {
 async function run(req: Request) {
   // This endpoint drains global platform billing state across tenants. A
   // tenant ADMIN session must never authorize that operation.
-  const configuredCronToken = process.env.CRON_SECRET_TOKEN ?? process.env.CRON_SECRET;
-  const bearerToken = req.headers.get('authorization')?.startsWith('Bearer ')
-    ? req.headers.get('authorization')?.slice('Bearer '.length)
-    : null;
-  const cronToken = req.headers.get('x-cron-token');
-  if (!configuredCronToken || (cronToken !== configuredCronToken && bearerToken !== configuredCronToken)) {
+  if (!hasCronSecret(req)) {
     recordJobRequestRejected('platform-billing-maintenance', 401);
     return NextResponse.json({ error: { code: 'NAO_AUTORIZADO', message: 'Credencial de cron inválida.' } }, { status: 401 });
   }

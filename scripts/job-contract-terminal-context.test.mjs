@@ -153,6 +153,25 @@ test('accepts executable global cron token validation and a 401 rejection', () =
   assert.deepEqual(validateGlobalCronAuth(source, route), []);
 });
 
+test('accepts the shared cron auth helper only when rejection remains guarded by HTTP 401', () => {
+  const protectedRoute = `
+    import { hasCronSecret } from '@/lib/security/route-protection-registry';
+    async function run(req) {
+      if (!hasCronSecret(req)) return NextResponse.json({}, { status: 401 });
+      return NextResponse.json({ success: true });
+    }
+  `;
+  const missingRejection = `
+    import { hasCronSecret } from '@/lib/security/route-protection-registry';
+    async function run(req) {
+      if (!hasCronSecret(req)) return NextResponse.json({ success: true });
+    }
+  `;
+
+  assert.deepEqual(validateGlobalCronAuth(protectedRoute, route), []);
+  assert.match(validateGlobalCronAuth(missingRejection, route).join('\n'), /CRON_SECRET.*401/);
+});
+
 test('rejects global cron auth patterns that appear only in comments or strings', () => {
   const source = `
     // const configuredCronToken = process.env.CRON_SECRET;

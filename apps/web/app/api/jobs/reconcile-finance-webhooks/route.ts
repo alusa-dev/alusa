@@ -14,6 +14,19 @@ function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });
 }
 
+function budgetTelemetry(job: Awaited<ReturnType<typeof reconcileFinanceWebhooksJob>>, maxAsaasCalls: number) {
+  const perAccountCalls = job.results.map((item) => item.reconcile.asaasCalls);
+  const maxCalls = perAccountCalls.length > 0 ? Math.max(...perAccountCalls) : 0;
+  const maxUtilizationPercent = maxAsaasCalls > 0 ? Math.min(100, Math.round((maxCalls / maxAsaasCalls) * 100)) : 0;
+  return {
+    maxAsaasCallsPerAccount: maxCalls,
+    accountsNearAsaasCallBudget: perAccountCalls.filter((calls) => calls >= maxAsaasCalls * 0.8 && calls < maxAsaasCalls).length,
+    accountsAtAsaasCallBudget: perAccountCalls.filter((calls) => calls >= maxAsaasCalls).length,
+    maxAsaasCallBudgetUtilizationPercent: maxUtilizationPercent,
+    budgetExhausted: job.budgetExhausted,
+  };
+}
+
 /**
  * POST /api/jobs/reconcile-finance-webhooks
  *
@@ -127,9 +140,13 @@ async function run(req: Request) {
       const accountResult = job.results[0];
       const reconcile = accountResult?.reconcile;
       const checked = (reconcile?.checkedPayments ?? 0) + (reconcile?.checkedSubscriptions ?? 0) + (reconcile?.checkedInstallments ?? 0);
+      const budget = budgetTelemetry(job, maxAsaasCalls);
       logJobResult('reconcile-finance-webhooks', startedAt, job, {
         targetedAccount: true,
         partial: job.outcome === 'partial',
+        ...budget,
+        partialFailure: job.outcome === 'partial' || job.outcome === 'failed' || job.budgetExhausted,
+        attentionRequired: budget.maxAsaasCallBudgetUtilizationPercent >= 80,
         workStatus: job.skippedDueToLock || job.outcome !== 'completed' ? 'unknown' : checked > 0 ? 'worked' : 'empty',
       });
       return NextResponse.json({
@@ -147,9 +164,13 @@ async function run(req: Request) {
     );
 
     const checked = job.results.reduce((total, item) => total + (item.reconcile?.checkedPayments ?? 0) + (item.reconcile?.checkedSubscriptions ?? 0) + (item.reconcile?.checkedInstallments ?? 0), 0);
+    const budget = budgetTelemetry(job, maxAsaasCalls);
     logJobResult('reconcile-finance-webhooks', startedAt, job, {
       targetedAccount: false,
       partial: job.outcome === 'partial',
+      ...budget,
+      partialFailure: job.outcome === 'partial' || job.outcome === 'failed' || job.budgetExhausted,
+      attentionRequired: budget.maxAsaasCallBudgetUtilizationPercent >= 80,
       workStatus: job.skippedDueToLock || job.outcome !== 'completed' ? 'unknown' : checked > 0 ? 'worked' : 'empty',
     });
 

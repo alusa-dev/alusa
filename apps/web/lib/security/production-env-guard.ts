@@ -75,8 +75,8 @@ export function assertProductionSecurityEnv(env: ProductionSecurityEnv = process
   if (!env.ASAAS_WEBHOOK_PUBLIC_BASE_URL?.trim()) {
     missing.push('ASAAS_WEBHOOK_PUBLIC_BASE_URL');
   }
-  if (!env.CRON_SECRET?.trim() && !env.CRON_SECRET_TOKEN?.trim()) {
-    missing.push('CRON_SECRET ou CRON_SECRET_TOKEN');
+  if (!env.CRON_SECRET?.trim()) {
+    missing.push('CRON_SECRET');
   }
   if (!isEnabled(env.CACHE_LAYER_ENABLED)) {
     missing.push('CACHE_LAYER_ENABLED=true');

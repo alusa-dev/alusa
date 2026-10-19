@@ -4,14 +4,12 @@ import { getServerSession } from 'next-auth';
 
 import { authOptions } from '@/lib/auth-options';
 import { getAsaasWebhookOperationalStatus } from '@alusa/finance';
+import { hasCronSecret } from '@/lib/security/route-protection-registry';
 
 export const dynamic = 'force-dynamic';
 
 function isCronRequest(req: NextRequest): boolean {
-  return Boolean(
-    process.env.CRON_SECRET_TOKEN &&
-    req.headers.get('x-cron-token') === process.env.CRON_SECRET_TOKEN,
-  );
+  return hasCronSecret(req);
 }
 
 export async function GET(req: NextRequest) {

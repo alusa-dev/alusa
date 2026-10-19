@@ -1,10 +1,12 @@
 # Revisão do catálogo de jobs agendados
 
-Revisão estática de 16/10/2026, baseada em [`job-ownership.json`](./job-ownership.json),
-[`apps/web/vercel.json`](../../apps/web/vercel.json), nos 36 paths do manifest e
-nos entrypoints chamados pelas respectivas rotas. O catálogo contém **36
-schedules e 35 rotas únicas**; `rebuild-billing-read-models` é chamado por dois
+Revisão estática de 19/10/2026, baseada em [`job-ownership.json`](./job-ownership.json),
+[`apps/web/vercel.json`](../../apps/web/vercel.json), nos 37 schedules do manifest e
+nos entrypoints chamados pelas respectivas rotas. O catálogo contém **37
+schedules e 36 rotas únicas**; `rebuild-billing-read-models` é chamado por dois
 schedules distintos, descritos em linhas separadas abaixo.
+
+<!-- cron-counts: schedules=37 unique-routes=36 -->
 
 Os limites abaixo são os parâmetros de cada chamada Vercel e o `maxDuration`
 declarado pela rota; `maxDuration` é um limite de runtime, não um SLA. O SLA de
@@ -30,6 +32,7 @@ Nenhuma frequência ou limite é proposta para alteração.
 | `reconcile-open-transfers` | `*/10 * * * *` · `maxAccounts=30`, `limit=20`, idade 60s · runtime 120s · [rota](../../apps/web/app/api/jobs/reconcile-open-transfers/route.ts) | `finance` · transferências abertas. `listAccountsWithOpenTransfers`/`reconcileOpenTransfers` em `packages/finance/src/use-cases/transfers/reconcile-open-transfers.ts`; fonte `TransferRequest` e consulta oficial Asaas. | `CRITICAL_FINANCE` · até 30 contas e 20 itens por conta; rota percorre contas sequencialmente e o serviço consulta transferências em série (sem fanout paralelo) · grupo `transfer-reconciliation`. | `budgeted-retry`. Sem contas/transferências candidatas, no-op. SLA não definido. |
 | `reconcile-finance-accounts` | `15 */2 * * *` · defaults da rota · runtime 120s · [rota](../../apps/web/app/api/jobs/reconcile-finance-accounts/route.ts) | `finance` · contas financeiras e opção webhooks. `reconcileAsaasAccountsJob`, `reconcileWithAsaas`, `detectWebhookGaps` em `packages/finance/src/jobs/reconcile-asaas-accounts.ts` e `packages/finance/src/webhooks/webhook-reconciliation.service.ts`; fonte `AsaasAccount`, `WebhookAsaas` e gaps. | `RECONCILIATION` · modo default accounts; `limit` webhooks até 1000 · grupo `account-reconciliation`. | `budgeted-retry`. Sem contas habilitadas/gaps elegíveis, no-op. SLA não definido. |
 | `reconcile-kyc-models` | `25 */2 * * *` · defaults do serviço · runtime 120s · [rota](../../apps/web/app/api/jobs/reconcile-kyc-models/route.ts) | `asaas` · reconciliação de KYC. `reconcileKycModels` em `packages/finance/src/use-cases/kyc/kyc-reconciliation.service.ts`; fontes `AsaasAccount`, `KycProcess`, `KycRequirement`/slots e estado oficial da subconta. | `RECONCILIATION` · limite definido pelo serviço · grupo `kyc-reconciliation`. | `budgeted-retry`. Conta sem KYC divergente pode gerar no-op. SLA não definido. |
+| `process-kyc-sync` | `* * * * *` · lote máximo 10 · runtime 120s · [rota](../../apps/web/app/api/jobs/process-kyc-sync/route.ts) | `asaas` · processamento da fila persistida de sincronização do read model KYC; consulta escopada por tenant quando `contaId` é fornecido. | `READ_MODEL` · até 10 jobs elegíveis por invocação · grupo `kyc-read-model-sync`. | `lease-and-retry`. Execuções vazias são uma varredura local limitada a 10 jobs; não fazem chamada ao Asaas. SLA não definido. |
 | `apply-asaas-notification-preferences` | `*/15 * * * *` · `limit=50` · runtime 120s · [rota](../../apps/web/app/api/jobs/apply-asaas-notification-preferences/route.ts) | `notifications` · preferências de notificação Asaas. `processAsaasNotificationPreferenceOutbox` e enqueue opcional; outbox `AsaasNotificationPreferenceOutbox`, configuração `AsaasNotificationPreference` e clientes vinculados à conta. | `NOTIFICATION` · 50 por lote · grupo `asaas-notifications`. | `idempotent-backoff`. Sem eventos/outbox elegíveis, no-op. SLA não definido. |
 | `process-asaas-notification-sync` | `*/5 * * * *` · `limit=25` · runtime 120s · [rota](../../apps/web/app/api/jobs/process-asaas-notification-sync/route.ts) | `notifications` · sincronização de canais com Asaas. `processAsaasNotificationSyncOutbox` em `packages/finance/src/services/asaas-notification-sync-outbox.service.ts`; fonte `AsaasNotificationSyncOutbox`. | `NOTIFICATION` · lote 25 · grupo `asaas-notifications`. | `idempotent-backoff`. Sem eventos claimable, no-op. SLA não definido. |
 | `reconcile-asaas-customers` | `20 */3 * * *` · `maxAccounts=20`, `limit=50` · runtime 120s · [rota](../../apps/web/app/api/jobs/reconcile-asaas-customers/route.ts) | `asaas` · espelhos de customer/endereço. `reconcileAsaasCustomerSnapshots` e reconciliação de endereços; `AsaasCustomerSnapshot`, `Customer`/responsável e chamadas Asaas por tenant. | `RECONCILIATION` · até 20 contas, limite 50 · grupo `customer-reconciliation`. | `budgeted-retry`. Nenhum snapshot/customer divergente significa no-op. SLA não definido. |

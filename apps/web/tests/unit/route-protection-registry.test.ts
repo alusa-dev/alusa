@@ -27,4 +27,18 @@ describe('route protection registry', () => {
     expect(hasCronSecret(new Request('http://localhost', { headers: { authorization: 'Bearer cron-secret' } }))).toBe(true);
     expect(hasCronSecret(new Request('http://localhost'))).toBe(false);
   });
+
+  it('mantém CRON_SECRET como bearer canônico quando o segredo legado diverge', () => {
+    vi.stubEnv('CRON_SECRET', 'canonical-secret');
+    vi.stubEnv('CRON_SECRET_TOKEN', 'legacy-secret');
+    expect(hasCronSecret(new Request('http://localhost', { headers: { authorization: 'Bearer canonical-secret' } }))).toBe(true);
+    expect(hasCronSecret(new Request('http://localhost', { headers: { authorization: 'Bearer legacy-secret' } }))).toBe(false);
+    expect(hasCronSecret(new Request('http://localhost', { headers: { 'x-cron-token': 'legacy-secret' } }))).toBe(true);
+  });
+
+  it('mantém bearer legado somente quando CRON_SECRET não está configurado', () => {
+    vi.stubEnv('CRON_SECRET', '');
+    vi.stubEnv('CRON_SECRET_TOKEN', 'legacy-secret');
+    expect(hasCronSecret(new Request('http://localhost', { headers: { authorization: 'Bearer legacy-secret' } }))).toBe(true);
+  });
 });

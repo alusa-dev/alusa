@@ -26,6 +26,7 @@ import { GET } from '../route';
 describe('GET /api/jobs/platform-billing-maintenance telemetry', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv('CRON_SECRET', 'canonical-secret');
     vi.stubEnv('CRON_SECRET_TOKEN', 'cron-secret');
     mocks.drainWebhooks.mockResolvedValue({ processed: 0, failed: 0, exhausted: 0, notifications: { claimed: 0, delivered: 0, failed: 0, exhausted: 0 } });
     mocks.applyPlanChanges.mockResolvedValue({ checked: 0, submitted: 0, failed: 0 });
@@ -61,5 +62,16 @@ describe('GET /api/jobs/platform-billing-maintenance telemetry', () => {
     expect(mocks.logJobResult).not.toHaveBeenCalled();
     expect(mocks.logJobFailure).not.toHaveBeenCalled();
     expect(mocks.drainWebhooks).not.toHaveBeenCalled();
+  });
+
+  it('accepts canonical Bearer auth when the legacy secret conflicts', async () => {
+    const response = await GET(new Request('http://localhost/api/jobs/platform-billing-maintenance', {
+      headers: { authorization: 'Bearer canonical-secret' },
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.recordJobRequestRejected).not.toHaveBeenCalled();
+    expect(mocks.startJobRun).toHaveBeenCalledTimes(1);
+    expect(mocks.drainWebhooks).toHaveBeenCalledTimes(1);
   });
 });

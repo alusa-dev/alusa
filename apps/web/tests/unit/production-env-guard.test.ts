@@ -48,6 +48,16 @@ describe('production env guard', () => {
     ).not.toThrow();
   });
 
+  it('exige CRON_SECRET mesmo quando somente o segredo legado está definido', () => {
+    expect(() => assertProductionSecurityEnv({
+      NODE_ENV: 'production', RLS_RUNTIME_ENABLED: 'true', DATABASE_RLS_URL: 'postgresql://rls@example/db',
+      ASAAS_REDIS_ENABLED: 'true', UPSTASH_REDIS_REST_URL: 'https://redis.example.com', UPSTASH_REDIS_REST_TOKEN: 'token',
+      TRUST_PROXY_HEADERS: 'true', ASAAS_WEBHOOK_STRICT_HTTP_REJECTIONS: 'true', ASAAS_WEBHOOK_IP_CHECK: 'strict',
+      ASAAS_WEBHOOK_AUTH_TOKEN_SECRET: 'webhook-secret', ASAAS_WEBHOOK_PUBLIC_BASE_URL: 'https://app.example.com',
+      CRON_SECRET_TOKEN: 'legacy-secret', CACHE_LAYER_ENABLED: 'true', REDIS_CACHE_ENABLED: 'true',
+    })).toThrow(/CRON_SECRET/);
+  });
+
   it('normaliza espacos e quebras de linha em flags booleanas da Vercel', () => {
     expect(() =>
       assertProductionSecurityEnv({

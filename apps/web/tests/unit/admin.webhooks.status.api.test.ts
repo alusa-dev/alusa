@@ -24,6 +24,7 @@ import { GET } from '@/app/api/admin/webhooks/status/route';
 describe('GET /api/admin/webhooks/status', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.CRON_SECRET = 'canonical-secret';
     process.env.CRON_SECRET_TOKEN = 'cron-secret';
     vi.mocked(getAsaasWebhookOperationalStatus).mockResolvedValue({
       contaId: 'conta-1',
@@ -74,6 +75,18 @@ describe('GET /api/admin/webhooks/status', () => {
     );
 
     expect(res.status).toBe(200);
+    expect(getAsaasWebhookOperationalStatus).toHaveBeenCalledWith({ contaId: undefined });
+  });
+
+  it('aceita Bearer canônico mesmo com segredo legado conflitante', async () => {
+    vi.mocked(getServerSession).mockResolvedValue(null as never);
+
+    const res = await GET(new NextRequest('http://localhost/api/admin/webhooks/status', {
+      headers: { authorization: 'Bearer canonical-secret' },
+    }));
+
+    expect(res.status).toBe(200);
+    expect(getServerSession).not.toHaveBeenCalled();
     expect(getAsaasWebhookOperationalStatus).toHaveBeenCalledWith({ contaId: undefined });
   });
 });

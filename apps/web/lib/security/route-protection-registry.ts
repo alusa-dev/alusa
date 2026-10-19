@@ -58,11 +58,14 @@ export function isRegisteredPublicApiPath(pathname: string): boolean {
 }
 
 export function hasCronSecret(req: Request): boolean {
-  const configuredToken = process.env.CRON_SECRET_TOKEN ?? process.env.CRON_SECRET;
-  if (!configuredToken) return false;
-
+  const canonicalToken = process.env.CRON_SECRET?.trim();
+  const legacyToken = process.env.CRON_SECRET_TOKEN?.trim();
   const cronToken = req.headers.get('x-cron-token');
   const authorization = req.headers.get('authorization');
   const bearerToken = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : null;
-  return cronToken === configuredToken || bearerToken === configuredToken;
+
+  // Vercel sends Bearer CRON_SECRET. Keep the custom header compatible with
+  // legacy callers, while never allowing a stale legacy secret to shadow it.
+  if (bearerToken) return canonicalToken ? bearerToken === canonicalToken : bearerToken === legacyToken;
+  return Boolean((canonicalToken && cronToken === canonicalToken) || (legacyToken && cronToken === legacyToken));
 }

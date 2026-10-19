@@ -244,6 +244,40 @@ describe('job observability', () => {
     recordMetric.mockRestore();
   });
 
+  it('emite pressão agregada de orçamento Asaas sem convertê-la em contagem genérica', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const recordMetric = vi.spyOn(sharedTelemetry, 'recordMetric').mockImplementation(() => undefined);
+    logJobResult('reconcile-finance-webhooks', Date.now(), { asaasCalls: 220 }, {
+      maxAsaasCallsPerAccount: 80,
+      accountsNearAsaasCallBudget: 1,
+      accountsAtAsaasCallBudget: 1,
+      maxAsaasCallBudgetUtilizationPercent: 80,
+      attentionRequired: true,
+      budgetExhausted: true,
+      partialFailure: true,
+    });
+    const payload = JSON.parse(String(warn.mock.calls[0]?.[0]));
+    expect(payload).toMatchObject({
+      'event.name': 'job.partial_failure',
+      attributes: {
+        maxAsaasCallsPerAccount: 80,
+        accountsNearAsaasCallBudget: 1,
+        accountsAtAsaasCallBudget: 1,
+        maxAsaasCallBudgetUtilizationPercent: 80,
+        budgetExhausted: true,
+      },
+    });
+    const metrics = recordMetric.mock.calls.map(([metric]) => metric);
+    expect(metrics).toContainEqual(expect.objectContaining({
+      name: 'alusa.job.asaas_call_budget_utilization', value: 80, unit: 'percent',
+      dimensions: { 'job.name': 'reconcile-finance-webhooks', result: 'near_budget' },
+    }));
+    expect(metrics.some((metric) => metric.name === 'alusa.job.items' && String(metric.dimensions?.result).includes('budget'))).toBe(false);
+    expect(JSON.stringify(payload)).not.toMatch(/contaId|paymentId|customerId|secret/);
+    warn.mockRestore();
+    recordMetric.mockRestore();
+  });
+
   it('registra classificação vazia com dimensão fixa e não aceita valores arbitrários', () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
     const recordMetric = vi

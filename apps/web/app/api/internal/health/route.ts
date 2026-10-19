@@ -11,6 +11,7 @@ import { internalHealthResultDTOSchema } from '@/features/system/dtos';
 import { mapInternalHealthResultToDTO } from '@/features/system/mappers';
 import { authOptions } from '@/lib/auth-options';
 import { checkDatabaseConnectivity } from '@/src/server/system/health.service';
+import { hasCronSecret } from '@/lib/security/route-protection-registry';
 
 type HealthCheckStatus = 'OK' | 'WARNING' | 'ERROR';
 
@@ -31,13 +32,7 @@ function summarizeOverallStatus(checks: HealthCheck[]): 'OK' | 'DEGRADED' | 'ERR
 }
 
 async function canReadInternalHealth(req: Request): Promise<boolean> {
-  const configuredToken = process.env.CRON_SECRET_TOKEN ?? process.env.CRON_SECRET;
-  const cronToken = req.headers.get('x-cron-token');
-  const authorization = req.headers.get('authorization');
-  const bearerToken = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : null;
-  if (configuredToken && (cronToken === configuredToken || bearerToken === configuredToken)) {
-    return true;
-  }
+  if (hasCronSecret(req)) return true;
 
   const session = await getServerSession(authOptions).catch(() => null);
   const role = (session as { user?: { role?: string } } | null)?.user?.role?.toUpperCase();

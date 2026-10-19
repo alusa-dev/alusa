@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 
 import { authOptions } from '@/lib/auth-options';
 import { jsonNoStore } from '@/lib/http-security';
+import { hasCronSecret } from '@/lib/security/route-protection-registry';
 
 type SessionUser = {
   id?: string;
@@ -49,15 +50,7 @@ export async function resolveTenantScope(
   const user = (session as { user?: SessionUser } | null)?.user ?? null;
   const requestedContaId = normalizeContaId(options.requestedContaId);
 
-  const cronToken = options.allowCron ? req.headers.get('x-cron-token') : null;
-  const authorization = options.allowCron ? req.headers.get('authorization') : null;
-  const bearerToken = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : null;
-  const configuredCronToken = process.env.CRON_SECRET_TOKEN ?? process.env.CRON_SECRET;
-  const isCron = Boolean(
-    options.allowCron &&
-    configuredCronToken &&
-    (cronToken === configuredCronToken || bearerToken === configuredCronToken),
-  );
+  const isCron = Boolean(options.allowCron && hasCronSecret(req));
   const isAdmin = user?.role?.toUpperCase() === 'ADMIN';
 
   if (isCron) {

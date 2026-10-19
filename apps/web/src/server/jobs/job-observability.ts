@@ -88,6 +88,11 @@ const SAFE_EXTRA_FIELDS = new Set([
   'skippedDueToLock',
   'failedSteps',
   'failedStages',
+  'budgetExhausted',
+  'maxAsaasCallsPerAccount',
+  'accountsNearAsaasCallBudget',
+  'accountsAtAsaasCallBudget',
+  'maxAsaasCallBudgetUtilizationPercent',
 ]);
 const COUNT_FIELDS = new Set([
   'processed',
@@ -359,6 +364,19 @@ export function logJobResult(
         dimensions: normalizeMetricDimensions({ 'job.name': name, result: field }),
       });
     }
+  }
+  if (name === 'reconcile-finance-webhooks' && typeof safeExtras.maxAsaasCallBudgetUtilizationPercent === 'number') {
+    const budgetDimensions = normalizeMetricDimensions(
+      { 'job.name': name, result: safeExtras.attentionRequired === true ? 'near_budget' : 'within_budget' },
+      ['job.name', 'result'],
+    );
+    void sharedTelemetry.recordMetric({
+      kind: 'distribution',
+      name: 'alusa.job.asaas_call_budget_utilization',
+      value: safeExtras.maxAsaasCallBudgetUtilizationPercent,
+      unit: 'percent',
+      dimensions: budgetDimensions,
+    });
   }
   for (const step of steps) {
     const stepResult = step.ok ? 'success' : 'error';

@@ -1,16 +1,10 @@
 import { NextResponse } from 'next/server';
 
 import { getTenantRuntimeHealth } from '@/lib/prisma-tenant';
+import { hasCronSecret } from '@/lib/security/route-protection-registry';
 
 function isAuthorized(req: Request) {
-  const configuredToken = process.env.CRON_SECRET_TOKEN ?? process.env.CRON_SECRET;
-  if (!configuredToken) return false;
-
-  const cronToken = req.headers.get('x-cron-token');
-  const authorization = req.headers.get('authorization');
-  const bearerToken = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : null;
-
-  return cronToken === configuredToken || bearerToken === configuredToken;
+  return hasCronSecret(req);
 }
 
 export async function GET(req: Request) {

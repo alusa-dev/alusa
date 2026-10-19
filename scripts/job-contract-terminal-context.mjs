@@ -183,6 +183,15 @@ export function validateGlobalCronAuth(source, route) {
     return found;
   };
   const declarations = new Map();
+  let importsSharedCronHelper = false;
+  visit(sourceFile, (node) => {
+    if (!ts.isImportDeclaration(node) || !ts.isStringLiteral(node.moduleSpecifier) ||
+      node.moduleSpecifier.text !== '@/lib/security/route-protection-registry') return;
+    const bindings = node.importClause?.namedBindings;
+    if (bindings && ts.isNamedImports(bindings)) {
+      importsSharedCronHelper = bindings.elements.some((element) => element.name.text === 'hasCronSecret');
+    }
+  });
   visit(sourceFile, (node) => {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
       declarations.set(node.name.text, node.initializer);
@@ -259,6 +268,18 @@ export function validateGlobalCronAuth(source, route) {
   visit(sourceFile, (node) => {
     if (!ts.isIfStatement(node)) return;
     const condition = node.expression;
+    let callsSharedCronHelper = false;
+    visit(condition, (child) => {
+      if (!ts.isCallExpression(child) || !ts.isIdentifier(child.expression) ||
+        child.expression.text !== 'hasCronSecret' || child.arguments.length !== 1 ||
+        !ts.isIdentifier(child.arguments[0]) || child.arguments[0].text !== 'req') return;
+      callsSharedCronHelper = true;
+    });
+    if (
+      importsSharedCronHelper && callsSharedCronHelper &&
+      ts.isPrefixUnaryExpression(condition) && condition.operator === ts.SyntaxKind.ExclamationToken &&
+      rejectsWith401(node.thenStatement)
+    ) hasGuardedUnauthorizedReturn = true;
     if (
       readsConfiguredSecret && readsCronToken && readsBearerToken &&
       compareWithConfigured(condition, 'cronToken') &&
