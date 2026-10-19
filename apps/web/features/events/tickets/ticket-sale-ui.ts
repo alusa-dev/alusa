@@ -40,7 +40,11 @@ export type TicketSaleFinancialSummary = {
  */
 export function getTicketSaleFinancialSummary(sale: Pick<TicketSaleDTO, 'status' | 'totalAmount' | 'refundedAmount' | 'paymentStatus'>): TicketSaleFinancialSummary {
   const grossAmount = Math.max(Number(sale.totalAmount) || 0, 0);
-  const refundedAmount = Math.max(Number(sale.refundedAmount) || 0, 0);
+  const persistedRefundedAmount = Math.max(Number(sale.refundedAmount) || 0, 0);
+  // Legacy rows can be terminally refunded without a persisted refund amount.
+  const refundedAmount = sale.status === 'REFUNDED'
+    ? Math.max(persistedRefundedAmount, grossAmount)
+    : persistedRefundedAmount;
   const netAmount = Math.max(grossAmount - refundedAmount, 0);
   const isPartialRefund = refundedAmount > 0 && refundedAmount < grossAmount;
   const amountFullyRefundedButTicketsActive = grossAmount > 0
@@ -57,7 +61,9 @@ export function getTicketSaleFinancialSummary(sale: Pick<TicketSaleDTO, 'status'
       : refundPending && sale.status === 'PAID'
         ? 'Pago · estorno em andamento'
         : null,
-    tone: isPartialRefund || amountFullyRefundedButTicketsActive || refundPending ? 'info' : 'success',
+    tone: sale.status === 'REFUNDED' || isPartialRefund || amountFullyRefundedButTicketsActive || refundPending
+      ? 'info'
+      : 'success',
     grossAmount,
     refundedAmount,
     netAmount,

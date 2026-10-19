@@ -48,6 +48,22 @@ describe('getTicketSaleFinancialSummary', () => {
     });
   });
 
+  it('treats a legacy refunded row with no persisted amount as fully refunded', () => {
+    expect(getTicketSaleFinancialSummary({
+      status: 'REFUNDED',
+      totalAmount: 90,
+      refundedAmount: 0,
+      paymentStatus: 'REFUNDED',
+    })).toEqual({
+      label: null,
+      tone: 'info',
+      grossAmount: 90,
+      refundedAmount: 90,
+      netAmount: 0,
+      hasRefund: true,
+    });
+  });
+
   it('explains that tickets remain active when this row is fully refunded but still PAID', () => {
     expect(getTicketSaleFinancialSummary({
       status: 'PAID',

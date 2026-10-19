@@ -11,7 +11,7 @@ As definições estão em `vercel.json` e em `apps/web/vercel.json` (manter as d
 | `/api/jobs/events-expire-reservations?maxAccounts=30&limit=100&maxExternalPaymentChecks=25` | A cada 5 min | Expira reservas seguras; reconcilia cobranças antes de liberar assentos. |
 | `/api/jobs/events-reconcile-orders?maxAccounts=20&limit=50&olderThanMinutes=5` | A cada 15 min | Corrige pedidos pendentes elegíveis por conta. |
 | `/api/jobs/events-fulfill-tickets?maxAccounts=20&limit=100` | A cada 5 min | Emite ingressos após confirmação financeira. |
-| `/api/jobs/process-ticket-email-outbox?limit=100` | A cada 5 min | Entrega e-mails pendentes com retry idempotente. |
+| `/api/jobs/process-ticket-email-outbox?limit=100` | A cada 5 min | Entrega e-mails pendentes com retry idempotente. Sobrepõe o drain geral do `webhook-scheduler` a cada 2 min e protege a latência quando outros efeitos ocupam o lote. |
 | `/api/jobs/events-inspect-financial-inconsistencies?maxAccounts=30&limit=200` | Hora a hora | Materializa inconsistências para acompanhamento operacional. |
 
 Essas configurações indicam agendamento pretendido; não comprovam execução em produção. Verifique no painel de deployments/cron e nos logs estruturados de cada execução: `status`, duração, quantidade processada/expirada/pulada, erros e `contaId` quando disponível. Investigue execuções ausentes, falhas recorrentes, backlog de pedidos antigos e reservas vencidas que seguem `HELD`.
