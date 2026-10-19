@@ -96,6 +96,51 @@ describe('job observability', () => {
     error.mockRestore();
   });
 
+  it('inclui região curta validada nos logs da invocação e omite região inválida', () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const originalRegion = process.env.VERCEL_REGION;
+    try {
+      process.env.VERCEL_REGION = 'gru1';
+      const run = startJobRun('example-job');
+      logJobResult('example-job', run, { processed: 1 });
+      logJobFailure('example-job', run, new Error('private failure'));
+      expect(JSON.parse(String(info.mock.calls[0]?.[0])).attributes.vercelRegion).toBe('gru1');
+      expect(JSON.parse(String(info.mock.calls[1]?.[0])).attributes.vercelRegion).toBe('gru1');
+      expect(JSON.parse(String(error.mock.calls[0]?.[0])).attributes.vercelRegion).toBe('gru1');
+
+      process.env.VERCEL_REGION = 'private-region/value';
+      startJobRun('example-job');
+      logJobResult('example-job', Date.now(), { processed: 1 });
+      logJobFailure('example-job', Date.now(), new Error('failure'));
+      expect(JSON.stringify([...info.mock.calls.slice(2), ...error.mock.calls.slice(1)])).not.toContain('private-region');
+    } finally {
+      if (originalRegion === undefined) delete process.env.VERCEL_REGION;
+      else process.env.VERCEL_REGION = originalRegion;
+      info.mockRestore();
+      error.mockRestore();
+    }
+  });
+
+  it('serializa somente contagens agregadas conhecidas de inconsistências', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    logJobResult('events-inspect-financial-inconsistencies', Date.now(), {
+      findingCount: 1,
+      findingsByType: {
+        CONFIRMED_ORDER_WITHOUT_TICKET: 1,
+        PRIVATE_CATEGORY: 99,
+      },
+      contaId: 'private-tenant',
+      eventId: 'private-event',
+      message: 'private message',
+    }, { partialFailure: true });
+
+    const log = JSON.parse(String(warn.mock.calls[0]?.[0]));
+    expect(log.attributes.findingsByType).toEqual({ CONFIRMED_ORDER_WITHOUT_TICKET: 1 });
+    expect(JSON.stringify(log)).not.toMatch(/private-tenant|private-event|private message|PRIVATE_CATEGORY/);
+    warn.mockRestore();
+  });
+
   it('registra contagens dos jobs de ingressos e mantém a lista de campos permitidos', () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
     const recordMetric = vi

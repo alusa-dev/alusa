@@ -7,6 +7,13 @@ import {
 
 type JobResultLike = Record<string, unknown>;
 
+function safeVercelRegion() {
+  const region = process.env.VERCEL_REGION;
+  return typeof region === 'string' && region.length <= 16 && /^[a-z0-9-]+$/.test(region)
+    ? region
+    : undefined;
+}
+
 export type JobWorkStatus = 'empty' | 'worked' | 'unknown';
 export type JobResultExtra = Record<string, unknown> & {
   workStatus?: JobWorkStatus;
@@ -330,6 +337,19 @@ export function logJobResult(
       ? 'needs_attention'
       : 'success';
   const counts = { ...numericFields(result), ...numericExtraFields(extra) };
+  const findingsByType = result && typeof result === 'object' && !Array.isArray(result)
+    ? (result as JobResultLike).findingsByType
+    : undefined;
+  // Defense in depth: the route aggregates known types, and the logger allowlists again before serialization.
+  const safeFindingCounts = findingsByType && typeof findingsByType === 'object' && !Array.isArray(findingsByType)
+    ? Object.fromEntries(
+        ['CONFIRMED_ORDER_WITHOUT_TICKET', 'CONFIRMED_ORDER_WITH_UNSOLD_SEAT', 'PENDING_ORDER_WITHOUT_PAYMENT', 'ORDER_WITH_PAYMENT_WITHOUT_METHOD', 'EXPIRED_RESERVATION_HOLDING_SEAT']
+          .flatMap((type) => {
+            const count = (findingsByType as Record<string, unknown>)[type];
+            return typeof count === 'number' && Number.isSafeInteger(count) && count >= 0 ? [[type, count]] : [];
+          }),
+      )
+    : undefined;
   const steps = safeStepResults(result);
   const workStatus = safeExtras.workStatus ?? 'unknown';
   const dimensions = normalizeMetricDimensions({ 'job.name': name, result: outcome });
@@ -418,8 +438,8 @@ export function logJobResult(
         ? 'job.needs_attention'
         : 'job.completed',
     duration_ms: durationMs,
-    attributes: { jobName: name, ...(correlationId ? { correlationId } : {}), ...counts, ...safeExtras, steps },
-    allowedAttributes: ['jobName', ...(correlationId ? ['correlationId'] : []), ...Object.keys(counts), ...Object.keys(safeExtras), 'steps'],
+    attributes: { jobName: name, ...(correlationId ? { correlationId } : {}), ...(safeVercelRegion() ? { vercelRegion: safeVercelRegion() } : {}), ...counts, ...safeExtras, ...(safeFindingCounts ? { findingsByType: safeFindingCounts } : {}), steps },
+    allowedAttributes: ['jobName', ...(correlationId ? ['correlationId'] : []), ...(safeVercelRegion() ? ['vercelRegion'] : []), ...Object.keys(counts), ...Object.keys(safeExtras), ...(safeFindingCounts ? ['findingsByType'] : []), 'steps'],
   });
   if (outcome !== 'success') console.warn(JSON.stringify(log));
   else console.info(JSON.stringify(log));
@@ -462,8 +482,8 @@ export function logJobFailure(
     'event.name': 'job.failed',
     duration_ms: durationMs,
     'error.type': errorType,
-    attributes: { jobName: name, ...(correlationId ? { correlationId } : {}), ...safeExtras },
-    allowedAttributes: ['jobName', ...(correlationId ? ['correlationId'] : []), ...Object.keys(safeExtras)],
+    attributes: { jobName: name, ...(correlationId ? { correlationId } : {}), ...(safeVercelRegion() ? { vercelRegion: safeVercelRegion() } : {}), ...safeExtras },
+    allowedAttributes: ['jobName', ...(correlationId ? ['correlationId'] : []), ...(safeVercelRegion() ? ['vercelRegion'] : []), ...Object.keys(safeExtras)],
   });
   console.error(JSON.stringify(log));
   void sharedTelemetry.publishLog(log);
@@ -477,8 +497,8 @@ export function startJobRun(jobName: string, startedAt = Date.now()): JobRunCont
     'service.name': 'alusa-web',
     'event.name': 'job.started',
     timestamp: new Date(startedAt).toISOString(),
-    attributes: { jobName: name, correlationId },
-    allowedAttributes: ['jobName', 'correlationId'],
+    attributes: { jobName: name, correlationId, ...(safeVercelRegion() ? { vercelRegion: safeVercelRegion() } : {}) },
+    allowedAttributes: ['jobName', 'correlationId', ...(safeVercelRegion() ? ['vercelRegion'] : [])],
   });
   void sharedTelemetry.recordMetric({
     kind: 'counter',

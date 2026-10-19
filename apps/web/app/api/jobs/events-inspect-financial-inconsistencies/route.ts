@@ -9,6 +9,30 @@ import { resolveTenantScopeForJob, startJobRun, logJobFailure, logJobResult } fr
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
 
+const INCONSISTENCY_TYPES = [
+  'CONFIRMED_ORDER_WITHOUT_TICKET',
+  'CONFIRMED_ORDER_WITH_UNSOLD_SEAT',
+  'PENDING_ORDER_WITHOUT_PAYMENT',
+  'ORDER_WITH_PAYMENT_WITHOUT_METHOD',
+  'EXPIRED_RESERVATION_HOLDING_SEAT',
+] as const;
+
+function countFindingsByType(findings: Array<{ type?: unknown }>) {
+  const counts: Record<(typeof INCONSISTENCY_TYPES)[number], number> = {
+    CONFIRMED_ORDER_WITHOUT_TICKET: 0,
+    CONFIRMED_ORDER_WITH_UNSOLD_SEAT: 0,
+    PENDING_ORDER_WITHOUT_PAYMENT: 0,
+    ORDER_WITH_PAYMENT_WITHOUT_METHOD: 0,
+    EXPIRED_RESERVATION_HOLDING_SEAT: 0,
+  };
+  for (const finding of findings) {
+    if (typeof finding.type === 'string' && INCONSISTENCY_TYPES.includes(finding.type as (typeof INCONSISTENCY_TYPES)[number])) {
+      counts[finding.type as (typeof INCONSISTENCY_TYPES)[number]] += 1;
+    }
+  }
+  return counts;
+}
+
 function toPositiveInt(value: string | null, fallback: number, max: number) {
   const parsed = Number(value ?? fallback);
   return Number.isFinite(parsed) ? Math.max(1, Math.min(max, Math.floor(parsed))) : fallback;
@@ -37,6 +61,7 @@ async function run(req: Request) {
       {
         inspected: result.inspected,
         findingCount: result.findings.length,
+        findingsByType: countFindingsByType(result.findings),
       },
       {
         hasTenantScope: Boolean(tenantScope.contaId),

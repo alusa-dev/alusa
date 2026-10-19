@@ -1,7 +1,7 @@
 # Plano de eficiência, confiabilidade e organização sistêmica da Alusa
 
 **Status:** implementação local em execução controlada; mudanças de produção dependem de rollout e observação operacional
-**Data de atualização:** 16/10/2026
+**Data de atualização:** 19/10/2026
 **Escopo:** workspace, API, jobs, filas, PostgreSQL/Neon, Redis, integrações, financeiro, webhooks, multi-tenant, testes, observabilidade e operação.
 
 ## 1. Objetivo
@@ -18,11 +18,11 @@ Reduzir o consumo desnecessário de compute e quota, aumentar a previsibilidade 
 
 O plano prioriza mudanças pequenas, mensuráveis, reversíveis e compatíveis com a arquitetura atual. Não propõe introduzir uma plataforma de filas externa antes de provar a necessidade por métricas.
 
-## 1.1 Registro de execução
+## 1.1 Registro histórico de execução (16/10/2026)
 
 O registro abaixo contém um snapshot histórico do trabalho local anterior; seus
 resultados não são uma validação desta execução nem evidência de produção.
-Nesta onda atual foi feito o seguinte:
+Na onda registrada naquele snapshot foi feito o seguinte:
 
 - recontagem por parsing JSON dos arrays `crons` (não por linhas de arquivo):
   `apps/web/vercel.json` tem 36 entries e o `vercel.json` raiz também tem 36;
@@ -52,6 +52,23 @@ Nesta onda atual foi feito o seguinte:
   campos consumidos pelo mapper/fluxo de reserva, preservando filtros tenant,
   visibilidade pública e locks de reserva.
 
+## 1.2 Atualização local para a publicação de 19/10/2026
+
+- Os manifests do app e da raiz contêm 37 schedules, que correspondem a 36
+  route handlers únicos; `pnpm validate:cron-config` e
+  `pnpm audit:job-contracts` confirmaram o alinhamento.
+- A configuração atual planeja 6.497 disparos por dia. É uma contagem de
+  schedules, não uma medição de execuções efetivas, trabalho útil ou custo.
+- O polling `process-kyc-sync` permanece a cada minuto. O SLA de frescor do
+  read model KYC não está definido; nenhuma redução de frequência foi incluída
+  nesta publicação.
+- O schedule dedicado de email permanece ativo como via de drenagem sob
+  backlog; não foi removido com base apenas na sobreposição aparente com o
+  scheduler geral.
+- As melhorias de observabilidade e confiabilidade ainda dependem de rollout e
+  observação. O aceite de eficiência continua condicionado a medir consumo no
+  Neon, backlog e frescor KYC após a publicação.
+
 Foram implementados e validados localmente em snapshots anteriores:
 
 - observabilidade JSON para jobs críticos, sem serializar payloads ou segredos;
@@ -75,7 +92,7 @@ sem evidência do ambiente publicado.
 
 | Fase | Estado | Evidência e pendência para aceite |
 |---|---|---|
-| 0 — Baseline e ownership | Parcial | Catálogo e manifests conferidos (`36` schedules, `35` rotas únicas); há snapshots de Vercel, Neon e p95 de spans HTTP de jobs no Sentry. Os `count()` do Sentry são spans observados, não execuções exatas, e não medem trabalho útil, atraso, quota ou custo atribuível por job/tenant. Ainda falta baseline comparável de trabalho útil, atrasos e quota por janela. |
+| 0 — Baseline e ownership | Parcial | Catálogo e manifests conferidos (`37` schedules, `36` rotas únicas); há snapshots de Vercel, Neon e p95 de spans HTTP de jobs no Sentry. Os `count()` do Sentry são spans observados, não execuções exatas, e não medem trabalho útil, atraso, quota ou custo atribuível por job/tenant. Ainda falta baseline comparável de trabalho útil, atrasos e quota por janela. |
 | 1 — Observabilidade | Parcial | Os handlers catalogados registram início/conclusão, duração, contagens seguras e classificação `workStatus`; o auditor agora exige `workStatus` em cada rota agendada. O snapshot de spans HTTP no Sentry fornece p95 de duração por rota, mas seus `count()` não equivalem a execuções exatas e a métrica `alusa.job.completed` ainda não tem amostras históricas porque esta instrumentação não foi publicada. O aceite continua pendente de confirmação de ingestão e comparação pós-publicação. Separadamente, a telemetria de webhooks fornece gauges agregados de backlog/estados e idade da fila via `getWebhookQueueMetrics`, além de distribuições do recebimento ao claim e à conclusão por categoria de evento. Essa cobertura é específica ao fluxo de webhooks: não atribui backlog/lag a jobs ou tenants, não mede `dbQueries` nem custo por job. |
 | 2 — Polling e timers | Pendente | Nenhuma frequência foi reduzida nesta onda. Decisões dependem da janela comparável e da confirmação dos SLAs de webhook e reconciliação. |
 | 3 — Outbox e deduplicação | Parcial | A [matriz de outboxes financeiros e de webhook](../architecture/financial-outbox-coverage.md) registra, por modelo, produtor/fronteira transacional, dedupe, claim, retry e replay/DLQ onde comprovados; o [runbook de recuperação](../runbooks/financial-outbox-recovery.md) mapeia ações existentes e triagem somente leitura. Integrações PostgreSQL local cobrem retry de webhook/side-effect, claim único de rematrícula, disputa de enqueue/claim de `MatriculaBillingOutbox` e fencing de lease para `AsaasNotificationPreferenceOutbox` e `AsaasNotificationSyncOutbox`, preservando Conta B. O teste novo de matrícula comprovou dedupe concorrente intra-Conta A, um único claim/provisionamento mockado entre dois workers e Conta B ainda PENDING, sem chamar Asaas. O fencing protege o estado/finalização no banco, mas não cancela PUT Asaas já iniciado; se um PUT de preferência termina após perder claim, o worker agora re-enfileira a preferência atual da escola, que prevalece sobre canais da cobrança (fallback apenas sem preferências salvas). Mudança da régua durante sync disparado por cobrança também re-enfileira a intenção corrente. O worker antigo continua incapaz de finalizar a linha nova. Testes usam providers mockados; resultado local não é evidência Neon, staging ou produção. Para divergências persistentes, comparar remoto/local e escalar ao owner. A UI foi alinhada para comunicar que prevalecem as preferências atuais da escola. Owners seguem como bounded contexts e replay por registro não existe para todos os fluxos; falta prova integrada uniforme para os oito outboxes. |

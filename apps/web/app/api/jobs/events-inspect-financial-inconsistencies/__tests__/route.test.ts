@@ -63,6 +63,28 @@ describe('GET /api/jobs/events-inspect-financial-inconsistencies', () => {
     expect(JSON.stringify(body)).not.toMatch(/private-order|private-tenant|Private Customer/);
   });
 
+  it('registra contagens agregadas por tipo sem incluir identificadores ou mensagens', async () => {
+    inspectEventFinancialInconsistencies.mockResolvedValue({
+      ...emptyResult,
+      inspected: 3,
+      findings: [
+        { type: 'CONFIRMED_ORDER_WITHOUT_TICKET', contaId: 'private-tenant', eventId: 'private-event', orderId: 'private-order', message: 'private message', asaasPaymentId: 'private-payment' },
+        { type: 'CONFIRMED_ORDER_WITHOUT_TICKET', contaId: 'private-tenant', eventId: 'private-event-2', reservationId: 'private-reservation' },
+        { type: 'EXPIRED_RESERVATION_HOLDING_SEAT', contaId: 'private-tenant', eventId: 'private-event-3' },
+      ],
+    });
+    await GET(new Request('http://localhost/api/jobs/events-inspect-financial-inconsistencies'));
+    const loggedResult = logJobResult.mock.calls[0]?.[2];
+    expect(loggedResult.findingsByType).toEqual({
+      CONFIRMED_ORDER_WITHOUT_TICKET: 2,
+      CONFIRMED_ORDER_WITH_UNSOLD_SEAT: 0,
+      PENDING_ORDER_WITHOUT_PAYMENT: 0,
+      ORDER_WITH_PAYMENT_WITHOUT_METHOD: 0,
+      EXPIRED_RESERVATION_HOLDING_SEAT: 1,
+    });
+    expect(JSON.stringify(loggedResult)).not.toMatch(/private-tenant|private-event|private-order|private-reservation|private message|private-payment/);
+  });
+
   it('retorna erro estável quando a inspeção falha', async () => {
     inspectEventFinancialInconsistencies.mockRejectedValue(new Error('database detail'));
     const response = await GET(

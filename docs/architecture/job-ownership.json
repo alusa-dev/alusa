@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-16",
+  "updatedAt": "2026-10-19",
   "reviewDocument": "job-schedule-review.md",
   "jobs": [
     { "id": "platform-billing-maintenance", "route": "/api/jobs/platform-billing-maintenance", "schedule": "*/5 * * * *", "scope": "global", "owner": "platform-billing", "criticality": "MAINTENANCE", "retryStrategy": "bounded-backoff", "exclusiveGroup": "platform-billing" },

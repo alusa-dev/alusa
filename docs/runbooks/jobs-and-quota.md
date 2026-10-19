@@ -23,14 +23,14 @@ e gaps de SLA, consulte a [matriz auditável de schedules](../architecture/job-s
 Qualquer alteração em `vercel.json` deve atualizar os dois manifests e o
 catálogo; `pnpm audit:job-contracts` bloqueia divergências.
 
-Na configuração local inspecionada em 16/10/2026, `apps/web/vercel.json`
-contém 36 crons; o manifest raiz também contém 36, mas são arquivos de
-deployments distintos e não uma agenda de 72 jobs. Expandindo as expressões
-cron do manifest do app por frequência, o total planejado é 5.057 disparos por
-dia: 4.932 em schedules intervalares, 120 em cinco horários fixos por hora e
-5 em cinco horários diários. A estimativa descreve somente a agenda
-configurada. Para saber
-execuções efetivas e trabalho útil, correlacione logs de deployment/runtime e
+Na configuração local revisada em 19/10/2026, `apps/web/vercel.json`
+contém 37 crons; o manifest raiz também contém 37, mas são arquivos de
+deployments distintos e não uma agenda de 74 jobs. Expandindo as expressões
+cron do manifest do app por frequência, o total planejado é 6.497 disparos por
+dia. A estimativa descreve somente a agenda configurada, não execuções
+observadas nem trabalho útil. Nenhuma frequência de job foi reduzida nesta
+publicação; `process-kyc-sync` permanece a cada minuto enquanto o SLA de frescor
+do read model KYC não estiver definido. Para saber execuções efetivas e trabalho útil, correlacione logs de deployment/runtime e
 contagens de itens processados/ignorados; a configuração local não valida a
 agenda ativa em produção.
 
@@ -82,7 +82,7 @@ eventos `job.completed` agrupados em 15 rotas. Esse valor não é execução tot
 confirmada: logs de conclusão podem faltar em rotas sem instrumentação ou em
 execuções que falharam antes do resumo, e a consulta não separa esses casos.
 Use como snapshot exploratório; não reduza schedules com base nessa diferença
-frente aos 5.057 disparos/dia planejados localmente.
+frente aos 6.497 disparos/dia planejados localmente.
 
 O Sentry retornou zero e ingestão inativa para `alusa.job.completed`,
 `alusa.job.run.classification` e `alusa.job.duration` nos 14 dias consultados.
@@ -108,7 +108,9 @@ da interrupção ainda está presente.
 `SYNC_KYC_STATUS` já vencidos; não chama o Asaas a cada disparo e não substitui
 webhooks nem a reconciliação `reconcile-kyc-models` (que permanece a cada 2h).
 O enqueue é feito junto à persistência da subconta no tenant (`contaId`) e
-define `nextAttemptAt` para, no mínimo, 15 segundos após o provisionamento.
+define `nextAttemptAt` para, no mínimo, 15 segundos após o provisionamento. O
+SLA de frescor do bootstrap ainda não está definido; por isso, a frequência de
+um minuto foi preservada.
 Cada invocação processa no máximo 10 itens com claim atômico e lease de 5
 minutos. O worker tenta até 8 vezes, com backoff exponencial limitado a 15
 minutos; jobs esgotados terminam em `FAILED`. A chave inclui a geração da
@@ -136,7 +138,7 @@ separar execução vazia, trabalho real, retry e falha.
 Não registrar payloads Asaas, tokens, e-mails ou mensagens de erro completas
 quando não forem necessárias para a investigação.
 
-Os 35 handlers únicos do catálogo emitem `job.started` quando a execução começa
+Os 36 handlers únicos do catálogo emitem `job.started` quando a execução começa
 e incluem o mesmo UUID aleatório `correlationId` em `job.completed`,
 `job.partial_failure`, `job.needs_attention` ou `job.failed`. A métrica
 `alusa.job.started` conta inícios com dimensão fixa `job.name`; não recebe o
@@ -148,7 +150,13 @@ uma execução do job. A rota global `platform-billing-maintenance` registra
 credenciais de cron inválidas na mesma série antes de retornar 401, também sem
 iniciar a execução.
 
-O `webhook-scheduler` também registra cada etapa com duração e resultado
+Nenhuma frequência foi reduzida nesta publicação; o schedule dedicado de email
+permanece como proteção de drenagem sob backlog. Isso não comprova redução do
+`active_time` do Neon: o `webhook-scheduler` crítico continua a cada 2 min,
+abaixo do autosuspend de 300 s. A economia real deve ser verificada medindo a
+série de consumo Neon após o deploy.
+
+`webhook-scheduler` também registra cada etapa com duração e resultado
 (`success`/`error`) nas métricas `alusa.job.step.completed` e
 `alusa.job.step.duration`. As contagens allowlisted de etapa aparecem em
 `alusa.job.step.items`, com dimensões fixas `job.name`, `job.step` e nome do
@@ -166,13 +174,16 @@ como mecanismo de retry: o trabalho persistido permanece elegível ao próximo
 ciclo do scheduler. Alertas devem considerar o status HTTP e as métricas/logs
 por etapa; não presumir que Vercel repetirá a invocação.
 
-Os 36 schedules do catálogo apontam para 35 route handlers únicos, que
+Os 37 schedules do catálogo apontam para 36 route handlers únicos, que
 registram conclusão por meio de `logJobResult`; `pnpm audit:job-contracts`
 bloqueia a remoção desse registro de uma rota catalogada. A telemetria usa
 `alusa.job.completed` e
 `alusa.job.duration` com dimensões de nome seguro do job e resultado, e
-`alusa.job.items` para contagens allowlisted. Os logs `job.completed`,
-`job.partial_failure` e `job.needs_attention` incluem duração e somente
+`alusa.job.items` para contagens allowlisted. Os logs `job.started`,
+`job.completed`, `job.partial_failure`,
+`job.needs_attention` e `job.failed` incluem `vercelRegion` somente quando
+`VERCEL_REGION` é curto e contém apenas caracteres seguros. A região não é dimensão
+de métrica. Os eventos terminais incluem duração e somente
 contagens/campos explicitamente permitidos. Esses dados ajudam a separar uma
 invocação vazia de uma execução com trabalho, retry ou falha; não revelam custo
 exato de compute por job.
@@ -385,9 +396,9 @@ etapas falhas, mantém backlog dentro do SLO, não gera duplicidade financeira e
 preserva isolamento Conta A/Conta B. Quota menor, isoladamente, não é critério
 de sucesso.
 
-## Correlação e custos reportados — 16/10/2026
+## Correlação e custos reportados — 19/10/2026
 
-Os 35 handlers únicos do catálogo emitem `job.started` com UUID aleatório e
+Os 36 handlers únicos do catálogo emitem `job.started` com UUID aleatório e
 repetem o mesmo `correlationId` em `job.completed`, `job.partial_failure`,
 `job.needs_attention` ou `job.failed`. `alusa.job.started` conta invocações com
 dimensão fixa `job.name`; o UUID não vira dimensão de métrica. Não são usados
@@ -396,6 +407,10 @@ segredos. Nas rotas que resolvem escopo de tenant e na rota global
 `platform-billing-maintenance`, uma autorização negada gera
 `alusa.job.request_rejected`, sem `job.started` nem evento terminal. A ingestão
 dessa série após publicação ainda precisa ser confirmada.
+Os eventos de início e término incluem `vercelRegion` quando `VERCEL_REGION`
+passa a validação curta e segura; a região não é dimensão de métrica. O aviso
+de inconsistências financeiras registra contagens agregadas apenas para os
+cinco tipos conhecidos, sem IDs, mensagem ou payment ID.
 Essa instrumentação não faz queries de observabilidade, não atribui os gauges
 globais `finance.webhook.*` a um job específico e não mede `queueDepth`, lag
 por job ou `dbQueries`.
