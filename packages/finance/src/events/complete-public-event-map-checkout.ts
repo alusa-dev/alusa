@@ -180,6 +180,74 @@ async function resolveEventMapCustomerCreationIssue(input: {
   });
 }
 
+async function resolveEventMapPaymentCreationIssue(input: {
+  contaId: string;
+  orderId: string;
+  externalReference: string;
+  apiKey: string;
+  paymentId: string;
+  customerId: string | null;
+  paymentMethod: string | null;
+  totalAmount: number | Prisma.Decimal;
+}) {
+  const issue = await prisma.financeReconciliationIssue.findFirst({
+    where: {
+      contaId: input.contaId,
+      entityType: 'PAYMENT',
+      entityId: input.orderId,
+      issueType: 'BILLING_OPERATION_UNCERTAIN',
+      dedupeKey: `BILLING_OPERATION_UNCERTAIN:PAYMENT:${input.orderId}`,
+      status: 'OPEN',
+      metadata: { path: ['externalReference'], equals: input.externalReference },
+    },
+    select: { id: true, remoteStatus: true },
+  });
+  // Resolve only the legacy preflight issue that explicitly recorded no
+  // remote match. Conflicts, multiple candidates and ambiguous POST outcomes
+  // require their own reconciliation path even if the order has a payment ID.
+  if (!issue || issue.remoteStatus !== 'NOT_FOUND' || !input.customerId || !input.paymentMethod) return;
+
+  let remotePayment: EventAsaasPayment;
+  try {
+    remotePayment = await getEventAsaasPaymentProvider().getPayment({
+      apiKey: input.apiKey,
+      paymentId: input.paymentId,
+    });
+  } catch (error) {
+    logEventsFinance('finance.events.public_event_map.checkout.payment_reconciliation.failed', { error }, 'warn');
+    return;
+  }
+  if (
+    remotePayment.id !== input.paymentId ||
+    remotePayment.externalReference !== input.externalReference ||
+    remotePayment.customer !== input.customerId ||
+    remotePayment.billingType !== input.paymentMethod ||
+    typeof remotePayment.value !== 'number' ||
+    toMoney(remotePayment.value) !== toMoney(input.totalAmount) ||
+    remotePayment.deleted === true ||
+    !remotePayment.status
+  ) return;
+
+  await prisma.financeReconciliationIssue.updateMany({
+    where: {
+      id: issue.id,
+      contaId: input.contaId,
+      entityType: 'PAYMENT',
+      entityId: input.orderId,
+      issueType: 'BILLING_OPERATION_UNCERTAIN',
+      dedupeKey: `BILLING_OPERATION_UNCERTAIN:PAYMENT:${input.orderId}`,
+      status: 'OPEN',
+      remoteStatus: 'NOT_FOUND',
+      metadata: { path: ['externalReference'], equals: input.externalReference },
+    },
+    data: {
+      status: 'RESOLVED',
+      resolvedAt: new Date(),
+      resolution: 'The persisted Asaas payment was verified against the checkout order.',
+    },
+  });
+}
+
 async function hasCustomerCreationPostMarker(input: {
   contaId: string;
   orderId: string;
@@ -353,6 +421,18 @@ export async function completePublicEventMapCheckout(
     }
 
     if (pending.order.asaasPaymentId) {
+      if (pending.order.paymentStatus !== 'PAYMENT_CREATION_UNKNOWN') {
+        await resolveEventMapPaymentCreationIssue({
+          contaId: pending.map.contaId,
+          orderId: pending.order.id,
+          externalReference: `event-map-order:${pending.order.id}`,
+          apiKey: credentials.apiKey,
+          paymentId: pending.order.asaasPaymentId,
+          customerId: pending.order.asaasCustomerId,
+          paymentMethod: pending.order.paymentMethod,
+          totalAmount: pending.totalAmount,
+        });
+      }
       return buildCheckoutResponse(pending.order, {
         apiKey: credentials.apiKey,
         paymentMethod: input.paymentMethod,

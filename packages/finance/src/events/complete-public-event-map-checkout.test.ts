@@ -190,6 +190,124 @@ describe('completePublicEventMapCheckout payment reference pagination', () => {
     }));
   });
 
+  it('resolve o alerta legado de cobrança incerta quando o pedido já persiste a cobrança confirmada', async () => {
+    mocks.prepare.mockResolvedValueOnce({
+      ...pending(),
+      order: {
+        ...pending().order,
+        asaasPaymentId: 'pay-persisted',
+        asaasCustomerId: 'cus-canonical',
+        paymentMethod: 'PIX',
+        paymentStatus: 'PENDING',
+        items: [],
+      },
+    });
+    mocks.findIssueForOrder.mockResolvedValueOnce({ id: 'issue-legacy', remoteStatus: 'NOT_FOUND' });
+    mocks.provider.getPayment.mockResolvedValueOnce({
+      id: 'pay-persisted', customer: 'cus-canonical', value: 20, billingType: 'PIX',
+      externalReference, status: 'PENDING', deleted: false,
+    });
+
+    await completePublicEventMapCheckout('public-map', checkoutInput());
+
+    expect(mocks.provider.getPayment).toHaveBeenCalledWith({ apiKey: 'tenant-A-key', paymentId: 'pay-persisted' });
+    expect(mocks.resolveCustomerIssue).toHaveBeenCalledWith({
+      where: {
+        id: 'issue-legacy',
+        contaId: 'conta-A',
+        entityType: 'PAYMENT',
+        entityId: 'order-1',
+        issueType: 'BILLING_OPERATION_UNCERTAIN',
+        dedupeKey: 'BILLING_OPERATION_UNCERTAIN:PAYMENT:order-1',
+        status: 'OPEN',
+        remoteStatus: 'NOT_FOUND',
+        metadata: { path: ['externalReference'], equals: externalReference },
+      },
+      data: {
+        status: 'RESOLVED',
+        resolvedAt: expect.any(Date),
+        resolution: 'The persisted Asaas payment was verified against the checkout order.',
+      },
+    });
+    expect(mocks.provider.createPayment).not.toHaveBeenCalled();
+    expect(mocks.provider.listPayments).not.toHaveBeenCalled();
+  });
+
+  it('preserves an open attachment conflict even when the order has a local payment ID', async () => {
+    mocks.prepare.mockResolvedValueOnce({
+      ...pending(),
+      order: {
+        ...pending().order,
+        asaasPaymentId: 'pay-local',
+        asaasCustomerId: 'cus-canonical',
+        paymentMethod: 'PIX',
+        paymentStatus: 'PENDING',
+        items: [],
+      },
+    });
+    mocks.findIssueForOrder.mockResolvedValueOnce({ id: 'issue-conflict', remoteStatus: 'POST_ATTACH_CONFLICT' });
+
+    await completePublicEventMapCheckout('public-map', checkoutInput());
+
+    expect(mocks.provider.getPayment).not.toHaveBeenCalled();
+    expect(mocks.resolveCustomerIssue).not.toHaveBeenCalled();
+    expect(mocks.provider.createPayment).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['different payment ID', { id: 'pay-other' }],
+    ['different external reference', { externalReference: 'event-map-order:other-order' }],
+    ['different customer', { customer: 'cus-other' }],
+    ['different payment method', { billingType: 'BOLETO' }],
+    ['different amount', { value: 21 }],
+    ['deleted payment', { deleted: true }],
+    ['missing remote status', { status: undefined }],
+  ])('keeps the uncertainty issue open when the Asaas payment does not match (%s)', async (_label, mismatch) => {
+    mocks.prepare.mockResolvedValueOnce({
+      ...pending(),
+      order: {
+        ...pending().order,
+        asaasPaymentId: 'pay-persisted',
+        asaasCustomerId: 'cus-canonical',
+        paymentMethod: 'PIX',
+        paymentStatus: 'PENDING',
+        items: [],
+      },
+    });
+    mocks.findIssueForOrder.mockResolvedValueOnce({ id: 'issue-legacy', remoteStatus: 'NOT_FOUND' });
+    mocks.provider.getPayment.mockResolvedValueOnce({
+      id: 'pay-persisted', customer: 'cus-canonical', value: 20, billingType: 'PIX',
+      externalReference, status: 'PENDING', deleted: false,
+      ...mismatch,
+    });
+
+    await completePublicEventMapCheckout('public-map', checkoutInput());
+
+    expect(mocks.resolveCustomerIssue).not.toHaveBeenCalled();
+    expect(mocks.provider.createPayment).not.toHaveBeenCalled();
+  });
+
+  it('keeps the uncertainty issue open and returns the existing order when Asaas verification fails', async () => {
+    mocks.prepare.mockResolvedValueOnce({
+      ...pending(),
+      order: {
+        ...pending().order,
+        asaasPaymentId: 'pay-persisted',
+        asaasCustomerId: 'cus-canonical',
+        paymentMethod: 'PIX',
+        paymentStatus: 'PENDING',
+        items: [],
+      },
+    });
+    mocks.findIssueForOrder.mockResolvedValueOnce({ id: 'issue-legacy', remoteStatus: 'NOT_FOUND' });
+    mocks.provider.getPayment.mockRejectedValueOnce(new Error('provider unavailable'));
+
+    await completePublicEventMapCheckout('public-map', checkoutInput());
+
+    expect(mocks.resolveCustomerIssue).not.toHaveBeenCalled();
+    expect(mocks.provider.createPayment).not.toHaveBeenCalled();
+  });
+
   it('reusa customer único sem alterar os contatos do cadastro compartilhado', async () => {
     mocks.provider.listPayments.mockResolvedValueOnce(page({ offset: 0, hasMore: false, data: [] }));
     mocks.provider.listCustomers.mockResolvedValue(customersPage({
