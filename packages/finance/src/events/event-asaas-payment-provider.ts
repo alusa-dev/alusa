@@ -12,7 +12,7 @@ import {
 } from '@alusa/asaas';
 import { assertCompleteAsaasPage } from '../use-cases/asaas-pagination';
 
-export type EventAsaasCustomer = { id: string; cpfCnpj?: string; deleted?: boolean };
+export type EventAsaasCustomer = { id: string; cpfCnpj?: string; externalReference?: string; deleted?: boolean };
 export type EventAsaasCustomerListResponse = {
   data: EventAsaasCustomer[];
   hasMore: boolean;
@@ -174,6 +174,50 @@ export async function listCompleteEventCustomersByDocument(input: {
   }
 
   throw new Error('EVENT_CUSTOMER_LOOKUP_INCOMPLETE:PAGE_LIMIT_EXCEEDED');
+}
+
+export async function listCompleteEventCustomersByReference(input: {
+  apiKey: string;
+  externalReference: string;
+}): Promise<EventAsaasCustomer[]> {
+  const customers: EventAsaasCustomer[] = [];
+  const seenIds = new Set<string>();
+  const pageSize = 100;
+  let expectedTotalCount: number | undefined;
+
+  for (let page = 0; page < 100; page += 1) {
+    const offset = page * pageSize;
+    let response: EventAsaasCustomerListResponse;
+    try {
+      response = await getEventAsaasPaymentProvider().listCustomers({
+        apiKey: input.apiKey,
+        externalReference: input.externalReference,
+        offset,
+        limit: pageSize,
+      });
+    } catch (error) {
+      throw new Error(`EVENT_CUSTOMER_REFERENCE_LOOKUP_INCOMPLETE:${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (
+      !response ||
+      !Array.isArray(response.data) ||
+      typeof response.hasMore !== 'boolean' ||
+      response.offset !== offset ||
+      response.limit !== pageSize
+    ) throw new Error('EVENT_CUSTOMER_REFERENCE_LOOKUP_INCOMPLETE:INVALID_PAGE');
+    try { expectedTotalCount = assertCompleteAsaasPage(response, offset, pageSize, expectedTotalCount); }
+    catch { throw new Error('EVENT_CUSTOMER_REFERENCE_LOOKUP_INCOMPLETE:TOTAL_COUNT_MISMATCH'); }
+    if (response.data.some((customer) =>
+      !customer?.id || seenIds.has(customer.id) || customer.externalReference !== input.externalReference,
+    )) throw new Error('EVENT_CUSTOMER_REFERENCE_LOOKUP_INCOMPLETE:REPEATED_OR_MISMATCHED_RESULT');
+    for (const customer of response.data) {
+      seenIds.add(customer.id);
+      customers.push(customer);
+    }
+    if (!response.hasMore) return customers;
+    if (response.data.length === 0) throw new Error('EVENT_CUSTOMER_REFERENCE_LOOKUP_INCOMPLETE:EMPTY_PAGE_WITH_MORE');
+  }
+  throw new Error('EVENT_CUSTOMER_REFERENCE_LOOKUP_INCOMPLETE:PAGE_LIMIT_EXCEEDED');
 }
 
 export const eventAsaasPaymentProvider: EventAsaasPaymentProvider = {

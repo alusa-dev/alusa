@@ -301,6 +301,83 @@ describe('event map purchase schedule snapshots', () => {
     }
   });
 
+  it('resumes an expired hold only for its original unknown order and keeps buyer details', async () => {
+    const fixture = await createFixture({ seatStatus: 'HELD' });
+    try {
+      const reservation = await createReservation(fixture, 'PUBLIC_CHECKOUT');
+      const order = await prisma.eventMapOrder.create({
+        data: {
+          contaId: fixture.conta.id, eventId: fixture.event.id, eventMapId: fixture.map.id,
+          versionId: fixture.version.id, reservationId: reservation.id, buyerName: 'Comprador Teste',
+          buyerEmail: 'ticket@example.test', buyerDocument: '52998224725', buyerPhone: '11987654321',
+          totalAmount: 20, status: 'PAYMENT_PENDING', paymentMethod: 'PIX', paymentStatus: 'PAYMENT_CREATION_UNKNOWN',
+          accessToken: `order-${randomUUID()}`,
+        },
+      });
+      await prisma.eventMapReservation.update({ where: { id: reservation.id }, data: { expiresAt: new Date(Date.now() - 60_000) } });
+
+      const result = await preparePublicEventMapCheckout(fixture.map.publicSlug!, checkoutInput(reservation));
+      const persisted = await prisma.eventMapOrder.findFirstOrThrow({ where: { id: order.id, contaId: fixture.conta.id } });
+      const heldReservation = await prisma.eventMapReservation.findFirstOrThrow({ where: { id: reservation.id, contaId: fixture.conta.id } });
+
+      expect(result.order.id).toBe(order.id);
+      expect(heldReservation.expiresAt.getTime()).toBeGreaterThan(Date.now());
+      expect(persisted).toMatchObject({ buyerName: 'Comprador Teste', buyerEmail: 'ticket@example.test', buyerPhone: '11987654321' });
+      expect((await prisma.eventMapPublicSeat.findUniqueOrThrow({ where: { id: fixture.seat.id } })).status).toBe('HELD');
+      expect(await prisma.auditLog.count({ where: { contaId: fixture.conta.id, entityId: order.id, action: 'events.map.public.checkout.hold_resumed' } })).toBe(1);
+    } finally {
+      await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
+  it('does not resume an expired hold without an unresolved payment', async () => {
+    const fixture = await createFixture({ seatStatus: 'HELD' });
+    try {
+      const reservation = await createReservation(fixture, 'PUBLIC_CHECKOUT');
+      await prisma.eventMapReservation.update({ where: { id: reservation.id }, data: { expiresAt: new Date(Date.now() - 60_000) } });
+      await prisma.eventMapOrder.create({
+        data: {
+          contaId: fixture.conta.id, eventId: fixture.event.id, eventMapId: fixture.map.id,
+          versionId: fixture.version.id, reservationId: reservation.id, buyerName: 'Nome', buyerEmail: 'buyer@example.test',
+          buyerDocument: '52998224725', buyerPhone: '11987654321', totalAmount: 20, status: 'PAYMENT_PENDING',
+          paymentMethod: 'PIX', accessToken: `order-${randomUUID()}`,
+        },
+      });
+      await expect(preparePublicEventMapCheckout(fixture.map.publicSlug!, checkoutInput(reservation)))
+        .rejects.toMatchObject({ code: 'RESERVA_EXPIRADA' });
+    } finally {
+      await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
+  it('rejects checkout when an original reserved seat is no longer held', async () => {
+    const fixture = await createFixture({ seatStatus: 'HELD' });
+    try {
+      const reservation = await createReservation(fixture, 'PUBLIC_CHECKOUT');
+      await prisma.eventMapPublicSeat.update({ where: { id: fixture.seat.id }, data: { status: 'AVAILABLE' } });
+      await expect(preparePublicEventMapCheckout(fixture.map.publicSlug!, checkoutInput(reservation)))
+        .rejects.toMatchObject({ code: 'RESERVA_INVALIDA' });
+      expect(await prisma.eventMapOrder.count({ where: { contaId: fixture.conta.id } })).toBe(0);
+    } finally {
+      await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
+  it('does not accept a reservation token from another tenant', async () => {
+    const tenantA = await createFixture({ seatStatus: 'HELD' });
+    const tenantB = await createFixture({ seatStatus: 'HELD' });
+    try {
+      const foreignReservation = await createReservation(tenantB, 'PUBLIC_CHECKOUT');
+      await expect(preparePublicEventMapCheckout(tenantA.map.publicSlug!, checkoutInput(foreignReservation)))
+        .rejects.toMatchObject({ code: 'RESERVA_NAO_ENCONTRADA' });
+      expect(await prisma.eventMapOrder.count({ where: { contaId: tenantA.conta.id } })).toBe(0);
+      expect((await prisma.eventMapPublicSeat.findUniqueOrThrow({ where: { id: tenantB.seat.id } })).status).toBe('HELD');
+    } finally {
+      await prisma.conta.deleteMany({ where: { id: tenantA.conta.id } });
+      await prisma.conta.deleteMany({ where: { id: tenantB.conta.id } });
+    }
+  });
+
   it('preserves an initiated public order when its lot later closes', async () => {
     const fixture = await createFixture({
       seatStatus: 'HELD',

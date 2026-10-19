@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   listCompleteEventCustomersByDocument,
+  listCompleteEventCustomersByReference,
   listCompleteEventPaymentsByReference,
   registerEventAsaasPaymentProvider,
   selectUniqueActiveEventPayment,
@@ -20,11 +21,12 @@ function page(input: { offset: number; hasMore: boolean; data: Array<{ id: strin
     : input.data;
   return { ...input, data, limit: 100, totalCount: input.totalCount ?? (input.hasMore ? Math.max(101, input.offset + data.length + 1) : input.offset + data.length) };
 }
-function customersPage(input: { offset: number; hasMore: boolean; data: Array<{ id: string; cpfCnpj?: string }> }) {
+function customersPage(input: { offset: number; hasMore: boolean; data: Array<{ id: string; cpfCnpj?: string; externalReference?: string }> }) {
   const data = input.hasMore
     ? [...input.data, ...Array.from({ length: Math.max(0, 100 - input.data.length) }, (_, index) => ({
         id: `cus-page-${input.offset}-${index}`,
         cpfCnpj: '99999999999',
+      externalReference: input.data[0]?.externalReference ?? externalReference,
       }))]
     : input.data;
   return { ...input, data, limit: 100, totalCount: input.hasMore ? 101 : input.offset + data.length };
@@ -91,6 +93,53 @@ describe('listCompleteEventPaymentsByReference', () => {
     expect(() => selectUniqueActiveEventPayment(candidates))
       .toThrow('MULTIPLE_ACTIVE_PAYMENTS');
     expect(listPayments.mock.calls.map(([params]) => params.offset)).toEqual([0, 100]);
+  });
+});
+
+describe('listCompleteEventCustomersByReference', () => {
+  it('retorna todos os customers da referência exata após paginação completa', async () => {
+    const listCustomers = vi.fn()
+      .mockResolvedValueOnce(customersPage({ offset: 0, hasMore: true, data: Array.from({ length: 100 }, (_, index) => ({
+        id: `cus-${index}`, cpfCnpj: buyerDocument, externalReference,
+      })) }))
+      .mockResolvedValueOnce(customersPage({ offset: 100, hasMore: false, data: [{
+        id: 'cus-order-customer', cpfCnpj: buyerDocument, externalReference,
+      }] }));
+    registerEventAsaasPaymentProvider({ listCustomers } as never);
+
+    const result = await listCompleteEventCustomersByReference({ apiKey: 'tenant-key', externalReference });
+
+    expect(result).toHaveLength(101);
+    expect(result.at(-1)?.id).toBe('cus-order-customer');
+    expect(listCustomers.mock.calls).toEqual([
+      [{ apiKey: 'tenant-key', externalReference, offset: 0, limit: 100 }],
+      [{ apiKey: 'tenant-key', externalReference, offset: 100, limit: 100 }],
+    ]);
+  });
+
+  it('rejeita resultado cuja referência não coincide exatamente', async () => {
+    const listCustomers = vi.fn().mockResolvedValueOnce(customersPage({
+      offset: 0,
+      hasMore: false,
+      data: [{ id: 'cus-other-order', cpfCnpj: buyerDocument, externalReference: 'event-map-order:other' }],
+    }));
+    registerEventAsaasPaymentProvider({ listCustomers } as never);
+
+    await expect(listCompleteEventCustomersByReference({ apiKey: 'tenant-key', externalReference }))
+      .rejects.toThrow('EVENT_CUSTOMER_REFERENCE_LOOKUP_INCOMPLETE:REPEATED_OR_MISMATCHED_RESULT');
+  });
+
+  it('falha fechada se uma página posterior da busca por referência estiver incompleta', async () => {
+    const listCustomers = vi.fn()
+      .mockResolvedValueOnce(customersPage({ offset: 0, hasMore: true, data: Array.from({ length: 100 }, (_, index) => ({
+        id: `cus-${index}`, cpfCnpj: buyerDocument, externalReference,
+      })) }))
+      .mockRejectedValueOnce(new Error('temporary provider failure'));
+    registerEventAsaasPaymentProvider({ listCustomers } as never);
+
+    await expect(listCompleteEventCustomersByReference({ apiKey: 'tenant-key', externalReference }))
+      .rejects.toThrow('EVENT_CUSTOMER_REFERENCE_LOOKUP_INCOMPLETE');
+    expect(listCustomers.mock.calls.map(([params]) => params.offset)).toEqual([0, 100]);
   });
 });
 

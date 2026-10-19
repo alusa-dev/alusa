@@ -73,14 +73,12 @@ export async function preparePublicEventMapCheckout(publicSlug: string, input: P
 
     const reservation = await tx.eventMapReservation.findFirst({
       where: { id: input.reservationId, holdToken: input.holdToken, contaId: map.contaId, eventMapId: map.id, versionId: map.publishedVersionId!, status: 'HELD' },
-      include: { seats: { include: { publicSeat: true } }, order: { include: { items: { include: { ticket: true } } } } },
+      include: { seats: { include: { publicSeat: { include: { orderItems: { select: { id: true } }, saleSeats: { select: { id: true } } } } } }, order: { include: { items: { include: { ticket: true } } } } },
     });
     if (!reservation) throw new EventsError('RESERVA_NAO_ENCONTRADA', 'Reserva não encontrada ou expirada.', 404);
     if (!eventMapLocalDateTimeToDate(startsAtLocal)) throw new EventsError('HORARIO_SESSAO_INVALIDO', 'O horário desta sessão é inválido.', 409);
-    if (reservation.expiresAt < new Date()) throw new EventsError('RESERVA_EXPIRADA', 'A reserva expirou. Selecione os assentos novamente.', 409);
-
     const publicSeats = reservation.seats.map((entry) => entry.publicSeat);
-    if (publicSeats.length === 0 || publicSeats.some((seat) => seat.status !== 'HELD')) throw new EventsError('RESERVA_INVALIDA', 'A reserva possui assentos indisponíveis.', 409);
+    if (publicSeats.length === 0 || publicSeats.some((seat) => seat.status !== 'HELD' || seat.orderItems.length > 0 || seat.saleSeats.length > 0)) throw new EventsError('RESERVA_INVALIDA', 'A reserva possui assentos indisponíveis.', 409);
     if (!reservation.order) assertEventTicketSalesOpen(map.event);
 
     const totalAmount = publicSeats.reduce((sum, seat) => sum + toMoney(seat.unitPrice), 0);
@@ -98,6 +96,11 @@ export async function preparePublicEventMapCheckout(publicSlug: string, input: P
     });
 
     if (['CANCELLED', 'EXPIRED', 'REFUNDED'].includes(order.status)) throw new EventsError('PEDIDO_NAO_REUTILIZAVEL', 'A reserva já foi encerrada. Selecione os assentos novamente.', 409);
+    const expired = reservation.expiresAt < new Date();
+    if (expired && (order.paymentStatus !== 'PAYMENT_CREATION_UNKNOWN' || order.asaasPaymentId)) {
+      throw new EventsError('RESERVA_EXPIRADA', 'A reserva expirou. Selecione os assentos novamente.', 409);
+    }
+    if (expired) assertEventTicketSalesOpen(map.event);
     if ((order.paymentStatus === 'PAYMENT_CREATION_IN_PROGRESS' || order.paymentStatus === 'PAYMENT_CREATION_UNKNOWN') &&
       (order.buyerName !== input.buyerName || order.buyerEmail !== input.buyerEmail || order.buyerDocument !== buyerDocument || order.buyerPhone !== input.buyerPhone || order.paymentMethod !== input.paymentMethod)) {
       throw new EventsError('CHECKOUT_EM_RECONCILIACAO', 'Esta tentativa de pagamento ainda está sendo verificada. Mantenha os dados e o meio de pagamento e consulte o pedido novamente.', 409);
@@ -105,20 +108,12 @@ export async function preparePublicEventMapCheckout(publicSlug: string, input: P
     if (order.asaasPaymentId && order.paymentMethod !== input.paymentMethod) throw new EventsError('METODO_PAGAMENTO_FIXO', 'A cobrança deste pedido já foi gerada com outro meio de pagamento. Cancele o pedido e inicie uma nova compra para alterá-lo.', 409);
 
     const expiresAt = order.asaasPaymentId ? order.expiresAt ?? proposedExpiresAt : proposedExpiresAt;
-    await tx.eventMapReservation.update({ where: { id: reservation.id }, data: { status: 'HELD', expiresAt, buyerName: input.buyerName, buyerEmail: input.buyerEmail } });
+    await tx.eventMapReservation.update({ where: { id: reservation.id }, data: { status: 'HELD', expiresAt } });
     await tx.eventMapOrder.update({
       where: { id: order.id },
-      data: {
-        buyerName: input.buyerName,
-        buyerEmail: input.buyerEmail,
-        buyerDocument,
-        buyerPhone: input.buyerPhone,
-        ...(input.whatsappConsent && !order.whatsappOptOutAt ? { whatsappOptInAt: new Date(), whatsappOptInSource: 'PUBLIC_CHECKOUT' } : {}),
-        paymentMethod: input.paymentMethod,
-        expiresAt,
-      },
+      data: { expiresAt },
     });
-    await tx.auditLog.create({ data: { contaId: map.contaId, actorType: 'SYSTEM', actorId: null, action: 'events.map.public.checkout', entityType: 'EventMapOrder', entityId: order.id, metadata: toAuditJson({ eventId: map.eventId, eventMapId: map.id, versionId: map.publishedVersionId, seats: publicSeats.map((seat) => seat.technicalCode), totalAmount, expiresAt: expiresAt.toISOString() }) } });
+    await tx.auditLog.create({ data: { contaId: map.contaId, actorType: 'SYSTEM', actorId: null, action: expired ? 'events.map.public.checkout.hold_resumed' : 'events.map.public.checkout', entityType: 'EventMapOrder', entityId: order.id, metadata: toAuditJson({ eventId: map.eventId, eventMapId: map.id, versionId: map.publishedVersionId, reservationId: reservation.id, seats: publicSeats.map((seat) => seat.technicalCode), totalAmount, expiresAt: expiresAt.toISOString() }) } });
     return {
       order,
       map,
