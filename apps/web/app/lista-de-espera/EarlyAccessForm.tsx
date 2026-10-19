@@ -126,7 +126,7 @@ export function EarlyAccessForm() {
         />
         <span>Aceito receber comunicações promocionais da Alusa.</span>
       </label>
-      <button type="submit" disabled={status === 'submitting'}>
+      <button type="submit" disabled={status === 'submitting' || !form.marketingConsent}>
         {status === 'submitting' ? 'Confirmando…' : 'Entrar na lista de espera'}
         <span aria-hidden="true">↗</span>
       </button>
