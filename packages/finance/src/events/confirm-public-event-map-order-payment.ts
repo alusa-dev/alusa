@@ -62,13 +62,57 @@ export async function confirmPublicEventMapOrderPayment(params: {
       },
       include: {
         map: true,
-        version: { select: { snapshot: true } },
-        event: { select: { name: true, startsAt: true, endsAt: true, locationName: true, locationAddress: true } },
+        version: { select: { contaId: true, eventMapId: true, snapshot: true } },
+        event: { select: { id: true, contaId: true, name: true, startsAt: true, endsAt: true, locationName: true, locationAddress: true } },
         reservation: { include: { seats: { include: { publicSeat: true } } } },
         items: { include: { ticket: true, publicSeat: true } },
       },
     });
     if (!order) return null;
+
+    let reservation = order.reservation;
+    const invalidOrderGraph = order.map.contaId !== order.contaId
+      || order.map.eventId !== order.eventId
+      || order.event.contaId !== order.contaId
+      || order.event.id !== order.eventId
+      || order.version.contaId !== order.contaId
+      || order.version.eventMapId !== order.eventMapId
+      || (reservation !== null && (
+        reservation.contaId !== order.contaId
+        || reservation.eventId !== order.eventId
+        || reservation.eventMapId !== order.eventMapId
+        || reservation.versionId !== order.versionId
+        || reservation.id !== order.reservationId
+        || reservation.seats.some((entry) => entry.contaId !== order.contaId
+        || entry.reservationId !== reservation!.id
+          || entry.publicSeat.contaId !== order.contaId
+          || entry.publicSeat.eventId !== order.eventId
+          || entry.publicSeat.eventMapId !== order.eventMapId
+          || entry.publicSeat.versionId !== order.versionId)
+      ))
+      || order.items.some((item) => item.contaId !== order.contaId
+        || item.orderId !== order.id
+        || !reservation?.seats.some((entry) => entry.publicSeatId === item.publicSeatId)
+        || item.publicSeat.contaId !== order.contaId
+        || item.publicSeat.eventId !== order.eventId
+        || item.publicSeat.eventMapId !== order.eventMapId
+        || item.publicSeat.versionId !== order.versionId
+        || (item.ticket !== null && (item.ticket.contaId !== order.contaId
+          || item.ticket.eventId !== order.eventId
+          || item.ticket.eventMapOrderId !== order.id
+          || item.ticket.orderItemId !== item.id)));
+    if (invalidOrderGraph) {
+      throw new EventsError('RESERVA_INVALIDA', 'As relações do pedido público não correspondem ao mesmo tenant e evento.', 409);
+    }
+
+    const normalizedPaymentStatus = order.paymentStatus?.trim().toUpperCase() ?? null;
+    if (normalizedPaymentStatus === 'DELETED' || normalizedPaymentStatus === 'CANCELLATION_IN_PROGRESS') {
+      throw new EventsError(
+        'PAGAMENTO_BLOQUEADO_POR_ANALISE',
+        'O pagamento foi cancelado ou está em cancelamento e não pode emitir ingressos.',
+        409,
+      );
+    }
 
     if (
       isTicketPaymentBlocked(order.paymentStatus)
@@ -100,7 +144,7 @@ export async function confirmPublicEventMapOrderPayment(params: {
     if (
       order.status !== 'PAYMENT_PENDING' &&
       order.status !== 'CONFIRMED' &&
-      !(params.allowReleasedReservation && (order.status === 'EXPIRED' || order.status === 'CANCELLED'))
+      !(params.allowReleasedReservation && order.status === 'EXPIRED')
     ) {
       throw new EventsError('PEDIDO_NAO_CONFIRMAVEL', 'Pedido público não está pendente de pagamento.', 409);
     }
@@ -117,7 +161,6 @@ export async function confirmPublicEventMapOrderPayment(params: {
       );
     }
 
-    let reservation = order.reservation;
     if (!reservation) {
       throw new EventsError('RESERVA_INVALIDA', 'Reserva do pedido público não está disponível para confirmação.', 409);
     }
@@ -267,8 +310,8 @@ export async function confirmPublicEventMapOrderPayment(params: {
       await syncPublicLotQuantity(tx, order.contaId, lotId);
     }
 
-    await tx.eventMapReservation.update({
-      where: { id: reservation.id },
+    const consumedReservation = await tx.eventMapReservation.updateMany({
+      where: { id: reservation.id, contaId: order.contaId, eventId: order.eventId, eventMapId: order.eventMapId, versionId: order.versionId, status: 'HELD' },
       data: {
         status: 'CONSUMED',
         consumedAt: paidAt,
@@ -277,6 +320,9 @@ export async function confirmPublicEventMapOrderPayment(params: {
         buyerEmail: order.buyerEmail,
       },
     });
+    if (consumedReservation.count !== 1) {
+      throw new EventsError('RESERVA_INVALIDA', 'A reserva mudou durante a confirmação do pagamento.', 409);
+    }
 
     const updated = await tx.eventMapOrder.update({
       where: { id: order.id },

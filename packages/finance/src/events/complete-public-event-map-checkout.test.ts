@@ -11,11 +11,16 @@ const mocks = vi.hoisted(() => ({
   casFindOrder: vi.fn(),
   dbFindResponsibles: vi.fn(),
   useDatabaseCas: false,
+  useRealTransaction: false,
+  realTransaction: null as null | ((callback: (tx: unknown) => Promise<unknown>) => Promise<unknown>),
   prepare: vi.fn(),
   cancelOrder: vi.fn(),
   upsertIssue: vi.fn(),
   loadCredentials: vi.fn(),
   buildResponse: vi.fn(),
+  confirmEventMapOrderPayment: vi.fn(),
+  reconcileEventMapOrderPayment: vi.fn(),
+  enqueueTicketEmail: vi.fn(),
   enqueueEmail: vi.fn(),
   provider: {
     listPayments: vi.fn(),
@@ -40,13 +45,43 @@ vi.mock('@alusa/database', () => ({ prisma: {
     findFirst: (args: unknown) => mocks.findIssueForOrder(args),
     updateMany: (args: unknown) => mocks.resolveCustomerIssue(args),
   },
-  $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) => callback({})),
+  $transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+    mocks.useRealTransaction && mocks.realTransaction ? mocks.realTransaction(callback) : callback({})),
 } }));
 vi.mock('@alusa/lib/events/map/public-event-map-checkout-persistence', () => ({ preparePublicEventMapCheckout: mocks.prepare }));
-vi.mock('@alusa/lib/events/map/public-order-links', () => ({ publicOrderStatusPath: vi.fn(() => '/order/status') }));
+vi.mock('@alusa/lib/events/map/public-order-links', () => ({
+  publicOrderStatusPath: vi.fn(() => '/order/status'),
+  publicOrderTicketsPath: vi.fn(() => '/order/tickets'),
+}));
 vi.mock('./public-event-map-checkout-response', () => ({ buildPublicEventMapCheckoutResponse: mocks.buildResponse }));
 vi.mock('./public-order-created-email', () => ({ enqueuePublicOrderCreatedEmail: mocks.enqueueEmail }));
-vi.mock('@alusa/lib/events/map/event-map-order-operations', () => ({ cancelPublicEventMapOrder: mocks.cancelOrder }));
+vi.mock('./confirm-public-event-map-order-payment', () => ({ confirmPublicEventMapOrderPayment: mocks.confirmEventMapOrderPayment }));
+vi.mock('./event-map-payment-transitions', () => ({ reconcileEventMapOrderFinancialStateFromAsaas: mocks.reconcileEventMapOrderPayment }));
+vi.mock('../core/idempotency.service', () => ({
+  withSessionAdvisoryLock: async ({ fn }: { fn: () => Promise<unknown> }) => fn(),
+}));
+vi.mock('@alusa/lib/events/map/event-map-order-operations', () => ({
+  parseEventMapOrderExternalReference: (reference: string | null | undefined) => reference?.startsWith('event-map-order:') ? reference.slice('event-map-order:'.length) : null,
+  cancelPublicEventMapOrder: mocks.cancelOrder,
+  lockEventMapForReservation: vi.fn(async () => true),
+  lockPublicEventMapReservation: vi.fn(async () => true),
+  findEventMapOrderForPayment: async (tx: { eventMapOrder: { findFirst: (args: unknown) => Promise<unknown> } }, input: { contaId: string; asaasPaymentId: string; externalReference?: string | null }) => tx.eventMapOrder.findFirst({
+    where: {
+      contaId: input.contaId,
+      OR: [
+        { asaasPaymentId: input.asaasPaymentId },
+        ...(input.externalReference?.startsWith('event-map-order:') ? [{ id: input.externalReference.slice('event-map-order:'.length) }] : []),
+      ],
+    },
+    select: { id: true, reservationId: true, asaasPaymentId: true },
+  }),
+  syncPublicLotQuantity: vi.fn(async () => undefined),
+  decimal: (value: unknown) => value,
+  toAuditJson: (value: unknown) => value,
+  toMoney: (value: unknown) => Number(value ?? 0),
+}));
+vi.mock('@alusa/lib/events/ticket-email-outbox', () => ({ enqueueEventTicketEmail: mocks.enqueueTicketEmail }));
+vi.mock('@alusa/lib/events/ticket-whatsapp-notification', () => ({ enqueueEventTicketWhatsAppNotification: vi.fn(async () => undefined) }));
 vi.mock('../foundation/load-decrypted-asaas-credentials', () => ({ loadDecryptedAsaasCredentials: mocks.loadCredentials }));
 vi.mock('./events-finance-observability', () => ({ logEventsFinance: vi.fn() }));
 vi.mock('../reconciliation/finance-reconciliation-issue.service', () => ({
@@ -56,7 +91,7 @@ vi.mock('../customer/customer-identity', () => ({
   findCustomerForPayer: mocks.findCustomerForPayer,
 }));
 
-import { completePublicEventMapCheckout } from './complete-public-event-map-checkout';
+import { beginEventMapPaymentCancellation, completePublicEventMapCheckout, recordFailedEventMapPaymentCancellation, recordSuccessfulEventMapPaymentCancellation } from './complete-public-event-map-checkout';
 import { registerEventAsaasPaymentProvider } from './event-asaas-payment-provider';
 
 const externalReference = 'event-map-order:order-1';
@@ -144,8 +179,12 @@ describe('completePublicEventMapCheckout payment reference pagination', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.useDatabaseCas = false;
+    mocks.useRealTransaction = false;
+    mocks.realTransaction = null;
     registerEventAsaasPaymentProvider(mocks.provider as never);
     mocks.prepare.mockResolvedValue(pending());
+    mocks.confirmEventMapOrderPayment.mockResolvedValue({ orderId: 'order-1', status: 'CONFIRMED', ticketsCreated: 1 });
+    mocks.reconcileEventMapOrderPayment.mockResolvedValue({ orderId: 'order-1', status: 'CONFIRMED', financialOnly: true });
     mocks.loadCredentials.mockResolvedValue({ apiKey: 'tenant-A-key' });
     mocks.updateOrderMany.mockResolvedValue({ count: 1 });
     mocks.findOrder
@@ -161,6 +200,302 @@ describe('completePublicEventMapCheckout payment reference pagination', () => {
     mocks.provider.createCustomer.mockResolvedValue({ id: 'cus-1' });
   });
 
+  it('retries the idempotent order email enqueue when the payment is already attached', async () => {
+    const attachedOrder = {
+      ...pending().order,
+      asaasPaymentId: 'pay-attached',
+      paymentMethod: 'PIX',
+      buyerEmail: 'buyer@example.test',
+      buyerName: 'Buyer',
+      accessToken: 'stable-token',
+      invoiceUrl: 'https://invoice.test/pay-attached',
+      expiresAt: new Date('2026-10-20T12:00:00.000Z'),
+    };
+    mocks.prepare.mockResolvedValueOnce({ ...pending(), order: attachedOrder });
+
+    await completePublicEventMapCheckout('public-map', checkoutInput());
+
+    expect(mocks.enqueueEmail).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      contaId: 'conta-A', orderId: 'order-1', buyerEmail: 'buyer@example.test',
+      statusPath: '/order/status', invoiceUrl: 'https://invoice.test/pay-attached',
+    }));
+    expect(mocks.provider.createPayment).not.toHaveBeenCalled();
+  });
+
+  it('does not claim cancellation when DELETED wins the status compare-and-set race', async () => {
+    mocks.useDatabaseCas = true;
+    mocks.casFindOrder.mockResolvedValue({ id: 'order-race', status: 'EXPIRED', paymentStatus: 'PENDING' });
+    mocks.casUpdateOrder.mockImplementation(async (args) => {
+      const query = args as { where: { paymentStatus?: string }; data: { paymentStatus?: string } };
+      expect(query.where.paymentStatus).toBe('PENDING');
+      expect(query.data.paymentStatus).toBe('CANCELLATION_IN_PROGRESS');
+      // A PAYMENT_DELETED webhook commits after the stale read and before CAS.
+      return { count: 0 };
+    });
+
+    await expect(beginEventMapPaymentCancellation({
+      contaId: 'conta-1', orderId: 'order-race', paymentId: 'pay-race', orderStatus: 'EXPIRED',
+    })).resolves.toBe(false);
+    expect(mocks.casUpdateOrder).toHaveBeenCalledTimes(1);
+    expect(mocks.upsertIssue).not.toHaveBeenCalled();
+  });
+
+  it('keeps a restored payment under review when GET DELETED is stale at finalization', async () => {
+    mocks.useDatabaseCas = true;
+    mocks.casFindOrder
+      .mockResolvedValueOnce({ id: 'order-restore', status: 'EXPIRED', paymentStatus: 'CANCELLATION_IN_PROGRESS' })
+      .mockResolvedValueOnce({ status: 'EXPIRED', paymentStatus: 'PENDING' });
+    mocks.casUpdateOrder.mockResolvedValue({ count: 1 });
+    mocks.findIssueForOrder.mockResolvedValue({
+      remoteStatus: 'RECEIVED', metadata: { cancellationRestoreObserved: true },
+    });
+    mocks.provider.getPayment.mockResolvedValue({ id: 'pay-restore', status: 'PENDING' });
+
+    await expect(recordSuccessfulEventMapPaymentCancellation({
+      contaId: 'conta-1', orderId: 'order-restore', paymentId: 'pay-restore', orderStatus: 'EXPIRED',
+      apiKey: 'tenant-key', remoteStatus: 'PENDING',
+    })).resolves.toEqual({ latePaymentFulfilled: false });
+    expect(mocks.casUpdateOrder).toHaveBeenCalledWith(expect.objectContaining({
+      data: { paymentStatus: 'PENDING' },
+    }));
+    expect(mocks.resolveCustomerIssue).not.toHaveBeenCalled();
+    expect(mocks.upsertIssue).toHaveBeenCalledWith(expect.objectContaining({
+      entityId: 'order-restore', remoteStatus: 'RECEIVED', severity: 'HIGH',
+      metadata: expect.objectContaining({ cancellationInProgress: true, reason: 'payment_received_during_order_cancellation' }),
+    }));
+    expect(mocks.confirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mocks.enqueueTicketEmail).not.toHaveBeenCalled();
+  });
+
+  it('keeps post-RESTORED paid GET visible when DELETE response is terminal DELETED', async () => {
+    mocks.useDatabaseCas = true;
+    mocks.casFindOrder
+      .mockResolvedValueOnce({ id: 'order-restored-after-delete', status: 'EXPIRED', paymentStatus: 'CANCELLATION_IN_PROGRESS' })
+      .mockResolvedValueOnce({ status: 'EXPIRED', paymentStatus: 'DELETED' });
+    mocks.casUpdateOrder.mockResolvedValue({ count: 1 });
+    mocks.provider.getPayment
+      .mockResolvedValueOnce({ id: 'pay-restored-after-delete', status: 'PENDING' })
+      .mockResolvedValueOnce({ id: 'pay-restored-after-delete', status: 'RECEIVED', value: 20 });
+    // No prior paid issue observation: RECEIVED is known only from the
+    // authoritative post-RESTORED provider read.
+    mocks.findIssueForOrder.mockResolvedValue({ remoteStatus: 'PENDING', metadata: { cancellationRestoreObserved: true } });
+
+    await expect(recordSuccessfulEventMapPaymentCancellation({
+      contaId: 'conta-1', orderId: 'order-restored-after-delete', paymentId: 'pay-restored-after-delete', orderStatus: 'EXPIRED',
+      apiKey: 'tenant-key', remoteStatus: 'DELETED',
+    })).resolves.toEqual({ latePaymentFulfilled: false });
+
+    expect(mocks.casUpdateOrder).toHaveBeenCalledWith(expect.objectContaining({
+      data: { paymentStatus: 'DELETED' },
+    }));
+    expect(mocks.resolveCustomerIssue).not.toHaveBeenCalled();
+    expect(mocks.upsertIssue).toHaveBeenCalledWith(expect.objectContaining({
+      entityId: 'order-restored-after-delete', remoteStatus: 'RECEIVED', severity: 'HIGH',
+    }));
+    expect(mocks.confirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mocks.reconcileEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mocks.enqueueTicketEmail).not.toHaveBeenCalled();
+  });
+
+  it('uses a post-restore paid GET to confirm EXPIRED orders with available seats', async () => {
+    mocks.useDatabaseCas = true;
+    mocks.casFindOrder
+      .mockResolvedValueOnce({ id: 'order-restore-paid', status: 'EXPIRED', paymentStatus: 'CANCELLATION_IN_PROGRESS' })
+      .mockResolvedValueOnce({ status: 'EXPIRED', paymentStatus: 'RECEIVED' });
+    mocks.casUpdateOrder.mockResolvedValue({ count: 1 });
+    mocks.findIssueForOrder.mockResolvedValue({ remoteStatus: 'RECEIVED', metadata: { cancellationRestoreObserved: true } });
+    mocks.provider.getPayment.mockResolvedValue({
+      id: 'pay-restore-paid', status: 'RECEIVED', value: 20, paymentDate: new Date().toISOString(),
+    });
+
+    await expect(recordSuccessfulEventMapPaymentCancellation({
+      contaId: 'conta-1', orderId: 'order-restore-paid', paymentId: 'pay-restore-paid', orderStatus: 'EXPIRED',
+      apiKey: 'tenant-key', remoteStatus: 'PENDING',
+    })).resolves.toEqual({ latePaymentFulfilled: true });
+    expect(mocks.confirmEventMapOrderPayment).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1', asaasPaymentId: 'pay-restore-paid', paymentStatus: 'RECEIVED', allowReleasedReservation: true,
+    }));
+    expect(mocks.upsertIssue).toHaveBeenCalledWith(expect.objectContaining({
+      entityId: 'order-restore-paid', remoteStatus: 'RECEIVED', severity: 'HIGH',
+    }));
+  });
+
+  it('re-reads after observing RESTORED when the first GET predates the received webhook', async () => {
+    mocks.useDatabaseCas = true;
+    mocks.casFindOrder
+      .mockResolvedValueOnce({ id: 'order-restore-race', status: 'EXPIRED', paymentStatus: 'CANCELLATION_IN_PROGRESS' })
+      .mockResolvedValueOnce({ status: 'EXPIRED', paymentStatus: 'RECEIVED' });
+    mocks.casUpdateOrder.mockResolvedValue({ count: 1 });
+    // The first GET is stale PENDING. The issue marker is observed before the
+    // merge, so the second GET must be authoritative for this attempt.
+    mocks.provider.getPayment
+      .mockResolvedValueOnce({ id: 'pay-restore-race', status: 'PENDING' })
+      .mockResolvedValueOnce({ id: 'pay-restore-race', status: 'RECEIVED', value: 20, paymentDate: new Date().toISOString() });
+    mocks.findIssueForOrder.mockResolvedValue({ remoteStatus: 'RECEIVED', metadata: { cancellationRestoreObserved: true } });
+
+    await expect(recordSuccessfulEventMapPaymentCancellation({
+      contaId: 'conta-1', orderId: 'order-restore-race', paymentId: 'pay-restore-race', orderStatus: 'EXPIRED',
+      apiKey: 'tenant-key', remoteStatus: 'PENDING',
+    })).resolves.toEqual({ latePaymentFulfilled: true });
+    expect(mocks.provider.getPayment).toHaveBeenCalledTimes(2);
+    expect(mocks.casUpdateOrder).toHaveBeenCalledWith(expect.objectContaining({ data: { paymentStatus: 'RECEIVED' } }));
+    expect(mocks.confirmEventMapOrderPayment).toHaveBeenCalledWith(expect.objectContaining({
+      asaasPaymentId: 'pay-restore-race', paymentStatus: 'RECEIVED',
+    }));
+  });
+
+  it('re-reads after RESTORED on failed DELETE and confirms a post-marker receipt', async () => {
+    mocks.useDatabaseCas = true;
+    mocks.casFindOrder
+      .mockResolvedValueOnce({ id: 'order-failed-restore-race', status: 'EXPIRED', paymentStatus: 'CANCELLATION_IN_PROGRESS' })
+      .mockResolvedValueOnce({ status: 'EXPIRED', paymentStatus: 'RECEIVED' });
+    mocks.casUpdateOrder.mockResolvedValue({ count: 1 });
+    mocks.provider.getPayment
+      .mockResolvedValueOnce({ id: 'pay-failed-restore-race', status: 'PENDING' })
+      .mockResolvedValueOnce({ id: 'pay-failed-restore-race', status: 'RECEIVED', value: 20, paymentDate: new Date().toISOString() });
+    mocks.findIssueForOrder.mockResolvedValue({ remoteStatus: 'RECEIVED', metadata: { cancellationRestoreObserved: true } });
+
+    await expect(recordFailedEventMapPaymentCancellation({
+      contaId: 'conta-1', orderId: 'order-failed-restore-race', paymentId: 'pay-failed-restore-race', orderStatus: 'EXPIRED',
+      apiKey: 'tenant-key', paymentStatus: 'PENDING', error: new Error('delete failed'),
+    })).resolves.toEqual({ latePaymentFulfilled: true });
+    expect(mocks.provider.getPayment).toHaveBeenCalledTimes(2);
+    expect(mocks.casUpdateOrder).toHaveBeenCalledWith(expect.objectContaining({ data: { paymentStatus: 'RECEIVED' } }));
+    expect(mocks.confirmEventMapOrderPayment).toHaveBeenCalledWith(expect.objectContaining({
+      asaasPaymentId: 'pay-failed-restore-race', paymentStatus: 'RECEIVED', allowReleasedReservation: true,
+    }));
+  });
+
+  it.each(['success', 'failure'] as const)('resolves cancellation issue when post-RESTORED GET confirms DELETED (%s)', async (outcome) => {
+    mocks.useDatabaseCas = true;
+    mocks.casFindOrder
+      .mockResolvedValueOnce({ id: 'order-restored-deleted', status: 'CANCELLED', paymentStatus: 'CANCELLATION_IN_PROGRESS' })
+      .mockResolvedValueOnce({ status: 'CANCELLED', paymentStatus: 'DELETED' });
+    mocks.casUpdateOrder.mockResolvedValue({ count: 1 });
+    mocks.provider.getPayment
+      .mockResolvedValueOnce({ id: 'pay-restored-deleted', status: 'PENDING' })
+      .mockResolvedValueOnce({ id: 'pay-restored-deleted', deleted: true, status: 'DELETED' });
+    mocks.findIssueForOrder.mockResolvedValue({ remoteStatus: 'PENDING', metadata: { cancellationRestoreObserved: true } });
+    const result = outcome === 'success'
+      ? recordSuccessfulEventMapPaymentCancellation({
+          contaId: 'conta-1', orderId: 'order-restored-deleted', paymentId: 'pay-restored-deleted', orderStatus: 'CANCELLED',
+          apiKey: 'tenant-key', remoteStatus: 'DELETED',
+        })
+      : recordFailedEventMapPaymentCancellation({
+          contaId: 'conta-1', orderId: 'order-restored-deleted', paymentId: 'pay-restored-deleted', orderStatus: 'CANCELLED',
+          apiKey: 'tenant-key', paymentStatus: 'PENDING', error: new Error('delete failed'),
+        });
+
+    await expect(result).resolves.toEqual({ latePaymentFulfilled: false });
+    expect(mocks.casUpdateOrder).toHaveBeenCalledWith(expect.objectContaining({ data: { paymentStatus: 'DELETED' } }));
+    expect(mocks.resolveCustomerIssue).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'RESOLVED', remoteStatus: 'DELETED' }),
+    }));
+    expect(mocks.confirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mocks.enqueueTicketEmail).not.toHaveBeenCalled();
+  });
+
+  it.each(['success', 'failure'] as const)('keeps a paid issue open when cancellation finalizer sees DELETED (%s)', async (outcome) => {
+    mocks.useDatabaseCas = true;
+    mocks.casFindOrder
+      .mockResolvedValueOnce({ id: 'order-paid-marker', status: 'EXPIRED', paymentStatus: 'CANCELLATION_IN_PROGRESS' })
+      .mockResolvedValueOnce({ status: 'EXPIRED', paymentStatus: 'DELETED' });
+    mocks.casUpdateOrder.mockResolvedValue({ count: 1 });
+    mocks.provider.getPayment.mockResolvedValue({ id: 'pay-paid-marker', status: 'DELETED', deleted: true });
+    mocks.findIssueForOrder.mockResolvedValue({ remoteStatus: 'RECEIVED', metadata: { cancellationInProgress: true } });
+    const result = outcome === 'success'
+      ? recordSuccessfulEventMapPaymentCancellation({
+          contaId: 'conta-1', orderId: 'order-paid-marker', paymentId: 'pay-paid-marker', orderStatus: 'EXPIRED',
+          apiKey: 'tenant-key', remoteStatus: 'DELETED',
+        })
+      : recordFailedEventMapPaymentCancellation({
+          contaId: 'conta-1', orderId: 'order-paid-marker', paymentId: 'pay-paid-marker', orderStatus: 'EXPIRED',
+          apiKey: 'tenant-key', paymentStatus: 'DELETED', error: new Error('delete failed'),
+        });
+
+    await expect(result).resolves.toEqual({ latePaymentFulfilled: false });
+    expect(mocks.casUpdateOrder).toHaveBeenCalledWith(expect.objectContaining({ data: { paymentStatus: 'DELETED' } }));
+    expect(mocks.resolveCustomerIssue).not.toHaveBeenCalled();
+    expect(mocks.upsertIssue).toHaveBeenCalledWith(expect.objectContaining({
+      entityId: 'order-paid-marker', remoteStatus: 'RECEIVED', severity: 'HIGH',
+    }));
+    expect(mocks.confirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mocks.enqueueTicketEmail).not.toHaveBeenCalled();
+  });
+
+  it('reconciles a post-restore paid GET when EXPIRED seats are unavailable', async () => {
+    mocks.useDatabaseCas = true;
+    mocks.casFindOrder
+      .mockResolvedValueOnce({ id: 'order-restore-reconcile', status: 'EXPIRED', paymentStatus: 'CANCELLATION_IN_PROGRESS' })
+      .mockResolvedValueOnce({ status: 'EXPIRED', paymentStatus: 'RECEIVED' });
+    mocks.casUpdateOrder.mockResolvedValue({ count: 1 });
+    mocks.findIssueForOrder.mockResolvedValue({ remoteStatus: 'RECEIVED', metadata: { cancellationRestoreObserved: true } });
+    mocks.confirmEventMapOrderPayment.mockResolvedValueOnce(null);
+    mocks.provider.getPayment.mockResolvedValue({ id: 'pay-restore-reconcile', status: 'RECEIVED', value: 20 });
+
+    await expect(recordSuccessfulEventMapPaymentCancellation({
+      contaId: 'conta-1', orderId: 'order-restore-reconcile', paymentId: 'pay-restore-reconcile', orderStatus: 'EXPIRED',
+      apiKey: 'tenant-key', remoteStatus: 'PENDING',
+    })).resolves.toEqual({ latePaymentFulfilled: false });
+    expect(mocks.reconcileEventMapOrderPayment).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1', asaasPaymentId: 'pay-restore-reconcile', paymentStatus: 'RECEIVED',
+      ticketFulfillmentError: 'PAYMENT_RECEIVED_DURING_CANCELLATION',
+    }));
+    expect(mocks.enqueueTicketEmail).not.toHaveBeenCalled();
+  });
+
+  it('keeps a post-restore paid GET financial-only for CANCELLED orders', async () => {
+    mocks.useDatabaseCas = true;
+    mocks.casFindOrder
+      .mockResolvedValueOnce({ id: 'order-restore-cancelled', status: 'CANCELLED', paymentStatus: 'CANCELLATION_IN_PROGRESS' })
+      .mockResolvedValueOnce({ status: 'CANCELLED', paymentStatus: 'RECEIVED' });
+    mocks.casUpdateOrder.mockResolvedValue({ count: 1 });
+    mocks.findIssueForOrder.mockResolvedValue({ remoteStatus: 'RECEIVED', metadata: { cancellationRestoreObserved: true } });
+    mocks.provider.getPayment.mockResolvedValue({ id: 'pay-restore-cancelled', status: 'RECEIVED', value: 20 });
+
+    await expect(recordSuccessfulEventMapPaymentCancellation({
+      contaId: 'conta-1', orderId: 'order-restore-cancelled', paymentId: 'pay-restore-cancelled', orderStatus: 'CANCELLED',
+      apiKey: 'tenant-key', remoteStatus: 'DELETED',
+    })).resolves.toEqual({ latePaymentFulfilled: false });
+    expect(mocks.confirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mocks.reconcileEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mocks.enqueueTicketEmail).not.toHaveBeenCalled();
+    expect(mocks.upsertIssue).toHaveBeenCalledWith(expect.objectContaining({
+      entityId: 'order-restore-cancelled', remoteStatus: 'RECEIVED', severity: 'HIGH',
+    }));
+  });
+
+  it('does not enqueue a payment CTA after webhook fulfillment consumed the reservation', async () => {
+    const attachedOrder = {
+      ...pending().order, id: 'order-consumed', contaId: 'conta-A', reservationId: 'reservation-1',
+      asaasPaymentId: 'pay-email-recovery', paymentStatus: 'RECEIVED', status: 'CONFIRMED',
+      paymentMethod: 'PIX', buyerEmail: 'buyer@example.test', buyerName: 'Buyer', accessToken: 'stable-token',
+      invoiceUrl: 'https://invoice.test/pay-email-recovery', expiresAt: new Date('2026-10-20T12:00:00.000Z'),
+    };
+    let failFirstEnqueue = true;
+    mocks.prepare
+      .mockResolvedValueOnce({ ...pending(), order: { ...pending().order, asaasPaymentId: 'pay-email-recovery', status: 'PAYMENT_PENDING' } })
+      .mockResolvedValue({ ...pending(), order: attachedOrder });
+    mocks.enqueueEmail.mockImplementation(async (_tx, params) => {
+      if (failFirstEnqueue) {
+        failFirstEnqueue = false;
+        throw new Error('outbox unavailable');
+      }
+      return { count: 1 } as never;
+    });
+
+    await expect(completePublicEventMapCheckout('public-map', checkoutInput())).rejects.toThrow('outbox unavailable');
+    // The webhook has consumed the reservation and confirmed the persisted order;
+    // checkout's recovery read returns that order without requiring HELD inventory.
+    await expect(completePublicEventMapCheckout('public-map', checkoutInput()))
+      .resolves.toMatchObject({ order: { id: 'order-consumed', status: 'CONFIRMED', asaasPaymentId: 'pay-email-recovery' } });
+    await completePublicEventMapCheckout('public-map', checkoutInput());
+
+    expect(mocks.enqueueEmail).toHaveBeenCalledTimes(1);
+    expect(mocks.provider.createPayment).not.toHaveBeenCalled();
+    expect(mocks.provider.createCustomer).not.toHaveBeenCalled();
+  });
+
   it('recupera cobrança na página seguinte sem criar outro POST', async () => {
     const existingPayment = {
       id: 'pay-later', customer: 'cus-1', value: 20, billingType: 'PIX',
@@ -169,7 +504,11 @@ describe('completePublicEventMapCheckout payment reference pagination', () => {
     mocks.findOrder
       .mockReset()
       .mockResolvedValueOnce({ asaasCustomerId: 'cus-1' })
-      .mockResolvedValueOnce({ ...pending().order, asaasPaymentId: 'pay-later', items: [] });
+      .mockResolvedValueOnce({
+        ...pending().order, asaasPaymentId: 'pay-later', items: [], paymentMethod: 'PIX',
+        buyerEmail: 'buyer@example.test', buyerName: 'Buyer', accessToken: 'stable-token',
+        invoiceUrl: 'https://invoice.test/pay-later', expiresAt: pending().expiresAt,
+      });
     mocks.provider.listPayments
       .mockResolvedValueOnce(page({ offset: 0, hasMore: true, data: Array.from({ length: 100 }, (_, index) => ({
         id: `deleted-${index}`, externalReference, deleted: true,
@@ -183,6 +522,9 @@ describe('completePublicEventMapCheckout payment reference pagination', () => {
     expect(mocks.provider.listPayments.mock.calls.map(([params]) => [params.offset, params.apiKey]))
       .toEqual([[0, 'tenant-A-key'], [100, 'tenant-A-key']]);
     expect(mocks.provider.createPayment).not.toHaveBeenCalled();
+    expect(mocks.enqueueEmail).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      contaId: 'conta-A', orderId: 'order-1', buyerEmail: expect.any(String),
+    }));
     expect(mocks.provider.listPayments.mock.calls.map(([params]) => params.offset)).toEqual([0, 100]);
     expect(mocks.provider.createCustomer).not.toHaveBeenCalled();
     expect(mocks.updateOrderMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -513,6 +855,7 @@ describe('completePublicEventMapCheckout payment reference pagination', () => {
       expect(persisted.paymentStatus).toBe('PENDING');
       expect(seat.status).toBe('HELD');
     } finally {
+      await db.financeReconciliationIssue.deleteMany({ where: { contaId: fixture.conta.id } });
       await db.conta.deleteMany({ where: { id: fixture.conta.id } });
     }
   });
@@ -565,6 +908,439 @@ describe('completePublicEventMapCheckout payment reference pagination', () => {
       const seat = await db.eventMapPublicSeat.findFirstOrThrow({ where: { id: fixture.seat.id, contaId: fixture.conta.id } });
       expect(persisted.asaasPaymentId).toBe('pay-blocked-post');
       expect(seat.status).toBe('HELD');
+    } finally {
+      await db.financeReconciliationIssue.deleteMany({ where: { contaId: fixture.conta.id } });
+      await db.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
+  it('preserves terminal DELETED persisted after a stale GET observed RECEIVED', async () => {
+    const { prisma: db } = await vi.importActual<typeof import('@alusa/database')>('@alusa/database');
+    const actualConfirmation = await vi.importActual<typeof import('./confirm-public-event-map-order-payment')>('./confirm-public-event-map-order-payment');
+    const fixture = await createDatabaseCheckoutFixture(db);
+    try {
+      mocks.useDatabaseCas = true;
+      mocks.useRealTransaction = true;
+      mocks.realTransaction = (callback) => db.$transaction((tx) => callback(tx));
+      mocks.casUpdateOrder.mockImplementation((args) => db.eventMapOrder.updateMany(args as never));
+      mocks.casFindOrder.mockImplementation((args) => db.eventMapOrder.findFirst(args as never));
+      mocks.dbFindResponsibles.mockImplementation((args) => db.responsavel.findMany(args as never));
+      mocks.confirmEventMapOrderPayment.mockImplementation((params) => actualConfirmation.confirmPublicEventMapOrderPayment(params as never));
+      mocks.findIssueForOrder.mockImplementation((args) => db.financeReconciliationIssue.findFirst(args as never));
+      mocks.resolveCustomerIssue.mockImplementation((args) => db.financeReconciliationIssue.updateMany(args as never));
+      mocks.upsertIssue.mockImplementation(async (value) => {
+        const issue = value as { contaId: string; entityId: string; asaasId: string; severity: 'HIGH'; localStatus: string; remoteStatus: string; metadata: unknown };
+        const dedupeKey = `PAYMENT_NEEDS_REVIEW:PAYMENT:${issue.entityId}`;
+        return db.financeReconciliationIssue.upsert({
+          where: { uq_fin_recon_issue_conta_dedupe: { contaId: issue.contaId, dedupeKey } },
+          create: {
+            contaId: issue.contaId, entityType: 'PAYMENT', entityId: issue.entityId, asaasId: issue.asaasId,
+            issueType: 'PAYMENT_NEEDS_REVIEW', severity: issue.severity, dedupeKey,
+            localStatus: issue.localStatus, remoteStatus: issue.remoteStatus, metadata: issue.metadata as never,
+          },
+          update: { localStatus: issue.localStatus, remoteStatus: issue.remoteStatus, metadata: issue.metadata as never, lastSeenAt: new Date() },
+        });
+      });
+      mocks.prepare.mockImplementation(async () => {
+        const current = await db.eventMapOrder.findFirstOrThrow({ where: { id: fixture.order.id, contaId: fixture.conta.id } });
+        return {
+          ...pending(), map: { ...pending().map, contaId: fixture.conta.id, publicSlug: fixture.map.publicSlug },
+          order: { ...current, items: [] },
+        };
+      });
+      mocks.provider.listPayments.mockResolvedValue(page({ offset: 0, hasMore: false, data: [] }));
+      mocks.provider.listCustomers.mockResolvedValue(customersPage({ offset: 0, hasMore: false, data: [
+        { id: 'cus-expiry-race', cpfCnpj: '12345678901' },
+      ] }));
+      mocks.provider.getPayment.mockImplementation(async () => {
+        const dedupeKey = `PAYMENT_NEEDS_REVIEW:PAYMENT:${fixture.order.id}`;
+        await db.eventMapOrder.updateMany({ where: { id: fixture.order.id, contaId: fixture.conta.id, status: 'EXPIRED' }, data: { paymentStatus: 'DELETED' } });
+        await db.financeReconciliationIssue.updateMany({
+          where: { contaId: fixture.conta.id, dedupeKey, status: 'OPEN' },
+          data: { status: 'RESOLVED', remoteStatus: 'DELETED', resolvedAt: new Date() },
+        });
+        return { id: 'pay-expired-during-post', status: 'RECEIVED', value: 20, paymentDate: new Date().toISOString() };
+      });
+      mocks.provider.deletePayment.mockResolvedValue({ status: 'DELETED', deleted: true } as never);
+
+      let postEntered!: () => void;
+      let releasePost!: () => void;
+      const entered = new Promise<void>((resolve) => { postEntered = resolve; });
+      const blockedPost = new Promise<void>((resolve) => { releasePost = resolve; });
+      mocks.provider.createPayment.mockImplementation(async () => {
+        postEntered();
+        await blockedPost;
+        return {
+          id: 'pay-expired-during-post', customer: 'cus-expiry-race', value: 20, billingType: 'PIX',
+          externalReference: `event-map-order:${fixture.order.id}`, status: 'PENDING',
+        };
+      });
+
+      const checkout = completePublicEventMapCheckout(fixture.map.publicSlug, {
+        ...checkoutInput(), reservationId: fixture.reservation.id, holdToken: fixture.reservation.holdToken,
+      });
+      await entered;
+      await db.$transaction(async (tx) => {
+        await tx.eventMapOrder.updateMany({ where: { id: fixture.order.id, contaId: fixture.conta.id }, data: { status: 'EXPIRED', asaasPaymentId: 'pay-expired-during-post', paymentStatus: 'PENDING' } });
+        await tx.eventMapReservation.updateMany({ where: { id: fixture.reservation.id, contaId: fixture.conta.id }, data: { status: 'EXPIRED' } });
+        await tx.eventMapPublicSeat.updateMany({ where: { id: fixture.seat.id, contaId: fixture.conta.id }, data: { status: 'AVAILABLE' } });
+      });
+      releasePost();
+
+      await expect(checkout).rejects.toMatchObject({ code: 'RESERVA_EXPIRADA' });
+      const [order, reservation, seat, ticketCount] = await Promise.all([
+        db.eventMapOrder.findFirstOrThrow({ where: { id: fixture.order.id, contaId: fixture.conta.id } }),
+        db.eventMapReservation.findFirstOrThrow({ where: { id: fixture.reservation.id, contaId: fixture.conta.id } }),
+        db.eventMapPublicSeat.findFirstOrThrow({ where: { id: fixture.seat.id, contaId: fixture.conta.id } }),
+        db.eventTicket.count({ where: { contaId: fixture.conta.id, eventMapOrderId: fixture.order.id } }),
+      ]);
+      expect(order).toMatchObject({ status: 'EXPIRED', asaasPaymentId: 'pay-expired-during-post', paymentStatus: 'DELETED' });
+      expect(reservation.status).toBe('EXPIRED');
+      expect(seat.status).toBe('AVAILABLE');
+      expect(ticketCount).toBe(0);
+      const cancellationIssue = await db.financeReconciliationIssue.findFirstOrThrow({ where: { contaId: fixture.conta.id, entityId: fixture.order.id, issueType: 'PAYMENT_NEEDS_REVIEW' } });
+      expect(cancellationIssue).toMatchObject({ status: 'RESOLVED', remoteStatus: 'DELETED' });
+      expect(mocks.provider.deletePayment).toHaveBeenCalledWith(expect.objectContaining({ paymentId: 'pay-expired-during-post' }));
+      expect(mocks.confirmEventMapOrderPayment).not.toHaveBeenCalled();
+      expect(mocks.enqueueTicketEmail).not.toHaveBeenCalled();
+    } finally {
+      await db.financeReconciliationIssue.deleteMany({ where: { contaId: fixture.conta.id } });
+      await db.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
+  it('keeps a cancelled order terminal when a delayed pending POST follows webhook receipt', async () => {
+    const { prisma: db } = await vi.importActual<typeof import('@alusa/database')>('@alusa/database');
+    const fixture = await createDatabaseCheckoutFixture(db);
+    try {
+      mocks.useDatabaseCas = true;
+      mocks.casUpdateOrder.mockImplementation((args) => db.eventMapOrder.updateMany(args as never));
+      mocks.casFindOrder.mockImplementation((args) => db.eventMapOrder.findFirst(args as never));
+      mocks.dbFindResponsibles.mockImplementation((args) => db.responsavel.findMany(args as never));
+      mocks.prepare.mockImplementation(async () => {
+        const current = await db.eventMapOrder.findFirstOrThrow({ where: { id: fixture.order.id, contaId: fixture.conta.id } });
+        return {
+          ...pending(), map: { ...pending().map, contaId: fixture.conta.id, publicSlug: fixture.map.publicSlug },
+          order: { ...current, items: [] },
+        };
+      });
+      mocks.provider.listPayments.mockResolvedValue(page({ offset: 0, hasMore: false, data: [] }));
+      mocks.provider.listCustomers.mockResolvedValue(customersPage({ offset: 0, hasMore: false, data: [
+        { id: 'cus-cancelled-race', cpfCnpj: '12345678901' },
+      ] }));
+
+      let postEntered!: () => void;
+      let releasePost!: () => void;
+      const entered = new Promise<void>((resolve) => { postEntered = resolve; });
+      const blockedPost = new Promise<void>((resolve) => { releasePost = resolve; });
+      mocks.provider.createPayment.mockImplementation(async () => {
+        postEntered();
+        await blockedPost;
+        return {
+          id: 'pay-cancelled-during-post', customer: 'cus-cancelled-race', value: 20, billingType: 'PIX',
+          externalReference: `event-map-order:${fixture.order.id}`, status: 'PENDING',
+        };
+      });
+
+      const checkout = completePublicEventMapCheckout(fixture.map.publicSlug, {
+        ...checkoutInput(), reservationId: fixture.reservation.id, holdToken: fixture.reservation.holdToken,
+      });
+      await entered;
+      await db.$transaction(async (tx) => {
+        await tx.eventMapOrder.updateMany({ where: { id: fixture.order.id, contaId: fixture.conta.id }, data: { status: 'CANCELLED', paymentStatus: 'RECEIVED' } });
+        await tx.eventMapReservation.updateMany({ where: { id: fixture.reservation.id, contaId: fixture.conta.id }, data: { status: 'CANCELLED' } });
+        await tx.eventMapPublicSeat.updateMany({ where: { id: fixture.seat.id, contaId: fixture.conta.id }, data: { status: 'AVAILABLE' } });
+      });
+      releasePost();
+
+      await expect(checkout).rejects.toMatchObject({ code: 'PEDIDO_CANCELADO' });
+      const [order, reservation, seat, ticketCount] = await Promise.all([
+        db.eventMapOrder.findFirstOrThrow({ where: { id: fixture.order.id, contaId: fixture.conta.id } }),
+        db.eventMapReservation.findFirstOrThrow({ where: { id: fixture.reservation.id, contaId: fixture.conta.id } }),
+        db.eventMapPublicSeat.findFirstOrThrow({ where: { id: fixture.seat.id, contaId: fixture.conta.id } }),
+        db.eventTicket.count({ where: { contaId: fixture.conta.id, eventMapOrderId: fixture.order.id } }),
+      ]);
+      expect(order).toMatchObject({ status: 'CANCELLED', paymentStatus: 'RECEIVED', asaasPaymentId: 'pay-cancelled-during-post' });
+      expect(reservation.status).toBe('CANCELLED');
+      expect(seat.status).toBe('AVAILABLE');
+      expect(ticketCount).toBe(0);
+      expect(mocks.upsertIssue).toHaveBeenCalledWith(expect.objectContaining({
+        contaId: fixture.conta.id, entityId: fixture.order.id,
+        issueType: 'PAYMENT_NEEDS_REVIEW', remoteStatus: 'RECEIVED',
+      }));
+      expect(mocks.provider.deletePayment).not.toHaveBeenCalled();
+    } finally {
+      await db.financeReconciliationIssue.deleteMany({ where: { contaId: fixture.conta.id } });
+      await db.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
+  it('records an operational issue when cancelling a pending payment for a cancelled order fails', async () => {
+    const { prisma: db } = await vi.importActual<typeof import('@alusa/database')>('@alusa/database');
+    const fixture = await createDatabaseCheckoutFixture(db);
+    try {
+      mocks.useDatabaseCas = true;
+      mocks.casUpdateOrder.mockImplementation((args) => db.eventMapOrder.updateMany(args as never));
+      mocks.casFindOrder.mockImplementation((args) => db.eventMapOrder.findFirst(args as never));
+      mocks.dbFindResponsibles.mockImplementation((args) => db.responsavel.findMany(args as never));
+      mocks.prepare.mockImplementation(async () => {
+        const current = await db.eventMapOrder.findFirstOrThrow({ where: { id: fixture.order.id, contaId: fixture.conta.id } });
+        return {
+          ...pending(), map: { ...pending().map, contaId: fixture.conta.id, publicSlug: fixture.map.publicSlug },
+          order: { ...current, items: [] },
+        };
+      });
+      mocks.provider.listPayments.mockResolvedValue(page({ offset: 0, hasMore: false, data: [] }));
+      mocks.provider.listCustomers.mockResolvedValue(customersPage({ offset: 0, hasMore: false, data: [
+        { id: 'cus-cancel-failed', cpfCnpj: '12345678901' },
+      ] }));
+      mocks.provider.createPayment.mockResolvedValue({
+        id: 'pay-cancel-failed', customer: 'cus-cancel-failed', value: 20, billingType: 'PIX',
+        externalReference: `event-map-order:${fixture.order.id}`, status: 'PENDING',
+      });
+      mocks.provider.deletePayment.mockImplementation(async () => {
+        // Model a RECEIVED webhook winning after checkout's open-status
+        // snapshot but before the provider rejects DELETE.
+        await db.eventMapOrder.updateMany({
+          where: { id: fixture.order.id, contaId: fixture.conta.id, status: 'CANCELLED' },
+          data: { paymentStatus: 'RECEIVED' },
+        });
+        throw new Error('provider unavailable');
+      });
+      mocks.provider.getPayment.mockResolvedValue({ id: 'pay-cancel-failed', status: 'RECEIVED' });
+
+      let postEntered!: () => void;
+      let releasePost!: () => void;
+      const entered = new Promise<void>((resolve) => { postEntered = resolve; });
+      const blockedPost = new Promise<void>((resolve) => { releasePost = resolve; });
+      mocks.provider.createPayment.mockImplementation(async () => {
+        postEntered();
+        await blockedPost;
+        return {
+          id: 'pay-cancel-failed', customer: 'cus-cancel-failed', value: 20, billingType: 'PIX',
+          externalReference: `event-map-order:${fixture.order.id}`, status: 'PENDING',
+        };
+      });
+
+      const checkout = completePublicEventMapCheckout(fixture.map.publicSlug, {
+        ...checkoutInput(), reservationId: fixture.reservation.id, holdToken: fixture.reservation.holdToken,
+      });
+      await entered;
+      await db.eventMapOrder.updateMany({ where: { id: fixture.order.id, contaId: fixture.conta.id }, data: { status: 'CANCELLED' } });
+      await db.eventMapReservation.updateMany({ where: { id: fixture.reservation.id, contaId: fixture.conta.id }, data: { status: 'CANCELLED' } });
+      await db.eventMapPublicSeat.updateMany({ where: { id: fixture.seat.id, contaId: fixture.conta.id }, data: { status: 'AVAILABLE' } });
+      releasePost();
+
+      await expect(checkout).rejects.toMatchObject({ code: 'PEDIDO_CANCELADO' });
+      expect((await db.eventMapOrder.findFirstOrThrow({ where: { id: fixture.order.id, contaId: fixture.conta.id } })) )
+        .toMatchObject({ status: 'CANCELLED', paymentStatus: 'RECEIVED' });
+      expect(mocks.provider.deletePayment).toHaveBeenCalledWith(expect.objectContaining({ paymentId: 'pay-cancel-failed' }));
+      expect(mocks.upsertIssue).toHaveBeenCalledWith(expect.objectContaining({
+        contaId: fixture.conta.id, entityId: fixture.order.id, asaasId: 'pay-cancel-failed',
+        issueType: 'PAYMENT_NEEDS_REVIEW', localStatus: 'CANCELLED', remoteStatus: 'RECEIVED',
+        causeId: 'payment-post-delete:pay-cancel-failed',
+        metadata: expect.objectContaining({ deleteErrorCode: 'Error', paymentStatus: 'RECEIVED' }),
+      }));
+      expect(JSON.stringify(mocks.upsertIssue.mock.calls)).not.toContain('provider unavailable');
+    } finally {
+      await db.financeReconciliationIssue.deleteMany({ where: { contaId: fixture.conta.id } });
+      await db.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
+  it('preserves terminal DELETE response over a stale GET RECEIVED snapshot', async () => {
+    const { prisma: db } = await vi.importActual<typeof import('@alusa/database')>('@alusa/database');
+    const actualConfirmation = await vi.importActual<typeof import('./confirm-public-event-map-order-payment')>('./confirm-public-event-map-order-payment');
+    const fixture = await createDatabaseCheckoutFixture(db);
+    try {
+      mocks.useDatabaseCas = true;
+      mocks.useRealTransaction = true;
+      mocks.realTransaction = (callback) => db.$transaction((tx) => callback(tx));
+      mocks.findIssueForOrder.mockImplementation((args) => db.financeReconciliationIssue.findFirst(args as never));
+      mocks.resolveCustomerIssue.mockImplementation((args) => db.financeReconciliationIssue.updateMany(args as never));
+      mocks.upsertIssue.mockImplementation(async (value) => {
+        const issue = value as { contaId: string; entityId: string; asaasId: string; severity: 'HIGH'; localStatus: string; remoteStatus: string; metadata: unknown };
+        const dedupeKey = `PAYMENT_NEEDS_REVIEW:PAYMENT:${issue.entityId}`;
+        return db.financeReconciliationIssue.upsert({
+          where: { uq_fin_recon_issue_conta_dedupe: { contaId: issue.contaId, dedupeKey } },
+          create: {
+            contaId: issue.contaId, entityType: 'PAYMENT', entityId: issue.entityId, asaasId: issue.asaasId,
+            issueType: 'PAYMENT_NEEDS_REVIEW', severity: issue.severity, dedupeKey,
+            localStatus: issue.localStatus, remoteStatus: issue.remoteStatus, metadata: issue.metadata as never,
+          },
+          update: { localStatus: issue.localStatus, remoteStatus: issue.remoteStatus, metadata: issue.metadata as never, lastSeenAt: new Date() },
+        });
+      });
+      let confirmationError: unknown;
+      mocks.confirmEventMapOrderPayment.mockImplementation(async (params) => {
+        try { return await actualConfirmation.confirmPublicEventMapOrderPayment(params as never); }
+        catch (error) { confirmationError = error; throw error; }
+      });
+      mocks.casUpdateOrder.mockImplementation((args) => db.eventMapOrder.updateMany(args as never));
+      mocks.casFindOrder.mockImplementation((args) => db.eventMapOrder.findFirst(args as never));
+      mocks.dbFindResponsibles.mockImplementation((args) => db.responsavel.findMany(args as never));
+      mocks.prepare.mockImplementation(async () => {
+        const current = await db.eventMapOrder.findFirstOrThrow({ where: { id: fixture.order.id, contaId: fixture.conta.id } });
+        return {
+          ...pending(), map: { ...pending().map, contaId: fixture.conta.id, publicSlug: fixture.map.publicSlug },
+          order: { ...current, items: [] },
+        };
+      });
+      mocks.provider.listPayments.mockResolvedValue(page({ offset: 0, hasMore: false, data: [] }));
+      mocks.provider.listCustomers.mockResolvedValue(customersPage({ offset: 0, hasMore: false, data: [
+        { id: 'cus-expired-received', cpfCnpj: '12345678901' },
+      ] }));
+      mocks.provider.deletePayment.mockResolvedValue({ status: 'DELETED', deleted: true } as never);
+      mocks.provider.getPayment.mockResolvedValue({
+        id: 'pay-expired-received', status: 'RECEIVED', value: 20,
+        paymentDate: new Date().toISOString(), invoiceUrl: null,
+      });
+      let postEntered!: () => void;
+      let releasePost!: () => void;
+      const entered = new Promise<void>((resolve) => { postEntered = resolve; });
+      const blockedPost = new Promise<void>((resolve) => { releasePost = resolve; });
+      mocks.provider.createPayment.mockImplementation(async () => {
+        postEntered();
+        await blockedPost;
+        return {
+          id: 'pay-expired-received', customer: 'cus-expired-received', value: 20, billingType: 'PIX',
+          externalReference: `event-map-order:${fixture.order.id}`, status: 'PENDING',
+        };
+      });
+
+      const checkout = completePublicEventMapCheckout(fixture.map.publicSlug, {
+        ...checkoutInput(), reservationId: fixture.reservation.id, holdToken: fixture.reservation.holdToken,
+      });
+      await entered;
+      await db.eventMapOrder.updateMany({ where: { id: fixture.order.id, contaId: fixture.conta.id }, data: { status: 'EXPIRED' } });
+      await db.eventMapReservation.updateMany({ where: { id: fixture.reservation.id, contaId: fixture.conta.id }, data: { status: 'EXPIRED' } });
+      await db.eventMapPublicSeat.updateMany({ where: { id: fixture.seat.id, contaId: fixture.conta.id }, data: { status: 'AVAILABLE' } });
+      releasePost();
+
+      await expect(checkout).rejects.toMatchObject({ code: 'RESERVA_EXPIRADA' });
+      expect(confirmationError).toBeUndefined();
+      expect(mocks.confirmEventMapOrderPayment).not.toHaveBeenCalled();
+      expect(await db.eventTicket.count({ where: { contaId: fixture.conta.id, eventMapOrderId: fixture.order.id } })).toBe(0);
+      expect((await db.eventMapPublicSeat.findFirstOrThrow({ where: { id: fixture.seat.id, contaId: fixture.conta.id } })).status).toBe('AVAILABLE');
+      expect(mocks.enqueueTicketEmail).not.toHaveBeenCalled();
+      expect(await db.financeReconciliationIssue.findFirstOrThrow({ where: { contaId: fixture.conta.id, entityId: fixture.order.id, issueType: 'PAYMENT_NEEDS_REVIEW' } }))
+        .toMatchObject({ status: 'RESOLVED', remoteStatus: 'DELETED' });
+      expect(mocks.enqueueEmail).not.toHaveBeenCalled();
+    } finally {
+      await db.financeReconciliationIssue.deleteMany({ where: { contaId: fixture.conta.id } });
+      await db.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
+  it('blocks fulfillment when PAYMENT_DELETED commits after GET and before confirmation', async () => {
+    const { prisma: db } = await vi.importActual<typeof import('@alusa/database')>('@alusa/database');
+    const actualConfirmation = await vi.importActual<typeof import('./confirm-public-event-map-order-payment')>('./confirm-public-event-map-order-payment');
+    const fixture = await createDatabaseCheckoutFixture(db);
+    try {
+      mocks.useDatabaseCas = true;
+      mocks.useRealTransaction = true;
+      mocks.realTransaction = (callback) => db.$transaction((tx) => callback(tx));
+      let confirmationError: unknown;
+      mocks.confirmEventMapOrderPayment.mockImplementation(async (params) => {
+        // Simulate PAYMENT_DELETED committing after the finalizer's provider
+        // GET and immediately before the central confirmation transaction.
+        await db.eventMapOrder.updateMany({
+          where: { id: fixture.order.id, contaId: fixture.conta.id, status: 'EXPIRED' },
+          data: { paymentStatus: 'DELETED' },
+        });
+        try { return await actualConfirmation.confirmPublicEventMapOrderPayment(params as never); }
+        catch (error) { confirmationError = error; throw error; }
+      });
+      mocks.casUpdateOrder.mockImplementation((args) => db.eventMapOrder.updateMany(args as never));
+      mocks.casFindOrder.mockImplementation((args) => db.eventMapOrder.findFirst(args as never));
+      mocks.dbFindResponsibles.mockImplementation((args) => db.responsavel.findMany(args as never));
+      mocks.findIssueForOrder.mockImplementation((args) => db.financeReconciliationIssue.findFirst(args as never));
+      mocks.resolveCustomerIssue.mockImplementation((args) => db.financeReconciliationIssue.updateMany(args as never));
+      mocks.upsertIssue.mockImplementation(async (value) => {
+        const issue = value as { contaId: string; entityId: string; asaasId: string; severity: 'HIGH'; localStatus: string; remoteStatus: string; metadata: unknown };
+        const dedupeKey = `PAYMENT_NEEDS_REVIEW:PAYMENT:${issue.entityId}`;
+        return db.financeReconciliationIssue.upsert({
+          where: { uq_fin_recon_issue_conta_dedupe: { contaId: issue.contaId, dedupeKey } },
+          create: {
+            contaId: issue.contaId, entityType: 'PAYMENT', entityId: issue.entityId, asaasId: issue.asaasId,
+            issueType: 'PAYMENT_NEEDS_REVIEW', severity: issue.severity, dedupeKey,
+            localStatus: issue.localStatus, remoteStatus: issue.remoteStatus, metadata: issue.metadata as never,
+          },
+          update: { localStatus: issue.localStatus, remoteStatus: issue.remoteStatus, metadata: issue.metadata as never, lastSeenAt: new Date() },
+        });
+      });
+      mocks.prepare.mockImplementation(async () => {
+        const current = await db.eventMapOrder.findFirstOrThrow({ where: { id: fixture.order.id, contaId: fixture.conta.id } });
+        return { ...pending(), map: { ...pending().map, contaId: fixture.conta.id, publicSlug: fixture.map.publicSlug }, order: { ...current, items: [] } };
+      });
+      mocks.provider.listPayments.mockResolvedValue(page({ offset: 0, hasMore: false, data: [] }));
+      mocks.provider.listCustomers.mockResolvedValue(customersPage({ offset: 0, hasMore: false, data: [{ id: 'cus-expired-received-unavailable', cpfCnpj: '12345678901' }] }));
+      mocks.provider.createPayment.mockResolvedValue({
+        id: 'pay-expired-received-unavailable', customer: 'cus-expired-received-unavailable', value: 20, billingType: 'PIX',
+        externalReference: `event-map-order:${fixture.order.id}`, status: 'PENDING',
+      });
+      mocks.provider.deletePayment.mockImplementation(async () => {
+        throw new Error('delete response lost after webhook');
+      });
+      mocks.provider.getPayment.mockResolvedValue({ id: 'pay-expired-received-unavailable', status: 'RECEIVED', value: 20 });
+      let postEntered!: () => void;
+      let releasePost!: () => void;
+      const entered = new Promise<void>((resolve) => { postEntered = resolve; });
+      const blockedPost = new Promise<void>((resolve) => { releasePost = resolve; });
+      mocks.provider.createPayment.mockImplementation(async () => {
+        postEntered();
+        await blockedPost;
+        return {
+          id: 'pay-expired-received-unavailable', customer: 'cus-expired-received-unavailable', value: 20, billingType: 'PIX',
+          externalReference: `event-map-order:${fixture.order.id}`, status: 'PENDING',
+        };
+      });
+      const checkout = completePublicEventMapCheckout(fixture.map.publicSlug, {
+        ...checkoutInput(), reservationId: fixture.reservation.id, holdToken: fixture.reservation.holdToken,
+      });
+      await entered;
+      await db.$transaction(async (tx) => {
+        await tx.eventMapOrder.updateMany({ where: { id: fixture.order.id, contaId: fixture.conta.id }, data: { status: 'EXPIRED' } });
+        await tx.eventMapReservation.updateMany({ where: { id: fixture.reservation.id, contaId: fixture.conta.id }, data: { status: 'EXPIRED' } });
+        await tx.eventMapPublicSeat.updateMany({ where: { id: fixture.seat.id, contaId: fixture.conta.id }, data: { status: 'AVAILABLE' } });
+      });
+      releasePost();
+
+      await expect(checkout).rejects.toMatchObject({ code: 'RESERVA_EXPIRADA' });
+      const order = await db.eventMapOrder.findFirstOrThrow({ where: { id: fixture.order.id, contaId: fixture.conta.id } });
+      expect(order).toMatchObject({ status: 'EXPIRED', paymentStatus: 'DELETED' });
+      expect(confirmationError).toMatchObject({ code: 'PAGAMENTO_BLOQUEADO_POR_ANALISE' });
+      expect(await db.eventTicket.count({ where: { contaId: fixture.conta.id, eventMapOrderId: fixture.order.id } })).toBe(0);
+      expect(await db.financeWebhookSideEffectOutbox.count({ where: { contaId: fixture.conta.id, effectType: 'EVENT_MAP_LATE_PAYMENT_REFUND' } })).toBe(0);
+      expect(await db.financeReconciliationIssue.findFirstOrThrow({ where: { contaId: fixture.conta.id, entityId: fixture.order.id, issueType: 'PAYMENT_NEEDS_REVIEW' } }))
+        .toMatchObject({ status: 'OPEN', remoteStatus: 'RECEIVED' });
+      expect(mocks.confirmEventMapOrderPayment).toHaveBeenCalledTimes(1);
+      expect(mocks.enqueueTicketEmail).not.toHaveBeenCalled();
+    } finally {
+      await db.financeReconciliationIssue.deleteMany({ where: { contaId: fixture.conta.id } });
+      await db.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
+  it('keeps a persisted DELETED payment snapshot against a delayed RECEIVED sync', async () => {
+    const { prisma: db } = await vi.importActual<typeof import('@alusa/database')>('@alusa/database');
+    const transitions = await vi.importActual<typeof import('./event-map-payment-transitions')>('./event-map-payment-transitions');
+    const fixture = await createDatabaseCheckoutFixture(db);
+    try {
+      mocks.useDatabaseCas = true;
+      mocks.casUpdateOrder.mockImplementation((args) => db.eventMapOrder.updateMany(args as never));
+      mocks.casFindOrder.mockImplementation((args) => db.eventMapOrder.findFirst(args as never));
+      await db.eventMapOrder.update({ where: { id: fixture.order.id }, data: { asaasPaymentId: 'pay-terminal-deleted', paymentStatus: 'DELETED' } });
+
+      await transitions.syncPublicEventMapOrderPaymentCreated({
+        contaId: fixture.conta.id,
+        asaasPaymentId: 'pay-terminal-deleted',
+        externalReference: `event-map-order:${fixture.order.id}`,
+        paymentStatus: 'RECEIVED',
+      });
+
+      expect(await db.eventMapOrder.findFirstOrThrow({ where: { id: fixture.order.id, contaId: fixture.conta.id } }))
+        .toMatchObject({ status: 'PAYMENT_PENDING', asaasPaymentId: 'pay-terminal-deleted', paymentStatus: 'DELETED' });
     } finally {
       await db.conta.deleteMany({ where: { id: fixture.conta.id } });
     }

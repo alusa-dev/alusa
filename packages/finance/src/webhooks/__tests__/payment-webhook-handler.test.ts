@@ -225,6 +225,11 @@ vi.mock('@alusa/database', () => ({
     eventMapOrder: {
       findFirst: vi.fn(),
       findMany: vi.fn(async () => []),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+    },
+    financeReconciliationIssue: {
+      findFirst: vi.fn(),
+      updateMany: vi.fn(async () => ({ count: 1 })),
     },
     eventFinancialEntry: {
       findFirst: vi.fn(),
@@ -2370,7 +2375,7 @@ describe('handlePaymentWebhook', () => {
     } as never);
     vi.mocked(prisma.charge.update).mockResolvedValueOnce({ id: 'ch_no_date', status: 'PAID' } as never);
 
-    await handlePaymentWebhook('conta-1', {
+    const result = await handlePaymentWebhook('conta-1', {
       event: 'PAYMENT_CONFIRMED',
       payment: {
         id: 'pay_no_date',
@@ -3450,10 +3455,36 @@ describe('handlePaymentWebhook', () => {
       contaId: 'conta-1', asaasPaymentId: 'pay-deleted-pending',
       externalReference: 'event-map-order:order-deleted-pending', reason: 'PAYMENT_DELETED',
     }));
-    expect(mockSyncEventMapOrderPaymentCreated).toHaveBeenCalledWith(expect.objectContaining({
-      contaId: 'conta-1', asaasPaymentId: 'pay-deleted-pending', paymentStatus: 'DELETED',
+    expect(mockSyncEventMapOrderPaymentCreated).not.toHaveBeenCalled();
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+  });
+
+  it('persists terminal PAYMENT_DELETED on an expired order before late-payment confirmation can run', async () => {
+    const { prisma } = await import('@alusa/database');
+    const order = { id: 'order-expired-delete-race', status: 'EXPIRED', paymentStatus: 'RECEIVED', asaasPaymentId: 'pay-expired-delete-race' };
+    vi.mocked(prisma.eventMapOrder.findFirst).mockImplementation(async () => ({ ...order }) as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockImplementation(async () => [{ ...order }] as never);
+    vi.mocked(prisma.eventMapOrder.updateMany).mockImplementation(async ({ where, data }) => {
+      expect(where).toEqual(expect.objectContaining({
+        id: order.id, contaId: 'conta-1', status: 'EXPIRED', asaasPaymentId: order.asaasPaymentId,
+      }));
+      Object.assign(order, data);
+      return { count: 1 } as never;
+    });
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_DELETED', eventId: 'evt-delete-after-receipt',
+      payment: { id: order.asaasPaymentId, status: 'DELETED', deleted: true, value: 20,
+        externalReference: `event-map-order:${order.id}` },
+    } as never);
+
+    expect(result.success).toBe(true);
+    expect(order).toMatchObject({ status: 'EXPIRED', paymentStatus: 'DELETED' });
+    expect(mockCancelEventMapOrder).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1', asaasPaymentId: order.asaasPaymentId,
     }));
     expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mockSyncEventMapOrderPaymentCreated).not.toHaveBeenCalled();
   });
 
   it('does not let a stale PAYMENT_CREATED event reopen a cancelled order', async () => {
@@ -3474,6 +3505,365 @@ describe('handlePaymentWebhook', () => {
     expect(result.success).toBe(true);
     expect(mockSyncEventMapOrderPaymentCreated).not.toHaveBeenCalled();
     expect(mockCancelEventMapOrder).not.toHaveBeenCalled();
+  });
+
+  it('keeps cancellation intent while recording RECEIVED and blocks fulfillment during DELETE', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
+      id: 'order-cancel-intent', status: 'EXPIRED', paymentStatus: 'CANCELLATION_IN_PROGRESS',
+      asaasPaymentId: 'pay-cancel-intent',
+    } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RECEIVED',
+      payment: {
+        id: 'pay-cancel-intent', status: 'RECEIVED', value: 20,
+        externalReference: 'event-map-order:order-cancel-intent',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1', entityId: 'order-cancel-intent', remoteStatus: 'RECEIVED',
+      metadata: expect.objectContaining({ cancellationInProgress: true }),
+    }));
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mockReconcileEventMapOrder).not.toHaveBeenCalled();
+    expect(mockSyncEventMapOrderPaymentCreated).not.toHaveBeenCalled();
+
+  });
+
+  it('records PAYMENT_RESTORED during cancellation intent without releasing the marker or seats', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
+      id: 'order-cancel-restored', status: 'EXPIRED', paymentStatus: 'CANCELLATION_IN_PROGRESS',
+      asaasPaymentId: 'pay-cancel-restored',
+    } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RESTORED',
+      payment: {
+        id: 'pay-cancel-restored', status: 'PENDING', value: 20,
+        externalReference: 'event-map-order:order-cancel-restored',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1', entityId: 'order-cancel-restored', remoteStatus: 'PENDING', severity: 'HIGH',
+      metadata: expect.objectContaining({ cancellationInProgress: true, cancellationRestoreObserved: true }),
+    }));
+    expect(prisma.eventMapOrder.updateMany).not.toHaveBeenCalled();
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mockReconcileEventMapOrder).not.toHaveBeenCalled();
+    expect(mockSyncEventMapOrderPaymentCreated).not.toHaveBeenCalled();
+
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
+      id: 'order-cancel-restored', status: 'EXPIRED', paymentStatus: 'CANCELLATION_IN_PROGRESS',
+      asaasPaymentId: 'pay-cancel-restored',
+    } as never);
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RECEIVED',
+      payment: {
+        id: 'pay-cancel-restored', status: 'RECEIVED', value: 20,
+        externalReference: 'event-map-order:order-cancel-restored',
+      },
+    });
+    const laterReceiptMetadata = mockUpsertFinanceReconciliationIssue.mock.calls[1][0].metadata as Record<string, unknown>;
+    expect(laterReceiptMetadata).not.toHaveProperty('cancellationRestoreObserved');
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+  });
+
+  it('preserves DELETED and reopens review for a delayed PAYMENT_RESTORED after expiry', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
+      id: 'order-expired-restored', status: 'EXPIRED', paymentStatus: 'DELETED',
+      asaasPaymentId: 'pay-expired-restored',
+    } as never);
+    vi.mocked(prisma.eventMapOrder.updateMany).mockResolvedValueOnce({ count: 1 } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RESTORED',
+      payment: {
+        id: 'pay-expired-restored', status: 'PENDING', value: 20,
+        externalReference: 'event-map-order:order-expired-restored',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(prisma.eventMapOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'order-expired-restored', contaId: 'conta-1', status: 'EXPIRED' }),
+      data: expect.objectContaining({ asaasPaymentId: 'pay-expired-restored', paymentStatus: 'DELETED' }),
+    }));
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1', entityId: 'order-expired-restored', localStatus: 'EXPIRED',
+      remoteStatus: 'PENDING', severity: 'HIGH',
+      metadata: expect.objectContaining({
+        reason: 'event_map_order_payment_restored_after_expiry_or_cancellation',
+        terminalStatusPreserved: 'DELETED', providerStateRequiresReconciliation: true,
+      }),
+    }));
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mockReconcileEventMapOrder).not.toHaveBeenCalled();
+  });
+
+  it('records a later paid observation after delayed RESTORED without reopening a deleted order', async () => {
+    const { prisma } = await import('@alusa/database');
+    const order = { id: 'order-deleted-then-paid', status: 'EXPIRED', paymentStatus: 'DELETED', asaasPaymentId: 'pay-deleted-then-paid' };
+    vi.mocked(prisma.eventMapOrder.findFirst).mockImplementation(async () => ({ ...order }) as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockImplementation(async () => [{ ...order }] as never);
+    vi.mocked(prisma.eventMapOrder.updateMany).mockImplementation(async ({ data }) => {
+      Object.assign(order, data);
+      return { count: 1 } as never;
+    });
+
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RESTORED', eventId: 'evt-restore-delayed',
+      payment: { id: order.asaasPaymentId, status: 'PENDING', value: 20, externalReference: `event-map-order:${order.id}` },
+    } as never);
+    const received = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RECEIVED', eventId: 'evt-received-after-delete',
+      payment: { id: order.asaasPaymentId, status: 'RECEIVED', value: 20, externalReference: `event-map-order:${order.id}` },
+    } as never);
+
+    expect(received.success).toBe(true);
+    expect(order).toMatchObject({ status: 'EXPIRED', paymentStatus: 'DELETED' });
+    expect(prisma.eventMapOrder.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: order.id, contaId: 'conta-1', status: 'EXPIRED' }),
+      data: expect.objectContaining({ paymentStatus: 'DELETED' }),
+    }));
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenLastCalledWith(expect.objectContaining({
+      contaId: 'conta-1', entityId: order.id, remoteStatus: 'RECEIVED', severity: 'HIGH', causeId: 'evt-received-after-delete',
+      metadata: expect.objectContaining({
+        event: 'PAYMENT_RECEIVED', terminalStatusPreserved: 'DELETED', providerStateRequiresReconciliation: true,
+      }),
+    }));
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mockReconcileEventMapOrder).not.toHaveBeenCalled();
+    expect(mockSyncEventMapOrderPaymentCreated).not.toHaveBeenCalled();
+  });
+
+  it('preserves a paid issue observation when delayed RESTORED follows RECEIVED', async () => {
+    const { prisma } = await import('@alusa/database');
+    const order = { id: 'order-received-then-restored', status: 'EXPIRED', paymentStatus: 'DELETED', asaasPaymentId: 'pay-received-then-restored' };
+    let issueRemoteStatus: string | null = null;
+    vi.mocked(prisma.eventMapOrder.findFirst).mockImplementation(async () => ({ ...order }) as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockImplementation(async () => [{ ...order }] as never);
+    vi.mocked(prisma.eventMapOrder.updateMany).mockImplementation(async ({ data }) => {
+      Object.assign(order, data);
+      return { count: 1 } as never;
+    });
+    vi.mocked(prisma.financeReconciliationIssue.findFirst).mockImplementation(async () => ({ remoteStatus: issueRemoteStatus }) as never);
+    mockUpsertFinanceReconciliationIssue.mockImplementation(async (input) => {
+      issueRemoteStatus = (input as { remoteStatus: string }).remoteStatus;
+      return { id: 'issue-1' };
+    });
+
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RECEIVED', eventId: 'evt-received-first',
+      payment: { id: order.asaasPaymentId, status: 'RECEIVED', value: 20, externalReference: `event-map-order:${order.id}` },
+    } as never);
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RESTORED', eventId: 'evt-restored-later',
+      payment: { id: order.asaasPaymentId, status: 'PENDING', value: 20, externalReference: `event-map-order:${order.id}` },
+    } as never);
+
+    expect(order).toMatchObject({ status: 'EXPIRED', paymentStatus: 'DELETED' });
+    expect(issueRemoteStatus).toBe('RECEIVED');
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenLastCalledWith(expect.objectContaining({
+      remoteStatus: 'RECEIVED', metadata: expect.objectContaining({ priorPaidObservationPreserved: 'RECEIVED' }),
+    }));
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mockSyncEventMapOrderPaymentCreated).not.toHaveBeenCalled();
+  });
+
+  it('keeps a persisted RECEIVED issue open for RESTORED then RECEIVED then PAYMENT_DELETED', async () => {
+    const { prisma } = await import('@alusa/database');
+    const order = { id: 'order-restored-received-deleted', status: 'EXPIRED', paymentStatus: 'DELETED', asaasPaymentId: 'pay-restored-received-deleted' };
+    vi.mocked(prisma.eventMapOrder.findFirst).mockImplementation(async () => ({ ...order }) as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockImplementation(async () => [{ ...order }] as never);
+    vi.mocked(prisma.eventMapOrder.updateMany).mockImplementation(async ({ data }) => {
+      Object.assign(order, data);
+      return { count: 1 } as never;
+    });
+    const issue = { status: 'OPEN', remoteStatus: null as string | null, asaasId: order.asaasPaymentId };
+    vi.mocked(prisma.financeReconciliationIssue.findFirst).mockImplementation(async () =>
+      issue.status === 'OPEN' ? ({ remoteStatus: issue.remoteStatus }) as never : null as never);
+    vi.mocked(prisma.financeReconciliationIssue.updateMany).mockImplementation(async ({ data }) => {
+      Object.assign(issue, data);
+      return { count: 1 } as never;
+    });
+    mockUpsertFinanceReconciliationIssue.mockImplementation(async (input) => {
+      issue.remoteStatus = (input as { remoteStatus: string }).remoteStatus;
+      issue.status = 'OPEN';
+      return { id: 'issue-1' };
+    });
+
+    for (const [event, status] of [['PAYMENT_RESTORED', 'PENDING'], ['PAYMENT_RECEIVED', 'RECEIVED']] as const) {
+      await handlePaymentWebhook('conta-1', {
+        event, payment: { id: order.asaasPaymentId, status, value: 20, externalReference: `event-map-order:${order.id}` },
+      } as never);
+    }
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_DELETED', payment: { id: order.asaasPaymentId, status: 'PENDING', deleted: true, value: 20,
+        externalReference: `event-map-order:${order.id}` },
+    } as never);
+
+    expect(order).toMatchObject({ status: 'EXPIRED', paymentStatus: 'DELETED' });
+    expect(issue).toMatchObject({ status: 'OPEN', remoteStatus: 'RECEIVED', asaasId: order.asaasPaymentId });
+    expect(prisma.financeReconciliationIssue.updateMany).not.toHaveBeenCalled();
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mockSyncEventMapOrderPaymentCreated).not.toHaveBeenCalled();
+  });
+
+  it('keeps a paid reconciliation issue open when PAYMENT_DELETED arrives late', async () => {
+    const { prisma } = await import('@alusa/database');
+    const order = { id: 'order-received-then-deleted', status: 'EXPIRED', paymentStatus: 'DELETED', asaasPaymentId: 'pay-received-then-deleted' };
+    let issueRemoteStatus: string | null = null;
+    vi.mocked(prisma.eventMapOrder.findFirst).mockImplementation(async () => ({ ...order }) as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockImplementation(async () => [{ ...order }] as never);
+    vi.mocked(prisma.eventMapOrder.updateMany).mockImplementation(async ({ data }) => {
+      Object.assign(order, data);
+      return { count: 1 } as never;
+    });
+    vi.mocked(prisma.financeReconciliationIssue.findFirst).mockImplementation(async () =>
+      issueRemoteStatus ? ({ remoteStatus: issueRemoteStatus }) as never : null as never);
+    mockUpsertFinanceReconciliationIssue.mockImplementation(async (input) => {
+      issueRemoteStatus = (input as { remoteStatus: string }).remoteStatus;
+      return { id: 'issue-1' };
+    });
+
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RECEIVED', eventId: 'evt-paid-before-delete',
+      payment: { id: order.asaasPaymentId, status: 'RECEIVED', value: 20, externalReference: `event-map-order:${order.id}` },
+    } as never);
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_DELETED', eventId: 'evt-delete-late',
+      payment: { id: order.asaasPaymentId, status: 'DELETED', deleted: true, value: 20, externalReference: `event-map-order:${order.id}` },
+    } as never);
+
+    expect(order).toMatchObject({ status: 'EXPIRED', paymentStatus: 'DELETED' });
+    expect(issueRemoteStatus).toBe('RECEIVED');
+    expect(prisma.financeReconciliationIssue.updateMany).not.toHaveBeenCalled();
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mockSyncEventMapOrderPaymentCreated).not.toHaveBeenCalled();
+  });
+
+  it('keeps a received issue open when PAYMENT_DELETED arrives during cancellation intent', async () => {
+    const { prisma } = await import('@alusa/database');
+    const order = { id: 'order-marker-received-deleted', status: 'EXPIRED', paymentStatus: 'CANCELLATION_IN_PROGRESS', asaasPaymentId: 'pay-marker-received-deleted' };
+    const issue = { status: 'OPEN', remoteStatus: 'CANCELLATION_IN_PROGRESS', asaasId: order.asaasPaymentId };
+    vi.mocked(prisma.eventMapOrder.findFirst).mockImplementation(async () => ({ ...order }) as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockImplementation(async () => [{ ...order }] as never);
+    vi.mocked(prisma.eventMapOrder.updateMany).mockImplementation(async ({ data }) => {
+      Object.assign(order, data);
+      return { count: 1 } as never;
+    });
+    vi.mocked(prisma.financeReconciliationIssue.findFirst).mockImplementation(async () => ({ remoteStatus: issue.remoteStatus }) as never);
+    vi.mocked(prisma.financeReconciliationIssue.updateMany).mockImplementation(async ({ data }) => {
+      Object.assign(issue, data);
+      return { count: 1 } as never;
+    });
+    mockUpsertFinanceReconciliationIssue.mockImplementation(async (input) => {
+      issue.remoteStatus = (input as { remoteStatus: string }).remoteStatus;
+      issue.status = 'OPEN';
+      return { id: 'issue-1' };
+    });
+
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RECEIVED', eventId: 'evt-received-marker',
+      payment: { id: order.asaasPaymentId, status: 'RECEIVED', value: 20, externalReference: `event-map-order:${order.id}` },
+    } as never);
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RESTORED', eventId: 'evt-restored-marker',
+      payment: { id: order.asaasPaymentId, status: 'PENDING', value: 20, externalReference: `event-map-order:${order.id}` },
+    } as never);
+    expect(issue).toMatchObject({ status: 'OPEN', remoteStatus: 'RECEIVED' });
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_DELETED', eventId: 'evt-deleted-marker',
+      payment: { id: order.asaasPaymentId, status: 'DELETED', deleted: true, value: 20, externalReference: `event-map-order:${order.id}` },
+    } as never);
+
+    expect(order).toMatchObject({ status: 'EXPIRED', paymentStatus: 'DELETED' });
+    expect(issue).toMatchObject({ status: 'OPEN', remoteStatus: 'RECEIVED' });
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mockSyncEventMapOrderPaymentCreated).not.toHaveBeenCalled();
+  });
+
+  it('resolves the matching pending issue after PAYMENT_DELETED when no paid observation exists', async () => {
+    const { prisma } = await import('@alusa/database');
+    const order = { id: 'order-pending-then-deleted', status: 'EXPIRED', paymentStatus: 'DELETED', asaasPaymentId: 'pay-pending-then-deleted' };
+    const issue = { status: 'OPEN', remoteStatus: 'PENDING', asaasId: order.asaasPaymentId };
+    vi.mocked(prisma.eventMapOrder.findFirst).mockImplementation(async () => ({ ...order }) as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockImplementation(async () => [{ ...order }] as never);
+    vi.mocked(prisma.financeReconciliationIssue.findFirst).mockResolvedValue({ remoteStatus: 'PENDING' } as never);
+    vi.mocked(prisma.financeReconciliationIssue.updateMany).mockImplementation(async ({ where, data }) => {
+      expect(where).toEqual(expect.objectContaining({ contaId: 'conta-1', asaasId: order.asaasPaymentId }));
+      Object.assign(issue, data);
+      return { count: 1 } as never;
+    });
+
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_DELETED', eventId: 'evt-delete-pending',
+      payment: { id: order.asaasPaymentId, status: 'DELETED', deleted: true, value: 20, externalReference: `event-map-order:${order.id}` },
+    } as never);
+
+    expect(order).toMatchObject({ status: 'EXPIRED', paymentStatus: 'DELETED' });
+    expect(issue).toMatchObject({ status: 'RESOLVED', remoteStatus: 'DELETED' });
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+  });
+
+  it('finalizes a persisted DELETE webhook received during cancellation intent', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
+      id: 'order-delete-intent', status: 'EXPIRED', paymentStatus: 'CANCELLATION_IN_PROGRESS',
+      asaasPaymentId: 'pay-delete-intent',
+    } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_DELETED',
+      payment: {
+        id: 'pay-delete-intent', status: 'PENDING', deleted: true, value: 20,
+        externalReference: 'event-map-order:order-delete-intent',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(prisma.eventMapOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'order-delete-intent', contaId: 'conta-1', status: 'EXPIRED', paymentStatus: 'CANCELLATION_IN_PROGRESS' }),
+      data: { paymentStatus: 'DELETED' },
+    }));
+    expect(prisma.financeReconciliationIssue.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ contaId: 'conta-1', dedupeKey: 'PAYMENT_NEEDS_REVIEW:PAYMENT:order-delete-intent', status: 'OPEN' }),
+      data: expect.objectContaining({ status: 'RESOLVED' }),
+    }));
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mockSyncEventMapOrderPaymentCreated).not.toHaveBeenCalled();
+  });
+
+  it('records a late paid observation for reconciliation while preserving DELETED snapshot', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
+      id: 'order-expired-after-delete', status: 'EXPIRED', paymentStatus: 'DELETED',
+      asaasPaymentId: 'pay-expired-after-delete',
+    } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RECEIVED',
+      payment: {
+        id: 'pay-expired-after-delete', status: 'RECEIVED', value: 60,
+        externalReference: 'event-map-order:order-expired-after-delete',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mockReconcileEventMapOrder).not.toHaveBeenCalled();
+    expect(mockSyncEventMapOrderPaymentCreated).not.toHaveBeenCalled();
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      entityId: 'order-expired-after-delete', remoteStatus: 'RECEIVED', severity: 'HIGH',
+      metadata: expect.objectContaining({ terminalStatusPreserved: 'DELETED', providerStateRequiresReconciliation: true }),
+    }));
   });
 
   it('registra recusa de estorno sem marcar pedido ou venda como estornados', async () => {
@@ -3592,6 +3982,167 @@ describe('handlePaymentWebhook', () => {
       contaId: 'conta-1', asaasPaymentId: 'pay1', externalReference: undefined,
     }));
     expect(mockUpdateFinanceStatusFromPayment).not.toHaveBeenCalled();
+  });
+
+  it('preserva DELETE local quando PAYMENT_RESTORED atrasado reativa cobrança cancelada', async () => {
+    const { prisma } = await import('@alusa/database');
+    const order = { id: 'order-restored', status: 'CANCELLED', paymentStatus: 'DELETED', asaasPaymentId: 'pay-restored' };
+    vi.mocked(prisma.eventMapOrder.findFirst).mockImplementation(async () => ({ ...order }) as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockImplementation(async () => [{ ...order }] as never);
+    vi.mocked(prisma.eventMapOrder.updateMany).mockImplementation(async ({ data }) => {
+      Object.assign(order, data);
+      return { count: 1 } as never;
+    });
+    const issueStore = new Map<string, unknown>();
+    mockUpsertFinanceReconciliationIssue.mockImplementation(async (input) => {
+      const params = input as { contaId: string; entityType: string; entityId?: string | null; issueType: string };
+      const key = `${params.contaId}:${params.issueType}:${params.entityType}:${params.entityId ?? 'unknown'}`;
+      issueStore.set(key, input);
+      return { id: 'issue-1' };
+    });
+
+    const payload = {
+      event: 'PAYMENT_RESTORED',
+      eventId: 'evt-restored-1',
+      payment: { id: 'pay-restored', status: 'PENDING', value: 60, externalReference: 'event-map-order:order-restored' },
+    } as never;
+    const first = await handlePaymentWebhook('conta-1', payload);
+    const replay = await handlePaymentWebhook('conta-1', payload);
+    expect(first.success).toBe(true);
+    expect(replay.success).toBe(true);
+
+    expect(prisma.eventMapOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'order-restored', contaId: 'conta-1', status: 'CANCELLED' }),
+      data: expect.objectContaining({ paymentStatus: 'DELETED', asaasPaymentId: 'pay-restored' }),
+    }));
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1', entityId: 'order-restored', asaasId: 'pay-restored',
+      issueType: 'PAYMENT_NEEDS_REVIEW', causeId: 'evt-restored-1', remoteStatus: 'PENDING',
+      metadata: expect.objectContaining({ terminalStatusPreserved: 'DELETED', providerStateRequiresReconciliation: true }),
+    }));
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledTimes(2);
+    expect(issueStore.size).toBe(1);
+    expect(order).toMatchObject({ status: 'CANCELLED', paymentStatus: 'DELETED', asaasPaymentId: 'pay-restored' });
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mockCancelEventMapOrder).not.toHaveBeenCalled();
+  });
+
+  it('ignora regressão de PAYMENT_RESTORED atrasado após pagamento recebido no pedido cancelado', async () => {
+    const { prisma } = await import('@alusa/database');
+    const order = { id: 'order-paid-before-restore', status: 'CANCELLED', paymentStatus: 'RECEIVED', asaasPaymentId: 'pay-paid-before-restore' };
+    vi.mocked(prisma.eventMapOrder.findFirst).mockImplementation(async () => ({ ...order }) as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockImplementation(async () => [{ ...order }] as never);
+    vi.mocked(prisma.eventMapOrder.updateMany).mockImplementation(async ({ data }) => {
+      Object.assign(order, data);
+      return { count: 1 } as never;
+    });
+    mockUpsertFinanceReconciliationIssue.mockImplementation(async () => ({ id: 'issue-1' }));
+
+    const first = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RESTORED', eventId: 'evt-restore-after-receipt',
+      payment: { id: 'pay-paid-before-restore', status: 'PENDING', value: 60, externalReference: 'event-map-order:order-paid-before-restore' },
+    } as never);
+
+    expect(first.success).toBe(true);
+    expect(order).toMatchObject({ status: 'CANCELLED', paymentStatus: 'RECEIVED' });
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      localStatus: 'CANCELLED', remoteStatus: 'RECEIVED', causeId: 'evt-restore-after-receipt',
+    }));
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+  });
+
+  it('serializa PAYMENT_RECEIVED concorrente com PAYMENT_RESTORED atrasado sem regredir o snapshot', async () => {
+    const { prisma } = await import('@alusa/database');
+    const order = { id: 'order-concurrent-restore', status: 'CANCELLED', paymentStatus: 'PENDING', asaasPaymentId: 'pay-concurrent-restore' };
+    vi.mocked(prisma.eventMapOrder.findFirst).mockImplementation(async () => ({ ...order }) as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockImplementation(async () => [{ ...order }] as never);
+    vi.mocked(prisma.eventMapOrder.updateMany).mockImplementation(async ({ data }) => {
+      Object.assign(order, data);
+      return { count: 1 } as never;
+    });
+    mockUpsertFinanceReconciliationIssue.mockImplementation(async () => ({ id: 'issue-1' }));
+
+    const receipt = handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RECEIVED', eventId: 'evt-receipt-first',
+      payment: { id: 'pay-concurrent-restore', status: 'RECEIVED', value: 60, externalReference: 'event-map-order:order-concurrent-restore' },
+    } as never);
+    const staleRestore = handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RESTORED', eventId: 'evt-restore-late',
+      payment: { id: 'pay-concurrent-restore', status: 'PENDING', value: 60, externalReference: 'event-map-order:order-concurrent-restore' },
+    } as never);
+    const [receiptResult, restoreResult] = await Promise.all([receipt, staleRestore]);
+
+    expect(receiptResult.success).toBe(true);
+    expect(restoreResult.success).toBe(true);
+    expect(order).toMatchObject({ status: 'CANCELLED', paymentStatus: 'RECEIVED', asaasPaymentId: 'pay-concurrent-restore' });
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenLastCalledWith(expect.objectContaining({ remoteStatus: 'RECEIVED' }));
+  });
+
+  it.each([
+    { event: 'PAYMENT_RECEIVED', status: 'RECEIVED' },
+    { event: 'PAYMENT_CONFIRMED', status: 'CONFIRMED' },
+  ])('mantém pedido cancelado sem fulfillment para $event, inclusive em replay', async ({ event, status }) => {
+    const { prisma } = await import('@alusa/database');
+    const order = { id: 'order-cancelled-paid', status: 'CANCELLED', paymentStatus: 'PENDING', asaasPaymentId: 'pay-cancelled-paid' };
+    vi.mocked(prisma.eventMapOrder.findFirst).mockImplementation(async () => ({ ...order }) as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockImplementation(async () => [{ ...order }] as never);
+    vi.mocked(prisma.eventMapOrder.updateMany).mockImplementation(async ({ data }) => {
+      Object.assign(order, data);
+      return { count: 1 } as never;
+    });
+    const issueStore = new Map<string, unknown>();
+    mockUpsertFinanceReconciliationIssue.mockImplementation(async (input) => {
+      const params = input as { contaId: string; entityType: string; entityId?: string | null; issueType: string };
+      const key = `${params.contaId}:${params.issueType}:${params.entityType}:${params.entityId ?? 'unknown'}`;
+      issueStore.set(key, input);
+      return { id: 'issue-1' };
+    });
+    const payload = {
+      event,
+      eventId: `evt-${event.toLowerCase()}-cancelled`,
+      payment: {
+        id: 'pay-cancelled-paid', status, value: 60,
+        externalReference: 'event-map-order:order-cancelled-paid',
+      },
+    } as never;
+
+    const first = await handlePaymentWebhook('conta-1', payload);
+    const replay = await handlePaymentWebhook('conta-1', payload);
+
+    expect(first.success).toBe(true);
+    expect(replay.success).toBe(true);
+    expect(order).toMatchObject({ status: 'CANCELLED', paymentStatus: status, asaasPaymentId: 'pay-cancelled-paid' });
+    expect(prisma.eventMapOrder.updateMany).toHaveBeenCalledTimes(2);
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledTimes(2);
+    expect(issueStore.size).toBe(1);
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenLastCalledWith(expect.objectContaining({
+      entityId: 'order-cancelled-paid', asaasId: 'pay-cancelled-paid',
+      issueType: 'PAYMENT_NEEDS_REVIEW', causeId: `evt-${event.toLowerCase()}-cancelled`,
+      localStatus: 'CANCELLED', remoteStatus: status,
+    }));
+    // Ticket issuance and seat reclamation are encapsulated by confirmation;
+    // this terminal path must never call it.
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+  });
+
+  it('trata PAYMENT_DUNNING_RECEIVED como pagamento recebido conforme contrato Asaas', async () => {
+    const { prisma } = await import('@alusa/database');
+    const order = { id: 'order-dunning', status: 'PAYMENT_PENDING', paymentStatus: 'PENDING', asaasPaymentId: 'pay-dunning' };
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce(order as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockResolvedValueOnce([order] as never);
+    mockConfirmEventMapOrderPayment.mockResolvedValueOnce({ id: order.id, status: 'CONFIRMED' } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_DUNNING_RECEIVED',
+      eventId: 'evt-dunning-1',
+      payment: { id: 'pay-dunning', status: 'DUNNING_RECEIVED', value: 60, externalReference: 'event-map-order:order-dunning' },
+    } as never);
+
+    expect(result.success).toBe(true);
+    expect(mockConfirmEventMapOrderPayment).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1', asaasPaymentId: 'pay-dunning', paymentStatus: 'DUNNING_RECEIVED',
+    }));
   });
 
   it('reconcilia sem mutações quando payment ID aponta para pedidos Event Map duplicados', async () => {

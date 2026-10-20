@@ -26,6 +26,7 @@ const PAID_ASAAS_PAYMENT_STATUSES = new Set([
 ]);
 const SETTLED_OR_BLOCKED_ASAAS_PAYMENT_STATUSES = [
   ...PAID_ASAAS_PAYMENT_STATUSES,
+  'CANCELLATION_IN_PROGRESS',
   'REFUNDED', 'PAYMENT_REFUNDED', 'PARTIALLY_REFUNDED', 'PAYMENT_REFUND_IN_PROGRESS', 'REFUND_IN_PROGRESS',
   'REFUND_REQUESTED', 'REFUND_DENIED', 'REVERSED', 'CHARGEBACK_REQUESTED', 'CHARGEBACK_DISPUTE', 'IN_DISPUTE',
   'AWAITING_CHARGEBACK_REVERSAL', 'DISPUTE_LOST', 'CHARGEBACK', 'CHARGEBACK_DEPOSITED',
@@ -109,11 +110,46 @@ export async function reconcileEventMapOrderFinancialStateFromAsaas(params: Even
         status: { in: ['PAYMENT_PENDING', 'EXPIRED', 'CANCELLED', 'CONFIRMED'] },
       },
       include: {
-        map: { select: { publishedVersionId: true } },
-        reservation: { include: { seats: { include: { publicSeat: { select: { status: true } } } } } },
+        map: { select: { contaId: true, eventId: true, publishedVersionId: true } },
+        version: { select: { contaId: true, eventMapId: true } },
+        event: { select: { id: true, contaId: true } },
+        reservation: {
+          include: {
+            seats: {
+              include: {
+                publicSeat: { select: { contaId: true, eventId: true, eventMapId: true, versionId: true, status: true } },
+              },
+            },
+          },
+        },
+        items: { include: { publicSeat: { select: { contaId: true, eventId: true, eventMapId: true, versionId: true } }, ticket: true } },
       },
     });
     if (!order) return null;
+    if (order.map.contaId !== order.contaId || order.map.eventId !== order.eventId
+      || order.event.contaId !== order.contaId || order.event.id !== order.eventId
+      || order.version.contaId !== order.contaId || order.version.eventMapId !== order.eventMapId
+      || order.items.some((item) => item.contaId !== order.contaId || item.orderId !== order.id
+        || !order.reservation?.seats.some((entry) => entry.publicSeatId === item.publicSeatId)
+        || item.publicSeat.contaId !== order.contaId || item.publicSeat.eventId !== order.eventId
+        || item.publicSeat.eventMapId !== order.eventMapId || item.publicSeat.versionId !== order.versionId
+        || (item.ticket !== null && (item.ticket.contaId !== order.contaId || item.ticket.eventId !== order.eventId
+          || item.ticket.eventMapOrderId !== order.id || item.ticket.orderItemId !== item.id)))
+      || (order.reservation !== null && (order.reservation.contaId !== order.contaId
+        || order.reservation.eventId !== order.eventId || order.reservation.eventMapId !== order.eventMapId
+        || order.reservation.versionId !== order.versionId || order.reservation.id !== order.reservationId
+        || order.reservation.seats.some((entry) => entry.contaId !== order.contaId
+          || entry.reservationId !== order.reservation!.id || entry.publicSeat.contaId !== order.contaId
+          || entry.publicSeat.eventId !== order.eventId || entry.publicSeat.eventMapId !== order.eventMapId
+          || entry.publicSeat.versionId !== order.versionId)))) return null;
+    // A paid snapshot obtained before a cancellation/deletion can race with
+    // the cancellation webhook. Keep the financial discrepancy visible, but
+    // never promote a terminal cancellation state or enqueue effects from
+    // that stale snapshot. This read is protected by the order row lock.
+    const normalizedOrderPaymentStatus = order.paymentStatus?.trim().toUpperCase() ?? null;
+    if (normalizedOrderPaymentStatus === 'DELETED' || normalizedOrderPaymentStatus === 'CANCELLATION_IN_PROGRESS') {
+      return { orderId: order.id, status: order.status, financialOnly: true, blocked: true };
+    }
     if (
       isTicketPaymentBlocked(order.paymentStatus)
       && !mayResolveChargebackPaymentHold(order.paymentStatus, params.chargebackStatus)
@@ -151,7 +187,12 @@ export async function reconcileEventMapOrderFinancialStateFromAsaas(params: Even
     const cannotFulfillLatePayment = stalePublishedVersion || (releasedOrder && !seatsStillFree);
 
     const update = await tx.eventMapOrder.updateMany({
-      where: { id: order.id, contaId: params.contaId, status: order.status },
+      where: {
+        id: order.id,
+        contaId: params.contaId,
+        status: order.status,
+        paymentStatus: order.paymentStatus,
+      },
       data: {
         status: 'CONFIRMED',
         ticketFulfillmentStatus: 'REQUIRES_RECONCILIATION',

@@ -23,6 +23,8 @@ import { parseFirstValidCivilDatePreservingInstant } from '../mappers/civil-date
 import { logEventsFinance } from './events-finance-observability';
 import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
 import { findCustomerForPayer } from '../customer/customer-identity';
+import { withSessionAdvisoryLock } from '../core/idempotency.service';
+import { resolveMonotonicAsaasPaymentStatus } from '../mappers/asaas-snapshot-monotonicity';
 
 const PAID_ASAAS_PAYMENT_STATUSES = new Set([
   'CONFIRMED',
@@ -154,6 +156,383 @@ async function markEventMapPaymentReconciliationRequired(input: {
         : {}),
     },
   });
+}
+
+export async function recordFailedEventMapPaymentCancellation(input: {
+  contaId: string;
+  orderId: string;
+  paymentId: string;
+  orderStatus: 'CANCELLED' | 'EXPIRED';
+  apiKey: string;
+  paymentStatus: string;
+  error: unknown;
+}) {
+  const errorCode = input.error && typeof input.error === 'object' && 'code' in input.error
+    && typeof input.error.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(input.error.code)
+    ? input.error.code
+    : input.error instanceof Error ? input.error.name : 'UNKNOWN_ERROR';
+  let latestRemoteStatus = input.paymentStatus;
+  let remoteReadSucceeded = false;
+  let latestPayment: EventAsaasPayment | null = null;
+  try {
+    const latest = await getEventAsaasPaymentProvider().getPayment({ apiKey: input.apiKey, paymentId: input.paymentId });
+    if (latest.id === input.paymentId) {
+      latestPayment = latest;
+      latestRemoteStatus = latest.deleted ? 'DELETED' : latest.status?.trim().toUpperCase() ?? latestRemoteStatus;
+      remoteReadSucceeded = true;
+    }
+  } catch (error) {
+    logEventsFinance('finance.events.public_event_map.checkout.payment_reconciliation.failed', { error }, 'warn');
+  }
+
+  // A restore can be observed while DELETE is in flight, after the first GET.
+  // Re-read after observing that marker so a pre-restore snapshot cannot mask
+  // a payment received during the cancellation window.
+  let restoreObservedBeforeMerge = false;
+  let paidIssueObservedBeforeMerge = false;
+  await withSessionAdvisoryLock({
+    contaId: input.contaId,
+    scope: 'webhook-process',
+    key: `payment:${input.paymentId}`,
+    fn: async () => {
+      const issue = await prisma.financeReconciliationIssue.findFirst({
+        where: { contaId: input.contaId, dedupeKey: `PAYMENT_NEEDS_REVIEW:PAYMENT:${input.orderId}`, status: 'OPEN' },
+        select: { metadata: true, remoteStatus: true },
+      });
+      const metadata = issue?.metadata && typeof issue.metadata === 'object' && !Array.isArray(issue.metadata)
+        ? issue.metadata as Record<string, unknown>
+        : null;
+      restoreObservedBeforeMerge = metadata?.cancellationRestoreObserved === true;
+      paidIssueObservedBeforeMerge = PAID_ASAAS_PAYMENT_STATUSES.has(issue?.remoteStatus?.trim().toUpperCase() ?? '');
+    },
+  });
+  let postRestoreReadSucceeded = false;
+  if (restoreObservedBeforeMerge || paidIssueObservedBeforeMerge && !PAID_ASAAS_PAYMENT_STATUSES.has(latestRemoteStatus) && latestRemoteStatus !== 'DELETED') {
+    try {
+      const latest = await getEventAsaasPaymentProvider().getPayment({ apiKey: input.apiKey, paymentId: input.paymentId });
+      if (latest.id === input.paymentId) {
+        latestPayment = latest;
+        latestRemoteStatus = latest.deleted ? 'DELETED' : latest.status?.trim().toUpperCase() ?? latestRemoteStatus;
+        remoteReadSucceeded = latest.deleted === true || Boolean(latest.status);
+        postRestoreReadSucceeded = remoteReadSucceeded;
+      }
+    } catch (error) {
+      logEventsFinance('finance.events.public_event_map.checkout.payment_reconciliation.failed', { error }, 'warn');
+    }
+  }
+
+  const finalState = await withSessionAdvisoryLock({
+    contaId: input.contaId,
+    scope: 'webhook-process',
+    key: `payment:${input.paymentId}`,
+    fn: async () => {
+      const current = await prisma.eventMapOrder.findFirst({
+        where: { id: input.orderId, contaId: input.contaId, status: input.orderStatus, asaasPaymentId: input.paymentId },
+        select: { id: true, status: true, paymentStatus: true },
+      });
+      if (!current) return null;
+      const issue = await prisma.financeReconciliationIssue.findFirst({
+        where: { contaId: input.contaId, dedupeKey: `PAYMENT_NEEDS_REVIEW:PAYMENT:${input.orderId}`, status: 'OPEN' },
+        select: { remoteStatus: true, metadata: true },
+      });
+      const issueStatus = issue?.remoteStatus?.trim().toUpperCase() ?? null;
+      const issueMetadata = issue?.metadata && typeof issue.metadata === 'object' && !Array.isArray(issue.metadata)
+        ? issue.metadata as Record<string, unknown>
+        : null;
+      const restoreObserved = issueMetadata?.cancellationRestoreObserved === true;
+      const paidIssueObserved = PAID_ASAAS_PAYMENT_STATUSES.has(issueStatus ?? '');
+      const currentStatus = current.paymentStatus?.trim().toUpperCase() ?? null;
+      const resolvedStatus = restoreObserved
+        ? postRestoreReadSucceeded ? latestRemoteStatus : 'CANCELLATION_IN_PROGRESS'
+        : remoteReadSucceeded && latestRemoteStatus === 'DELETED' ? 'DELETED'
+        : currentStatus === 'DELETED' || issueStatus === 'DELETED'
+        ? 'DELETED'
+        : PAID_ASAAS_PAYMENT_STATUSES.has(issueStatus ?? '')
+          ? issueStatus!
+          : remoteReadSucceeded ? latestRemoteStatus : 'CANCELLATION_IN_PROGRESS';
+      await prisma.eventMapOrder.updateMany({
+        where: { id: current.id, contaId: input.contaId, status: input.orderStatus, asaasPaymentId: input.paymentId, paymentStatus: current.paymentStatus },
+        data: { paymentStatus: resolvedStatus },
+      });
+      const persisted = await prisma.eventMapOrder.findFirst({
+        where: { id: current.id, contaId: input.contaId, status: input.orderStatus, asaasPaymentId: input.paymentId },
+        select: { status: true, paymentStatus: true },
+      });
+      const result = persisted ? { status: persisted.status, paymentStatus: persisted.paymentStatus?.trim().toUpperCase() ?? resolvedStatus } : null;
+      if (result?.paymentStatus === 'DELETED' && !paidIssueObserved && (!restoreObserved || postRestoreReadSucceeded && latestRemoteStatus === 'DELETED')) {
+        await prisma.financeReconciliationIssue.updateMany({
+          where: { contaId: input.contaId, dedupeKey: `PAYMENT_NEEDS_REVIEW:PAYMENT:${input.orderId}`, status: 'OPEN' },
+          data: { status: 'RESOLVED', remoteStatus: 'DELETED', resolvedAt: new Date(), resolution: 'Asaas payment cancellation confirmed by provider lookup.' },
+        });
+      } else if (result) await upsertFinanceReconciliationIssue({
+        contaId: input.contaId,
+        entityType: 'PAYMENT',
+        entityId: input.orderId,
+        asaasId: input.paymentId,
+        issueType: 'PAYMENT_NEEDS_REVIEW',
+        severity: 'HIGH',
+        localStatus: result.status,
+        remoteStatus: paidIssueObserved ? issueStatus! : result.paymentStatus,
+        causeId: `payment-post-delete:${input.paymentId}`,
+        metadata: {
+          source: 'public-event-map-checkout',
+          reason: paidIssueObserved ? 'payment_received_during_order_cancellation'
+            : restoreObserved ? 'payment_restored_during_order_cancellation' : 'cancelled_order_payment_delete_failed',
+          eventMapOrderId: input.orderId,
+          orderStatus: input.orderStatus,
+          paymentStatus: result.paymentStatus,
+          cancellationInProgress: restoreObserved && !postRestoreReadSucceeded || (!remoteReadSucceeded && !PAID_ASAAS_PAYMENT_STATUSES.has(result.paymentStatus)),
+          seatsMustNotBeReopenedAutomatically: true,
+          deleteErrorCode: errorCode,
+        },
+      });
+      return result;
+    },
+  });
+  if (!finalState) return { latePaymentFulfilled: false };
+  let latePaymentFulfilled = false;
+  if (input.orderStatus === 'EXPIRED' && remoteReadSucceeded && PAID_ASAAS_PAYMENT_STATUSES.has(latestRemoteStatus) && PAID_ASAAS_PAYMENT_STATUSES.has(finalState.paymentStatus)) {
+    if (!latestPayment) latestPayment = await getEventAsaasPaymentProvider().getPayment({ apiKey: input.apiKey, paymentId: input.paymentId }).catch(() => null);
+    const confirmed = await confirmPublicEventMapOrderPayment({
+      contaId: input.contaId,
+      asaasPaymentId: input.paymentId,
+      paymentStatus: finalState.paymentStatus,
+      invoiceUrl: latestPayment?.invoiceUrl ?? null,
+      paidAt: parseFirstValidCivilDatePreservingInstant(latestPayment?.paymentDate, latestPayment?.clientPaymentDate) ?? new Date(),
+      paidAmount: latestPayment?.value ?? null,
+      allowReleasedReservation: true,
+    }).catch(() => null);
+    latePaymentFulfilled = Boolean(confirmed);
+    if (!confirmed) await reconcileEventMapOrderFinancialStateFromAsaas({
+        contaId: input.contaId,
+        asaasPaymentId: input.paymentId,
+        paymentStatus: finalState.paymentStatus,
+        invoiceUrl: latestPayment?.invoiceUrl ?? null,
+        paidAt: parseFirstValidCivilDatePreservingInstant(latestPayment?.paymentDate, latestPayment?.clientPaymentDate) ?? new Date(),
+        paidAmount: latestPayment?.value ?? null,
+        ticketFulfillmentError: 'PAYMENT_RECEIVED_DURING_CANCELLATION',
+      });
+  }
+  return { latePaymentFulfilled };
+}
+
+export async function beginEventMapPaymentCancellation(input: {
+  contaId: string;
+  orderId: string;
+  paymentId: string;
+  orderStatus: 'CANCELLED' | 'EXPIRED';
+}) {
+  return withSessionAdvisoryLock({
+    contaId: input.contaId,
+    scope: 'webhook-process',
+    key: `payment:${input.paymentId}`,
+    fn: async () => {
+      const current = await prisma.eventMapOrder.findFirst({
+        where: { id: input.orderId, contaId: input.contaId, status: input.orderStatus, asaasPaymentId: input.paymentId },
+        select: { id: true, status: true, paymentStatus: true },
+      });
+      const currentPaymentStatus = current?.paymentStatus?.trim().toUpperCase() ?? null;
+      if (!current || !['PENDING', 'OVERDUE'].includes(currentPaymentStatus ?? '')) return false;
+      const claimed = await prisma.eventMapOrder.updateMany({
+        where: { id: current.id, contaId: input.contaId, status: input.orderStatus, asaasPaymentId: input.paymentId, paymentStatus: current.paymentStatus },
+        data: { paymentStatus: 'CANCELLATION_IN_PROGRESS' },
+      });
+      if (claimed.count !== 1) return false;
+      await upsertFinanceReconciliationIssue({
+        contaId: input.contaId,
+        entityType: 'PAYMENT',
+        entityId: input.orderId,
+        asaasId: input.paymentId,
+        issueType: 'PAYMENT_NEEDS_REVIEW',
+        severity: 'HIGH',
+        localStatus: input.orderStatus,
+        remoteStatus: 'CANCELLATION_IN_PROGRESS',
+        causeId: `payment-post-delete:${input.paymentId}`,
+        metadata: {
+          source: 'public-event-map-checkout',
+          reason: 'cancelled_order_payment_delete_in_progress',
+          eventMapOrderId: input.orderId,
+          orderStatus: input.orderStatus,
+          cancellationInProgress: true,
+          seatsMustNotBeReopenedAutomatically: true,
+        },
+      });
+      return true;
+    },
+  });
+}
+
+export async function recordSuccessfulEventMapPaymentCancellation(input: {
+  contaId: string;
+  orderId: string;
+  paymentId: string;
+  orderStatus: 'CANCELLED' | 'EXPIRED';
+  apiKey: string;
+  remoteStatus: string | null;
+}) {
+  const responseStatus = input.remoteStatus?.trim().toUpperCase() ?? null;
+  let finalRemoteStatus = responseStatus;
+  let latestRemoteStatus: string | null = null;
+  let remoteReadSucceeded = false;
+  let latestPayment: EventAsaasPayment | null = null;
+  try {
+    const latest = await getEventAsaasPaymentProvider().getPayment({ apiKey: input.apiKey, paymentId: input.paymentId });
+    if (latest.id === input.paymentId) {
+      latestPayment = latest;
+      latestRemoteStatus = latest.deleted ? 'DELETED' : latest.status?.trim().toUpperCase() ?? null;
+      remoteReadSucceeded = latest.deleted === true || Boolean(latest.status);
+    }
+    const latestStatus = latest.id === input.paymentId
+      ? latest.deleted ? 'DELETED' : latest.status?.trim().toUpperCase() ?? null
+      : null;
+    const paidObservation = [latestStatus, responseStatus].find((status) => PAID_ASAAS_PAYMENT_STATUSES.has(status ?? ''));
+    finalRemoteStatus = responseStatus === 'DELETED'
+      ? 'DELETED'
+      : paidObservation ?? latestStatus ?? responseStatus;
+  } catch {
+    // Keep the DELETE response as evidence; without a terminal response or
+    // readable snapshot, the durable intent stays open for reconciliation.
+  }
+  let restoreObservedBeforeMerge = false;
+  let paidIssueObservedBeforeMerge = false;
+  await withSessionAdvisoryLock({
+    contaId: input.contaId,
+    scope: 'webhook-process',
+    key: `payment:${input.paymentId}`,
+    fn: async () => {
+      const issue = await prisma.financeReconciliationIssue.findFirst({
+        where: { contaId: input.contaId, dedupeKey: `PAYMENT_NEEDS_REVIEW:PAYMENT:${input.orderId}`, status: 'OPEN' },
+        select: { metadata: true, remoteStatus: true },
+      });
+      const metadata = issue?.metadata && typeof issue.metadata === 'object' && !Array.isArray(issue.metadata)
+        ? issue.metadata as Record<string, unknown>
+        : null;
+      restoreObservedBeforeMerge = metadata?.cancellationRestoreObserved === true;
+      paidIssueObservedBeforeMerge = PAID_ASAAS_PAYMENT_STATUSES.has(issue?.remoteStatus?.trim().toUpperCase() ?? '');
+    },
+  });
+  let postRestoreReadSucceeded = false;
+  if (restoreObservedBeforeMerge || paidIssueObservedBeforeMerge && !PAID_ASAAS_PAYMENT_STATUSES.has(latestRemoteStatus ?? '') && latestRemoteStatus !== 'DELETED') {
+    try {
+      const latest = await getEventAsaasPaymentProvider().getPayment({ apiKey: input.apiKey, paymentId: input.paymentId });
+      if (latest.id === input.paymentId) {
+        latestPayment = latest;
+        latestRemoteStatus = latest.deleted ? 'DELETED' : latest.status?.trim().toUpperCase() ?? null;
+        remoteReadSucceeded = latest.deleted === true || Boolean(latest.status);
+        postRestoreReadSucceeded = remoteReadSucceeded;
+        if (latestRemoteStatus && PAID_ASAAS_PAYMENT_STATUSES.has(latestRemoteStatus)) finalRemoteStatus = latestRemoteStatus;
+        else if (latestRemoteStatus) finalRemoteStatus = latestRemoteStatus;
+        if (responseStatus === 'DELETED') finalRemoteStatus = 'DELETED';
+      }
+    } catch {
+      // Preserve the open cancellation issue when a post-restore read is ambiguous.
+    }
+  }
+  const finalState = await withSessionAdvisoryLock({
+    contaId: input.contaId,
+    scope: 'webhook-process',
+    key: `payment:${input.paymentId}`,
+    fn: async () => {
+      const current = await prisma.eventMapOrder.findFirst({
+        where: { id: input.orderId, contaId: input.contaId, status: input.orderStatus, asaasPaymentId: input.paymentId },
+        select: { id: true, paymentStatus: true },
+      });
+      if (!current) return null;
+      const currentStatus = current.paymentStatus?.trim().toUpperCase() ?? null;
+      const issue = await prisma.financeReconciliationIssue.findFirst({
+        where: { contaId: input.contaId, dedupeKey: `PAYMENT_NEEDS_REVIEW:PAYMENT:${input.orderId}`, status: 'OPEN' },
+        select: { remoteStatus: true, metadata: true },
+      });
+      const issueStatus = issue?.remoteStatus?.trim().toUpperCase() ?? null;
+      const receivedDuringCancellation = PAID_ASAAS_PAYMENT_STATUSES.has(issueStatus ?? '');
+      const issueMetadata = issue?.metadata && typeof issue.metadata === 'object' && !Array.isArray(issue.metadata)
+        ? issue.metadata as Record<string, unknown>
+        : null;
+      const restoreObserved = issueMetadata?.cancellationRestoreObserved === true;
+      const paidIssueObserved = PAID_ASAAS_PAYMENT_STATUSES.has(issueStatus ?? '');
+      const resolvedStatus = restoreObserved
+        ? responseStatus === 'DELETED' ? 'DELETED'
+          : postRestoreReadSucceeded ? latestRemoteStatus ?? 'CANCELLATION_IN_PROGRESS' : 'CANCELLATION_IN_PROGRESS'
+        : remoteReadSucceeded && latestRemoteStatus === 'DELETED' || responseStatus === 'DELETED' ? 'DELETED'
+        : currentStatus === 'DELETED' || issueStatus === 'DELETED'
+        ? 'DELETED'
+        : receivedDuringCancellation
+          ? issueStatus!
+        : PAID_ASAAS_PAYMENT_STATUSES.has(currentStatus ?? '') ? currentStatus!
+          : PAID_ASAAS_PAYMENT_STATUSES.has(finalRemoteStatus ?? '') ? finalRemoteStatus!
+            : finalRemoteStatus === 'DELETED' ? 'DELETED' : 'CANCELLATION_IN_PROGRESS';
+      await prisma.eventMapOrder.updateMany({
+        where: { id: current.id, contaId: input.contaId, status: input.orderStatus, asaasPaymentId: input.paymentId, paymentStatus: current.paymentStatus },
+        data: { paymentStatus: resolvedStatus },
+      });
+      const persisted = await prisma.eventMapOrder.findFirst({
+        where: { id: current.id, contaId: input.contaId, status: input.orderStatus, asaasPaymentId: input.paymentId },
+        select: { status: true, paymentStatus: true },
+      });
+      const result = persisted ? { status: persisted.status, paymentStatus: persisted.paymentStatus?.trim().toUpperCase() ?? resolvedStatus } : null;
+      if (result && result.paymentStatus === 'DELETED' && !paidIssueObserved && (!restoreObserved || postRestoreReadSucceeded && latestRemoteStatus === 'DELETED')) {
+        await prisma.financeReconciliationIssue.updateMany({
+          where: { contaId: input.contaId, dedupeKey: `PAYMENT_NEEDS_REVIEW:PAYMENT:${input.orderId}`, status: 'OPEN' },
+          data: { status: 'RESOLVED', remoteStatus: 'DELETED', resolvedAt: new Date(), resolution: 'Asaas payment cancellation completed.' },
+        });
+      } else if (result) {
+        await upsertFinanceReconciliationIssue({
+          contaId: input.contaId,
+          entityType: 'PAYMENT',
+          entityId: input.orderId,
+          asaasId: input.paymentId,
+          issueType: 'PAYMENT_NEEDS_REVIEW',
+          severity: 'HIGH',
+          localStatus: result.status,
+          remoteStatus: paidIssueObserved ? issueStatus!
+            : restoreObserved && postRestoreReadSucceeded ? latestRemoteStatus ?? result.paymentStatus
+            : restoreObserved ? result.paymentStatus
+            : PAID_ASAAS_PAYMENT_STATUSES.has(result.paymentStatus) ? result.paymentStatus : finalRemoteStatus ?? 'CANCELLATION_IN_PROGRESS',
+          causeId: `payment-post-delete:${input.paymentId}`,
+          metadata: {
+            source: 'public-event-map-checkout',
+            reason: paidIssueObserved ? 'payment_received_during_order_cancellation'
+              : restoreObserved ? 'payment_restored_during_order_cancellation'
+              : PAID_ASAAS_PAYMENT_STATUSES.has(result.paymentStatus) ? 'payment_received_during_order_cancellation' : 'payment_cancellation_unconfirmed',
+            eventMapOrderId: input.orderId,
+            orderStatus: input.orderStatus,
+            cancellationInProgress: restoreObserved && !postRestoreReadSucceeded || (!PAID_ASAAS_PAYMENT_STATUSES.has(result.paymentStatus) && finalRemoteStatus !== 'DELETED'),
+            paymentStatus: result.paymentStatus,
+            seatsMustNotBeReopenedAutomatically: true,
+          },
+        });
+      }
+      return result;
+    },
+  });
+  if (!finalState) return { latePaymentFulfilled: false };
+  if (input.orderStatus === 'EXPIRED' && responseStatus !== 'DELETED' && remoteReadSucceeded && PAID_ASAAS_PAYMENT_STATUSES.has(latestRemoteStatus ?? '') && PAID_ASAAS_PAYMENT_STATUSES.has(finalState.paymentStatus)) {
+    if (!latestPayment && finalRemoteStatus && PAID_ASAAS_PAYMENT_STATUSES.has(finalRemoteStatus)) {
+      latestPayment = await getEventAsaasPaymentProvider().getPayment({ apiKey: input.apiKey, paymentId: input.paymentId }).catch(() => null);
+    }
+    const paidAt = parseFirstValidCivilDatePreservingInstant(latestPayment?.paymentDate, latestPayment?.clientPaymentDate) ?? new Date();
+    const paidAmount = latestPayment?.value ?? null;
+    const confirmed = await confirmPublicEventMapOrderPayment({
+      contaId: input.contaId,
+      asaasPaymentId: input.paymentId,
+      paymentStatus: finalState.paymentStatus,
+      invoiceUrl: latestPayment?.invoiceUrl ?? null,
+      paidAt,
+      paidAmount,
+      allowReleasedReservation: true,
+    }).catch(() => null);
+    if (!confirmed) await reconcileEventMapOrderFinancialStateFromAsaas({
+      contaId: input.contaId,
+      asaasPaymentId: input.paymentId,
+      paymentStatus: finalState.paymentStatus,
+      invoiceUrl: latestPayment?.invoiceUrl ?? null,
+      paidAt,
+      paidAmount,
+      ticketFulfillmentError: 'PAYMENT_RECEIVED_DURING_CANCELLATION',
+    });
+    return { latePaymentFulfilled: Boolean(confirmed) };
+  }
+  return { latePaymentFulfilled: false };
 }
 
 async function resolveEventMapCustomerCreationIssue(input: {
@@ -404,6 +783,27 @@ export async function completePublicEventMapCheckout(
 ) {
   const buyerDocument = input.buyerDocument?.replace(/\D/g, '') ?? '';
   const pending = await preparePublicEventMapCheckout(publicSlug, input);
+  const enqueueCreatedEmail = async (order: typeof pending.order) => {
+    const paymentStatus = order.paymentStatus?.trim().toUpperCase();
+    if (order.status !== 'PAYMENT_PENDING' || PAID_ASAAS_PAYMENT_STATUSES.has(paymentStatus ?? '')) return;
+    await prisma.$transaction(async (tx) => {
+      await enqueuePublicOrderCreatedEmail(tx, {
+        contaId: pending.map.contaId,
+        orderId: order.id,
+        buyerEmail: order.buyerEmail,
+        buyerName: order.buyerName,
+        eventName: `${pending.map.event.name} · ${pending.map.name}`,
+        eventStartsAt: pending.publishedMapSchedule.startsAt
+          ? new Date(pending.publishedMapSchedule.startsAt)
+          : pending.map.startsAt ?? pending.map.event.startsAt,
+        eventStartsAtLocal: pending.publishedMapSchedule.startsAtLocal,
+        statusPath: publicOrderStatusPath(pending.map.publicSlug, order.id, order.accessToken),
+        invoiceUrl: order.invoiceUrl,
+        paymentMethod: order.paymentMethod,
+        expiresAt: order.expiresAt ?? pending.expiresAt,
+      });
+    });
+  };
   let paymentCreationClaimed = false;
   let paymentCreationStarted = false;
   let customerCreationStarted = false;
@@ -433,6 +833,10 @@ export async function completePublicEventMapCheckout(
           totalAmount: pending.totalAmount,
         });
       }
+      // The payment may have been attached before the process failed to enqueue
+      // the buyer notification. The outbox key is stable per tenant and order,
+      // so recreating it here is safe for retries and already delivered mail.
+      await enqueueCreatedEmail(pending.order);
       return buildCheckoutResponse(pending.order, {
         apiKey: credentials.apiKey,
         paymentMethod: input.paymentMethod,
@@ -585,6 +989,7 @@ export async function completePublicEventMapCheckout(
           409,
         );
       }
+      await enqueueCreatedEmail(reconciledOrder);
       return buildCheckoutResponse(reconciledOrder, {
         apiKey: credentials.apiKey,
         paymentMethod: input.paymentMethod,
@@ -1018,28 +1423,174 @@ export async function completePublicEventMapCheckout(
       );
     }
 
-    if (attached.count !== 1 && updated.asaasPaymentId !== payment.id) {
+    if (updated.status === 'CANCELLED') {
+      // CANCELLED is terminal even when the provider accepts the payment POST
+      // concurrently. Preserve the remote payment identity, but never reclaim
+      // seats or fulfill tickets from this checkout response.
+      const cancelledPaymentStatus = await withSessionAdvisoryLock({
+        contaId: pending.map.contaId,
+        scope: 'webhook-process',
+        key: `payment:${payment.id}`,
+        fn: async () => {
+          const current = await prisma.eventMapOrder.findFirst({
+            where: {
+              id: updated.id,
+              contaId: pending.map.contaId,
+              status: 'CANCELLED',
+              OR: [{ asaasPaymentId: null }, { asaasPaymentId: payment.id }],
+            },
+            select: { id: true, paymentStatus: true, asaasPaymentId: true },
+          });
+          if (!current) return (payment.status ?? 'PENDING').trim().toUpperCase();
+
+          const currentStatus = current.paymentStatus?.trim().toUpperCase() ?? null;
+          const incomingStatus = (payment.status ?? 'PENDING').trim().toUpperCase();
+          const currentIsPaid = ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED'].includes(currentStatus ?? '');
+          const incomingIsOpen = ['PENDING', 'OVERDUE', 'AWAITING_RISK_ANALYSIS'].includes(incomingStatus);
+          const resolvedStatus = currentIsPaid && incomingIsOpen
+            ? currentStatus!
+            : resolveMonotonicAsaasPaymentStatus({
+                currentAsaasStatus: current.paymentStatus,
+                incoming: incomingStatus,
+              }) ?? incomingStatus;
+          await prisma.eventMapOrder.updateMany({
+            where: {
+              id: current.id,
+              contaId: pending.map.contaId,
+              status: 'CANCELLED',
+              paymentStatus: current.paymentStatus,
+              OR: [{ asaasPaymentId: null }, { asaasPaymentId: payment.id }],
+            },
+            data: {
+              asaasPaymentId: payment.id,
+              asaasCustomerId: resolvedCustomerId,
+              paymentMethod: input.paymentMethod,
+              paymentStatus: resolvedStatus,
+              paymentProvider: 'ASAAS',
+              invoiceUrl: payment.invoiceUrl ?? null,
+            },
+          });
+          const persisted = await prisma.eventMapOrder.findFirst({
+            where: { id: current.id, contaId: pending.map.contaId, status: 'CANCELLED' },
+            select: { paymentStatus: true, asaasPaymentId: true },
+          });
+          return persisted?.asaasPaymentId === payment.id
+            ? (persisted.paymentStatus ?? resolvedStatus).trim().toUpperCase()
+            : resolvedStatus;
+        },
+      });
+      if (PAID_ASAAS_PAYMENT_STATUSES.has(cancelledPaymentStatus)) {
+        await upsertFinanceReconciliationIssue({
+          contaId: pending.map.contaId,
+          entityType: 'PAYMENT',
+          entityId: updated.id,
+          asaasId: payment.id,
+          issueType: 'PAYMENT_NEEDS_REVIEW',
+          severity: 'HIGH',
+          localStatus: 'CANCELLED',
+          remoteStatus: cancelledPaymentStatus,
+          causeId: `payment-post:${payment.id}`,
+          metadata: {
+            source: 'public-event-map-checkout',
+            reason: 'cancelled_order_payment_created_paid',
+            eventMapOrderId: updated.id,
+            seatsMustNotBeReopenedAutomatically: true,
+          },
+        });
+      } else if (!payment.deleted && CANCELLABLE_ASAAS_PAYMENT_STATUSES.has(cancelledPaymentStatus)) {
+        const cancellationStarted = await beginEventMapPaymentCancellation({
+          contaId: pending.map.contaId,
+          orderId: updated.id,
+          paymentId: payment.id,
+          orderStatus: 'CANCELLED',
+        });
+        if (cancellationStarted) await getEventAsaasPaymentProvider()
+          .deletePayment({ apiKey: credentials.apiKey, paymentId: payment.id })
+          .then((deletedPayment) => recordSuccessfulEventMapPaymentCancellation({
+            contaId: pending.map.contaId,
+            orderId: updated.id,
+            paymentId: payment.id,
+            orderStatus: 'CANCELLED',
+            apiKey: credentials.apiKey,
+            remoteStatus: deletedPayment.deleted ? 'DELETED' : deletedPayment.status ?? null,
+          }))
+          .catch((deleteError) => {
+            logEventsFinance(
+              'finance.events.public_event_map.checkout.late_payment_cancel.failed',
+              { error: deleteError },
+              'error',
+            );
+            return recordFailedEventMapPaymentCancellation({
+              contaId: pending.map.contaId,
+              orderId: updated.id,
+              paymentId: payment.id,
+              orderStatus: 'CANCELLED',
+              apiKey: credentials.apiKey,
+              paymentStatus: cancelledPaymentStatus,
+              error: deleteError,
+            });
+          });
+      }
+      throw new EventsError(
+        'PEDIDO_CANCELADO',
+        'O pedido foi cancelado enquanto a cobrança era criada. Consulte a instituição para reconciliar o pagamento.',
+        409,
+      );
+    }
+
+    if (updated.status === 'EXPIRED') {
       // The hold expired while the provider request was in flight. Persist the
       // provider identity for reconciliation, cancel a still-payable charge,
       // and never return a live checkout URL for an order whose seats were
       // released to another buyer.
-      await prisma.eventMapOrder.updateMany({
-        where: {
-          id: updated.id,
-          contaId: pending.map.contaId,
-          status: { in: ['EXPIRED', 'CANCELLED'] },
-          asaasPaymentId: null,
-        },
-        data: {
-          asaasPaymentId: payment.id,
-          asaasCustomerId: resolvedCustomerId,
-          paymentMethod: input.paymentMethod,
-          paymentStatus: payment.status,
-          paymentProvider: 'ASAAS',
-          invoiceUrl: payment.invoiceUrl ?? null,
+      const paymentStatus = await withSessionAdvisoryLock({
+        contaId: pending.map.contaId,
+        scope: 'webhook-process',
+        key: `payment:${payment.id}`,
+        fn: async () => {
+          const current = await prisma.eventMapOrder.findFirst({
+            where: {
+              id: updated.id,
+              contaId: pending.map.contaId,
+              status: 'EXPIRED',
+              OR: [{ asaasPaymentId: null }, { asaasPaymentId: payment.id }],
+            },
+            select: { id: true, paymentStatus: true, asaasPaymentId: true },
+          });
+          if (!current) return (payment.status ?? '').trim().toUpperCase();
+          const currentStatus = current.paymentStatus?.trim().toUpperCase() ?? null;
+          const incomingStatus = (payment.status ?? '').trim().toUpperCase();
+          const currentIsPaid = ['CONFIRMED', 'RECEIVED', 'RECEIVED_IN_CASH', 'DUNNING_RECEIVED'].includes(currentStatus ?? '');
+          const incomingIsOpen = ['PENDING', 'OVERDUE', 'AWAITING_RISK_ANALYSIS'].includes(incomingStatus);
+          const resolvedStatus = currentIsPaid && incomingIsOpen
+            ? currentStatus!
+            : resolveMonotonicAsaasPaymentStatus({ currentAsaasStatus: current.paymentStatus, incoming: incomingStatus }) ?? incomingStatus;
+          await prisma.eventMapOrder.updateMany({
+            where: {
+              id: current.id,
+              contaId: pending.map.contaId,
+              status: 'EXPIRED',
+              paymentStatus: current.paymentStatus,
+              OR: [{ asaasPaymentId: null }, { asaasPaymentId: payment.id }],
+            },
+            data: {
+              asaasPaymentId: payment.id,
+              asaasCustomerId: resolvedCustomerId,
+              paymentMethod: input.paymentMethod,
+              paymentStatus: resolvedStatus,
+              paymentProvider: 'ASAAS',
+              invoiceUrl: payment.invoiceUrl ?? null,
+            },
+          });
+          const persisted = await prisma.eventMapOrder.findFirst({
+            where: { id: current.id, contaId: pending.map.contaId, status: 'EXPIRED' },
+            select: { paymentStatus: true, asaasPaymentId: true },
+          });
+          return persisted?.asaasPaymentId === payment.id
+            ? (persisted.paymentStatus ?? resolvedStatus).trim().toUpperCase()
+            : resolvedStatus;
         },
       });
-      const paymentStatus = (payment.status ?? '').trim().toUpperCase();
       if (PAID_ASAAS_PAYMENT_STATUSES.has(paymentStatus)) {
         const latePaymentParams = {
           contaId: pending.map.contaId,
@@ -1058,22 +1609,75 @@ export async function completePublicEventMapCheckout(
         const confirmed = await confirmPublicEventMapOrderPayment(latePaymentParams).catch(
           () => null,
         );
-        if (!confirmed) {
+        let fulfilledOrder: typeof updated | null = null;
+        if (confirmed) {
+          fulfilledOrder = await prisma.eventMapOrder.findFirst({
+            where: {
+              id: updated.id,
+              contaId: pending.map.contaId,
+              status: 'CONFIRMED',
+              asaasPaymentId: payment.id,
+            },
+            include: { items: { include: { ticket: true } } },
+          });
+          if (fulfilledOrder) {
+            return buildCheckoutResponse(fulfilledOrder, {
+              apiKey: credentials.apiKey,
+              paymentMethod: input.paymentMethod,
+              publicSlug: pending.map.publicSlug,
+            });
+          }
+        }
+        if (!confirmed || !fulfilledOrder) {
           await reconcileEventMapOrderFinancialStateFromAsaas({
             ...latePaymentParams,
             ticketFulfillmentError: 'PAYMENT_CREATED_AFTER_RESERVATION_EXPIRED',
           });
         }
       } else if (!payment.deleted && CANCELLABLE_ASAAS_PAYMENT_STATUSES.has(paymentStatus)) {
-        await getEventAsaasPaymentProvider()
+        const cancellationStarted = await beginEventMapPaymentCancellation({
+          contaId: pending.map.contaId,
+          orderId: updated.id,
+          paymentId: payment.id,
+          orderStatus: 'EXPIRED',
+        });
+        const cancellationOutcome = cancellationStarted ? await getEventAsaasPaymentProvider()
           .deletePayment({ apiKey: credentials.apiKey, paymentId: payment.id })
+          .then((deletedPayment) => recordSuccessfulEventMapPaymentCancellation({
+              contaId: pending.map.contaId,
+              orderId: updated.id,
+              paymentId: payment.id,
+              orderStatus: 'EXPIRED',
+              apiKey: credentials.apiKey,
+              remoteStatus: deletedPayment.deleted ? 'DELETED' : deletedPayment.status ?? null,
+            }))
           .catch((deleteError) => {
             logEventsFinance(
               'finance.events.public_event_map.checkout.late_payment_cancel.failed',
               { error: deleteError },
               'error',
             );
+            return recordFailedEventMapPaymentCancellation({
+              contaId: pending.map.contaId,
+              orderId: updated.id,
+              paymentId: payment.id,
+              orderStatus: 'EXPIRED',
+              apiKey: credentials.apiKey,
+              paymentStatus,
+              error: deleteError,
+            });
+          }) : null;
+        if (cancellationOutcome?.latePaymentFulfilled) {
+          const fulfilledOrder = await prisma.eventMapOrder.findFirst({
+            where: { id: updated.id, contaId: pending.map.contaId, status: 'CONFIRMED', asaasPaymentId: payment.id },
+            include: { items: { include: { ticket: true } } },
           });
+          if (fulfilledOrder) return buildCheckoutResponse(fulfilledOrder, {
+            apiKey: credentials.apiKey,
+            paymentMethod: input.paymentMethod,
+            publicSlug: pending.map.publicSlug,
+          });
+        }
       }
       throw new EventsError(
         'RESERVA_EXPIRADA',
@@ -1082,23 +1686,7 @@ export async function completePublicEventMapCheckout(
       );
     }
 
-    await prisma.$transaction(async (tx) => {
-      await enqueuePublicOrderCreatedEmail(tx, {
-        contaId: pending.map.contaId,
-        orderId: updated.id,
-        buyerEmail: updated.buyerEmail,
-        buyerName: updated.buyerName,
-        eventName: `${pending.map.event.name} · ${pending.map.name}`,
-        eventStartsAt: pending.publishedMapSchedule.startsAt
-          ? new Date(pending.publishedMapSchedule.startsAt)
-          : pending.map.startsAt ?? pending.map.event.startsAt,
-        eventStartsAtLocal: pending.publishedMapSchedule.startsAtLocal,
-        statusPath: publicOrderStatusPath(pending.map.publicSlug, updated.id, updated.accessToken),
-        invoiceUrl: updated.invoiceUrl,
-        paymentMethod: input.paymentMethod,
-        expiresAt: pending.expiresAt,
-      });
-    });
+    await enqueueCreatedEmail(updated);
 
     return buildCheckoutResponse(updated, {
       apiKey: credentials.apiKey,

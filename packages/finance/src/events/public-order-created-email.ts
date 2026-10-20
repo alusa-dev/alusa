@@ -14,7 +14,7 @@ export async function enqueuePublicOrderCreatedEmail(
     eventStartsAtLocal?: string | null;
     statusPath: string;
     invoiceUrl: string | null;
-    paymentMethod: string;
+    paymentMethod: string | null;
     expiresAt: Date;
   },
 ) {
