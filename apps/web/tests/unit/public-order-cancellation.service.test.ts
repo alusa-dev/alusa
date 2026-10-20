@@ -1,14 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { findFirst, runWithTenant, deletePayment, handlePaymentWebhook } = vi.hoisted(() => ({
+const { findFirst, runWithTenant, deletePayment, handlePaymentWebhook, finalizeDeletedPublicEventMapOrder } = vi.hoisted(() => ({
   findFirst: vi.fn(),
   runWithTenant: vi.fn(async (_contaId: string, callback: (_tx: unknown) => Promise<unknown>) => callback({ eventMapOrder: { findFirst } })),
   deletePayment: vi.fn(),
   handlePaymentWebhook: vi.fn(),
+  finalizeDeletedPublicEventMapOrder: vi.fn(),
 }));
 
 vi.mock('@/lib/prisma-tenant', () => ({ runWithTenant }));
-vi.mock('@alusa/finance', () => ({ deletePayment, handlePaymentWebhook }));
+vi.mock('@alusa/finance', () => ({ deletePayment, handlePaymentWebhook, finalizeDeletedPublicEventMapOrder }));
 
 import { cancelPendingPublicOrder } from '@/src/server/events/public-order-cancellation.service';
 
@@ -51,6 +52,38 @@ describe('cancelPendingPublicOrder', () => {
     await expect(cancelPendingPublicOrder({ orderId: 'order-1', contaId: 'tenant-1' })).resolves.toBe('CANCELLED');
     expect(deletePayment).toHaveBeenCalledWith('pay-1', { contaId: 'tenant-1' });
     expect(handlePaymentWebhook).toHaveBeenCalledWith('tenant-1', expect.objectContaining({ event: 'PAYMENT_DELETED' }));
+  });
+
+  it('finalizes an already-deleted pending payment without another provider DELETE', async () => {
+    findFirst
+      .mockResolvedValueOnce({ id: 'order-1', status: 'PAYMENT_PENDING', paymentStatus: 'DELETED', asaasPaymentId: 'pay-1' })
+      .mockResolvedValueOnce({ status: 'CANCELLED' });
+    finalizeDeletedPublicEventMapOrder.mockResolvedValue({ ok: true });
+
+    await expect(cancelPendingPublicOrder({ orderId: 'order-1', contaId: 'tenant-1' })).resolves.toBe('CANCELLED');
+
+    expect(finalizeDeletedPublicEventMapOrder).toHaveBeenCalledWith({ contaId: 'tenant-1', orderId: 'order-1' });
+    expect(deletePayment).not.toHaveBeenCalled();
+    expect(handlePaymentWebhook).not.toHaveBeenCalled();
+    expect(runWithTenant).toHaveBeenCalledTimes(2);
+    expect(findFirst).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: 'order-1', contaId: 'tenant-1' },
+      select: { status: true },
+    }));
+  });
+
+  it.each([
+    { status: 'CONFIRMED', paymentStatus: 'DELETED' },
+    { status: 'PAYMENT_PENDING', paymentStatus: 'RECEIVED' },
+    { status: 'PAYMENT_PENDING', paymentStatus: 'CONFIRMED' },
+  ])('never cancels a confirmed or paid order: %s', async (order) => {
+    findFirst.mockResolvedValue({ ...order, id: 'order-1', asaasPaymentId: 'pay-1' });
+
+    await expect(cancelPendingPublicOrder({ orderId: 'order-1', contaId: 'tenant-1' })).resolves.toBe('NOT_CANCELLABLE');
+
+    expect(finalizeDeletedPublicEventMapOrder).not.toHaveBeenCalled();
+    expect(deletePayment).not.toHaveBeenCalled();
+    expect(handlePaymentWebhook).not.toHaveBeenCalled();
   });
 
   it('blocks unknown payment states without calling the provider', async () => {

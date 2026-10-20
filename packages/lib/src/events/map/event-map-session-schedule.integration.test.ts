@@ -7,6 +7,7 @@ import { getPublicEventMap, listEventMaps, reservePublicEventMapSeats } from './
 import { getPublicEventMapOrderStatus } from './public-event-map-order-status.service';
 import { createSeatedTicketSale, getPublicStaffSaleTickets, getStaffEventMapSalesView, reserveStaffEventMapSeats } from './staff-map-sales.service';
 import { updateTicketLot } from '../events.service';
+import { cancelPublicEventMapOrder } from './event-map-order-operations';
 
 const validLocal = '2026-11-14T20:00';
 const ctx = (contaId: string, userId: string) => ({ contaId, userId });
@@ -296,6 +297,46 @@ describe('event map purchase schedule snapshots', () => {
 
       await expect(preparePublicEventMapCheckout(fixture.map.publicSlug!, checkoutInput(reservation)))
         .resolves.toMatchObject({ order: { id: order.id } });
+    } finally {
+      await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
+  it('cancels an already-deleted pending order and releases its held reservation seats', async () => {
+    const fixture = await createFixture({ seatStatus: 'HELD' });
+    try {
+      const reservation = await createReservation(fixture, 'PUBLIC_CHECKOUT');
+      const order = await prisma.eventMapOrder.create({
+        data: {
+          contaId: fixture.conta.id,
+          eventId: fixture.event.id,
+          eventMapId: fixture.map.id,
+          versionId: fixture.version.id,
+          reservationId: reservation.id,
+          buyerName: 'Comprador Teste',
+          buyerEmail: 'ticket@example.test',
+          buyerDocument: '52998224725',
+          buyerPhone: '11987654321',
+          totalAmount: 20,
+          status: 'PAYMENT_PENDING',
+          paymentMethod: 'PIX',
+          paymentStatus: 'DELETED',
+          asaasPaymentId: 'pay-deleted-test',
+          accessToken: `order-${randomUUID()}`,
+        },
+      });
+
+      await expect(cancelPublicEventMapOrder(fixture.conta.id, order.id, 'ASAAS_PAYMENT_ALREADY_DELETED'))
+        .resolves.toMatchObject({ ok: true });
+
+      expect(await prisma.eventMapOrder.findFirstOrThrow({ where: { id: order.id, contaId: fixture.conta.id } }))
+        .toMatchObject({ status: 'CANCELLED', paymentStatus: 'DELETED', asaasPaymentId: 'pay-deleted-test', cancelledAt: expect.any(Date) });
+      expect(await prisma.eventMapReservation.findFirstOrThrow({ where: { id: reservation.id, contaId: fixture.conta.id } }))
+        .toMatchObject({ status: 'CANCELLED', checkoutKey: null });
+      expect((await prisma.eventMapPublicSeat.findUniqueOrThrow({ where: { id: fixture.seat.id } })).status).toBe('AVAILABLE');
+      expect(await prisma.auditLog.count({ where: {
+        contaId: fixture.conta.id, entityId: order.id, action: 'events.map.public.order.cancelled',
+      } })).toBe(1);
     } finally {
       await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
     }

@@ -24,6 +24,13 @@ const PAID_ASAAS_PAYMENT_STATUSES = new Set([
   'RECEIVED_IN_CASH',
   'DUNNING_RECEIVED',
 ]);
+const SETTLED_OR_BLOCKED_ASAAS_PAYMENT_STATUSES = [
+  ...PAID_ASAAS_PAYMENT_STATUSES,
+  'REFUNDED', 'PAYMENT_REFUNDED', 'PARTIALLY_REFUNDED', 'PAYMENT_REFUND_IN_PROGRESS', 'REFUND_IN_PROGRESS',
+  'REFUND_REQUESTED', 'REFUND_DENIED', 'REVERSED', 'CHARGEBACK_REQUESTED', 'CHARGEBACK_DISPUTE', 'IN_DISPUTE',
+  'AWAITING_CHARGEBACK_REVERSAL', 'DISPUTE_LOST', 'CHARGEBACK', 'CHARGEBACK_DEPOSITED',
+  'CHARGEBACK_LOST', 'CHARGEBACK_WON', 'REQUESTED', 'DONE', 'CHARGEBACK_UNKNOWN',
+];
 
 export type EventMapPaymentReference = {
   contaId: string;
@@ -40,17 +47,26 @@ export async function syncPublicEventMapOrderPaymentCreated(params: EventMapPaym
   const target = await findEventMapOrderForPayment(prisma, params);
   if (!target || target.id !== orderId) return null;
 
+  const incomingPaymentStatus = (params.paymentStatus ?? 'PENDING').trim().toUpperCase();
+  const isDeletion = incomingPaymentStatus === 'DELETED';
+
   const updated = await prisma.eventMapOrder.updateMany({
     where: {
       id: target.id,
       contaId: params.contaId,
-      status: { in: ['PAYMENT_PENDING', 'EXPIRED', 'CANCELLED'] },
+      // A deletion webhook follows the domain cancellation and must still
+      // persist on CANCELLED orders. A stale nonterminal snapshot must not
+      // update an order that became cancelled after its handler pre-read.
+      status: { in: isDeletion ? ['PAYMENT_PENDING', 'EXPIRED', 'CANCELLED'] : ['PAYMENT_PENDING', 'EXPIRED'] },
       OR: [{ asaasPaymentId: null }, { asaasPaymentId: params.asaasPaymentId }],
-      AND: [{ OR: [{ paymentStatus: null }, { paymentStatus: { not: 'CHARGEBACK_UNKNOWN' } }] }],
+      AND: [
+        { OR: [{ paymentStatus: null }, { paymentStatus: { notIn: SETTLED_OR_BLOCKED_ASAAS_PAYMENT_STATUSES } }] },
+        ...(isDeletion ? [] : [{ OR: [{ paymentStatus: null }, { paymentStatus: { not: 'DELETED' } }] }]),
+      ],
     },
     data: {
       asaasPaymentId: params.asaasPaymentId,
-      paymentStatus: params.paymentStatus ?? 'PENDING',
+      paymentStatus: incomingPaymentStatus,
       invoiceUrl: params.invoiceUrl ?? undefined,
       paymentProvider: 'ASAAS',
     },
@@ -206,6 +222,28 @@ export async function cancelPublicEventMapOrderByPayment(params: EventMapPayment
     order.id,
     params.reason ?? 'Pagamento cancelado/expirado.',
   );
+}
+
+/** Finalize the local state only after the provider payment is already deleted. */
+export async function finalizeDeletedPublicEventMapOrder(params: { contaId: string; orderId: string }) {
+  const order = await prisma.eventMapOrder.findFirst({
+    where: {
+      id: params.orderId,
+      contaId: params.contaId,
+      status: 'PAYMENT_PENDING',
+      paymentStatus: 'DELETED',
+      asaasPaymentId: { not: null },
+    },
+    select: { id: true },
+  });
+  if (!order) return null;
+  const result = await cancelPublicEventMapOrder(
+    params.contaId,
+    order.id,
+    'ASAAS_PAYMENT_ALREADY_DELETED',
+    { expectedPaymentStatus: 'DELETED' },
+  );
+  return result.ok ? result : null;
 }
 
 export async function refundPublicEventMapOrderByPayment(params: EventMapPaymentReference & {

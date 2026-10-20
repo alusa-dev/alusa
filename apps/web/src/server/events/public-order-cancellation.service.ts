@@ -1,4 +1,4 @@
-import { deletePayment, handlePaymentWebhook } from '@alusa/finance';
+import { deletePayment, finalizeDeletedPublicEventMapOrder, handlePaymentWebhook } from '@alusa/finance';
 
 import { runWithTenant } from '@/lib/prisma-tenant';
 
@@ -13,9 +13,23 @@ export async function cancelPendingPublicOrder(input: {
     select: { id: true, status: true, paymentStatus: true, asaasPaymentId: true },
   }));
   if (!order) return 'NOT_FOUND';
-  if (order.status !== 'PAYMENT_PENDING' || !['PENDING', 'OVERDUE'].includes(order.paymentStatus ?? '') || !order.asaasPaymentId) {
+  if (order.status !== 'PAYMENT_PENDING' || !order.asaasPaymentId) {
     return 'NOT_CANCELLABLE';
   }
+
+  // A PAYMENT_DELETED webhook may have persisted the provider's terminal
+  // state before cancellation is retried. Finalize local order/hold state
+  // through the same idempotent domain operation without sending another DELETE.
+  if (order.paymentStatus === 'DELETED') {
+    await finalizeDeletedPublicEventMapOrder(input);
+    const cancelled = await runWithTenant(input.contaId, (tx) => tx.eventMapOrder.findFirst({
+      where: { id: input.orderId, contaId: input.contaId },
+      select: { status: true },
+    }));
+    return cancelled?.status === 'CANCELLED' ? 'CANCELLED' : 'PROCESSING';
+  }
+
+  if (!['PENDING', 'OVERDUE'].includes(order.paymentStatus ?? '')) return 'NOT_CANCELLABLE';
 
   const deletion = await deletePayment(order.asaasPaymentId, { contaId: input.contaId });
   if (deletion.deleted !== true) return 'NOT_CANCELLABLE';

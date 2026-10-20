@@ -1975,6 +1975,7 @@ export {
 } from './events/event-participant-lifecycle-operations';
 export {
   cancelPublicEventMapOrderByPayment,
+  finalizeDeletedPublicEventMapOrder,
   markPublicEventMapOrderRefundProcessingByPayment,
   reconcileEventMapOrderFinancialStateFromAsaas,
   refundPublicEventMapOrderByPayment,

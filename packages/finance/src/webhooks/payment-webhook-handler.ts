@@ -1694,14 +1694,25 @@ async function handlePaymentWebhookCore(
           paymentStatus: 'REVERSED',
         });
       }
-    } else if (payload.event === 'PAYMENT_CREATED' || payload.payment.status === 'PENDING') {
-      await syncPublicEventMapOrderPaymentCreated({
+    } else if (payload.event === 'PAYMENT_DELETED' || payload.payment.deleted) {
+      await cancelPublicEventMapOrderByPayment({
         contaId,
         asaasPaymentId: payload.payment.id,
         externalReference: payload.payment.externalReference,
-        paymentStatus: effectiveAsaasStatus,
-        invoiceUrl: payload.payment.invoiceUrl ?? null,
+        reason: payload.event,
       });
+    } else if (payload.event === 'PAYMENT_CREATED' || payload.payment.status === 'PENDING') {
+      // A stale creation/pending event must not overwrite a terminal canceled
+      // order's DELETED snapshot. Paid events still use the normal reconciliation path.
+      if (knownEventMapOrder?.status !== 'CANCELLED') {
+        await syncPublicEventMapOrderPaymentCreated({
+          contaId,
+          asaasPaymentId: payload.payment.id,
+          externalReference: payload.payment.externalReference,
+          paymentStatus: effectiveAsaasStatus,
+          invoiceUrl: payload.payment.invoiceUrl ?? null,
+        });
+      }
     } else if (payload.event === 'PAYMENT_REFUND_IN_PROGRESS' || payload.event === 'PAYMENT_REFUND_DENIED') {
       await markPublicEventMapOrderRefundProcessingByPayment({
         contaId,
@@ -1715,13 +1726,6 @@ async function handlePaymentWebhookCore(
         paymentStatus: payload.event === 'PAYMENT_REFUND_DENIED' ? 'REFUND_DENIED' : payload.payment.status,
         isFinalRefund: false,
       });
-    } else if (payload.event === 'PAYMENT_DELETED' || payload.payment.deleted) {
-      await cancelPublicEventMapOrderByPayment({
-        contaId,
-        asaasPaymentId: payload.payment.id,
-        externalReference: payload.payment.externalReference,
-        reason: payload.event,
-      });
     }
 
     // Event-map orders are not academic Cobranca/Charge records. Once the
@@ -1730,13 +1734,15 @@ async function handlePaymentWebhookCore(
     // issues for a valid public ticket purchase. Unknown provider states still
     // update the pending order's payment snapshot through the same guarded CAS.
     if (payload.payment.externalReference?.startsWith('event-map-order:') || eventMapOrderByPayment) {
-      await syncPublicEventMapOrderPaymentCreated({
-        contaId,
-        asaasPaymentId: payload.payment.id,
-        externalReference: payload.payment.externalReference,
-        paymentStatus: effectiveAsaasStatus,
-        invoiceUrl: payload.payment.invoiceUrl ?? null,
-      });
+      if (knownEventMapOrder?.status !== 'CANCELLED' || payload.event === 'PAYMENT_DELETED' || payload.payment.deleted) {
+        await syncPublicEventMapOrderPaymentCreated({
+          contaId,
+          asaasPaymentId: payload.payment.id,
+          externalReference: payload.payment.externalReference,
+          paymentStatus: effectiveAsaasStatus,
+          invoiceUrl: payload.payment.invoiceUrl ?? null,
+        });
+      }
       if (eventMapOrderReference && (!eventMapOrder || (eventMapOrder.asaasPaymentId && eventMapOrder.asaasPaymentId !== payload.payment.id))) {
         throw new Error('EVENT_MAP_ORDER_PAYMENT_REFERENCE_NOT_FOUND');
       }

@@ -133,6 +133,7 @@ describe('public online order presentation', () => {
     };
     expect(publicOrderAdminActions(base, false).canCancel).toBe(true);
     expect(publicOrderAdminActions({ ...base, paymentStatus: 'OVERDUE' }, false).canCancel).toBe(true);
+    expect(publicOrderAdminActions({ ...base, paymentStatus: 'DELETED' }, false).canCancel).toBe(true);
     expect(publicOrderAdminActions({ ...base, paymentStatus: 'PAYMENT_CREATION_UNKNOWN' }, false).canCancel).toBe(false);
     expect(publicOrderAdminActions({ ...base, paymentStatus: 'RECEIVED' }, false).canCancel).toBe(false);
     expect(publicOrderAdminActions({ ...base, asaasPaymentId: null }, false).canCancel).toBe(false);

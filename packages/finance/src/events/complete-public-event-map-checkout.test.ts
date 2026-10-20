@@ -773,9 +773,10 @@ describe('completePublicEventMapCheckout payment reference pagination', () => {
   });
 
   it.each([
-    ['ausente', undefined],
-    ['inválido', 'not-an-iso-date'],
-  ])('UNKNOWN com marker de customer e timestamp %s faz lookup exato e nunca novo POST', async (_label, customerCreationPostStartedAt) => {
+    ['ausente com busca vazia', undefined, 'empty'],
+    ['inválido com busca vazia', 'not-an-iso-date', 'empty'],
+    ['inválido com busca incompleta', 'not-an-iso-date', 'incomplete'],
+  ])('UNKNOWN com marker de customer e timestamp %s faz lookup exato e nunca novo POST', async (_label, customerCreationPostStartedAt, lookupResult) => {
     mocks.prepare.mockResolvedValue({
       ...pending(),
       order: { ...pending().order, paymentStatus: 'PAYMENT_CREATION_UNKNOWN' },
@@ -788,7 +789,11 @@ describe('completePublicEventMapCheckout payment reference pagination', () => {
       },
     });
     mocks.provider.listPayments.mockResolvedValue(page({ offset: 0, hasMore: false, data: [] }));
-    mocks.provider.listCustomers.mockResolvedValue(customersPage({ offset: 0, hasMore: false, data: [] }));
+    if (lookupResult === 'incomplete') {
+      mocks.provider.listCustomers.mockRejectedValue(new Error('provider lookup incomplete'));
+    } else {
+      mocks.provider.listCustomers.mockResolvedValue(customersPage({ offset: 0, hasMore: false, data: [] }));
+    }
 
     await expect(completePublicEventMapCheckout('public-map', checkoutInput()))
       .rejects.toMatchObject({ code: 'PAGAMENTO_EM_VERIFICACAO' });
@@ -802,7 +807,7 @@ describe('completePublicEventMapCheckout payment reference pagination', () => {
     }));
     expect(mocks.upsertIssue).toHaveBeenCalledWith(expect.objectContaining({
       severity: 'CRITICAL',
-      remoteStatus: 'CUSTOMER_CREATION_UNKNOWN_NO_MATCH',
+      remoteStatus: lookupResult === 'empty' ? 'CUSTOMER_CREATION_UNKNOWN_NO_MATCH' : 'CUSTOMER_REFERENCE_LOOKUP_INCOMPLETE',
       metadata: expect.objectContaining({ operation: 'CUSTOMER_CREATION', customerCreationPostStarted: true }),
     }));
     expect(mocks.provider.createCustomer).not.toHaveBeenCalled();

@@ -544,11 +544,13 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
       <ConfirmDialog
         open={Boolean(cancelTarget)}
         onOpenChange={(open) => { if (!open && !cancelMutation.isPending) setCancelTarget(null); }}
-        title="Cancelar pedido?"
+        title={cancelTarget?.paymentStatus === 'DELETED' ? 'Finalizar cancelamento?' : 'Cancelar pedido?'}
         description={cancelTarget
-          ? `A cobrança de ${formatCurrency(cancelTarget.totalAmount)} para ${cancelTarget.buyerName} será cancelada. Os assentos só serão liberados após a confirmação do cancelamento.`
+          ? cancelTarget.paymentStatus === 'DELETED'
+            ? `A cobrança de ${formatCurrency(cancelTarget.totalAmount)} para ${cancelTarget.buyerName} já foi removida. Esta ação finalizará o cancelamento local do pedido e liberará os assentos.`
+            : `A cobrança de ${formatCurrency(cancelTarget.totalAmount)} para ${cancelTarget.buyerName} será cancelada. Os assentos só serão liberados após a confirmação do cancelamento.`
           : 'A cobrança será cancelada e os assentos serão liberados após a confirmação.'}
-        confirmText="Cancelar pedido"
+        confirmText={cancelTarget?.paymentStatus === 'DELETED' ? 'Finalizar cancelamento' : 'Cancelar pedido'}
         cancelText="Voltar"
         variant="destructive"
         onConfirm={() => { if (cancelTarget) cancelMutation.mutate(cancelTarget); }}

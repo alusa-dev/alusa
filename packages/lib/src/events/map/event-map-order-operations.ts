@@ -39,6 +39,7 @@ export async function cancelPublicEventMapOrder(
   contaId: string,
   orderId: string,
   reason?: string | null,
+  options?: { expectedPaymentStatus?: string },
 ) {
   return prisma.$transaction(async (tx) => {
     const candidate = await tx.eventMapOrder.findFirst({
@@ -49,10 +50,19 @@ export async function cancelPublicEventMapOrder(
     if (candidate.reservationId) {
       await lockPublicEventMapReservation(tx, { contaId, reservationId: candidate.reservationId });
     }
+    const lockedOrder = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT "id" FROM "EventMapOrder"
+      WHERE "id" = ${orderId} AND "contaId" = ${contaId}
+      FOR UPDATE
+    `);
+    if (lockedOrder.length !== 1) return options?.expectedPaymentStatus ? { ok: false } : { ok: true };
     const order = await tx.eventMapOrder.findFirst({
       where: { id: orderId, contaId },
       include: { reservation: { include: { seats: true } } },
     });
+    if (options?.expectedPaymentStatus && order?.paymentStatus !== options.expectedPaymentStatus) {
+      return { ok: false };
+    }
     if (
       !order
       || order.status === 'CANCELLED'

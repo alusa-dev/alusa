@@ -45,6 +45,9 @@ export function publicOrderAdminStatusLabel(order: PublicOrderStatusSummary) {
 }
 
 export function publicOrderAdminStatusDescription(order: PublicOrderStatusSummary) {
+  if (order.status === 'PAYMENT_PENDING' && order.paymentStatus === 'DELETED') {
+    return 'A cobrança já foi removida. Finalize o cancelamento para liberar os assentos.';
+  }
   if (order.status === 'PAYMENT_PENDING' && order.paymentStatus === 'PAYMENT_CREATION_UNKNOWN') {
     return 'O provedor ainda não confirmou o resultado; os assentos não serão liberados até a verificação.';
   }
@@ -106,7 +109,7 @@ export function publicOrderAdminActions(order: {
   const completeTicketSet = order.ticketCount > 0 && order.ticketCount === order.seatCount;
 
   return {
-    canCancel: order.status === 'PAYMENT_PENDING' && ['PENDING', 'OVERDUE'].includes(order.paymentStatus ?? '') && Boolean(order.asaasPaymentId),
+    canCancel: order.status === 'PAYMENT_PENDING' && ['PENDING', 'OVERDUE', 'DELETED'].includes(order.paymentStatus ?? '') && Boolean(order.asaasPaymentId),
     canViewRefundDetails: order.status === 'REFUNDED',
     canViewCancellationDetails: order.status === 'CANCELLED',
     invoiceUrl: order.status === 'PAYMENT_PENDING' && isSafePaymentUrl(order.invoiceUrl)

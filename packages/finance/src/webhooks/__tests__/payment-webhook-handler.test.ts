@@ -3430,6 +3430,52 @@ describe('handlePaymentWebhook', () => {
     expect(result).toMatchObject({ success: false, error: 'EVENT_MAP_PAID_PAYMENT_REQUIRES_RETRY' });
   });
 
+  it('prioriza PAYMENT_DELETED sobre status PENDING e persiste o estado terminal do pedido', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
+      id: 'order-deleted-pending', status: 'PAYMENT_PENDING', paymentStatus: 'PENDING',
+      asaasPaymentId: 'pay-deleted-pending',
+    } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_DELETED',
+      payment: {
+        id: 'pay-deleted-pending', status: 'PENDING', deleted: true, value: 60,
+        externalReference: 'event-map-order:order-deleted-pending',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockCancelEventMapOrder).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1', asaasPaymentId: 'pay-deleted-pending',
+      externalReference: 'event-map-order:order-deleted-pending', reason: 'PAYMENT_DELETED',
+    }));
+    expect(mockSyncEventMapOrderPaymentCreated).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1', asaasPaymentId: 'pay-deleted-pending', paymentStatus: 'DELETED',
+    }));
+    expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+  });
+
+  it('does not let a stale PAYMENT_CREATED event reopen a cancelled order', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
+      id: 'order-already-cancelled', status: 'CANCELLED', paymentStatus: 'DELETED',
+      asaasPaymentId: 'pay-already-deleted',
+    } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_CREATED',
+      payment: {
+        id: 'pay-already-deleted', status: 'PENDING', value: 60,
+        externalReference: 'event-map-order:order-already-cancelled',
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(mockSyncEventMapOrderPaymentCreated).not.toHaveBeenCalled();
+    expect(mockCancelEventMapOrder).not.toHaveBeenCalled();
+  });
+
   it('registra recusa de estorno sem marcar pedido ou venda como estornados', async () => {
     const { prisma } = await import('@alusa/database');
     vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
