@@ -3,8 +3,8 @@ import type { CustomerPayerType, Prisma, PrismaClient } from '@prisma/client';
 
 type FinanceDbClient = PrismaClient | Prisma.TransactionClient;
 import type { UnifiedChargeItem, OperationalExposureReason } from '../dtos/unified-billing';
+import { getCurrentAcademicDateKey } from '@alusa/shared/date-only';
 import {
-  getEndOfCurrentMonth,
   getOperationalRecentSince,
   resolveUnifiedChargeStatus,
   ASAAS_NON_OPEN_UNIFIED_STATUSES,
@@ -224,37 +224,11 @@ function buildItemDisplayStatus(input: {
 function shouldExposeInOperationalQueue(params: {
   status: UnifiedChargeItem['status'];
   dueDate: Date | null;
-  isInstallment: boolean;
-  now: Date;
+  endOfMonth: Date;
 }): boolean {
   if (!['PENDING', 'OVERDUE', 'PROCESSING'].includes(params.status)) return false;
-  if (!params.dueDate) return true;
-
-  const endOfMonth = getEndOfCurrentMonth(params.now);
-  if (params.dueDate <= endOfMonth) return true;
-  return false;
-}
-
-type OperationalItemMeta = UnifiedChargeItem & {
-  _planId: string | null;
-  _subscriptionKey: string | null;
-};
-
-const OPEN_STATUSES_FOR_RECENT_PIN: UnifiedChargeItem['status'][] = [
-  'PENDING',
-  'OVERDUE',
-  'PROCESSING',
-];
-
-function isRecentlyCreatedCharge(createdAtIso: string, now: Date, recentSince: Date): boolean {
-  const createdAt = new Date(createdAtIso).getTime();
-  if (Number.isNaN(createdAt)) return false;
-  return createdAt >= recentSince.getTime() && createdAt <= now.getTime();
-}
-
-function isDueAfterCurrentMonth(dueDate: Date | null, endOfMonth: Date): boolean {
-  if (!dueDate) return false;
-  return dueDate > endOfMonth;
+  if (!params.dueDate) return false;
+  return params.dueDate <= params.endOfMonth;
 }
 
 function mergeRecordsById<T extends { id: string }>(primary: T[], supplemental: T[]): T[] {
@@ -268,93 +242,9 @@ function mergeRecordsById<T extends { id: string }>(primary: T[], supplemental: 
   return merged;
 }
 
-function applyRecentlyCreatedPins(params: {
-  allItems: OperationalItemMeta[];
-  selectedIds: Set<string>;
-  exposureReasonById: Map<string, OperationalExposureReason>;
-  now: Date;
-  endOfMonth: Date;
-  recentSince: Date;
-}): void {
-  const { allItems, selectedIds, exposureReasonById, now, endOfMonth, recentSince } = params;
-
-  const candidates = allItems.filter((item) => {
-    if (selectedIds.has(item.id)) return false;
-    if (!OPEN_STATUSES_FOR_RECENT_PIN.includes(item.status)) return false;
-    if (!isRecentlyCreatedCharge(item.createdAt, now, recentSince)) return false;
-    const dueDate = item.dueDate ? new Date(item.dueDate) : null;
-    return isDueAfterCurrentMonth(dueDate, endOfMonth);
-  });
-
-  const subscriptionGroups = new Map<string, OperationalItemMeta[]>();
-  for (const item of candidates) {
-    if (!item._subscriptionKey) continue;
-    const bucket = subscriptionGroups.get(item._subscriptionKey) ?? [];
-    bucket.push(item);
-    subscriptionGroups.set(item._subscriptionKey, bucket);
-  }
-
-  for (const [, groupItems] of subscriptionGroups) {
-    groupItems.sort(compareNextOpenItem);
-    const nextOpen = groupItems[0];
-    if (!nextOpen) continue;
-    selectedIds.add(nextOpen.id);
-    exposureReasonById.set(nextOpen.id, 'RECENTLY_CREATED');
-  }
-
-  const installmentGroups = new Map<string, OperationalItemMeta[]>();
-  for (const item of candidates) {
-    if (!item._planId || item._subscriptionKey) continue;
-    const bucket = installmentGroups.get(item._planId) ?? [];
-    bucket.push(item);
-    installmentGroups.set(item._planId, bucket);
-  }
-
-  for (const [, groupItems] of installmentGroups) {
-    groupItems.sort(compareNextOpenItem);
-    const firstOpen = groupItems[0];
-    if (!firstOpen) continue;
-    selectedIds.add(firstOpen.id);
-    exposureReasonById.set(firstOpen.id, 'RECENTLY_CREATED');
-  }
-
-  for (const item of candidates) {
-    if (item._planId || item._subscriptionKey) continue;
-    if (selectedIds.has(item.id)) continue;
-    selectedIds.add(item.id);
-    exposureReasonById.set(item.id, 'RECENTLY_CREATED');
-  }
-}
-
 function compareOperationalItems(
-  a: Pick<UnifiedChargeItem, 'status' | 'dueDate' | 'createdAt'>,
-  b: Pick<UnifiedChargeItem, 'status' | 'dueDate' | 'createdAt'>,
-): number {
-  if (a.status === 'OVERDUE' && b.status !== 'OVERDUE') return -1;
-  if (b.status === 'OVERDUE' && a.status !== 'OVERDUE') return 1;
-
-  const aCreated = new Date(a.createdAt).getTime();
-  const bCreated = new Date(b.createdAt).getTime();
-  if (!Number.isNaN(aCreated) && !Number.isNaN(bCreated) && aCreated !== bCreated) {
-    return bCreated - aCreated;
-  }
-
-  const aDate = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
-  const bDate = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
-  return aDate - bDate;
-}
-
-/**
- * Escolhe a cobrança que deve representar um plano/assinatura na fila.
- *
- * A data de criação não representa a ordem das parcelas: integrações como
- * Asaas normalmente persistem todas no mesmo lote e a última gravada pode
- * ser uma parcela futura. Para a operação, a próxima obrigação é sempre a
- * de menor vencimento aberto (mantendo vencidas como prioridade).
- */
-function compareNextOpenItem(
-  a: Pick<UnifiedChargeItem, 'status' | 'dueDate' | 'createdAt'>,
-  b: Pick<UnifiedChargeItem, 'status' | 'dueDate' | 'createdAt'>,
+  a: Pick<UnifiedChargeItem, 'status' | 'dueDate' | 'createdAt' | 'id'>,
+  b: Pick<UnifiedChargeItem, 'status' | 'dueDate' | 'createdAt' | 'id'>,
 ): number {
   if (a.status === 'OVERDUE' && b.status !== 'OVERDUE') return -1;
   if (b.status === 'OVERDUE' && a.status !== 'OVERDUE') return 1;
@@ -368,8 +258,7 @@ function compareNextOpenItem(
   if (!Number.isNaN(aCreated) && !Number.isNaN(bCreated) && aCreated !== bCreated) {
     return aCreated - bCreated;
   }
-
-  return 0;
+  return a.id.localeCompare(b.id);
 }
 
 // ---------------------------------------------------------------------------
@@ -382,12 +271,9 @@ function compareNextOpenItem(
  * Regras:
  * - Apenas status PENDING / OVERDUE
  * - Vencidas / mês corrente sempre entram
- * - Assinatura: sempre expor a próxima cobrança aberta gerada
- * - Avulsas recentes continuam entrando, sem despejar histórico futuro
- * - Parcelamentos: expor somente parcelas vencidas e a competência vigente
- *   (nunca despejar parcelas futuras)
- * - Pin temporário (72h): cobranças recém-geradas com vencimento futuro
- *   (avulsa, taxa, 1ª parcela, próxima assinatura) — badge RECENTLY_CREATED
+ * - Vínculo acadêmico: expor a primeira mensalidade histórica ainda aberta
+ *   quando vencer fora do mês corrente, sem promover cobranças posteriores
+ * - Parcelamentos e assinaturas não promovem a próxima cobrança futura
  * - Ao quitar/pagar/cancelar: sai da lista
  */
 async function buildOperationalChargesCollection(
@@ -397,7 +283,11 @@ async function buildOperationalChargesCollection(
   const _db = db ?? prisma;
   const { contaId, search, tipoFilter } = input;
   const now = input.now ?? new Date();
-  const endOfMonth = getEndOfCurrentMonth(now);
+  const account = await _db.conta.findUnique({ where: { id: contaId }, select: { timezone: true } });
+  const todayKey = getCurrentAcademicDateKey(now, account?.timezone ?? undefined);
+  const [year, month] = todayKey.split('-').map(Number);
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const endOfMonth = new Date(Date.UTC(year, month - 1, lastDay, 23, 59, 59, 999));
   const recentSince = getOperationalRecentSince(now);
 
   const openAcademicStatuses = ['PENDENTE', 'A_VENCER', 'ATRASADO', 'PROCESSANDO'] as const;
@@ -684,10 +574,20 @@ async function buildOperationalChargesCollection(
     matricula: {
       select: {
         id: true,
+        dataInicio: true,
         aluno: { select: { id: true, nome: true } },
         responsavelFinanceiro: { select: { nome: true } },
         billingMode: true,
         matriculaFamiliarId: true,
+        matriculaFamiliar: {
+          select: {
+            items: {
+              where: { matricula: { contaId } },
+              orderBy: { orderIndex: 'asc' },
+              select: { matricula: { select: { aluno: { select: { id: true, nome: true } } } } },
+            },
+          },
+        },
       },
     },
   } as const;
@@ -735,7 +635,32 @@ async function buildOperationalChargesCollection(
   // =================================================================
   // 3. Cobranças acadêmicas (operacionais + recém-geradas futuras)
   // =================================================================
-  const [academicResultMain, academicResultRecent] = await Promise.all([
+  const academicInitialWhere: Record<string, unknown> = {
+    AND: [
+      { contaId },
+      { tipo: 'MENSALIDADE' },
+      { status: { in: [...openAcademicStatuses] } },
+      { vencimento: { gt: endOfMonth } },
+      { matricula: { is: { dataInicio: { lte: now } } } },
+      {
+        OR: [
+          { asaasStatus: null },
+          { asaasStatus: { notIn: [...ASAAS_NON_OPEN_UNIFIED_STATUSES] } },
+        ],
+      },
+    ],
+  };
+  if (tipoFilter?.length) (academicInitialWhere.AND as unknown[]).push({ tipo: { in: tipoFilter } });
+  if (search) {
+    (academicInitialWhere.AND as unknown[]).push({
+      OR: [
+        { matricula: { aluno: { nome: { contains: search, mode: 'insensitive' } } } },
+        { descricao: { contains: search, mode: 'insensitive' } },
+      ],
+    });
+  }
+
+  const [academicResultMain, academicResultRecent, academicInitialCandidates] = await Promise.all([
     _db.cobranca.findMany({
       where: academicWhere,
       orderBy: { vencimento: 'asc' },
@@ -746,9 +671,44 @@ async function buildOperationalChargesCollection(
       orderBy: { vencimento: 'asc' },
       include: academicInclude,
     }),
+    _db.cobranca.findMany({
+      where: academicInitialWhere,
+      orderBy: [{ competenciaInicio: 'asc' }, { id: 'asc' }],
+      include: academicInclude,
+    }),
   ]);
+  const startedInitialCandidates = academicInitialCandidates.filter((item) =>
+    item.matricula?.dataInicio ? new Date(item.matricula.dataInicio) <= now : false,
+  );
 
-  const academicResult = mergeRecordsById(academicResultMain, academicResultRecent);
+  let academicInitialIds = new Set<string>();
+  if (startedInitialCandidates.length) {
+    const history = await _db.cobranca.findMany({
+      where: {
+        contaId,
+        matriculaId: { in: [...new Set(startedInitialCandidates.map((item) => item.matriculaId))] },
+        tipo: 'MENSALIDADE',
+      },
+      orderBy: [{ matriculaId: 'asc' }, { competenciaInicio: 'asc' }, { id: 'asc' }],
+      select: { id: true, matriculaId: true, competenciaInicio: true },
+    });
+    const firstInvoiceByEnrollment = new Map<string, string>();
+    for (const invoice of history) {
+      if (!firstInvoiceByEnrollment.has(invoice.matriculaId)) {
+        firstInvoiceByEnrollment.set(invoice.matriculaId, invoice.id);
+      }
+    }
+    academicInitialIds = new Set(
+      startedInitialCandidates
+        .filter((item) => firstInvoiceByEnrollment.get(item.matriculaId) === item.id)
+        .map((item) => item.id),
+    );
+  }
+
+  const academicResult = mergeRecordsById(
+    mergeRecordsById(academicResultMain, academicResultRecent),
+    startedInitialCandidates.filter((item) => academicInitialIds.has(item.id)),
+  );
   const academicCobrancaIds = academicResult.map((cobranca) => cobranca.id);
 
   // =================================================================
@@ -1061,6 +1021,9 @@ async function buildOperationalChargesCollection(
       description: c.descricao || c.tipo,
       payerName: c.matricula.responsavelFinanceiro?.nome ?? c.matricula.aluno.nome,
       studentName: c.matricula.aluno.nome,
+      studentNames: c.matricula.matriculaFamiliar?.items.length
+        ? [...new Map(c.matricula.matriculaFamiliar.items.map((item) => [item.matricula.aluno.id, item.matricula.aluno.nome])).values()]
+        : [c.matricula.aluno.nome],
       value: Number(c.valor),
       dueDate: c.vencimento?.toISOString() ?? null,
       billingType: mapBillingType(c.formaPagamento),
@@ -1293,20 +1256,10 @@ async function buildOperationalChargesCollection(
   const allOverdue = allItemsWithMeta.filter((item) => item.status === 'OVERDUE');
   for (const item of allOverdue) markOperational(item.id);
 
-  const subscriptionGroups = new Map<string, OperationalItemMeta[]>();
   for (const item of allItemsWithMeta) {
-    if (!item._subscriptionKey || !['PENDING', 'PROCESSING'].includes(item.status)) continue;
-    const itemDueDate = item.dueDate ? new Date(item.dueDate) : null;
-    if (itemDueDate && itemDueDate > endOfMonth && item.origin !== 'STANDALONE') continue;
-    const bucket = subscriptionGroups.get(item._subscriptionKey) ?? [];
-    bucket.push(item);
-    subscriptionGroups.set(item._subscriptionKey, bucket);
-  }
-
-  for (const [, groupItems] of subscriptionGroups) {
-    groupItems.sort(compareNextOpenItem);
-    const nextOpen = groupItems[0];
-    if (nextOpen) markOperational(nextOpen.id);
+    if (academicInitialIds.has(item.id) && ['PENDING', 'PROCESSING'].includes(item.status)) {
+      markOperational(item.id);
+    }
   }
 
   for (const item of allItemsWithMeta) {
@@ -1321,26 +1274,14 @@ async function buildOperationalChargesCollection(
       continue;
     }
 
-    if (item._subscriptionKey) continue;
-
     if (shouldExposeInOperationalQueue({
       status: item.status,
       dueDate: itemDueDate,
-      isInstallment: false,
-      now,
+      endOfMonth,
     })) {
       markOperational(item.id);
     }
   }
-
-  applyRecentlyCreatedPins({
-    allItems: allItemsWithMeta,
-    selectedIds,
-    exposureReasonById,
-    now,
-    endOfMonth,
-    recentSince,
-  });
 
   const allItems: UnifiedChargeItem[] = allItemsWithMeta
     .filter((item) => selectedIds.has(item.id))
@@ -1352,7 +1293,8 @@ async function buildOperationalChargesCollection(
       };
     });
 
-  // Ordenar: overdue primeiro, depois por criação DESC (mais recentes no topo)
+  // Ordenar a coleção inteira antes de aplicar paginação: atrasadas por
+  // vencimento e, dentro do restante, obrigações mais próximas primeiro.
   allItems.sort(compareOperationalItems);
 
   return allItems;

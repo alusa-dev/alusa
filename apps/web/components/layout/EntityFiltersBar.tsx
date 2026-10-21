@@ -30,6 +30,7 @@ interface EntityFiltersBarProps<TStatus extends EntityStatusValue = StatusValue>
   statusValue: TStatus;
   onStatusChange: (_v: TStatus) => void;
   hideStatusFilter?: boolean;
+  hideSortFilter?: boolean;
   additionalStatusOptions?: Array<{ value: TStatus; label: string }>;
   sortOrder: SortOrder;
   onSortChange: (_o: SortOrder) => void;
@@ -53,6 +54,7 @@ export default function EntityFiltersBar<TStatus extends EntityStatusValue = Sta
   statusValue,
   onStatusChange,
   hideStatusFilter = false,
+  hideSortFilter = false,
   additionalStatusOptions,
   sortOrder,
   onSortChange,
@@ -105,7 +107,7 @@ export default function EntityFiltersBar<TStatus extends EntityStatusValue = Sta
             </SelectContent>
           </Select>
         )}
-        <DropdownMenu>
+        {!hideSortFilter ? <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="outline"
@@ -141,7 +143,7 @@ export default function EntityFiltersBar<TStatus extends EntityStatusValue = Sta
               </>
             )}
           </DropdownMenuContent>
-        </DropdownMenu>
+        </DropdownMenu> : null}
       </div>
     </div>
   );

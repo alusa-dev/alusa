@@ -65,7 +65,7 @@ export default function AssinaturasPage() {
   const [assinaturas, setAssinaturas] = useState<Assinatura[]>([]);
   const [total, setTotal] = useState<number>(0);
   const [page, setPage] = useState<number>(1);
-  const [pageSize] = useState<number>(6);
+  const [pageSize] = useState<number>(20);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const requestedStatus = searchParams.get('status');
   // Por padrão, a operação diária mostra apenas assinaturas ativas.
@@ -134,6 +134,11 @@ export default function AssinaturasPage() {
   useEffect(() => {
     setPage(1);
   }, [searchQuery, sortOrder, statusFilter]);
+
+  useEffect(() => {
+    const lastPage = Math.max(1, Math.ceil(total / pageSize));
+    if (page > lastPage) setPage(lastPage);
+  }, [page, pageSize, total]);
 
   return (
     <TableLayout
@@ -360,16 +365,17 @@ export default function AssinaturasPage() {
                 })
               )}
             </div>
-            {total > pageSize ? (
-              <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+            <div className="flex items-center justify-between border-t border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-500 sm:px-5 lg:px-6">
+              <span>{total} assinaturas</span>
+              {total > pageSize ? (
                 <Pagination
                   totalItems={total}
                   pageSize={pageSize}
                   page={page}
                   onChange={setPage}
                 />
-              </div>
-            ) : null}
+              ) : null}
+            </div>
           </>
         )}
       </div>

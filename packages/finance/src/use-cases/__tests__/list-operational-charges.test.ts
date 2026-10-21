@@ -8,6 +8,9 @@ import { getOperationalChargesSummary, listOperationalCharges } from '../list-op
 
 function createMockDb() {
   return {
+    conta: {
+      findUnique: vi.fn().mockResolvedValue({ timezone: 'America/Sao_Paulo' }),
+    },
     cobranca: {
       findMany: vi.fn().mockResolvedValue([]),
     },
@@ -78,6 +81,7 @@ function makeCobranca(overrides: Record<string, unknown> = {}) {
     matriculaId: 'mat_1',
     matricula: {
       id: 'mat_1',
+      dataInicio: new Date('2025-01-01T12:00:00.000Z'),
       aluno: { id: 'alu_1', nome: 'João Silva' },
       responsavelFinanceiro: null,
       matriculaFamiliarId: null,
@@ -239,7 +243,7 @@ describe('listOperationalCharges', () => {
     });
   });
 
-  it('não inclui fatura acadêmica recém-gerada com vencimento fora do mês vigente', async () => {
+  it('não depende de uma janela de criação para expor a fatura inicial futura', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([
       makeCobranca({
@@ -257,11 +261,11 @@ describe('listOperationalCharges', () => {
     expect(result.items).toHaveLength(1);
     expect(result.items[0]).toMatchObject({
       id: 'cob_recent_subscription',
-      exposureReason: 'RECENTLY_CREATED',
+      exposureReason: 'OPERATIONAL',
     });
   });
 
-  it('não expõe fatura futura quando createdAt está fora da janela de 72 horas', async () => {
+  it('expõe a primeira fatura acadêmica futura ainda aberta mesmo se antiga', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([
       makeCobranca({
@@ -276,10 +280,10 @@ describe('listOperationalCharges', () => {
 
     const result = await listOperationalCharges(BASE_INPUT, db);
 
-    expect(result.items).toHaveLength(0);
+    expect(result.items.map((item) => item.id)).toContain('cob_old_future');
   });
 
-  it('não expõe assinatura futura fora do mês vigente', async () => {
+  it('inclui a primeira mensalidade futura de um vínculo iniciado, mesmo em ciclo de assinatura', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([
       makeCobranca({
@@ -302,6 +306,33 @@ describe('listOperationalCharges', () => {
     });
 
     const result = await listOperationalCharges({ ...BASE_INPUT, now: new Date('2025-03-31T12:00:00.000Z') }, db);
+
+    expect(result.items.map((item) => item.id)).toContain('cob_sub_next');
+  });
+
+  it('não promove a segunda mensalidade se a primeira histórica do vínculo já foi paga', async () => {
+    const db = createMockDb();
+    const candidate = makeCobranca({
+      id: 'cob_second',
+      tipo: 'MENSALIDADE',
+      status: 'A_VENCER',
+      competenciaInicio: new Date('2025-07-01T00:00:00.000Z'),
+      vencimento: new Date('2025-07-05T00:00:00.000Z'),
+    });
+    db.cobranca.findMany.mockImplementation((args: any) => {
+      if (args?.where?.matriculaId) {
+        return Promise.resolve([
+          { id: 'cob_first_paid', matriculaId: 'mat_1', competenciaInicio: new Date('2025-06-01T00:00:00.000Z') },
+          { id: 'cob_second', matriculaId: 'mat_1', competenciaInicio: new Date('2025-07-01T00:00:00.000Z') },
+        ]);
+      }
+      if (args?.where?.AND?.some((condition: any) => condition?.vencimento?.gt)) {
+        return Promise.resolve([candidate]);
+      }
+      return Promise.resolve([]);
+    });
+
+    const result = await listOperationalCharges(BASE_INPUT, db);
 
     expect(result.items).toHaveLength(0);
   });
@@ -347,7 +378,7 @@ describe('listOperationalCharges', () => {
     expect(result.items[0].id).toBe('cob_sub_apr');
   });
 
-  it('inclui cobrança avulsa recém-gerada com vencimento fora do mês vigente como pin temporário', async () => {
+  it('não inclui cobrança avulsa futura apenas por ter sido criada recentemente', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([]);
     db.charge.findMany
@@ -363,11 +394,7 @@ describe('listOperationalCharges', () => {
 
     const result = await listOperationalCharges(BASE_INPUT, db);
 
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0]).toMatchObject({
-      id: 'ch_recent_future',
-      exposureReason: 'RECENTLY_CREATED',
-    });
+    expect(result.items).toHaveLength(0);
   });
 
   it('expõe a parcela standalone do mês vigente como parcelamento', async () => {
@@ -742,7 +769,7 @@ describe('listOperationalCharges', () => {
     expect(db.aluno.findMany).not.toHaveBeenCalled();
   });
 
-  it('expõe parcela futura recém-gerada de parcelamento standalone como pin da 1ª parcela aberta', async () => {
+  it('não inclui parcela standalone futura apenas por ter sido criada recentemente', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([]);
     db.charge.findMany.mockResolvedValue([
@@ -758,15 +785,10 @@ describe('listOperationalCharges', () => {
 
     const result = await listOperationalCharges(BASE_INPUT, db);
 
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0]).toMatchObject({
-      id: 'ch_installment_future',
-      tipo: 'PARCELADA',
-      exposureReason: 'RECENTLY_CREATED',
-    });
+    expect(result.items).toHaveLength(0);
   });
 
-  it('no pin recente de parcelamento expõe apenas a 1ª parcela aberta do plano', async () => {
+  it('não inclui parcelas futuras standalone de um plano apenas por criação recente', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([]);
     db.charge.findMany.mockResolvedValue([
@@ -792,13 +814,11 @@ describe('listOperationalCharges', () => {
 
     const result = await listOperationalCharges(BASE_INPUT, db);
 
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0]?.id).toBe('ch_installment_p1');
-    expect(result.items[0]?.exposureReason).toBe('RECENTLY_CREATED');
+    expect(result.items).toHaveLength(0);
   });
 
-  // ===== Regra: ordenação — overdue primeiro, depois por criação DESC =====
-  it('ordena overdue primeiro, depois por criação DESC', async () => {
+  // ===== Regra: ordenação global por vencimento antes da paginação =====
+  it('ordena atrasadas primeiro e vencimento ascendente, com desempate estável', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([
       makeCobranca({
@@ -824,8 +844,8 @@ describe('listOperationalCharges', () => {
     const result = await listOperationalCharges(BASE_INPUT, db);
 
     expect(result.items[0].id).toBe('cob_2'); // OVERDUE, vem primeiro
-    expect(result.items[1].id).toBe('cob_3'); // PENDING, criada mais recentemente
-    expect(result.items[2].id).toBe('cob_1'); // PENDING, criada antes
+    expect(result.items[1].id).toBe('cob_3'); // PENDING, vence antes
+    expect(result.items[2].id).toBe('cob_1'); // PENDING, vence depois
   });
 
   // ===== Paginação =====
@@ -863,7 +883,7 @@ describe('listOperationalCharges', () => {
     );
   });
 
-  it('resume o mesmo conjunto da fila operacional para uso em KPI, incluindo pins recém-gerados', async () => {
+  it('resume o mesmo conjunto operacional sem incluir futuras avulsas recentes', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([
       makeCobranca({ id: 'cob_1', valor: 80, status: 'PENDENTE', vencimento: new Date('2025-06-10') }),
@@ -883,13 +903,13 @@ describe('listOperationalCharges', () => {
     });
 
     const listResult = await listOperationalCharges(BASE_INPUT, db);
-    expect(listResult.items).toHaveLength(4);
+    expect(listResult.items).toHaveLength(3);
 
     const result = await getOperationalChargesSummary(BASE_INPUT, db);
 
     expect(result).toEqual({
       total: listResult.total,
-      valorBruto: 460,
+      valorBruto: 260,
     });
   });
 

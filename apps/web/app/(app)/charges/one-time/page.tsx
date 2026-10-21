@@ -145,7 +145,7 @@ export default function CobrancasAvulsasPage() {
   const visibleCobrancas = cobrancas;
 
   useVisibleChargeConvergence({
-    enabled: statusView === 'open',
+    enabled: statusView === 'open' || statusView === 'operational',
     items: visibleCobrancas,
     refresh,
     maxItems: pageSize,
@@ -154,6 +154,11 @@ export default function CobrancasAvulsasPage() {
   useEffect(() => {
     setPage(1);
   }, [searchQuery, sortOrder, statusView]);
+
+  useEffect(() => {
+    const lastPage = Math.max(1, Math.ceil(totalItems / pageSize));
+    if (page > lastPage) setPage(lastPage);
+  }, [page, pageSize, totalItems]);
 
   const handlePrint = (cobranca: Cobranca) => {
     if (!cobranca?.id) return;
@@ -407,16 +412,17 @@ export default function CobrancasAvulsasPage() {
                 })
               )}
             </div>
-            {totalItems > pageSize ? (
-              <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+            <div className="flex items-center justify-between border-t border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-500 sm:px-5 lg:px-6">
+              <span>{totalItems} cobranças</span>
+              {totalItems > pageSize ? (
                 <Pagination
                   totalItems={totalItems}
                   pageSize={pageSize}
                   page={page}
                   onChange={setPage}
                 />
-              </div>
-            ) : null}
+              ) : null}
+            </div>
           </>
         )}
       </div>

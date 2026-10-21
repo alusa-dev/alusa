@@ -122,6 +122,11 @@ export default function ParcelamentosPage() {
     setPage(1);
   }, [searchQuery, sortOrder, statusFilter]);
 
+  useEffect(() => {
+    const lastPage = Math.max(1, Math.ceil(total / pageSize));
+    if (page > lastPage) setPage(lastPage);
+  }, [page, pageSize, total]);
+
   return (
     <TableLayout
       className="min-w-0 max-w-full pb-6"
@@ -340,16 +345,17 @@ export default function ParcelamentosPage() {
                 })
               )}
             </div>
-            {total > pageSize ? (
-              <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
+            <div className="flex items-center justify-between border-t border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-500 sm:px-5 lg:px-6">
+              <span>{total} parcelamentos</span>
+              {total > pageSize ? (
                 <Pagination
                   totalItems={total}
                   pageSize={pageSize}
                   page={page}
                   onChange={setPage}
                 />
-              </div>
-            ) : null}
+              ) : null}
+            </div>
           </>
         )}
       </div>

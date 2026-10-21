@@ -82,6 +82,8 @@ export type UnifiedChargeItem = {
   payerName: string;
   /** Nome do aluno relacionado à cobrança, quando houver. Usado na listagem operacional. */
   studentName?: string | null;
+  /** Alunos cobertos por uma fatura familiar compartilhada. */
+  studentNames?: string[];
   /** Valor da cobrança (sempre valor unitário da parcela/cobrança). */
   value: number;
   /** Data de vencimento ISO. */

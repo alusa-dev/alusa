@@ -8,6 +8,7 @@ import {
 } from '../dtos/unified-billing';
 import { parseExternalReference } from '../core';
 import { resolveChargeDisplayStatus } from '../mappers/asaas-display-status';
+import { getCurrentAcademicDateKey } from '@alusa/shared/date-only';
 import { isMaterializedGroupedEventEntry } from '../mappers/event-billing-entry';
 import { resolveEventPayerName } from '../mappers/event-payer';
 
@@ -43,7 +44,7 @@ export type ListChargesAggregatedInput = {
   page?: number;
   pageSize?: number;
   statusFilter?: string[];
-  statusView?: 'open' | 'paid' | 'all';
+  statusView?: 'open' | 'paid' | 'all' | 'future';
   tipoFilter?: string[];
   search?: string;
   /** Filtrar por origem: ACADEMIC (Cobranca), STANDALONE (Charge sem vínculo), ou 'all' */
@@ -136,7 +137,7 @@ function resolveEventFinancialPayerName(
   return resolveEventPayerName([...additionalCandidates, ...paymentCandidates]) ?? '-';
 }
 
-function matchesStatusView(status: UnifiedChargeStatus, statusView: 'open' | 'paid' | 'all') {
+function matchesStatusView(status: UnifiedChargeStatus, statusView: 'open' | 'paid' | 'all' | 'future') {
   if (statusView === 'all') return true;
   if (statusView === 'paid') return status === 'PAID' || status === 'PARTIALLY_REFUNDED';
   return ['PENDING', 'PROCESSING', 'OVERDUE'].includes(status);
@@ -201,6 +202,7 @@ export async function listChargesAggregated(
   const page = Math.max(1, input.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 20));
   const { contaId, statusFilter, statusView = 'open', tipoFilter, search, origin = 'all' } = input;
+  const queryStatusView = statusView === 'future' ? 'open' : statusView;
   const auxiliaryFetchLimit = pageSize * 2;
 
   // Skip queries based on origin filter
@@ -214,9 +216,9 @@ export async function listChargesAggregated(
   };
 
   // Aplicar filtros de status
-  if (statusFilter?.length) {
+  if (statusFilter?.length && statusView !== 'future') {
     academicWhere.status = { in: statusFilter };
-  } else if (statusView === 'open') {
+  } else if (queryStatusView === 'open') {
     addAndCondition(academicWhere, {
       OR: [
         {
@@ -229,7 +231,7 @@ export async function listChargesAggregated(
     addAndCondition(academicWhere, {
       OR: [{ asaasStatus: null }, { asaasStatus: { notIn: [...ASAAS_NON_OPEN_UNIFIED_STATUSES] } }],
     });
-  } else if (statusView === 'paid') {
+  } else if (queryStatusView === 'paid') {
     addAndCondition(academicWhere, {
       OR: [
         { status: { in: ['PAGO', 'ESTORNADO_PARCIAL'] } },
@@ -257,7 +259,7 @@ export async function listChargesAggregated(
   };
 
   // Mapear statusFilter para ChargeStatus
-  if (statusFilter?.length) {
+  if (statusFilter?.length && statusView !== 'future') {
     const chargeStatuses: string[] = [];
     for (const s of statusFilter) {
       if (['A_VENCER', 'PENDENTE'].includes(s)) {
@@ -275,12 +277,12 @@ export async function listChargesAggregated(
     if (chargeStatuses.length) {
       standaloneWhere.status = { in: [...new Set(chargeStatuses)] };
     }
-  } else if (statusView === 'open') {
+  } else if (queryStatusView === 'open') {
     standaloneWhere.status = { in: ['CREATED', 'OPEN', 'OVERDUE'] };
     addAndCondition(standaloneWhere, {
       OR: [{ asaasStatus: null }, { asaasStatus: { notIn: [...ASAAS_NON_OPEN_UNIFIED_STATUSES] } }],
     });
-  } else if (statusView === 'paid') {
+  } else if (queryStatusView === 'paid') {
     addAndCondition(standaloneWhere, {
       OR: [{ status: 'PAID' }, { asaasStatus: { in: [...ASAAS_PAID_UNIFIED_STATUSES] } }],
     });
@@ -338,6 +340,16 @@ export async function listChargesAggregated(
               select: {
                 id: true,
                 aluno: { select: { id: true, nome: true } },
+                responsavelFinanceiro: { select: { nome: true } },
+                matriculaFamiliar: {
+                  select: {
+                    items: {
+                      where: { matricula: { contaId } },
+                      orderBy: { orderIndex: 'asc' },
+                      select: { matricula: { select: { aluno: { select: { id: true, nome: true } } } } },
+                    },
+                  },
+                },
               },
             },
           },
@@ -397,7 +409,6 @@ export async function listChargesAggregated(
       ? _db.standaloneSubscription.findMany({
           where: standaloneSubscriptionWhere,
           orderBy: { createdAt: 'desc' },
-          take: auxiliaryFetchLimit,
           select: {
             id: true,
             status: true,
@@ -571,7 +582,11 @@ export async function listChargesAggregated(
     id: c.id,
     origin: 'ACADEMIC' as const,
     description: c.descricao || mapTipoToDescription(c.tipo),
-    payerName: c.matricula.aluno.nome,
+    payerName: c.matricula.responsavelFinanceiro?.nome ?? c.matricula.aluno.nome,
+    studentName: c.matricula.aluno.nome,
+    studentNames: c.matricula.matriculaFamiliar?.items.length
+      ? [...new Map(c.matricula.matriculaFamiliar.items.map((item) => [item.matricula.aluno.id, item.matricula.aluno.nome])).values()]
+      : [c.matricula.aluno.nome],
     value: Number(c.valor),
     dueDate: c.vencimento?.toISOString() ?? null,
     billingType: mapBillingType(c.formaPagamento),
@@ -681,7 +696,7 @@ export async function listChargesAggregated(
     .filter((subscription) => {
       if (materializedSubscriptionIds.has(subscription.id)) return false;
       if (tipoFilter?.length && !tipoFilter.includes('RECORRENTE')) return false;
-      return statusView !== 'paid';
+      return queryStatusView !== 'paid';
     })
     .map((subscription) => ({
       id: `group:subscription:${subscription.id}`,
@@ -787,7 +802,7 @@ export async function listChargesAggregated(
     })),
   ].filter((item) => {
     if (tipoFilter?.length && !tipoFilter.includes(item.tipo ?? '')) return false;
-    return matchesStatusView(item.status, statusView);
+    return matchesStatusView(item.status, queryStatusView);
   });
 
   // ==================== Agrupar parcelamentos (se habilitado) ====================
@@ -1058,10 +1073,26 @@ export async function listChargesAggregated(
     ];
   }
 
-  processedItems = processedItems.filter((item) => matchesStatusView(item.status, statusView));
+  processedItems = processedItems.filter((item) => matchesStatusView(item.status, queryStatusView));
+  if (statusView === 'future') {
+    const account = await _db.conta.findUnique({ where: { id: contaId }, select: { timezone: true } });
+    const currentMonth = getCurrentAcademicDateKey(new Date(), account?.timezone ?? undefined).slice(0, 7);
+    processedItems = processedItems.filter((item) => {
+      if (!['PENDING', 'PROCESSING'].includes(item.status) || !item.dueDate) return false;
+      // `dueDate` is persisted as an instant. Determine its civil month in the
+      // account timezone so UTC month boundaries do not shift the operational view.
+      return getCurrentAcademicDateKey(new Date(item.dueDate), account?.timezone ?? undefined).slice(0, 7) > currentMonth;
+    });
+  }
 
-  // Ordenar por data de criação (mais recente primeiro)
-  processedItems.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  if (statusView === 'future') {
+    processedItems.sort((a, b) => {
+      const dueDateOrder = (a.dueDate ?? '').localeCompare(b.dueDate ?? '');
+      return dueDateOrder || a.id.localeCompare(b.id);
+    });
+  } else {
+    processedItems.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
 
   // Aplicar paginação
   const skip = (page - 1) * pageSize;
@@ -1092,9 +1123,13 @@ export async function listChargesAggregated(
 
   return {
     items: paginatedItems,
-    total: shouldGroup ? adjustedTotal : ungroupedTotal,
+    total: statusView === 'future'
+      ? processedItems.length
+      : shouldGroup ? adjustedTotal : ungroupedTotal,
     page,
     pageSize,
-    totalPages: Math.ceil((shouldGroup ? adjustedTotal : ungroupedTotal) / pageSize),
+    totalPages: Math.ceil(
+      (statusView === 'future' ? processedItems.length : shouldGroup ? adjustedTotal : ungroupedTotal) / pageSize,
+    ),
   };
 }

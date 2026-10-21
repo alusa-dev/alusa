@@ -102,6 +102,8 @@ export async function GET(req: NextRequest) {
           valor: c.value,
           vencimento: c.dueDate,
           aluno: { id: c.alunoId ?? c.id, nome: c.payerName },
+          studentName: c.studentName ?? null,
+          studentNames: c.studentNames ?? null,
           matriculaId: c.matriculaId,
           eventId: (c as { eventId?: string | null }).eventId ?? null,
           asaasPaymentId: c.asaasPaymentId,
@@ -135,7 +137,7 @@ export async function GET(req: NextRequest) {
         page,
         pageSize,
         search: search || undefined,
-        statusView,
+        statusView: statusView === 'future' ? 'open' : statusView,
         sortOrder,
       });
 
@@ -211,6 +213,8 @@ export async function GET(req: NextRequest) {
         valor: c.value,
         vencimento: c.dueDate,
         aluno: { id: c.alunoId ?? c.id, nome: c.payerName },
+        studentName: c.studentName ?? null,
+        studentNames: c.studentNames ?? null,
         matriculaId: c.matriculaId,
         eventId: (c as { eventId?: string | null }).eventId ?? null,
         asaasPaymentId: c.asaasPaymentId,

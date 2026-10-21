@@ -9,7 +9,7 @@
  * Esta página é apenas uma camada de navegação, sem lógica financeira.
  */
 
-import { useEffect, useCallback, useMemo, useState } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import {
@@ -22,7 +22,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Plus, ChevronLeft, ChevronRight } from '@/components/icons/icons';
 import TableLayout from '@/components/layout/TableLayout';
-import EntityFiltersBar, { type SortOrder } from '@/components/layout/EntityFiltersBar';
+import EntityFiltersBar from '@/components/layout/EntityFiltersBar';
 import { ChargeDisplayStatusBadge } from '@/features/finance/operations/components/ChargeDisplayStatusBadge';
 import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
 import { pushToast } from '@/components/ui/toast';
@@ -65,6 +65,7 @@ type Cobranca = {
   createdAt?: string | null;
   payerName?: string;
   studentName?: string | null;
+  studentNames?: string[];
   asaasPaymentId?: string | null;
   invoiceUrl?: string | null;
   matriculaId?: string | null;
@@ -87,9 +88,8 @@ export default function CobrancasTodasPage() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [tipoFilter, setTipoFilter] = useState<string>('TODOS');
   const searchParams = useSearchParams();
-  const statusView = searchParams.get('view') || 'open';
+  const statusView = searchParams.get('view') || 'operational';
   const shouldOpenCreateModal = searchParams.get('new') === '1';
-  const [sortOrder, setSortOrder] = useState<SortOrder>('DESC');
 
   const [createModalOpen, setCreateModalOpen] = useState<boolean>(false);
 
@@ -101,7 +101,7 @@ export default function CobrancasTodasPage() {
 
   const { isInitialLoading, refresh } = useFinanceListLoad(
     async ({ signal }) => {
-      const isOperational = statusView === 'open';
+      const isOperational = statusView === 'operational';
       const params = new URLSearchParams({
         page: String(page),
         pageSize: String(pageSize),
@@ -150,6 +150,7 @@ export default function CobrancasTodasPage() {
             createdAt: typeof item.createdAt === 'string' ? item.createdAt : null,
             payerName: item.payerName as string | undefined,
             studentName: item.studentName as string | null | undefined,
+            studentNames: Array.isArray(item.studentNames) ? item.studentNames as string[] : undefined,
             asaasPaymentId: item.asaasPaymentId as string | null,
             invoiceUrl: item.invoiceUrl as string | null,
             matriculaId: item.matriculaId as string | null,
@@ -174,13 +175,11 @@ export default function CobrancasTodasPage() {
             typeof (item as Record<string, unknown>).createdAt === 'string'
               ? ((item as Record<string, unknown>).createdAt as string)
               : null,
-          payerName: ((item as Record<string, unknown>).aluno as Record<string, unknown>)?.nome as string
-            ?? ((item as Record<string, unknown>).matricula as Record<string, unknown>)?.aluno
-              ? (((item as Record<string, unknown>).matricula as Record<string, unknown>)?.aluno as Record<string, unknown>)?.nome as string
-              : undefined,
-          studentName: ((item as Record<string, unknown>).aluno as Record<string, unknown>)?.nome as string
-            ?? (((item as Record<string, unknown>).matricula as Record<string, unknown>)?.aluno as Record<string, unknown>)?.nome as string
+          payerName: ((item as Record<string, unknown>).aluno as Record<string, unknown>)?.nome as string | undefined,
+          studentName: item.studentName as string | null | undefined
+            ?? (((item as Record<string, unknown>).aluno as Record<string, unknown>)?.nome as string | undefined)
             ?? null,
+          studentNames: Array.isArray(item.studentNames) ? item.studentNames as string[] : undefined,
           asaasPaymentId: item.asaasPaymentId as string | null,
           invoiceUrl: null,
           matriculaId: item.matriculaId as string | null,
@@ -208,9 +207,21 @@ export default function CobrancasTodasPage() {
     },
   );
 
+  useVisibleChargeConvergence({
+    enabled: statusView === 'operational' || statusView === 'open',
+    items: cobrancas,
+    refresh,
+    maxItems: pageSize,
+  });
+
   useEffect(() => {
     setPage(1);
   }, [searchQuery, statusView, tipoFilter]);
+
+  useEffect(() => {
+    const lastPage = Math.max(1, Math.ceil(totalItems / pageSize));
+    if (page > lastPage) setPage(lastPage);
+  }, [page, pageSize, totalItems]);
 
   const handleStatusViewChange = useCallback(
     (value: string) => {
@@ -221,29 +232,6 @@ export default function CobrancasTodasPage() {
     },
     [searchParams, router],
   );
-
-  const orderedCobrancas = useMemo(() => {
-    const items = [...cobrancas];
-    items.sort((a, b) => {
-      const aOverdue = a.status === 'OVERDUE' || a.status === 'ATRASADO';
-      const bOverdue = b.status === 'OVERDUE' || b.status === 'ATRASADO';
-      if (aOverdue && !bOverdue) return -1;
-      if (bOverdue && !aOverdue) return 1;
-
-      const ta = new Date(a.createdAt ?? a.vencimento ?? '').getTime() || 0;
-      const tb = new Date(b.createdAt ?? b.vencimento ?? '').getTime() || 0;
-      const cmp = tb - ta;
-      return sortOrder === 'DESC' ? cmp : -cmp;
-    });
-    return items;
-  }, [cobrancas, sortOrder]);
-
-  useVisibleChargeConvergence({
-    enabled: statusView === 'open',
-    items: orderedCobrancas,
-    refresh,
-    maxItems: pageSize,
-  });
 
   const handlePrint = (cobranca: Cobranca) => {
     if (!cobranca?.id) return;
@@ -278,11 +266,9 @@ export default function CobrancasTodasPage() {
           statusValue="TODOS"
           onStatusChange={() => {}}
           hideStatusFilter
-          sortOrder={sortOrder}
-          onSortChange={setSortOrder}
-          sortMenuTitle="Ordenar por criação"
-          sortAscLabel="Mais antigas primeiro"
-          sortDescLabel="Mais recentes primeiro"
+          sortOrder="ASC"
+          onSortChange={() => {}}
+          hideSortFilter
           extraLeft={
             <div className="grid min-w-0 w-full grid-cols-2 gap-2 lg:flex lg:w-auto lg:shrink-0 lg:gap-2">
               <Select value={tipoFilter} onValueChange={setTipoFilter}>
@@ -301,12 +287,14 @@ export default function CobrancasTodasPage() {
               </Select>
               <Select value={statusView} onValueChange={handleStatusViewChange}>
                 <SelectTrigger className="flex h-10 w-full min-w-0 shrink-0 items-center justify-between gap-2 rounded-lg border-slate-200 bg-white px-3 text-slate-700 shadow-none lg:w-auto lg:min-w-[150px] lg:max-w-[190px]">
-                  <SelectValue placeholder="Em aberto" />
+                  <SelectValue placeholder="Visão operacional" />
                 </SelectTrigger>
                 <SelectContent align="end" className="text-[13px]">
-                  <SelectItem value="open">Em aberto</SelectItem>
+                  <SelectItem value="operational">Visão operacional</SelectItem>
+                  <SelectItem value="open">Todas em aberto</SelectItem>
+                  <SelectItem value="future">Futuras</SelectItem>
                   <SelectItem value="paid">Pagas</SelectItem>
-                  <SelectItem value="all">Todas</SelectItem>
+                  <SelectItem value="all">Todas as cobranças</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -368,10 +356,10 @@ export default function CobrancasTodasPage() {
             </div>
 
             <div className="min-w-0 divide-y">
-              {orderedCobrancas.length === 0 ? (
+              {cobrancas.length === 0 ? (
                 <div className="px-6 py-12 text-center text-gray-500">Nenhuma cobrança encontrada</div>
               ) : (
-                orderedCobrancas.map((cobranca) => {
+                cobrancas.map((cobranca) => {
                   const isOverdue = cobranca.status === 'OVERDUE' || cobranca.status === 'ATRASADO';
                   const isInstallmentGroup = cobranca.isGroup && cobranca.groupType === 'INSTALLMENT';
                   const displayStatus =
@@ -466,6 +454,16 @@ export default function CobrancasTodasPage() {
                                   variant="icon"
                                 />
                               ) : null}
+                            {cobranca.studentNames && cobranca.studentNames.length > 1 ? (
+                              <div className="mt-0.5 line-clamp-2 text-[11px] text-gray-500">
+                                Alunos: {cobranca.studentNames.join(', ')}
+                              </div>
+                            ) : null}
+                            {cobranca.payerName && cobranca.payerName !== cobranca.studentName ? (
+                              <div className="mt-0.5 truncate text-[11px] text-gray-500">
+                                Responsável: {cobranca.payerName}
+                              </div>
+                            ) : null}
                             </div>
                             <div className="mt-auto shrink-0 pt-1">
                               {displayStatus ? (
@@ -490,6 +488,16 @@ export default function CobrancasTodasPage() {
                                 {cobranca.description ? (
                                   <div className="truncate text-[11px] text-gray-500">
                                     {cobranca.description}
+                                  </div>
+                                ) : null}
+                                {cobranca.studentNames && cobranca.studentNames.length > 1 ? (
+                                  <div className="truncate text-[11px] text-gray-500">
+                                    Alunos: {cobranca.studentNames.join(', ')}
+                                  </div>
+                                ) : null}
+                                {cobranca.payerName && cobranca.payerName !== cobranca.studentName ? (
+                                  <div className="truncate text-[11px] text-gray-500">
+                                    Responsável: {cobranca.payerName}
                                   </div>
                                 ) : null}
                               </div>
@@ -539,6 +547,7 @@ export default function CobrancasTodasPage() {
                 })
               )}
             </div>
+            <div className="px-4 py-3 text-xs text-gray-500">{totalItems} cobranças</div>
             {totalItems > pageSize ? (
               <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
                 <Pagination

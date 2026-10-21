@@ -5,6 +5,7 @@ import { listChargesAggregated } from '../list-charges-aggregated';
 vi.mock('@alusa/database', () => {
   return {
     prisma: {
+      conta: { findUnique: vi.fn().mockResolvedValue({ timezone: 'America/Manaus' }) },
       cobranca: {
         count: vi.fn(),
         findMany: vi.fn(),
@@ -45,8 +46,10 @@ vi.mock('@alusa/database', () => {
 });
 
 describe('listChargesAggregated', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.standaloneSubscription.findMany).mockResolvedValue([] as never);
   });
 
   const mockAcademicCobranca = {
@@ -105,6 +108,127 @@ describe('listChargesAggregated', () => {
     expect(result.items[1].origin).toBe('ACADEMIC');
     expect(result.items[1].payerName).toBe('João Silva');
     expect(result.items[1].value).toBe(150);
+  });
+
+  it('filtra futuras no tenant timezone antes de paginar e calcula total do filtro', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-21T12:00:00.000Z'));
+    try {
+      const utcBoundaryStillCurrentLocally = {
+        ...mockStandaloneCharge,
+        id: 'local-october',
+        status: 'OPEN',
+        // 00:00 UTC is still October 31 in America/Manaus (UTC-4).
+        dueDate: new Date('2026-11-01T00:00:00.000Z'),
+      };
+      const future = {
+        ...mockStandaloneCharge,
+        id: 'future',
+        status: 'OPEN',
+        dueDate: new Date('2026-11-01T04:00:00.000Z'),
+      };
+      const current = {
+        ...mockStandaloneCharge,
+        id: 'current',
+        status: 'OPEN',
+        dueDate: new Date('2026-10-25T00:00:00.000Z'),
+      };
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.cobranca.count).mockResolvedValue(0 as never);
+      vi.mocked(prisma.charge.findMany).mockResolvedValue([future, current, utcBoundaryStillCurrentLocally] as never);
+      vi.mocked(prisma.charge.count).mockResolvedValue(3 as never);
+
+      const result = await listChargesAggregated({
+        contaId: 'c1', page: 1, pageSize: 1, statusView: 'future', groupInstallments: false,
+      });
+
+      expect(result.items.map((item) => item.id)).toEqual(['future']);
+      expect(result.total).toBe(1);
+      expect(result.totalPages).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('preserva alunos distintos com nomes iguais e limita os participantes da família ao tenant', async () => {
+    const { prisma } = await import('@alusa/database');
+    const familyCharge = {
+      ...mockAcademicCobranca,
+      matricula: {
+        ...mockAcademicCobranca.matricula,
+        matriculaFamiliar: {
+          items: [
+            { matricula: { aluno: { id: 'student-1', nome: 'Alex Silva' } } },
+            { matricula: { aluno: { id: 'student-2', nome: 'Alex Silva' } } },
+            { matricula: { aluno: { id: 'student-1', nome: 'Alex Silva' } } },
+          ],
+        },
+      },
+    };
+    vi.mocked(prisma.cobranca.findMany).mockResolvedValue([familyCharge] as never);
+    vi.mocked(prisma.cobranca.count).mockResolvedValue(1 as never);
+    vi.mocked(prisma.charge.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.charge.count).mockResolvedValue(0 as never);
+
+    const result = await listChargesAggregated({ contaId: 'c1', groupInstallments: false });
+
+    expect(result.items[0]?.studentNames).toEqual(['Alex Silva', 'Alex Silva']);
+    expect(prisma.cobranca.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      include: expect.objectContaining({
+        matricula: expect.objectContaining({
+          select: expect.objectContaining({
+            matriculaFamiliar: expect.objectContaining({
+              select: expect.objectContaining({
+                items: expect.objectContaining({
+                  where: { matricula: { contaId: 'c1' } },
+                }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    }));
+  });
+
+  it('inclui assinaturas futuras além do limite da página antes de filtrar e paginar', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-21T12:00:00.000Z'));
+    try {
+      const subscriptions = Array.from({ length: 41 }, (_, index) => ({
+        id: `sub-${index}`,
+        status: 'ACTIVE',
+        customerId: null,
+        asaasSubscriptionId: `asaas-${index}`,
+        billingType: 'PIX',
+        value: 10,
+        nextDueDate: new Date('2026-11-05T00:00:00.000Z'),
+        description: `Future subscription ${index}`,
+        familyGroupId: null,
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        payerType: null,
+        payerId: null,
+      }));
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.cobranca.count).mockResolvedValue(0 as never);
+      vi.mocked(prisma.charge.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.charge.count).mockResolvedValue(0 as never);
+      vi.mocked(prisma.standaloneSubscription.findMany).mockResolvedValue(subscriptions as never);
+
+      const result = await listChargesAggregated({
+        contaId: 'c1', page: 1, pageSize: 20, statusView: 'future',
+      });
+
+      expect(result.total).toBe(41);
+      expect(result.totalPages).toBe(3);
+      expect(result.items).toHaveLength(20);
+      expect(prisma.standaloneSubscription.findMany).toHaveBeenCalledWith(
+        expect.not.objectContaining({ take: expect.anything() }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('deve filtrar por tenant (contaId)', async () => {

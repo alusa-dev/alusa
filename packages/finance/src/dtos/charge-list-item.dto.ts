@@ -7,6 +7,8 @@ export type ChargeListItemDTO = {
   origin: 'ACADEMIC' | 'STANDALONE' | 'EVENT';
   description: string | null;
   payerName: string;
+  studentName?: string | null;
+  studentNames?: string[];
   value: number;
   dueDate: string | null;
   billingType: string | null;
