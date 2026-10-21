@@ -851,6 +851,7 @@ function resolveCobrancaAsaasStatusFromPayload(
 type CobrancaSelect = {
   id: true;
   matriculaId: true;
+  vencimento: true;
   status: true;
   asaasPaymentId: true;
   asaasStatus: true;
@@ -864,6 +865,7 @@ type CobrancaSelect = {
 const COBRANCA_SELECT: CobrancaSelect = {
   id: true,
   matriculaId: true,
+  vencimento: true,
   status: true,
   asaasPaymentId: true,
   asaasStatus: true,
@@ -1493,7 +1495,12 @@ async function handlePaymentWebhookCore(
     const earlyCanonicalResolution = await resolvePaymentToLocalEntity({
       contaId,
       asaasPaymentId: payload.payment.id,
-      externalReference: payload.payment.externalReference,
+      // Asaas may repeat the parent subscription reference on every cycle.
+      // For a recurring payment, its provider payment ID is the cycle identity;
+      // resolve by that ID / subscription mapping before considering the parent ref.
+      externalReference: payload.payment.subscription && payload.payment.externalReference
+        ? buildPaymentExternalReference(payload.payment.externalReference, payload.payment.id)
+        : payload.payment.externalReference,
       asaasSubscriptionId: payload.payment.subscription,
       asaasInstallmentId: payload.payment.installment,
       dueDate: payload.payment.dueDate,
@@ -1555,8 +1562,12 @@ async function handlePaymentWebhookCore(
     const unresolvedCanonicalSubscription = isCanonicalSubscriptionReference &&
       (earlyCanonicalResolution.type === 'not_found' ||
         (earlyCanonicalResolution.type !== 'conflict' &&
-          (!('cobrancaId' in earlyCanonicalResolution) || !earlyCanonicalResolution.cobrancaId)));
-    if (earlyCanonicalResolution.type === 'conflict' || unresolvedCanonicalSubscription || eventMapPaymentConflict || unresolvedEventMapOrderReference) {
+          (!('cobrancaId' in earlyCanonicalResolution) || !earlyCanonicalResolution.cobrancaId) &&
+          !(payload.payment.subscription && earlyCanonicalResolution.type === 'subscription')));
+    const unmappedSubscriptionPayment = Boolean(
+      payload.payment.subscription && earlyCanonicalResolution.type === 'unknown',
+    );
+    if (earlyCanonicalResolution.type === 'conflict' || unresolvedCanonicalSubscription || unmappedSubscriptionPayment || eventMapPaymentConflict || unresolvedEventMapOrderReference) {
       await upsertFinanceReconciliationIssue({
         contaId,
         entityType: 'PAYMENT',
@@ -1579,9 +1590,24 @@ async function handlePaymentWebhookCore(
             ? 'provider_payment_id_already_linked_to_different_local_entity'
             : earlyCanonicalResolution.type === 'not_found'
               ? earlyCanonicalResolution.reason
+              : unmappedSubscriptionPayment
+                ? 'asaas_subscription_without_local_entity'
               : 'canonical_subscription_reference_without_local_charge',
         },
       });
+      // PAYMENT_CREATED can win the race against the transaction that stores
+      // the canonical subscription mapping. Keep only this retryable create
+      // event in the existing inbox retry path; the handler remains the sole
+      // place that links/materializes the local invoice on replay.
+      if (
+        payload.event === 'PAYMENT_CREATED' &&
+        isCanonicalSubscriptionReference &&
+        earlyCanonicalResolution.type === 'not_found' &&
+        !eventMapPaymentConflict &&
+        !unresolvedEventMapOrderReference
+      ) {
+        return { success: false, error: 'PAYMENT_CREATED_LOCAL_MAPPING_NOT_READY' };
+      }
       // The order can be concurrently created by the checkout flow. Keep this
       // webhook retryable, but do not confirm commands or mutate any domain
       // until the referenced tenant-scoped order exists.
@@ -2059,7 +2085,8 @@ async function handlePaymentWebhookCore(
       }
       unresolvedCanonicalSubscriptionReference =
         (payload.payment.externalReference?.startsWith('alusa:subscription:') ?? false) &&
-        !resolvedCobrancaId;
+        !resolvedCobrancaId &&
+        !(payload.payment.subscription && resolveResult.type === 'subscription');
 
       // Se resolver encontrou algo, processar de forma determinística
       if (resolveResult.type !== 'not_found') {
@@ -2097,8 +2124,8 @@ async function handlePaymentWebhookCore(
 
     // Buscar Charge por externalReference (suporta ambos os prefixos)
     const chargeLookupOr = [
-      ...(paymentExternalReference ? [{ externalReference: paymentExternalReference }] : []),
-      ...(externalRefId ? [{ id: externalRefId }, { cobrancaId: externalRefId }] : []),
+      ...(!payload.payment.subscription && paymentExternalReference ? [{ externalReference: paymentExternalReference }] : []),
+      ...(!payload.payment.subscription && externalRefId ? [{ id: externalRefId }, { cobrancaId: externalRefId }] : []),
       { asaasPaymentId: payload.payment.id },
     ];
 
@@ -2149,7 +2176,7 @@ async function handlePaymentWebhookCore(
     const referenceCobrancaIds = [...new Set([
       resolvedCobrancaId,
       cobrancaIdFromExternalRef,
-      externalRefId,
+      ...(!payload.payment.subscription && externalRefId ? [externalRefId] : []),
     ].filter((id): id is string => Boolean(id)))];
     const cobrancaByAsaasPaymentIdMatches = cobrancaByAsaasPaymentId?.asaasPaymentId === payload.payment.id
       ? cobrancaByAsaasPaymentId
@@ -2163,6 +2190,7 @@ async function handlePaymentWebhookCore(
       cobrancaByAsaasPaymentIdMatches.id !== cobrancaByLegacyAsaasIdMatches.id
     );
     const paymentIdCobranca = cobrancaByAsaasPaymentIdMatches ?? cobrancaByLegacyAsaasIdMatches;
+    const subscriptionPaymentDueDate = resolveAsaasDueDateUtcRange(payload.payment.dueDate);
     if (paymentIdCobranca && resolvedCobrancaId && paymentIdCobranca.id !== resolvedCobrancaId) {
       cobrancaMappingConflict = true;
     }
@@ -2255,6 +2283,22 @@ async function handlePaymentWebhookCore(
         (cobranca.asaasId && cobranca.asaasId !== payload.payment.id)
       ),
     );
+    if (payload.payment.subscription && payload.payment.dueDate && (paymentIdCobranca || cobranca) ) {
+      const mappedCobrancaDueDate = await prisma.cobranca.findFirst({
+        where: { id: paymentIdCobranca?.id ?? cobranca?.id, contaId },
+        select: { vencimento: true },
+      });
+      if (
+        mappedCobrancaDueDate &&
+        (!subscriptionPaymentDueDate ||
+          mappedCobrancaDueDate.vencimento < subscriptionPaymentDueDate.start ||
+          mappedCobrancaDueDate.vencimento >= subscriptionPaymentDueDate.end)
+      ) {
+        // A payment ID already attached to a different cycle is a mapping
+        // conflict; never let a repeated parent reference move that invoice.
+        cobrancaMappingConflict = true;
+      }
+    }
     if (chargeByPaymentId && cobranca && chargeByPaymentId.cobrancaId !== cobranca.id) {
       cobrancaMappingConflict = true;
     }
@@ -2277,7 +2321,6 @@ async function handlePaymentWebhookCore(
     if (!cobrancaMappingConflict && !cobranca && chargeFromExternalRef && !chargeFromExternalRef.cobrancaId) {
       return handleStandaloneChargeWebhook(contaId, payload, chargeFromExternalRef);
     }
-    const subscriptionPaymentDueDate = resolveAsaasDueDateUtcRange(payload.payment.dueDate);
     let subscriptionChargeMappingBlocked = !subscriptionPaymentDueDate;
 
     // 1.1. Se não encontrou e o pagamento é de uma assinatura, buscar via asaasSubscriptionId
@@ -2315,6 +2358,7 @@ async function handlePaymentWebhookCore(
           select: {
             id: true,
             matriculaId: true,
+            vencimento: true,
             status: true,
             asaasPaymentId: true,
             asaasId: true,
@@ -2357,6 +2401,7 @@ async function handlePaymentWebhookCore(
               select: {
                 id: true,
                 matriculaId: true,
+                vencimento: true,
                 status: true,
                 asaasPaymentId: true,
                 asaasId: true,
@@ -2376,6 +2421,8 @@ async function handlePaymentWebhookCore(
             }
           }
         } else if (matchingCobrancas.length > 0) {
+          // A paid, already-linked, or ambiguous due-date candidate must not be
+          // claimed by a different provider payment. Reconcile instead.
           subscriptionChargeMappingBlocked = true;
         }
       }
@@ -3067,6 +3114,7 @@ async function handlePaymentWebhookCore(
           select: {
             id: true,
             matriculaId: true,
+            vencimento: true,
             status: true,
             asaasPaymentId: true,
             asaasId: true,
@@ -3192,7 +3240,9 @@ async function handlePaymentWebhookCore(
       contaId,
       cobrancaId: cobranca.id,
       asaasPaymentId: payload.payment.id,
-      subscriptionExternalReference: subscriptionRecord?.externalReference ?? null,
+      subscriptionExternalReference: subscriptionRecord?.externalReference ?? (
+        payload.payment.subscription ? payload.payment.externalReference ?? null : null
+      ),
       payment: payload.payment,
     });
 

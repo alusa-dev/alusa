@@ -39,17 +39,42 @@ function mapFormaPagamentoToBillingType(forma: FormaPagamento): string {
 }
 
 function resolveExternalReference(input: EnsureAcademicChargeForCobrancaInput): string {
-  const paymentRef = input.payment?.externalReference?.trim();
-  if (paymentRef) return paymentRef;
+  // A recurring payment's raw externalReference can be the subscription's
+  // parent reference, repeated by Asaas for every cycle. Charge references are
+  // unique, so persist the payment-scoped form for recurring cycles.
   if (input.subscriptionExternalReference) {
+    if (input.subscriptionExternalReference.endsWith(`:payment:${input.asaasPaymentId}`)) {
+      return input.subscriptionExternalReference;
+    }
     return buildPaymentExternalReference(input.subscriptionExternalReference, input.asaasPaymentId);
   }
+  const paymentRef = input.payment?.externalReference?.trim();
+  if (paymentRef) return paymentRef;
   return `charge:${input.cobrancaId}`;
 }
 
 function resolveChargeStatus(paymentStatus?: string | null): ReturnType<typeof mapAsaasToChargeStatus> {
   const normalized = paymentStatus?.trim().toUpperCase() ?? '';
   return mapAsaasToChargeStatus(normalized || 'PENDING');
+}
+
+function resolveInitialChargeStatus(
+  persistedPaymentStatus: string | null | undefined,
+  incomingPaymentStatus: string | null | undefined,
+  deleted: boolean | null | undefined,
+): ReturnType<typeof mapAsaasToChargeStatus> {
+  if (deleted) return 'CANCELED';
+
+  const persistedStatus = persistedPaymentStatus ? resolveChargeStatus(persistedPaymentStatus) : null;
+  const incomingStatus = resolveChargeStatus(incomingPaymentStatus ?? persistedPaymentStatus);
+
+  // Cobranca.asaasStatus is the durable local observation. A stale create
+  // event must not seed a new Charge as open after the invoice was paid.
+  if (persistedStatus === 'PAID' && ['OPEN', 'OVERDUE'].includes(incomingStatus)) {
+    return persistedStatus;
+  }
+
+  return incomingStatus;
 }
 
 /**
@@ -61,6 +86,12 @@ export async function ensureAcademicChargeForCobranca(
   input: EnsureAcademicChargeForCobrancaInput,
 ): Promise<EnsureAcademicChargeForCobrancaResult | null> {
   const prisma = getFiscalPrisma();
+
+  // Payment identity is the first lookup for recurring cycle events.
+  const existingByPayment = await prisma.charge.findFirst({
+    where: { contaId: input.contaId, asaasPaymentId: input.asaasPaymentId },
+    select: { id: true, cobrancaId: true },
+  });
 
   const cobranca = await prisma.cobranca.findFirst({
     where: {
@@ -83,26 +114,32 @@ export async function ensureAcademicChargeForCobranca(
 
   if (!cobranca) return null;
 
-  const existing = await prisma.charge.findFirst({
+  // Payment identity must win over the Cobranca identity. Never move an
+  // existing provider payment to another academic invoice on retry/replay.
+  if (existingByPayment && existingByPayment.cobrancaId !== cobranca.id) return null;
+
+  const existingByCobranca = await prisma.charge.findFirst({
     where: {
       contaId: input.contaId,
-      OR: [{ cobrancaId: cobranca.id }, { asaasPaymentId: input.asaasPaymentId }],
+      cobrancaId: cobranca.id,
     },
     select: { id: true, cobrancaId: true },
   });
 
-  if (existing && existing.cobrancaId && existing.cobrancaId !== cobranca.id) {
+  if (existingByCobranca && existingByCobranca.id !== existingByPayment?.id) {
     return null;
   }
+  const existing = existingByPayment ?? existingByCobranca;
 
   const externalReference = resolveExternalReference(input);
-  const paymentStatus = input.payment?.status ?? cobranca.asaasStatus;
   // O sinal `deleted` é terminal e prevalece sobre um status eventualmente
   // atrasado/inconsistente no payload do provedor. Isso evita recriar uma
   // cobrança local como aberta depois que o pagamento já foi excluído.
-  const chargeStatus = input.payment?.deleted
-    ? 'CANCELED'
-    : resolveChargeStatus(paymentStatus);
+  const chargeStatus = resolveInitialChargeStatus(
+    cobranca.asaasStatus,
+    input.payment?.status,
+    input.payment?.deleted,
+  );
   const value =
     input.payment?.value != null
       ? input.payment.value
@@ -132,8 +169,8 @@ export async function ensureAcademicChargeForCobranca(
       payerType,
       payerId,
       ...(invoiceUrl ? { invoiceUrl } : {}),
-      status: chargeStatus,
-      statusUpdatedAt: new Date(),
+      // Existing status is advanced by the webhook state machine below. This
+      // materializer must not reopen a paid Charge for a stale event snapshot.
     },
     create: {
       id: cobranca.id,

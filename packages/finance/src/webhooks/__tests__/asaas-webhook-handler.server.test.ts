@@ -112,4 +112,65 @@ describe('processAsaasWebhookQueue notification timestamp', () => {
 
     expect(result.processedPayments).toEqual([]);
   });
+
+  it('retries the same persisted PAYMENT_CREATED row after local mapping recovery', async () => {
+    const claimedAt = new Date('2026-03-28T15:02:00.000Z');
+    const hook = {
+      id: 'hook-replay',
+      contaId: 'conta-a',
+      status: 'ERRO',
+      evento: 'PAYMENT_CREATED',
+      eventId: 'evt-payment-created-replay',
+      payload: {
+        id: 'evt-payment-created-replay',
+        event: 'PAYMENT_CREATED',
+        payment: {
+          id: 'pay-replay',
+          status: 'PENDING',
+          value: 120,
+          dueDate: '2026-08-15',
+          subscription: 'asaas-subscription-a',
+          externalReference: 'alusa:subscription:mat-a:plan-a',
+        },
+      },
+      recebidoEm: new Date('2026-03-28T15:00:00Z'),
+      ultimaTentativaEm: claimedAt,
+      tentativas: 0,
+      attemptsLog: [],
+    };
+    let attempt = 0;
+    mocks.transaction.mockImplementation(async (callback) => callback({
+      $queryRaw: vi.fn().mockImplementation(async () => {
+        attempt += 1;
+        hook.status = 'PROCESSANDO';
+        hook.tentativas = attempt;
+        hook.ultimaTentativaEm = new Date(claimedAt.getTime() + attempt);
+        return [{ id: hook.id, tentativas: hook.tentativas, ultimaTentativaEm: hook.ultimaTentativaEm }];
+      }),
+    }));
+    mocks.findMany.mockImplementation(async () => [hook]);
+    mocks.updateMany.mockImplementation(async ({ where, data }) => {
+      if (where.tentativas !== hook.tentativas || where.ultimaTentativaEm.getTime() !== hook.ultimaTentativaEm.getTime()) {
+        return { count: 0 };
+      }
+      Object.assign(hook, data);
+      return { count: 1 };
+    });
+    mocks.payment
+      .mockResolvedValueOnce({ success: false, error: 'PAYMENT_CREATED_LOCAL_MAPPING_NOT_READY' })
+      .mockResolvedValueOnce({ success: true, skipped: false });
+
+    const firstRun = await processAsaasWebhookQueue({ contaId: 'conta-a', webhookId: hook.id });
+    expect(firstRun).toMatchObject({ attempted: 1, processed: 0, failed: 1 });
+    expect(hook).toMatchObject({ status: 'ERRO', tentativas: 1, ultimoErro: 'PAYMENT_CREATED_LOCAL_MAPPING_NOT_READY' });
+
+    const replayRun = await processAsaasWebhookQueue({ contaId: 'conta-a', webhookId: hook.id });
+    expect(replayRun).toMatchObject({ attempted: 1, processed: 1, failed: 0 });
+    expect(hook).toMatchObject({ status: 'PROCESSADO', tentativas: 2, ultimoErro: null });
+    expect(mocks.payment).toHaveBeenCalledTimes(2);
+    expect(mocks.payment.mock.calls.map(([contaId, payload]) => [contaId, payload.payment.id])).toEqual([
+      ['conta-a', 'pay-replay'],
+      ['conta-a', 'pay-replay'],
+    ]);
+  });
 });

@@ -256,7 +256,7 @@ describe('resolvePaymentToLocalEntity', () => {
       { label: 'sem vencimento', dueDate: undefined, matches: [{ id: 'cobranca-a' }] },
       { label: 'com vencimentos ambiguos', dueDate: '2026-08-15', matches: [{ id: 'cobranca-a' }, { id: 'cobranca-a2' }] },
       { label: 'com vencimento inválido', dueDate: '2026-02-30', matches: [{ id: 'cobranca-a' }] },
-    ])('não resolve referência V2 $label', async ({ dueDate, matches }) => {
+    ])('retorna a identidade da assinatura gerenciada sem candidata única $label', async ({ dueDate, matches }) => {
       vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce({
         id: 'subscription-a',
         matriculaId: 'mat-a',
@@ -272,8 +272,56 @@ describe('resolvePaymentToLocalEntity', () => {
         dueDate,
       });
 
-      expect(result).toEqual({ type: 'not_found', reason: 'alusa_subscription_without_local_entity' });
+      expect(result).toEqual({ type: 'subscription', subscriptionId: 'subscription-a' });
       if (!dueDate || dueDate === '2026-02-30') expect(prisma.cobranca.findMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('não resolve a referência pai recorrente para Charge de outro payment', async () => {
+      vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce({
+        id: 'subscription-a', matriculaId: 'mat-a',
+      } as never);
+      vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce(null as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+
+      const result = await resolvePaymentToLocalEntity({
+        contaId: 'conta-a',
+        asaasPaymentId: 'pay-cycle-2',
+        externalReference: 'enrollment-op:op-a:subscription',
+        asaasSubscriptionId: 'asaas-sub-a',
+        dueDate: '2026-09-10',
+      });
+
+      expect(result).toEqual({ type: 'subscription', subscriptionId: 'subscription-a', cobrancaId: undefined });
+      expect(prisma.charge.findFirst).not.toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ externalReference: 'enrollment-op:op-a:subscription' }),
+      }));
+    });
+
+    it('valida referência payment-scoped pela assinatura pai e só associa candidata única do ciclo', async () => {
+      vi.mocked(prisma.subscription.findFirst)
+        .mockResolvedValueOnce({ id: 'subscription-a', matriculaId: 'mat-a' } as never)
+        .mockResolvedValueOnce({ id: 'subscription-a', matriculaId: 'mat-a' } as never);
+      vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce(null as never);
+      vi.mocked(prisma.cobranca.findMany)
+        .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce([{ id: 'cobranca-cycle-2' }] as never);
+
+      const result = await resolvePaymentToLocalEntity({
+        contaId: 'conta-a',
+        asaasPaymentId: 'pay-cycle-2',
+        externalReference: 'alusa:subscription:mat-a:plan-a:payment:pay-cycle-2',
+        asaasSubscriptionId: 'asaas-sub-a',
+        dueDate: '2026-10-10',
+      });
+
+      expect(result).toEqual({ type: 'cobranca', cobrancaId: 'cobranca-cycle-2' });
+      expect(prisma.subscription.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: {
+          contaId: 'conta-a',
+          externalReference: 'alusa:subscription:mat-a:plan-a',
+          matricula: { contaId: 'conta-a', aluno: { contaId: 'conta-a' } },
+        },
+      }));
     });
 
     it.each([

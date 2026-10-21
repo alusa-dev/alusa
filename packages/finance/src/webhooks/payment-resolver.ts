@@ -107,6 +107,29 @@ async function findUniqueOpenSubscriptionCharge(input: {
   return candidates.length === 1 ? candidates[0]?.id ?? null : null;
 }
 
+async function hasOtherPaymentForSubscriptionCycle(input: {
+  contaId: string;
+  matriculaId: string;
+  dueDate?: string | null;
+}): Promise<boolean> {
+  const dueDateRange = utcDateRange(input.dueDate);
+  if (!dueDateRange) return false;
+
+  const linked = await prisma.cobranca.findMany({
+    where: {
+      contaId: input.contaId,
+      matriculaId: input.matriculaId,
+      matricula: { contaId: input.contaId, aluno: { contaId: input.contaId } },
+      tipo: 'MENSALIDADE',
+      vencimento: dueDateRange,
+      OR: [{ asaasPaymentId: { not: null } }, { asaasId: { not: null } }],
+    },
+    select: { id: true },
+    take: 1,
+  });
+  return linked.length > 0;
+}
+
 async function findChargeMappingForMatricula(input: {
   contaId: string;
   chargeCobrancaId: string | null;
@@ -145,7 +168,7 @@ async function resolvePaymentToLocalEntityForMappings(
   const chargeByPaymentId = chargesByPaymentId[0] ?? null;
   // The provider ID and externalReference must not resolve to two different
   // Charge rows. This also covers legacy `charge:` / `standalone:` references.
-  if (chargeByPaymentId && externalReference) {
+  if (chargeByPaymentId && externalReference && !input.asaasSubscriptionId) {
     const chargeByExternalReference = await prisma.charge.findFirst({
       where: { contaId, externalReference },
       select: { id: true, cobrancaId: true },
@@ -178,14 +201,17 @@ async function resolvePaymentToLocalEntityForMappings(
   // ─────────────────────────────────────────────────────────────────────────
   // 1. Resolver por externalReference (preferência máxima)
   // ─────────────────────────────────────────────────────────────────────────
-  if (externalReference) {
+  // For recurring payments, non-canonical parent references are descriptive
+  // only. They must never resolve a previous cycle's Charge/Cobranca.
+  if (externalReference && (!input.asaasSubscriptionId || isCanonicalV2SubscriptionReference)) {
     const parsed = parseExternalReference(externalReference);
 
     // V2 subscription references encode matrícula/plano IDs, while the
     // authoritative Subscription row stores the exact full reference.
     if (isCanonicalV2SubscriptionReference) {
+      const parentExternalReference = externalReference.replace(/:payment:[^:]+$/, '');
       const subscriptionByReference = await prisma.subscription.findFirst({
-        where: { contaId, externalReference, matricula: { contaId, aluno: { contaId } } },
+        where: { contaId, externalReference: parentExternalReference, matricula: { contaId, aluno: { contaId } } },
         select: { id: true, matriculaId: true },
       });
       const providerSubscription = input.asaasSubscriptionId
@@ -195,7 +221,7 @@ async function resolvePaymentToLocalEntityForMappings(
               asaasSubscriptionId: input.asaasSubscriptionId,
               matricula: { contaId, aluno: { contaId } },
             },
-            select: { matriculaId: true },
+            select: { id: true, matriculaId: true },
           })
         : null;
       const providerMatricula = input.asaasSubscriptionId && !providerSubscription
@@ -205,7 +231,7 @@ async function resolvePaymentToLocalEntityForMappings(
           })
         : null;
 
-      const parsedV2 = parseExternalReferenceV2(externalReference);
+      const parsedV2 = parseExternalReferenceV2(parentExternalReference);
       const referencedMatriculaId = subscriptionByReference?.matriculaId ?? parsedV2?.ids.matriculaId;
       if (chargeByPaymentId && chargeByPaymentId.cobrancaId === null) {
         return { type: 'conflict', reason: 'payment_id_mapped_to_different_entity' };
@@ -222,6 +248,9 @@ async function resolvePaymentToLocalEntityForMappings(
       }
       if (cobrancaByPaymentId && referencedMatriculaId === cobrancaByPaymentId.matriculaId) {
         return { type: 'cobranca', cobrancaId: cobrancaByPaymentId.id };
+      }
+      if (input.asaasSubscriptionId && !providerSubscription && !providerMatricula) {
+        return { type: 'not_found', reason: 'alusa_subscription_without_local_entity' };
       }
 
       if (subscriptionByReference) {
@@ -246,12 +275,27 @@ async function resolvePaymentToLocalEntityForMappings(
           dueDate: input.dueDate,
         });
 
+        if (!cobrancaId && await hasOtherPaymentForSubscriptionCycle({
+          contaId,
+          matriculaId: subscriptionByReference.matriculaId,
+          dueDate: input.dueDate,
+        })) {
+          return { type: 'conflict', reason: 'payment_id_mapped_to_different_entity' };
+        }
+
         if (cobrancaId && chargeByPaymentId && chargeByPaymentId.cobrancaId !== cobrancaId) {
           return { type: 'conflict', reason: 'payment_id_mapped_to_different_entity' };
         }
         return cobrancaId
           ? { type: 'cobranca', cobrancaId }
-          : { type: 'not_found', reason: 'alusa_subscription_without_local_entity' };
+          : { type: 'subscription', subscriptionId: subscriptionByReference.id };
+      }
+
+      if (providerSubscription && providerSubscription.matriculaId === referencedMatriculaId) {
+        return { type: 'subscription', subscriptionId: providerSubscription.id };
+      }
+      if (providerMatricula && providerMatricula.id === referencedMatriculaId) {
+        return { type: 'subscription', subscriptionId: `legacy:matricula:${providerMatricula.id}` };
       }
 
       // A canonical academic subscription reference is authoritative. Do not
@@ -453,7 +497,7 @@ async function resolvePaymentToLocalEntityForMappings(
     }
 
     // ExternalReference não parseável, tentar busca direta
-    const chargeByRef = await prisma.charge.findFirst({
+    const chargeByRef = input.asaasSubscriptionId ? null : await prisma.charge.findFirst({
       where: { contaId, externalReference },
       select: { id: true, cobrancaId: true },
     });

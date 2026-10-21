@@ -179,6 +179,9 @@ vi.mock('@alusa/database', () => ({
     subscription: {
       findFirst: vi.fn(),
     },
+    asaasResourceOrigin: {
+      findUnique: vi.fn(),
+    },
     standaloneSubscription: {
       findFirst: vi.fn(),
     },
@@ -1061,7 +1064,7 @@ describe('handlePaymentWebhook', () => {
     expect(prisma.cobranca.create).not.toHaveBeenCalled();
   });
 
-  it('mantém referência V2 de assinatura sem cobrança única em reconciliação', async () => {
+  it('mantém PAYMENT_CREATED de assinatura sem mapeamento canônico na fila para retry idempotente', async () => {
     const { prisma } = await import('@alusa/database');
     const { isPaymentResolutionPolicyEnabled } = await import('../../foundation/payment-resolution-policy');
 
@@ -1084,12 +1087,12 @@ describe('handlePaymentWebhook', () => {
     });
 
     expect(result).toMatchObject({
-      success: true,
-      skipped: true,
-      skipReason: 'UNMATCHED_PAYMENT_REQUIRES_RECONCILIATION',
+      success: false,
+      error: 'PAYMENT_CREATED_LOCAL_MAPPING_NOT_READY',
     });
     expect(mockConfirmPaymentCommandsByProviderEvent).not.toHaveBeenCalled();
     expect(prisma.cobranca.create).not.toHaveBeenCalled();
+    expect(prisma.cobranca.update).not.toHaveBeenCalled();
     expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
       contaId: 'conta-a',
       asaasId: 'pay-subscription-ambiguous',
@@ -1097,15 +1100,130 @@ describe('handlePaymentWebhook', () => {
     }));
   });
 
-  it('não usa fallback legado quando referência V2 não tem cobrança, mesmo se resolver acha Subscription', async () => {
+  it.each(['PAYMENT_CREATED', 'PAYMENT_OVERDUE'])(
+    'reconcilia assinatura Asaas sem matrícula local antes de efeitos para %s',
+    async (event) => {
+      const { prisma } = await import('@alusa/database');
+      mockResolvePaymentToLocalEntity.mockResolvedValue({
+        type: 'unknown', reason: 'no_matching_entity_or_origin',
+      });
+
+      const result = await handlePaymentWebhook('conta-a', {
+        event,
+        payment: {
+          id: `pay-external-${event.toLowerCase()}`,
+          status: event === 'PAYMENT_CREATED' ? 'PENDING' : 'OVERDUE',
+          value: 120,
+          subscription: 'asaas-manual-subscription',
+          externalReference: 'enrollment-op:remote:subscription',
+          dueDate: '2026-08-15',
+        },
+      });
+
+      expect(result).toMatchObject({ success: true, skipped: true });
+      expect(mockConfirmPaymentCommandsByProviderEvent).not.toHaveBeenCalled();
+      expect(prisma.cobranca.create).not.toHaveBeenCalled();
+      expect(prisma.cobranca.update).not.toHaveBeenCalled();
+      expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+        contaId: 'conta-a', asaasId: `pay-external-${event.toLowerCase()}`,
+        issueType: 'PAYMENT_MISSING_LOCAL_ENTITY',
+      }));
+    },
+  );
+
+  it('reprocessa PAYMENT_CREATED após o mapping aparecer e ignora uma terceira entrega duplicada', async () => {
+    const { prisma } = await import('@alusa/database');
+    const { isPaymentResolutionPolicyEnabled } = await import('../../foundation/payment-resolution-policy');
+    const resolver = await vi.importActual<typeof import('../payment-resolver')>('../payment-resolver');
+
+    vi.mocked(isPaymentResolutionPolicyEnabled).mockReturnValue(true);
+    const localInvoices: Array<{
+      contaId: string;
+      id: string;
+      matriculaId: string;
+      status: string;
+      asaasPaymentId: string;
+      tipo: string;
+      formaPagamento: string;
+    }> = [];
+    mockResolvePaymentToLocalEntity.mockImplementation((params) => resolver.resolvePaymentToLocalEntity(params));
+    vi.mocked(prisma.charge.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.matricula.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.asaasResourceOrigin.findUnique).mockResolvedValue(null as never);
+    vi.mocked(prisma.cobranca.findMany).mockImplementation(async (args) => {
+      const where = args.where as { contaId?: string; OR?: Array<Record<string, unknown>> };
+      const requestedPaymentId = where.OR?.flatMap((condition) => Object.values(condition))
+        .find((value) => typeof value === 'string');
+      return localInvoices.filter((invoice) =>
+        invoice.contaId === where.contaId && invoice.asaasPaymentId === requestedPaymentId,
+      ) as never;
+    });
+    localInvoices.push({
+      contaId: 'conta-b', id: 'cobranca-conta-b', matriculaId: 'mat-b', status: 'PENDENTE',
+      asaasPaymentId: 'pay-subscription-replay', tipo: 'MENSALIDADE', formaPagamento: 'BOLETO',
+    });
+    const contaBInvoiceBeforeReplay = { ...localInvoices[0] };
+    const payload = {
+      event: 'PAYMENT_CREATED' as const,
+      payment: {
+        id: 'pay-subscription-replay', status: 'PENDING', value: 120,
+        dueDate: '2026-08-15', subscription: 'asaas-subscription-a',
+        externalReference: 'alusa:subscription:mat-a:plan-a',
+      },
+    };
+
+    const firstDelivery = await handlePaymentWebhook('conta-a', payload);
+    expect(firstDelivery).toMatchObject({ success: false, error: 'PAYMENT_CREATED_LOCAL_MAPPING_NOT_READY' });
+
+    localInvoices.push({
+      contaId: 'conta-a', id: 'cobranca-mapped', matriculaId: 'mat-a', status: 'PENDENTE',
+      asaasPaymentId: 'pay-subscription-replay', tipo: 'MENSALIDADE', formaPagamento: 'BOLETO',
+    });
+    vi.mocked(prisma.cobranca.findFirst).mockImplementation(async ({ where }) =>
+      localInvoices.find((invoice) => invoice.contaId === where.contaId && invoice.asaasPaymentId === where.asaasPaymentId) as never,
+    );
+    vi.mocked(prisma.cobranca.update).mockImplementation(async ({ where, data }) => {
+      const invoice = localInvoices.find((item) => item.id === where.id)!;
+      Object.assign(invoice, data);
+      return invoice as never;
+    });
+    vi.mocked(prisma.charge.findFirst).mockResolvedValue(null as never);
+    const replayedDelivery = await handlePaymentWebhook('conta-a', payload);
+    const stateAfterReplay = { ...localInvoices.find((invoice) => invoice.contaId === 'conta-a')! };
+    const duplicateDelivery = await handlePaymentWebhook('conta-a', payload);
+
+    expect(replayedDelivery.success).toBe(true);
+    expect(duplicateDelivery.success).toBe(true);
+    expect(mockResolvePaymentToLocalEntity).toHaveBeenCalledTimes(3);
+    expect(localInvoices).toHaveLength(2);
+    const contaAInvoice = localInvoices.find((invoice) => invoice.contaId === 'conta-a');
+    const contaBInvoice = localInvoices.find((invoice) => invoice.contaId === 'conta-b');
+    expect(contaAInvoice).toMatchObject({ id: 'cobranca-mapped', asaasPaymentId: 'pay-subscription-replay', status: 'PENDENTE', providerStatus: 'PENDING' });
+    expect(contaAInvoice).toMatchObject({ providerStatus: stateAfterReplay.providerStatus, reconciliationStatus: stateAfterReplay.reconciliationStatus });
+    expect(contaBInvoice).toEqual(contaBInvoiceBeforeReplay);
+    expect(prisma.cobranca.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        contaId: 'conta-a',
+        matricula: { contaId: 'conta-a', aluno: { contaId: 'conta-a' } },
+      }),
+    }));
+    expect(prisma.cobranca.create).not.toHaveBeenCalled();
+    expect(prisma.cobranca.update).toHaveBeenCalledTimes(2);
+    expect(prisma.charge.upsert).not.toHaveBeenCalled();
+    expect(prisma.cobranca.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ contaId: 'conta-a', asaasPaymentId: 'pay-subscription-replay' }),
+    }));
+  });
+
+  it('mantém PAYMENT_CREATED de referência V2 sem assinatura local no retry para reconciliação', async () => {
     const { prisma } = await import('@alusa/database');
     const { isPaymentResolutionPolicyEnabled } = await import('../../foundation/payment-resolution-policy');
 
     vi.mocked(isPaymentResolutionPolicyEnabled).mockReturnValue(true);
     mockResolvePaymentToLocalEntity.mockResolvedValue({
-      type: 'subscription',
-      subscriptionId: 'subscription-without-charge',
-      cobrancaId: undefined,
+      type: 'not_found',
+      reason: 'alusa_subscription_without_local_entity',
     });
     vi.mocked(prisma.cobranca.findFirst).mockResolvedValue(null as never);
     vi.mocked(prisma.charge.findFirst).mockResolvedValue(null as never);
@@ -1122,11 +1240,7 @@ describe('handlePaymentWebhook', () => {
       },
     });
 
-    expect(result).toMatchObject({
-      success: true,
-      skipped: true,
-      skipReason: 'UNMATCHED_PAYMENT_REQUIRES_RECONCILIATION',
-    });
+    expect(result).toMatchObject({ success: false, error: 'PAYMENT_CREATED_LOCAL_MAPPING_NOT_READY' });
     expect(mockConfirmPaymentCommandsByProviderEvent).not.toHaveBeenCalled();
     expect(prisma.cobranca.create).not.toHaveBeenCalled();
   });
@@ -1501,44 +1615,79 @@ describe('handlePaymentWebhook', () => {
 
   it('reconcilia segundo payment da mesma assinatura após o ciclo já estar vinculado', async () => {
     const { prisma } = await import('@alusa/database');
+    const { isPaymentResolutionPolicyEnabled } = await import('../../foundation/payment-resolution-policy');
+    vi.mocked(isPaymentResolutionPolicyEnabled).mockReturnValue(true);
+    const parentExternalReference = 'alusa:subscription:matricula-a:plano-a';
+    let mappedPaymentId: string | null = null;
+    const materializedPayments = new Set<string>();
+    mockResolvePaymentToLocalEntity.mockImplementation(async ({ asaasPaymentId }) => {
+      if (!mappedPaymentId) return { type: 'subscription', subscriptionId: 'subscription-a' };
+      if (mappedPaymentId === asaasPaymentId) return { type: 'cobranca', cobrancaId: 'cobranca-ciclo' };
+      return { type: 'conflict', reason: 'payment_id_mapped_to_different_entity' };
+    });
+    mockEnsureAcademicChargeForCobranca.mockImplementation(async ({ asaasPaymentId }) => {
+      materializedPayments.add(asaasPaymentId);
+      return { chargeId: 'charge-ciclo', created: materializedPayments.size === 1 };
+    });
     vi.mocked(prisma.charge.findFirst).mockResolvedValue(null as never);
-    vi.mocked(prisma.cobranca.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.cobranca.findFirst).mockImplementation(async ({ where }) => {
+      if (where.id === 'cobranca-ciclo' || where.asaasPaymentId === mappedPaymentId) return {
+        id: 'cobranca-ciclo', matriculaId: 'matricula-a', status: 'PENDENTE',
+        asaasPaymentId: mappedPaymentId, asaasId: null, asaasStatus: mappedPaymentId ? 'PENDING' : null,
+        providerStatus: mappedPaymentId ? 'PENDING' : null, version: mappedPaymentId ? 2 : 1,
+        tipo: 'MENSALIDADE', formaPagamento: 'BOLETO', vencimento: new Date('2026-04-05T00:00:00Z'),
+      } as never;
+      return null as never;
+    });
     vi.mocked(prisma.matricula.findFirst).mockResolvedValue({
       id: 'matricula-a', contaId: 'conta-1', aluno: { contaId: 'conta-1' },
     } as never);
-    vi.mocked(prisma.cobranca.findMany)
-      .mockResolvedValueOnce([{
-        id: 'cobranca-ciclo', matriculaId: 'matricula-a', status: 'PENDENTE',
-        asaasPaymentId: null, asaasId: null, asaasStatus: null, providerStatus: null,
-        version: 1, tipo: 'MENSALIDADE', formaPagamento: 'BOLETO',
-      }] as never)
-      .mockResolvedValueOnce([{
-        id: 'cobranca-ciclo', matriculaId: 'matricula-a', status: 'PENDENTE',
-        asaasPaymentId: 'pay-cycle-first', asaasId: null, asaasStatus: 'PENDING', providerStatus: 'PENDING',
-        version: 2, tipo: 'MENSALIDADE', formaPagamento: 'BOLETO',
-      }] as never);
-
-    const first = await handlePaymentWebhook('conta-1', {
-      event: 'PAYMENT_CREATED',
-      payment: { id: 'pay-cycle-first', status: 'PENDING', value: 75, subscription: 'sub-a', dueDate: '2026-04-05' },
-    });
-    const second = await handlePaymentWebhook('conta-1', {
-      event: 'PAYMENT_CREATED',
-      payment: { id: 'pay-cycle-second', status: 'PENDING', value: 75, subscription: 'sub-a', dueDate: '2026-04-05' },
+    vi.mocked(prisma.cobranca.findMany).mockResolvedValue([{
+      id: 'cobranca-ciclo', matriculaId: 'matricula-a', status: 'PENDENTE',
+      asaasPaymentId: null, asaasId: null, asaasStatus: null, providerStatus: null,
+      version: 1, tipo: 'MENSALIDADE', formaPagamento: 'BOLETO', vencimento: new Date('2026-04-05T00:00:00Z'),
+    }] as never);
+    vi.mocked(prisma.cobranca.updateMany).mockImplementation(async ({ data }) => {
+      if (typeof data.asaasPaymentId === 'string' && !mappedPaymentId) {
+        mappedPaymentId = data.asaasPaymentId;
+        return { count: 1 } as never;
+      }
+      return { count: 0 } as never;
     });
 
-    expect(first.success).toBe(true);
-    expect(second).toMatchObject({
+    const payloadFor = (id: string) => ({
+      event: 'PAYMENT_CREATED',
+      payment: {
+        id, status: 'PENDING', value: 75, subscription: 'sub-a', dueDate: '2026-04-05',
+        externalReference: parentExternalReference,
+      },
+    } as const);
+    const [first, second] = await Promise.all([
+      handlePaymentWebhook('conta-1', payloadFor('pay-cycle-first')),
+      handlePaymentWebhook('conta-1', payloadFor('pay-cycle-second')),
+    ]);
+    const winningPaymentId = mappedPaymentId;
+    const retry = await handlePaymentWebhook('conta-1', payloadFor(winningPaymentId ?? 'pay-cycle-first'));
+
+    expect(first.success || second.success).toBe(true);
+    const losingResult = first.skipped ? first : second;
+    expect(losingResult).toMatchObject({
       success: true, skipped: true, skipReason: 'UNMATCHED_PAYMENT_REQUIRES_RECONCILIATION',
     });
+    expect(retry.success).toBe(true);
     expect(mockWithSessionAdvisoryLock.mock.calls.map(([params]) => params.additionalKeys)).toEqual([
       ['subscription-cycle:sub-a:2026-04-05'],
       ['subscription-cycle:sub-a:2026-04-05'],
+      ['subscription-cycle:sub-a:2026-04-05'],
     ]);
-    expect(prisma.cobranca.updateMany).toHaveBeenCalledTimes(1);
+    expect(mappedPaymentId).toMatch(/^pay-cycle-(first|second)$/);
+    expect(materializedPayments).toEqual(new Set([mappedPaymentId]));
+    expect(mockEnsureAcademicChargeForCobranca.mock.calls.map(([input]) => input.asaasPaymentId)).toEqual([
+      mappedPaymentId, mappedPaymentId,
+    ]);
     expect(prisma.cobranca.create).not.toHaveBeenCalled();
     expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
-      contaId: 'conta-1', asaasId: 'pay-cycle-second', issueType: 'PAYMENT_MISSING_LOCAL_ENTITY',
+      contaId: 'conta-1', asaasId: mappedPaymentId === 'pay-cycle-first' ? 'pay-cycle-second' : 'pay-cycle-first', issueType: 'PAYMENT_MISSING_LOCAL_ENTITY',
     }));
   });
 

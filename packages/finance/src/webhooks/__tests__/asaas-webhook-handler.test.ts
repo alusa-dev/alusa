@@ -106,6 +106,96 @@ describe('handleAsaasWebhookEvent (Fase 2 - authToken)', () => {
     }
   });
 
+  it('replays a persisted PAYMENT_CREATED after its academic invoice mapping appears', async () => {
+    const unique = randomUUID();
+    const conta = await prisma.conta.create({
+      data: { nome: 'Conta Payment Replay', cpfCnpj: `000000000008${unique.replaceAll('-', '').slice(0, 2)}` },
+    });
+    const eventId = `evt_${unique}`;
+    const paymentId = `pay_${unique}`;
+    const asaasSubscriptionId = `asaas_sub_${unique}`;
+    const aluno = await prisma.aluno.create({
+      data: { contaId: conta.id, nome: 'Aluno Payment Replay', dataNasc: new Date('2010-01-01T00:00:00.000Z') },
+    });
+    const matricula = await prisma.matricula.create({
+      data: {
+        contaId: conta.id,
+        alunoId: aluno.id,
+        dataInicio: new Date('2026-01-01T00:00:00.000Z'),
+        dataFimContrato: new Date('2027-01-01T00:00:00.000Z'),
+        taxaMatricula: 0,
+      },
+    });
+    const externalReference = `alusa:subscription:${matricula.id}:plan-replay`;
+    const webhook = await prisma.webhookAsaas.create({
+      data: {
+        contaId: conta.id,
+        evento: 'PAYMENT_CREATED',
+        eventId,
+        payload: {
+          id: eventId,
+          event: 'PAYMENT_CREATED',
+          payment: {
+            id: paymentId,
+            status: 'PENDING',
+            value: 120,
+            dueDate: '2026-12-15',
+            billingType: 'BOLETO',
+            subscription: asaasSubscriptionId,
+            externalReference,
+          },
+        },
+        status: 'PENDENTE',
+        tentativas: 0,
+      },
+    });
+
+    try {
+      const firstRun = await processAsaasWebhookQueue({ contaId: conta.id, webhookId: webhook.id });
+      const afterFirstRun = await prisma.webhookAsaas.findUnique({ where: { id: webhook.id } });
+      expect(firstRun).toMatchObject({ attempted: 1, processed: 0, failed: 1 });
+      expect(afterFirstRun).toMatchObject({ status: 'ERRO', tentativas: 1 });
+      expect(afterFirstRun?.ultimoErro).toContain('PAYMENT_CREATED_LOCAL_MAPPING_NOT_READY');
+
+      // The controlled replay below represents the normal retry worker after
+      // its backoff window (or an operator-triggered retry).
+      await prisma.webhookAsaas.updateMany({
+        where: { id: webhook.id, contaId: conta.id, status: 'ERRO' },
+        data: { nextRetryAt: null },
+      });
+
+      await prisma.cobranca.create({
+        data: {
+          contaId: conta.id,
+          matriculaId: matricula.id,
+          competenciaInicio: new Date('2026-12-01T00:00:00.000Z'),
+          competenciaFim: new Date('2026-12-31T00:00:00.000Z'),
+          vencimento: new Date('2026-12-15T00:00:00.000Z'),
+          formaPagamento: 'BOLETO',
+          tipo: 'MENSALIDADE',
+          status: 'PENDENTE',
+          asaasPaymentId: paymentId,
+          valor: 120,
+        },
+      });
+
+      const replayRun = await processAsaasWebhookQueue({ contaId: conta.id, webhookId: webhook.id });
+      const afterReplay = await prisma.webhookAsaas.findUnique({ where: { id: webhook.id } });
+      expect(afterReplay?.ultimoErro).toBeNull();
+      const charges = await prisma.charge.findMany({
+        where: { contaId: conta.id, asaasPaymentId: paymentId },
+        select: { id: true, cobrancaId: true },
+      });
+
+      expect(replayRun).toMatchObject({ attempted: 1, processed: 1, failed: 0 });
+      expect(afterReplay).toMatchObject({ status: 'PROCESSADO', tentativas: 2, ultimoErro: null });
+      expect(charges).toHaveLength(1);
+      expect(charges[0]?.cobrancaId).toBeDefined();
+    } finally {
+      await cleanup(conta.id);
+    }
+  });
+
   it('recovers stale rows with PostgreSQL precision and preserves a newer processing attempt', async () => {
     const conta = await prisma.conta.create({
       data: {
