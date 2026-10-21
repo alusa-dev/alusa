@@ -1499,7 +1499,7 @@ export async function reconcileWithAsaas(
       },
       orderBy: { updatedAt: 'desc' },
       take: limit,
-      select: { id: true, asaasInstallmentId: true, lastProviderCheckAt: true },
+      select: { id: true, asaasInstallmentId: true, status: true, lastProviderCheckAt: true },
     }),
     prisma.standaloneInstallmentPlan.findMany({
       where: {
@@ -1509,7 +1509,7 @@ export async function reconcileWithAsaas(
       },
       orderBy: { updatedAt: 'desc' },
       take: limit,
-      select: { id: true, asaasInstallmentId: true, lastProviderCheckAt: true },
+      select: { id: true, asaasInstallmentId: true, status: true, lastProviderCheckAt: true },
     }),
   ]);
 
@@ -1819,8 +1819,8 @@ export async function reconcileWithAsaas(
   }
 
   const allInstallments = [
-    ...installmentPlans.map((plan) => ({ id: plan.id, asaasInstallmentId: plan.asaasInstallmentId!, source: 'ACADEMIC' as const })),
-    ...standaloneInstallments.map((plan) => ({ id: plan.id, asaasInstallmentId: plan.asaasInstallmentId!, source: 'STANDALONE' as const })),
+    ...installmentPlans.map((plan) => ({ id: plan.id, asaasInstallmentId: plan.asaasInstallmentId!, status: plan.status, source: 'ACADEMIC' as const })),
+    ...standaloneInstallments.map((plan) => ({ id: plan.id, asaasInstallmentId: plan.asaasInstallmentId!, status: plan.status, source: 'STANDALONE' as const })),
   ];
 
   for (const plan of allInstallments) {
@@ -1842,11 +1842,16 @@ export async function reconcileWithAsaas(
         errors.push(`INSTALLMENT:${plan.asaasInstallmentId}:PAYMENT_LOOKUP_INCOMPLETE:${safeReconciliationError(error)}`);
         continue;
       }
+      if (remotePayments.hasMore) {
+        errors.push(`INSTALLMENT:${plan.asaasInstallmentId}:PAYMENT_LOOKUP_INCOMPLETE:additional_pages_available`);
+        continue;
+      }
 
       const localCount = plan.source === 'ACADEMIC'
         ? await prisma.charge.count({
             where: {
               contaId: options.contaId,
+              status: { not: 'CANCELED' },
               cobrancaId: { not: null },
               OR: [
                 { externalReference: { startsWith: `installmentPlan:${plan.id}` } },
@@ -1858,10 +1863,15 @@ export async function reconcileWithAsaas(
             where: {
               contaId: options.contaId,
               standaloneInstallmentPlanId: plan.id,
+              status: { not: 'CANCELED' },
             },
           });
+      // Compare only payments that still represent a provider-side payment. Canceled
+      // local charge rows remain in history, while deleted provider payments do not
+      // contribute to the current installment count.
+      const remoteCount = remotePayments.data.filter((payment) => !payment.deleted).length;
 
-      if (localCount !== remotePayments.totalCount) {
+      if (localCount !== remoteCount) {
         installmentDrift += 1;
         if (!dryRun) {
           await upsertFinanceReconciliationIssue({
@@ -1872,7 +1882,7 @@ export async function reconcileWithAsaas(
             issueType: 'PAYMENT_STATUS_DRIFT',
             severity: 'MEDIUM',
             localStatus: String(localCount),
-            remoteStatus: String(remotePayments.totalCount),
+            remoteStatus: String(remoteCount),
             metadata: {
               source: 'reconcileWithAsaas',
               drift: 'INSTALLMENT_PAYMENT_COUNT',
@@ -1880,6 +1890,18 @@ export async function reconcileWithAsaas(
             },
           });
         }
+      } else if (!dryRun) {
+        await resolveFinanceReconciliationIssueByDedupe({
+          contaId: options.contaId,
+          dedupeKey: buildFinanceReconciliationIssueDedupeKey({
+            entityType: 'INSTALLMENT_PLAN',
+            entityId: plan.id,
+            issueType: 'PAYMENT_STATUS_DRIFT',
+          }),
+          resolution: plan.status === 'CANCELED'
+            ? 'Plano cancelado e contagem de pagamentos remotos convergente.'
+            : 'Contagem de parcelas convergiu com pagamentos do Asaas.',
+        });
       }
       if (!dryRun) {
         if (plan.source === 'ACADEMIC') {

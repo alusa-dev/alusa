@@ -8,6 +8,7 @@ vi.mock('@alusa/database', () => ({
     charge: {
       findMany: vi.fn(),
       findFirst: vi.fn(),
+      count: vi.fn(),
       updateMany: vi.fn(),
     },
     cobranca: {
@@ -28,6 +29,9 @@ vi.mock('@alusa/database', () => ({
     },
     standaloneInstallmentPlan: {
       findMany: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    matricula: {
       updateMany: vi.fn(),
     },
     sale: {
@@ -112,6 +116,7 @@ describe('webhook-reconciliation.service', () => {
     vi.mocked(prisma.sale.findMany).mockResolvedValue([]);
     vi.mocked(prisma.webhookAsaas.findMany).mockResolvedValue([]);
     vi.mocked(prisma.charge.updateMany).mockResolvedValue({ count: 1 });
+    vi.mocked(prisma.charge.count).mockResolvedValue(0);
     vi.mocked(prisma.cobranca.updateMany).mockResolvedValue({ count: 1 });
     vi.mocked(prisma.subscription.updateMany).mockResolvedValue({ count: 1 });
     vi.mocked(prisma.installmentPlan.updateMany).mockResolvedValue({ count: 1 });
@@ -508,6 +513,164 @@ describe('webhook-reconciliation.service', () => {
       expect(result.errors.some((error) => error.includes('PAYMENT_LOOKUP_INCOMPLETE'))).toBe(true);
       expect(prisma.installmentPlan.updateMany).not.toHaveBeenCalled();
       expect(upsertFinanceReconciliationIssue).not.toHaveBeenCalled();
+    });
+
+    it('não compara nem resolve issue quando ainda há páginas remotas de pagamentos', async () => {
+      vi.mocked(prisma.standaloneInstallmentPlan.findMany).mockResolvedValue([{
+        id: 'plan-paged', asaasInstallmentId: 'inst-paged', status: 'CANCELED',
+      }] as never);
+      vi.mocked(getInstallment).mockResolvedValue({ id: 'inst-paged' } as never);
+      vi.mocked(listInstallmentPayments).mockResolvedValue({
+        data: Array.from({ length: 100 }, (_, index) => ({
+          id: `pay-${index}`, status: 'PENDING', deleted: false,
+        })),
+        hasMore: true, totalCount: 101, offset: 0, limit: 100,
+      } as never);
+
+      const result = await reconcileWithAsaas({ contaId: 'tenant-a', limit: 10 });
+
+      expect(result.errors).toContain('INSTALLMENT:inst-paged:PAYMENT_LOOKUP_INCOMPLETE:additional_pages_available');
+      expect(result.installmentDrift).toBe(0);
+      expect(prisma.charge.count).not.toHaveBeenCalled();
+      expect(resolveFinanceReconciliationIssueByDedupe).not.toHaveBeenCalled();
+      expect(upsertFinanceReconciliationIssue).not.toHaveBeenCalled();
+      expect(prisma.standaloneInstallmentPlan.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('resolve drift antigo para parcelamento avulso cancelado quando Asaas retorna zero pagamentos', async () => {
+      vi.mocked(prisma.standaloneInstallmentPlan.findMany).mockResolvedValue([{
+        id: 'plan-canceled', asaasInstallmentId: 'inst-canceled', status: 'CANCELED',
+      }] as never);
+      vi.mocked(getInstallment).mockResolvedValue({ id: 'inst-canceled' } as never);
+      vi.mocked(listInstallmentPayments).mockResolvedValue({
+        data: [], hasMore: false, totalCount: 0, offset: 0, limit: 100,
+      } as never);
+
+      const result = await reconcileWithAsaas({ contaId: 'tenant-a', limit: 10 });
+
+      expect(result.installmentDrift).toBe(0);
+      expect(prisma.standaloneInstallmentPlan.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ contaId: 'tenant-a' }),
+        select: expect.objectContaining({ status: true }),
+      }));
+      expect(resolveFinanceReconciliationIssueByDedupe).toHaveBeenCalledWith(expect.objectContaining({
+        contaId: 'tenant-a', dedupeKey: 'PAYMENT_STATUS_DRIFT:INSTALLMENT_PLAN:plan-canceled',
+      }));
+      expect(prisma.charge.updateMany).not.toHaveBeenCalled();
+      expect(prisma.charge.count).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({
+          contaId: 'tenant-a', standaloneInstallmentPlanId: 'plan-canceled', status: { not: 'CANCELED' },
+        }),
+      }));
+    });
+
+    it('mantém drift quando plano cancelado ainda tem pagamento listado pelo Asaas', async () => {
+      vi.mocked(prisma.installmentPlan.findMany).mockResolvedValue([{
+        id: 'plan-canceled-with-payment', asaasInstallmentId: 'inst-canceled-with-payment', status: 'CANCELED',
+      }] as never);
+      vi.mocked(getInstallment).mockResolvedValue({ id: 'inst-canceled-with-payment' } as never);
+      vi.mocked(listInstallmentPayments).mockResolvedValue({
+        data: [{ id: 'pay-still-remote', status: 'PENDING', deleted: false }],
+        hasMore: false, totalCount: 1, offset: 0, limit: 100,
+      } as never);
+
+      const result = await reconcileWithAsaas({ contaId: 'tenant-a', limit: 10 });
+
+      expect(result.installmentDrift).toBe(1);
+      expect(upsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+        contaId: 'tenant-a', entityId: 'plan-canceled-with-payment', localStatus: '0', remoteStatus: '1',
+      }));
+      expect(prisma.charge.updateMany).not.toHaveBeenCalled();
+      expect(prisma.matricula.updateMany).not.toHaveBeenCalled();
+      expect(prisma.installmentPlan.updateMany).toHaveBeenCalledWith({
+        where: { id: 'plan-canceled-with-payment', contaId: 'tenant-a' },
+        data: { lastProviderCheckAt: expect.any(Date) },
+      });
+    });
+
+    it('conta apenas charges não canceladas em plano ativo e preserva divergência legítima', async () => {
+      vi.mocked(prisma.installmentPlan.findMany).mockResolvedValue([{
+        id: 'plan-active', asaasInstallmentId: 'inst-active', status: 'ACTIVE',
+      }] as never);
+      vi.mocked(prisma.charge.count).mockResolvedValue(2);
+      vi.mocked(getInstallment).mockResolvedValue({ id: 'inst-active' } as never);
+      vi.mocked(listInstallmentPayments).mockResolvedValue({
+        data: [
+          { id: 'pay-active', status: 'PENDING', deleted: false },
+          { id: 'pay-deleted', status: 'DELETED', deleted: true },
+        ], hasMore: false, totalCount: 2, offset: 0, limit: 100,
+      } as never);
+
+      const result = await reconcileWithAsaas({ contaId: 'tenant-a', limit: 10 });
+
+      expect(result.installmentDrift).toBe(1);
+      expect(prisma.charge.count).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ contaId: 'tenant-a', status: { not: 'CANCELED' } }),
+      }));
+      expect(upsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+        contaId: 'tenant-a', entityId: 'plan-active',
+        localStatus: '2', remoteStatus: '1',
+      }));
+      expect(prisma.charge.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('em dryRun informa drift sem abrir/resolver issue nem atualizar plano', async () => {
+      vi.mocked(prisma.installmentPlan.findMany).mockResolvedValue([{
+        id: 'plan-dry-run', asaasInstallmentId: 'inst-dry-run', status: 'ACTIVE',
+      }] as never);
+      vi.mocked(prisma.charge.count).mockResolvedValue(2);
+      vi.mocked(getInstallment).mockResolvedValue({ id: 'inst-dry-run' } as never);
+      vi.mocked(listInstallmentPayments).mockResolvedValue({
+        data: [{ id: 'pay-one', status: 'PENDING', deleted: false }],
+        hasMore: false, totalCount: 1, offset: 0, limit: 100,
+      } as never);
+
+      const result = await reconcileWithAsaas({ contaId: 'tenant-a', limit: 10, dryRun: true });
+
+      expect(result.installmentDrift).toBe(1);
+      expect(upsertFinanceReconciliationIssue).not.toHaveBeenCalled();
+      expect(resolveFinanceReconciliationIssueByDedupe).not.toHaveBeenCalled();
+      expect(prisma.installmentPlan.updateMany).not.toHaveBeenCalled();
+      expect(prisma.charge.updateMany).not.toHaveBeenCalled();
+      expect(prisma.matricula.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('reconcilia apenas planos e charges do tenant solicitado', async () => {
+      const tenantPlans = [
+        { id: 'plan-tenant-a', contaId: 'tenant-a', asaasInstallmentId: 'inst-tenant-a', status: 'ACTIVE' },
+        { id: 'plan-tenant-b', contaId: 'tenant-b', asaasInstallmentId: 'inst-tenant-b', status: 'ACTIVE' },
+      ];
+      vi.mocked(prisma.installmentPlan.findMany).mockResolvedValue(
+        tenantPlans.filter((plan) => plan.contaId === 'tenant-a') as never,
+      );
+      vi.mocked(prisma.charge.count).mockResolvedValue(2);
+      vi.mocked(getInstallment).mockResolvedValue({ id: 'inst-tenant-a' } as never);
+      vi.mocked(listInstallmentPayments).mockResolvedValue({
+        data: [{ id: 'pay-tenant-a', status: 'PENDING', deleted: false }],
+        hasMore: false, totalCount: 1, offset: 0, limit: 100,
+      } as never);
+
+      const result = await reconcileWithAsaas({ contaId: 'tenant-a', limit: 10 });
+
+      expect(result.installmentDrift).toBe(1);
+      expect(prisma.installmentPlan.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ contaId: 'tenant-a' }),
+      }));
+      expect(prisma.standaloneInstallmentPlan.findMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ contaId: 'tenant-a' }),
+      }));
+      expect(prisma.charge.count).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ contaId: 'tenant-a' }),
+      }));
+      expect(upsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+        contaId: 'tenant-a', entityId: 'plan-tenant-a',
+      }));
+      expect(prisma.installmentPlan.updateMany).toHaveBeenCalledWith({
+        where: { id: 'plan-tenant-a', contaId: 'tenant-a' },
+        data: { lastProviderCheckAt: expect.any(Date) },
+      });
+      expect(prisma.charge.updateMany).not.toHaveBeenCalled();
+      expect(prisma.matricula.updateMany).not.toHaveBeenCalled();
     });
 
     it('não reconcilia quando status local já converge com o Asaas', async () => {
