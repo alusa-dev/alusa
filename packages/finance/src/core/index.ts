@@ -129,3 +129,5 @@ export {
   toFormaPagamento,
   toBillingType,
 } from './billing-helpers';
+
+export { formatInstallmentDescription, parseInstallmentDescriptionIndex } from './installment-description';

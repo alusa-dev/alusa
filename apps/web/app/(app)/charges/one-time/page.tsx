@@ -7,7 +7,7 @@
  * UI alinhada à listagem "Todas as cobranças" (TableLayout, EntityFiltersBar, tabela responsiva).
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import {
@@ -30,11 +30,12 @@ import { ChargeDisplayStatusBadge } from '@/features/finance/operations/componen
 import { buildChargeDisplayStatusDTO } from '@/lib/finance/charge-display-status';
 import { useFinanceListLoad } from '@/features/finance/operations/hooks/use-finance-list-load';
 import { useVisibleChargeConvergence } from '@/features/finance/operations/hooks/use-visible-charge-convergence';
+import { formatCivilDate } from '@/lib/finance/format-civil-date';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 
-const formatDate = (dateStr: string) => new Date(dateStr || '').toLocaleDateString('pt-BR');
+const formatDate = (dateStr: string) => formatCivilDate(dateStr);
 
 const getTipoLabel = (tipo: string | undefined, origin: string | undefined) => {
   if (origin === 'STANDALONE') return 'Avulsa Externa';
@@ -75,7 +76,8 @@ export default function CobrancasAvulsasPage() {
   const router = useRouter();
   const [cobrancas, setCobrancas] = useState<Cobranca[]>([]);
   const [page, setPage] = useState<number>(1);
-  const [pageSize] = useState<number>(6);
+  const [pageSize] = useState<number>(20);
+  const [totalItems, setTotalItems] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const searchParams = useSearchParams();
   const statusView = searchParams.get('view') || 'open';
@@ -96,6 +98,10 @@ export default function CobrancasAvulsasPage() {
       const params = new URLSearchParams();
       params.set('statusView', statusView);
       params.set('scope', 'standalone');
+      params.set('page', String(page));
+      params.set('pageSize', String(pageSize));
+      params.set('sortOrder', sortOrder);
+      if (searchQuery.trim()) params.set('q', searchQuery.trim());
       const res = await fetch(`/api/financeiro/cobrancas?${params.toString()}`, {
         cache: 'no-store',
         signal,
@@ -116,9 +122,10 @@ export default function CobrancasAvulsasPage() {
       }
       const payload = await res.json().catch(() => null);
       setCobrancas((payload && payload.data) || payload || []);
+      setTotalItems(typeof payload?.total === 'number' ? payload.total : 0);
     },
     {
-      deps: [statusView],
+      deps: [statusView, page, pageSize, searchQuery, sortOrder],
       liveRefresh: { localRefresh: true, financeiro: true, cobrancaQueries: true },
       intervalMs: 45_000,
       minIntervalMs: 10_000,
@@ -135,29 +142,7 @@ export default function CobrancasAvulsasPage() {
     [searchParams, router],
   );
 
-  const orderedCobrancas = useMemo(() => {
-    let items = [...cobrancas];
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      items = items.filter((c) => {
-        const name = (c.aluno?.nome ?? c.matricula?.aluno?.nome ?? '').toLowerCase();
-        const description = (c.description ?? '').toLowerCase();
-        return name.includes(q) || description.includes(q) || c.id.toLowerCase().includes(q);
-      });
-    }
-    items.sort((a, b) => {
-      const ta = new Date(a.vencimento ?? '').getTime() || 0;
-      const tb = new Date(b.vencimento ?? '').getTime() || 0;
-      return ta - tb;
-    });
-    if (sortOrder === 'DESC') items.reverse();
-    return items;
-  }, [cobrancas, searchQuery, sortOrder]);
-
-  const visibleCobrancas = useMemo(
-    () => orderedCobrancas.slice((page - 1) * pageSize, page * pageSize),
-    [orderedCobrancas, page, pageSize],
-  );
+  const visibleCobrancas = cobrancas;
 
   useVisibleChargeConvergence({
     enabled: statusView === 'open',
@@ -282,12 +267,12 @@ export default function CobrancasAvulsasPage() {
             </div>
 
             <div className="min-w-0 divide-y">
-              {orderedCobrancas.length === 0 ? (
+              {visibleCobrancas.length === 0 ? (
                 <div className="px-6 py-12 text-center text-gray-500">
                   Nenhuma cobrança avulsa encontrada
                 </div>
               ) : (
-                orderedCobrancas.slice((page - 1) * pageSize, page * pageSize).map((cobranca) => {
+                visibleCobrancas.map((cobranca) => {
                   const displayStatus =
                     cobranca.displayStatus ??
                     buildChargeDisplayStatusDTO({
@@ -422,10 +407,10 @@ export default function CobrancasAvulsasPage() {
                 })
               )}
             </div>
-            {orderedCobrancas.length > pageSize ? (
+            {totalItems > pageSize ? (
               <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
                 <Pagination
-                  totalItems={orderedCobrancas.length}
+                  totalItems={totalItems}
                   pageSize={pageSize}
                   page={page}
                   onChange={setPage}

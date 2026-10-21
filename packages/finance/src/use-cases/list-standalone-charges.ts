@@ -23,6 +23,7 @@ export type ListStandaloneChargesInput = {
   search?: string;
   /** Filtro de status unificado. */
   statusView?: 'open' | 'paid' | 'all';
+  sortOrder?: 'ASC' | 'DESC';
 };
 
 export type StandaloneChargeItem = {
@@ -135,7 +136,10 @@ async function shadowCompareStandaloneReadModelWithDatabase(
   const [legacyIds, total] = await Promise.all([
     db.charge.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      orderBy: [
+        { dueDate: input.sortOrder === 'ASC' ? 'asc' : 'desc' },
+        { id: input.sortOrder === 'ASC' ? 'asc' : 'desc' },
+      ],
       skip: (page - 1) * pageSize,
       take: pageSize,
       select: { id: true },
@@ -206,7 +210,10 @@ export async function listStandaloneCharges(
   const [charges, total] = await Promise.all([
     _db.charge.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      orderBy: [
+        { dueDate: input.sortOrder === 'ASC' ? 'asc' : 'desc' },
+        { id: input.sortOrder === 'ASC' ? 'asc' : 'desc' },
+      ],
       skip: (page - 1) * pageSize,
       take: pageSize,
       select: {

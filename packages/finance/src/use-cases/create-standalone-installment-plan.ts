@@ -19,6 +19,7 @@ import {
   buildInstallmentExternalReference,
   buildPaymentExternalReference,
   deriveDeterministicId,
+  formatInstallmentDescription,
   hashPayload,
   mapAsaasToChargeStatus,
   withIdempotencyGuard,
@@ -194,6 +195,7 @@ export async function createStandaloneInstallmentPlan(
         installmentPlanId: existing.id,
         externalReference: existing.externalReference,
         asaasInstallmentId: existing.asaasInstallmentId,
+        installmentCount: input.installmentCount,
         billingType: input.billingType,
         description: input.description ?? null,
         paymentRules: paymentRulesSnapshot(input),
@@ -564,6 +566,7 @@ export async function createStandaloneInstallmentPlan(
       installmentPlanId: updated.id,
       externalReference: updated.externalReference,
       asaasInstallmentId: updated.asaasInstallmentId!,
+      installmentCount: input.installmentCount,
       billingType: input.billingType,
       description: input.description ?? null,
       paymentRules: paymentRulesSnapshot(input),
@@ -705,6 +708,7 @@ async function syncInstallmentPayments(params: {
   installmentPlanId: string;
   externalReference: string;
   asaasInstallmentId: string;
+  installmentCount: number;
   billingType: BillingType;
   description: string | null;
   paymentRules: ReturnType<typeof paymentRulesSnapshot>;
@@ -718,6 +722,7 @@ async function syncInstallmentPayments(params: {
     installmentPlanId,
     externalReference,
     asaasInstallmentId,
+    installmentCount,
     billingType,
     description,
     paymentRules,
@@ -756,7 +761,12 @@ async function syncInstallmentPayments(params: {
 
   const sortedPayments = [...payments].sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 
-  for (const payment of sortedPayments) {
+  for (const [paymentIndex, payment] of sortedPayments.entries()) {
+    const paymentDescription = formatInstallmentDescription(
+      paymentIndex + 1,
+      installmentCount,
+      payment.description ?? description,
+    );
     const vencimento = new Date(payment.dueDate);
     const paymentExternalReference = buildPaymentExternalReference(externalReference, payment.id);
     const effectivePaymentStatus =
@@ -795,7 +805,7 @@ async function syncInstallmentPayments(params: {
         status: mapAsaasToChargeStatus(effectivePaymentStatus),
         statusUpdatedAt: new Date(),
         payerName,
-        description: payment.description ?? description,
+        description: paymentDescription,
         value: payment.value,
         dueDate: vencimento,
         billingType: payment.billingType ?? billingType,
@@ -814,7 +824,7 @@ async function syncInstallmentPayments(params: {
         statusUpdatedAt: new Date(),
         asaasPaymentId: payment.id,
         payerName,
-        description: payment.description ?? description,
+        description: paymentDescription,
         value: payment.value,
         dueDate: vencimento,
         billingType: payment.billingType ?? billingType,

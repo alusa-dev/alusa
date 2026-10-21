@@ -276,6 +276,18 @@ describe('listStandaloneCharges', () => {
     expect(call.take).toBe(10);
   });
 
+  it('ordena no banco por vencimento e id antes de aplicar paginação no modo legacy', async () => {
+    const db = createMockDb();
+
+    await listStandaloneCharges({ contaId: 'ct_1', page: 2, pageSize: 10, sortOrder: 'ASC' }, db);
+
+    expect(db.charge.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      orderBy: [{ dueDate: 'asc' }, { id: 'asc' }],
+      skip: 10,
+      take: 10,
+    }));
+  });
+
   it('preenche fallback para payerName e description', async () => {
     const db = createMockDb();
     db.charge.findMany.mockResolvedValue([

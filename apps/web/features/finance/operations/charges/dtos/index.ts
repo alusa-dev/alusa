@@ -37,6 +37,7 @@ export const financeiroCobrancasQueryDTOSchema = z.object({
   origin: z.string().default('all'),
   groupInstallments: z.boolean().default(true),
   scope: z.string().optional(),
+  sortOrder: z.enum(['ASC', 'DESC']).default('DESC'),
 });
 
 export type FinanceiroCobrancasQueryDTO = z.infer<typeof financeiroCobrancasQueryDTOSchema>;

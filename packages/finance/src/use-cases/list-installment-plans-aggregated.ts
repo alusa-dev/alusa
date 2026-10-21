@@ -2,8 +2,9 @@ import { prisma } from '@alusa/database';
 import type { InstallmentStatus } from '@prisma/client';
 import type { UnifiedInstallmentGroupItem } from '../dtos/unified-billing';
 import { resolveUnifiedChargeStatus } from '../dtos/unified-billing';
-import { buildPaymentReferencePrefix, isPaymentReferenceForParent } from '../core';
+import { buildPaymentReferencePrefix, isPaymentReferenceForParent, parseInstallmentDescriptionIndex } from '../core';
 import { resolveUnambiguousCustomerPayer } from '../customer/customer-identity';
+import { getAcademicDateKey, getCurrentAcademicDateKey } from '@alusa/shared/date-only';
 
 // ---------------------------------------------------------------------------
 // Input / Output
@@ -14,8 +15,9 @@ export type ListInstallmentPlansAggregatedInput = {
   page?: number;
   pageSize?: number;
   search?: string;
-  /** Filtro de status do plano (Prisma InstallmentStatus). */
-  statusFilter?: InstallmentStatus | InstallmentStatus[];
+  /** Filtro consolidado exibido na lista; os valores legados seguem aceitos. */
+  statusFilter?: InstallmentStatus | InstallmentStatus[] | StatusParcelamento | StatusParcelamento[];
+  sortOrder?: 'ASC' | 'DESC';
 };
 
 export type InstallmentGroupItemDTO = UnifiedInstallmentGroupItem & {
@@ -85,10 +87,11 @@ function resolveParcelaStatus(input: {
 
 function deriveStatus(
   planStatus: string,
-  parcelas: Array<{ status: string; vencimento: Date }>,
+  installmentCount: number,
+  parcelas: Array<{ status: string; vencimento: Date | null; installmentIndex?: number | null }>,
+  todayKey: string,
 ): StatusParcelamento {
   if (planStatus === 'CANCELED') return 'CANCELADO';
-  if (planStatus === 'COMPLETED') return 'QUITADO';
 
   if (parcelas.length === 0) return 'EM_DIA';
 
@@ -96,20 +99,29 @@ function deriveStatus(
   if (allCanceled) return 'CANCELADO';
 
   const allPaid = parcelas.every((p) => PAID_STATUSES.has(p.status));
-  if (allPaid && parcelas.length > 0) return 'QUITADO';
+  // A conclusão do plano e as parcelas já materializadas podem chegar em
+  // momentos diferentes. Só exibir quitado quando o conjunto local cobre
+  // todas as parcelas esperadas, para não esconder faturas ausentes.
+  const materializedIndices = new Set(parcelas.map((p) => p.installmentIndex).filter((index): index is number => index != null));
+  const planIsFullyMaterialized =
+    installmentCount > 0 &&
+    materializedIndices.size === installmentCount &&
+    Array.from({ length: installmentCount }, (_, index) => index + 1)
+      .every((index) => materializedIndices.has(index));
+  if (planIsFullyMaterialized && allPaid && parcelas.length > 0) return 'QUITADO';
 
   const allSettled = parcelas.every(
     (p) => PAID_STATUSES.has(p.status) || p.status === 'CANCELADO',
   );
   const hasPaid = parcelas.some((p) => PAID_STATUSES.has(p.status));
-  if (allSettled && hasPaid) return 'QUITADO';
+  if (planIsFullyMaterialized && allSettled && hasPaid) return 'QUITADO';
 
-  const now = new Date();
   const hasOverdue = parcelas.some(
     (p) =>
       !PAID_STATUSES.has(p.status) &&
       p.status !== 'CANCELADO' &&
-      new Date(p.vencimento) < now,
+      p.vencimento !== null &&
+      (getAcademicDateKey(p.vencimento) ?? '') < todayKey,
   );
 
   return hasOverdue ? 'ATRASADO' : 'EM_DIA';
@@ -142,14 +154,17 @@ export async function listInstallmentPlansAggregated(
   const page = Math.max(1, input.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 20));
   const { contaId, search, statusFilter } = input;
+  const account = typeof (_db as { conta?: { findUnique?: unknown } }).conta?.findUnique === 'function'
+    ? await (_db as typeof prisma).conta.findUnique({ where: { id: contaId }, select: { timezone: true } })
+    : null;
+  const todayKey = getCurrentAcademicDateKey(new Date(), account?.timezone ?? undefined);
 
   // =================================================================
   // 1. Buscar Academic InstallmentPlans
   // =================================================================
   const academicWhere: Record<string, unknown> = { contaId };
-  if (statusFilter) {
-    academicWhere.status = Array.isArray(statusFilter) ? { in: statusFilter } : statusFilter;
-  }
+  // O filtro de status é aplicado depois de derivar statusConsolidado das
+  // parcelas; filtrar pelo status bruto do plano diverge do que a tela exibe.
 
   const [installmentPlans, standalonePlans] = await Promise.all([
     _db.installmentPlan.findMany({
@@ -217,6 +232,7 @@ export async function listInstallmentPlansAggregated(
               select: {
                 id: true,
                 status: true,
+                descricao: true,
                 asaasPaymentId: true,
                 asaasStatus: true,
                 liquidacaoStatus: true,
@@ -236,12 +252,14 @@ export async function listInstallmentPlansAggregated(
           },
           select: {
             standaloneInstallmentPlanId: true,
+            externalReference: true,
             asaasPaymentId: true,
             asaasStatus: true,
             liquidacaoStatus: true,
             payerName: true,
             status: true,
             dueDate: true,
+            description: true,
           },
         })
       : Promise.resolve([]),
@@ -276,7 +294,7 @@ export async function listInstallmentPlansAggregated(
   // =================================================================
   // 4. Agrupar cobranças acadêmicas por planId (via externalReference prefix)
   // =================================================================
-  const cobrancasByPlanId = new Map<string, Array<{ status: string; vencimento: Date }>>();
+  const cobrancasByPlanId = new Map<string, Array<{ status: string; vencimento: Date; installmentIndex: number | null }>>();
   for (const charge of academicCharges) {
     if (!charge.cobranca || !charge.externalReference) continue;
     const ownerPlan = installmentPlans.find(
@@ -292,6 +310,7 @@ export async function listInstallmentPlansAggregated(
         hasAsaasLink: Boolean(charge.cobranca.asaasPaymentId ?? charge.asaasPaymentId),
       }),
       vencimento: charge.cobranca.vencimento,
+      installmentIndex: parseInstallmentDescriptionIndex(charge.cobranca.descricao, ownerPlan.installmentCount),
     });
     cobrancasByPlanId.set(ownerPlan.id, arr);
   }
@@ -328,10 +347,10 @@ export async function listInstallmentPlansAggregated(
       (a, b) => a.vencimento.getTime() - b.vencimento.getTime(),
     );
     const proxima = sortedParcelas.find(
-      (p) => !PAID_STATUSES.has(p.status) && p.status !== 'CANCELADO',
+      (p) => p.vencimento !== null && !PAID_STATUSES.has(p.status) && p.status !== 'CANCELADO' && p.status !== 'ESTORNADO',
     );
 
-    const statusConsolidado = deriveStatus(plan.status, parcelas);
+    const statusConsolidado = deriveStatus(plan.status, totalParcelas, parcelas, todayKey);
 
     // InstallmentPlan.value = per-installment
     const installmentValue = Number(plan.value);
@@ -359,19 +378,24 @@ export async function listInstallmentPlansAggregated(
   }
 
   // Standalone plans
-  const standaloneChargesByPlan = new Map<string, Array<{ status: string; vencimento: Date; payerName: string | null }>>();
+  const standalonePlanById = new Map(standalonePlans.map((plan) => [plan.id, plan]));
+  const standaloneChargesByPlan = new Map<string, Array<{ status: string; vencimento: Date | null; payerName: string | null; installmentIndex: number | null }>>();
   for (const charge of standaloneCharges) {
     if (!charge.standaloneInstallmentPlanId) continue;
     const arr = standaloneChargesByPlan.get(charge.standaloneInstallmentPlanId) ?? [];
     arr.push({
       payerName: charge.payerName,
+      installmentIndex: parseInstallmentDescriptionIndex(
+        charge.description,
+        standalonePlanById.get(charge.standaloneInstallmentPlanId)?.installmentCount ?? 0,
+      ),
       status: resolveParcelaStatus({
         localStatus: charge.status,
         asaasStatus: charge.asaasStatus,
         liquidacaoStatus: charge.liquidacaoStatus,
         hasAsaasLink: Boolean(charge.asaasPaymentId),
       }),
-      vencimento: charge.dueDate ?? new Date(),
+      vencimento: charge.dueDate,
     });
     standaloneChargesByPlan.set(charge.standaloneInstallmentPlanId, arr);
   }
@@ -395,13 +419,13 @@ export async function listInstallmentPlansAggregated(
     );
 
     const sortedParcelas = [...parcelas].sort(
-      (a, b) => a.vencimento.getTime() - b.vencimento.getTime(),
+      (a, b) => (a.vencimento?.getTime() ?? Number.POSITIVE_INFINITY) - (b.vencimento?.getTime() ?? Number.POSITIVE_INFINITY),
     );
     const proxima = sortedParcelas.find(
-      (p) => !PAID_STATUSES.has(p.status) && p.status !== 'CANCELADO',
+      (p) => p.vencimento !== null && !PAID_STATUSES.has(p.status) && p.status !== 'CANCELADO' && p.status !== 'ESTORNADO',
     );
 
-    const statusConsolidado = deriveStatus(plan.status, parcelas);
+    const statusConsolidado = deriveStatus(plan.status, plan.installmentCount, parcelas, todayKey);
 
     // StandaloneInstallmentPlan.value = total amount
     const totalValue = Number(plan.value);
@@ -431,8 +455,27 @@ export async function listInstallmentPlansAggregated(
   // =================================================================
   // 6. Paginação (in-memory, pois search/status-consolidado são pós-query)
   // =================================================================
-  const total = allItems.length;
-  const paginatedItems = allItems.slice((page - 1) * pageSize, page * pageSize);
+  const filteredItems = statusFilter
+    ? allItems.filter((item) => {
+        const statuses = Array.isArray(statusFilter) ? statusFilter : [statusFilter];
+        const acceptedStatuses = new Set<StatusParcelamento>();
+        for (const status of statuses) {
+          if (status === 'CANCELED' || status === 'CANCELADO') acceptedStatuses.add('CANCELADO');
+          else if (status === 'COMPLETED' || status === 'QUITADO') acceptedStatuses.add('QUITADO');
+          else if (status === 'ACTIVE') {
+            acceptedStatuses.add('EM_DIA');
+            acceptedStatuses.add('ATRASADO');
+          } else if (status === 'EM_DIA' || status === 'ATRASADO') acceptedStatuses.add(status);
+        }
+        return acceptedStatuses.size === 0 || acceptedStatuses.has(item.statusConsolidado);
+      })
+    : allItems;
+  const total = filteredItems.length;
+  const orderedItems = [...filteredItems].sort((a, b) => {
+    const cmp = a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
+    return input.sortOrder === 'ASC' ? cmp : -cmp;
+  });
+  const paginatedItems = orderedItems.slice((page - 1) * pageSize, page * pageSize);
 
   return {
     items: paginatedItems,

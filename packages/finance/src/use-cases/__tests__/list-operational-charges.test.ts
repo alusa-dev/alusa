@@ -422,7 +422,7 @@ describe('listOperationalCharges', () => {
     });
   });
 
-  it('inclui assinatura familiar sem payment materializado como item recorrente navegável', async () => {
+  it('não inclui assinatura familiar sem fatura materializada na lista de cobranças', async () => {
     const db = createMockDb();
     db.cobranca.findMany.mockResolvedValue([]);
     mockChargeFindMany(db);
@@ -446,17 +446,7 @@ describe('listOperationalCharges', () => {
 
     const result = await listOperationalCharges(BASE_INPUT, db);
 
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0]).toMatchObject({
-      id: 'group:subscription:sub_family_1',
-      origin: 'STANDALONE',
-      tipo: 'RECORRENTE',
-      chargeType: 'SUBSCRIPTION',
-      isGroup: true,
-      groupType: 'SUBSCRIPTION',
-      groupId: 'sub_family_1',
-      payerName: 'Maria Família',
-    });
+    expect(result.items).toHaveLength(0);
   });
 
   it('prioriza a cobrança vigente sobre o agrupador da assinatura familiar', async () => {

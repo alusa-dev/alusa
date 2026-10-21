@@ -1160,69 +1160,9 @@ async function buildOperationalChargesCollection(
     };
   });
 
-  const materializedSubscriptionIds = new Set(
-    effectiveStandaloneResult
-      .map((charge) => charge.standaloneSubscriptionId)
-      .filter((id): id is string => typeof id === 'string' && id.length > 0),
-  );
-  const materializedFamilyGroupIds = new Set(
-    effectiveStandaloneResult
-      .filter((charge) => typeof charge.familyGroupId === 'string' && charge.familyGroupId.length > 0)
-      .map((charge) => charge.familyGroupId as string),
-  );
-
-  const standaloneSubscriptionItems: (UnifiedChargeItem & { _planId: string | null; _subscriptionKey: string | null })[] =
-    standaloneSubscriptions
-      .filter((subscription) => {
-        if (tipoFilter?.length && !tipoFilter.includes('RECORRENTE')) return false;
-        // Uma cobrança vigente é sempre a representação principal. O item
-        // agrupador só pode aparecer como fallback quando não existe charge
-        // aberto materializado, inclusive em dados legados cujo vínculo foi
-        // preservado apenas pelo familyGroupId.
-        if (materializedSubscriptionIds.has(subscription.id)) return false;
-        if (subscription.familyGroupId && materializedFamilyGroupIds.has(subscription.familyGroupId)) {
-          return false;
-        }
-        return true;
-      })
-      .map((subscription) => {
-        const payer = resolveStandalonePayer(subscription);
-        const resolvedPayerName = payer
-          ? standalonePayerNameByKey.get(`${payer.payerType}:${payer.payerId}`)
-          : null;
-
-        return {
-          id: `group:subscription:${subscription.id}`,
-          origin: 'STANDALONE' as const,
-          description: subscription.description ?? 'Assinatura recorrente',
-          payerName: resolvedPayerName ?? 'Cliente',
-          studentName: payer?.payerType === 'ALUNO' ? resolvedPayerName : null,
-          value: Number(subscription.value),
-          dueDate: subscription.nextDueDate.toISOString(),
-          billingType: subscription.billingType,
-          status: 'PENDING',
-          asaasStatus: null,
-          liquidacaoStatus: null,
-          displayStatus: buildItemDisplayStatus({
-            localStatus: 'PENDENTE',
-            asaasPaymentId: null,
-          }),
-          chargeType: 'SUBSCRIPTION',
-          linkStatus: subscription.asaasSubscriptionId ? ('LINKED' as const) : ('NEEDS_REVIEW' as const),
-          asaasPaymentId: null,
-          tipo: 'RECORRENTE',
-          createdAt: subscription.createdAt.toISOString(),
-          matriculaId: null,
-          alunoId: payer?.payerType === 'ALUNO' ? payer.payerId : null,
-          isGroup: true,
-          groupType: 'SUBSCRIPTION',
-          groupId: subscription.id,
-          installmentCount: null,
-          installmentsPaid: null,
-          _planId: null,
-          _subscriptionKey: subscription.id,
-        };
-      });
+  // A listagem operacional representa cobranças/faturas materializadas.
+  // Próximas cobranças previstas continuam visíveis na gestão da assinatura.
+  const standaloneSubscriptionItems: (UnifiedChargeItem & { _planId: string | null; _subscriptionKey: string | null })[] = [];
 
   const eventItems: (UnifiedChargeItem & { _planId: string | null; _subscriptionKey: string | null })[] = [
     ...eventFinancialEntries.map((entry) => {

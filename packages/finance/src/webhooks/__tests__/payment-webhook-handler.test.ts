@@ -1933,6 +1933,7 @@ describe('handlePaymentWebhook', () => {
   it('cria cobrança apenas quando não existe mensalidade local no ciclo exato', async () => {
     const { prisma } = await import('@alusa/database');
 
+
     vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce(null as never);
     vi.mocked(prisma.cobranca.findFirst)
       .mockResolvedValueOnce(null as never)
@@ -2298,6 +2299,7 @@ describe('handlePaymentWebhook', () => {
     vi.mocked(prisma.standaloneInstallmentPlan.findFirst).mockResolvedValueOnce({
       id: 'plan-standalone-1',
       externalReference: 'alusa:standalone-installment:plan-standalone-1',
+      installmentCount: 3,
       billingType: 'PIX',
       interestValue: null,
       fineValue: null,
@@ -2320,13 +2322,16 @@ describe('handlePaymentWebhook', () => {
         value: 90,
         netValue: 88,
         installment: 'asaas-installment-1',
-        installmentNumber: 1,
+        installmentNumber: 2,
         dueDate: '2026-08-01',
         billingType: 'PIX',
+        description: 'Curso avulso',
       },
     });
 
     expect(result).toMatchObject({ success: true, stateChanged: true });
+    expect(vi.mocked(prisma.charge.upsert).mock.calls[0]?.[0]?.create.description)
+      .toBe('Parcela 2/3 - Curso avulso');
     expect(mockLinkSaleToFirstInstallmentCharge).toHaveBeenCalledWith({
       contaId: 'conta-1',
       installmentPlanId: 'plan-standalone-1',
@@ -2336,6 +2341,69 @@ describe('handlePaymentWebhook', () => {
       chargeId: 'charge-installment-1',
       trigger: 'webhook_installment_payment_confirmed',
     });
+  });
+
+  it.each([
+    {
+      label: 'válido',
+      installmentNumber: 2,
+      expectedDescription: 'Parcela 2/3 - Descrição base',
+    },
+    { label: 'omitido', installmentNumber: undefined, expectedDescription: 'Descrição persistida' },
+    { label: 'zero inválido', installmentNumber: 0, expectedDescription: 'Descrição persistida' },
+    { label: 'fora do plano', installmentNumber: 4, expectedDescription: 'Descrição persistida' },
+  ])('aplica a descrição correta em charge existente quando ordinal é $label', async ({ installmentNumber, expectedDescription }) => {
+    const { prisma } = await import('@alusa/database');
+
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.installmentPlan.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.standaloneInstallmentPlan.findFirst).mockResolvedValueOnce({
+      id: 'plan-standalone-preserve',
+      externalReference: 'alusa:standalone-installment:plan-standalone-preserve',
+      installmentCount: 3,
+      billingType: 'PIX',
+      interestValue: null,
+      fineValue: null,
+      fineType: null,
+      discountValue: null,
+      discountType: null,
+      discountDueDateLimitDays: null,
+      customerId: 'customer-preserve',
+      familyGroupId: null,
+      payerType: 'ALUNO',
+      payerId: 'aluno-preserve',
+    } as never);
+    let persistedDescription = 'Descrição persistida';
+    vi.mocked(prisma.charge.upsert).mockImplementationOnce(((args) => {
+      persistedDescription = args.update.description ?? persistedDescription;
+      return Promise.resolve({ id: 'charge-preserve', description: persistedDescription });
+    }) as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_CONFIRMED',
+      payment: {
+        id: `pay-preserve-${installmentNumber ?? 'missing'}`,
+        status: 'CONFIRMED',
+        value: 90,
+        netValue: 88,
+        installment: 'asaas-installment-preserve',
+        installmentNumber,
+        dueDate: '2099-08-01',
+        billingType: 'PIX',
+        description: 'Descrição base',
+      },
+    });
+
+    expect(result).toMatchObject({ success: true, stateChanged: true });
+    const upsert = vi.mocked(prisma.charge.upsert).mock.calls[0]?.[0];
+    if (installmentNumber === 2) {
+      expect(upsert?.update.description).toBe('Parcela 2/3 - Descrição base');
+    } else {
+      expect(upsert?.update).not.toHaveProperty('description');
+    }
+    expect(persistedDescription).toBe(expectedDescription);
   });
 
   it('preserva o pagador explícito da charge quando o plano legado ainda é ambíguo', async () => {

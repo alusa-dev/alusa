@@ -27,13 +27,13 @@ import {
 import { formatFormaPagamentoLabel } from '@/lib/finance/asaas-sync';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
 import { useFinanceListLoad } from '@/features/finance/operations/hooks/use-finance-list-load';
+import { formatCivilDate } from '@/lib/finance/format-civil-date';
 import { ChargeDisplayStatusBadge } from '@/features/finance/operations/components/ChargeDisplayStatusBadge';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 
-const formatDate = (dateStr: string | null) =>
-  dateStr ? new Date(dateStr).toLocaleDateString('pt-BR') : '—';
+const formatDate = (dateStr: string | null) => formatCivilDate(dateStr);
 
 type CobrancaFilha = {
   id: string;

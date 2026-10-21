@@ -46,9 +46,9 @@ export async function GET(req: NextRequest) {
       return err(400, 'DADOS_INVALIDOS', issue.message);
     }
     const { page, pageSize, q: search, status: statusRaw } = parsedQuery.data;
-    const statusFilter: 'ACTIVE' | 'COMPLETED' | 'CANCELED' | undefined =
+    const statusFilter: 'ACTIVE' | 'COMPLETED' | 'CANCELED' | 'EM_DIA' | 'ATRASADO' | 'QUITADO' | 'CANCELADO' | undefined =
       statusRaw && statusRaw !== 'all'
-        ? (statusRaw.toUpperCase() as 'ACTIVE' | 'COMPLETED' | 'CANCELED')
+        ? (statusRaw.toUpperCase() as 'ACTIVE' | 'COMPLETED' | 'CANCELED' | 'EM_DIA' | 'ATRASADO' | 'QUITADO' | 'CANCELADO')
         : undefined;
 
     const result = await listInstallmentPlansAggregated({
@@ -57,6 +57,7 @@ export async function GET(req: NextRequest) {
       pageSize,
       search,
       statusFilter,
+      sortOrder: searchParams.get('sortOrder') === 'ASC' ? 'ASC' : 'DESC',
     });
 
     return NextResponse.json(

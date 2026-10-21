@@ -20,7 +20,7 @@ import {
 import { resolveLiquidacaoFromAsaasPayment } from '../mappers/liquidacao-from-asaas';
 import { normalizeEventMapChargebackStatus, resolveEventMapChargebackStatus } from './event-map-chargeback-status';
 import { publishFinanceEvent } from '../realtime/finance-realtime-publisher';
-import { buildPaymentExternalReference, mapAsaasToChargeStatus } from '../core';
+import { buildPaymentExternalReference, formatInstallmentDescription, mapAsaasToChargeStatus } from '../core';
 import { ensureAcademicChargeForCobranca } from '../fiscal/ensure-academic-charge-for-cobranca';
 import { auditLogService } from '../foundation/audit-log.service';
 import { findStandaloneSubscription } from '../foundation/standalone-subscription-store';
@@ -2932,6 +2932,7 @@ async function handlePaymentWebhookCore(
             familyGroupId: true,
             payerType: true,
             payerId: true,
+            installmentCount: true,
           },
         });
 
@@ -2956,6 +2957,15 @@ async function handlePaymentWebhookCore(
             standalonePlan.payerType && standalonePlan.payerId
               ? { payerType: standalonePlan.payerType, payerId: standalonePlan.payerId }
               : {};
+          const installmentDescription = formatInstallmentDescription(
+            payload.payment.installmentNumber,
+            standalonePlan.installmentCount,
+            (payload.payment as { description?: string | null }).description,
+          );
+          const hasReliableInstallmentNumber =
+            Number.isInteger(payload.payment.installmentNumber) &&
+            payload.payment.installmentNumber! >= 1 &&
+            payload.payment.installmentNumber! <= standalonePlan.installmentCount;
 
           const standaloneInstallmentCharge = await prisma.charge.upsert({
             where: {
@@ -2971,6 +2981,9 @@ async function handlePaymentWebhookCore(
               billingType: payload.payment.billingType ?? standalonePlan.billingType,
               dueDate: vencimento,
               invoiceUrl: resolveChargeInvoiceUrlUpdate(payload.payment.invoiceUrl),
+              ...(hasReliableInstallmentNumber
+                ? { description: installmentDescription }
+                : {}),
               interestValue: standalonePlan.interestValue,
               fineValue: standalonePlan.fineValue,
               fineType: standalonePlan.fineType,
@@ -2987,7 +3000,7 @@ async function handlePaymentWebhookCore(
               statusUpdatedAt: new Date(),
               asaasPaymentId: payload.payment.id,
               payerName,
-              description: (payload.payment as { description?: string | null }).description ?? null,
+              description: installmentDescription,
               value: payload.payment.value,
               dueDate: vencimento,
               billingType: payload.payment.billingType ?? standalonePlan.billingType,

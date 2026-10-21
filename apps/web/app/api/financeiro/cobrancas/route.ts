@@ -63,6 +63,7 @@ export async function GET(req: NextRequest) {
       origin: url.searchParams.get('origin') || 'all',
       groupInstallments: url.searchParams.get('groupInstallments') !== 'false',
       scope: url.searchParams.get('scope') || undefined,
+      sortOrder: url.searchParams.get('sortOrder') === 'ASC' ? 'ASC' : 'DESC',
     });
 
     const {
@@ -75,6 +76,7 @@ export async function GET(req: NextRequest) {
       origin,
       groupInstallments,
       scope,
+      sortOrder,
     } = query as typeof query & { origin: ChargeOrigin };
 
     // FASE 1: se scope=operational, usar o novo use-case (fila operacional)
@@ -134,6 +136,7 @@ export async function GET(req: NextRequest) {
         pageSize,
         search: search || undefined,
         statusView,
+        sortOrder,
       });
 
       const now = Date.now();

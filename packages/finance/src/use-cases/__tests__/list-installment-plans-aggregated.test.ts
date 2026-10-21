@@ -160,6 +160,58 @@ describe('listInstallmentPlansAggregated', () => {
     db.charge.findMany.mockResolvedValue([
       {
         externalReference: 'alusa:installment:ip_1:sub_1:payment:1',
+        cobranca: { id: 'cob_1', status: 'PAGO', descricao: 'Parcela 1/2 - Plano', vencimento: new Date('2025-01-15') },
+      },
+      {
+        externalReference: 'alusa:installment:ip_1:sub_1:payment:2',
+        cobranca: { id: 'cob_2', status: 'PAGO', descricao: 'Parcela 2/2 - Plano', vencimento: new Date('2025-02-15') },
+      },
+    ]);
+
+    const result = await listInstallmentPlansAggregated({ contaId: 'ct_1' }, db);
+
+    expect(result.items[0].statusConsolidado).toBe('QUITADO');
+  });
+
+  it('reconhece marcadores acadêmicos reais no sufixo e formato legado acad.', async () => {
+    const db = createMockDb();
+    db.installmentPlan.findMany.mockResolvedValue([
+      makeAcademicPlan({ status: 'COMPLETED', installmentCount: 2 }),
+    ]);
+    db.charge.findMany.mockResolvedValue([
+      {
+        externalReference: 'alusa:installment:ip_1:sub_1:payment:payment-id-a',
+        cobranca: {
+          id: 'cob_1',
+          status: 'PAGO',
+          descricao: 'Curso anual - Parcela 1/2',
+          vencimento: new Date('2025-01-15'),
+        },
+      },
+      {
+        externalReference: 'alusa:installment:ip_1:sub_1:payment:payment-id-b',
+        cobranca: {
+          id: 'cob_2',
+          status: 'PAGO',
+          descricao: 'Parcela acad. 2/2',
+          vencimento: new Date('2025-02-15'),
+        },
+      },
+    ]);
+
+    const result = await listInstallmentPlansAggregated({ contaId: 'ct_1' }, db);
+
+    expect(result.items[0].statusConsolidado).toBe('QUITADO');
+  });
+
+  it('não marca plano quitado quando somente parte das faturas foi materializada', async () => {
+    const db = createMockDb();
+    db.installmentPlan.findMany.mockResolvedValue([
+      makeAcademicPlan({ status: 'COMPLETED', installmentCount: 3 }),
+    ]);
+    db.charge.findMany.mockResolvedValue([
+      {
+        externalReference: 'alusa:installment:ip_1:sub_1:payment:1',
         cobranca: { id: 'cob_1', status: 'PAGO', vencimento: new Date('2025-01-15') },
       },
       {
@@ -170,7 +222,129 @@ describe('listInstallmentPlansAggregated', () => {
 
     const result = await listInstallmentPlansAggregated({ contaId: 'ct_1' }, db);
 
+    expect(result.items[0].statusConsolidado).toBe('EM_DIA');
+  });
+
+  it('não marca quitado quando há cobrança duplicada de índice e outro índice ausente', async () => {
+    const db = createMockDb();
+    db.installmentPlan.findMany.mockResolvedValue([
+      makeAcademicPlan({ status: 'COMPLETED', installmentCount: 3 }),
+    ]);
+    db.charge.findMany.mockResolvedValue([
+      { externalReference: 'alusa:installment:ip_1:sub_1:payment:pay-1', cobranca: { id: 'cob_1', status: 'PAGO', descricao: 'Parcela 1/3 - Plano', vencimento: new Date('2025-01-15') } },
+      { externalReference: 'alusa:installment:ip_1:sub_1:payment:pay-1-duplicate', cobranca: { id: 'cob_1-duplicate', status: 'PAGO', descricao: 'Parcela 1/3 - Plano', vencimento: new Date('2025-01-15') } },
+      { externalReference: 'alusa:installment:ip_1:sub_1:payment:pay-2', cobranca: { id: 'cob_2', status: 'PAGO', descricao: 'Parcela 2/3 - Plano', vencimento: new Date('2025-02-15') } },
+    ]);
+
+    const result = await listInstallmentPlansAggregated({ contaId: 'ct_1' }, db);
+
+    expect(result.items[0].statusConsolidado).toBe('EM_DIA');
+  });
+
+  it('não interpreta sufixo numérico de externalReference como número da parcela', async () => {
+    const db = createMockDb();
+    db.installmentPlan.findMany.mockResolvedValue([
+      makeAcademicPlan({ status: 'COMPLETED', installmentCount: 3 }),
+    ]);
+    db.charge.findMany.mockResolvedValue([10, 11, 12].map((paymentId) => ({
+      externalReference: `alusa:installment:ip_1:sub_1:payment:${paymentId}`,
+      cobranca: { id: `cob_${paymentId}`, status: 'PAGO', vencimento: new Date('2025-01-15') },
+    })));
+
+    const result = await listInstallmentPlansAggregated({ contaId: 'ct_1' }, db);
+
+    expect(result.items[0].statusConsolidado).toBe('EM_DIA');
+  });
+
+  it('mantém status conservador em parcelamento standalone sem ordinal local confiável', async () => {
+    const db = createMockDb();
+    db.standaloneInstallmentPlan.findMany.mockResolvedValue([
+      makeStandalonePlan({ status: 'COMPLETED', installmentCount: 2 }),
+    ]);
+    db.charge.findMany.mockResolvedValue([
+      { standaloneInstallmentPlanId: 'sip_1', externalReference: 'alusa:installment:sip_1:payment:1', status: 'PAID', dueDate: new Date('2025-02-15') },
+      { standaloneInstallmentPlanId: 'sip_1', externalReference: 'alusa:installment:sip_1:payment:2', status: 'PAID', dueDate: new Date('2025-03-15') },
+    ]);
+
+    const result = await listInstallmentPlansAggregated({ contaId: 'ct_1' }, db);
+
+    expect(result.items[0].statusConsolidado).toBe('EM_DIA');
+  });
+
+  it('deriva QUITADO em standalone quando todas as parcelas pagas têm ordinal local 1..N', async () => {
+    const db = createMockDb();
+    db.standaloneInstallmentPlan.findMany.mockResolvedValue([
+      makeStandalonePlan({ status: 'COMPLETED', installmentCount: 2 }),
+    ]);
+    db.charge.findMany.mockResolvedValue([
+      { standaloneInstallmentPlanId: 'sip_1', status: 'PAID', dueDate: new Date('2025-02-15'), description: 'Parcela 1/2 - Curso anual' },
+      { standaloneInstallmentPlanId: 'sip_1', status: 'PAID', dueDate: new Date('2025-03-15'), description: 'Parcela 2/2 - Curso anual' },
+    ]);
+
+    const result = await listInstallmentPlansAggregated({ contaId: 'ct_1' }, db);
+
     expect(result.items[0].statusConsolidado).toBe('QUITADO');
+  });
+
+  it('compara vencimento por data civil, ficando em dia no vencimento e atrasado no dia seguinte', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-10T23:30:00.000Z'));
+    const db = createMockDb();
+    db.installmentPlan.findMany.mockResolvedValue([makeAcademicPlan({ installmentCount: 2 })]);
+    db.charge.findMany.mockResolvedValue([
+      { externalReference: 'alusa:installment:ip_1:sub_1:payment:1', cobranca: { id: 'cob_today', status: 'PENDENTE', vencimento: new Date('2026-06-10T00:00:00.000Z') } },
+    ]);
+
+    const dueToday = await listInstallmentPlansAggregated({ contaId: 'ct_1' }, db);
+    expect(dueToday.items[0].statusConsolidado).toBe('EM_DIA');
+
+    db.charge.findMany.mockResolvedValue([
+      { externalReference: 'alusa:installment:ip_1:sub_1:payment:1', cobranca: { id: 'cob_yesterday', status: 'PENDENTE', vencimento: new Date('2026-06-09T00:00:00.000Z') } },
+    ]);
+    const overdue = await listInstallmentPlansAggregated({ contaId: 'ct_1' }, db);
+    expect(overdue.items[0].statusConsolidado).toBe('ATRASADO');
+    vi.useRealTimers();
+  });
+
+  it('filtra pelo status consolidado derivado das parcelas', async () => {
+    const db = createMockDb();
+    db.installmentPlan.findMany.mockResolvedValue([makeAcademicPlan()]);
+    db.charge.findMany.mockResolvedValue([
+      {
+        externalReference: 'alusa:installment:ip_1:sub_1:payment:1',
+        cobranca: { id: 'cob_1', status: 'ATRASADO', vencimento: new Date('2025-01-15') },
+      },
+    ]);
+
+    const result = await listInstallmentPlansAggregated(
+      { contaId: 'ct_1', statusFilter: 'ATRASADO' },
+      db,
+    );
+
+    expect(result.total).toBe(1);
+    expect(result.items[0].statusConsolidado).toBe('ATRASADO');
+  });
+
+  it('combina status em array como união OR de estados consolidados', async () => {
+    const db = createMockDb();
+    db.installmentPlan.findMany.mockResolvedValue([
+      makeAcademicPlan({ id: 'ip_overdue', externalReference: 'alusa:installment:ip_overdue', installmentCount: 2 }),
+      makeAcademicPlan({ id: 'ip_canceled', externalReference: 'alusa:installment:ip_canceled', installmentCount: 2 }),
+      makeAcademicPlan({ id: 'ip_paid', externalReference: 'alusa:installment:ip_paid', installmentCount: 2 }),
+    ]);
+    db.charge.findMany.mockResolvedValue([
+      { externalReference: 'alusa:installment:ip_overdue:payment:p1', cobranca: { id: 'c1', status: 'ATRASADO', vencimento: new Date('2025-01-01') } },
+      { externalReference: 'alusa:installment:ip_canceled:payment:p1', cobranca: { id: 'c2', status: 'CANCELADO', vencimento: new Date('2025-01-01') } },
+      { externalReference: 'alusa:installment:ip_paid:payment:p1', cobranca: { id: 'c3', status: 'PAGO', descricao: 'Parcela 1/2 - Plano', vencimento: new Date('2025-01-01') } },
+    ]);
+
+    const result = await listInstallmentPlansAggregated(
+      { contaId: 'ct_1', statusFilter: ['ATRASADO', 'CANCELADO'] },
+      db,
+    );
+
+    expect(result.total).toBe(2);
+    expect(result.items.map((item) => item.statusConsolidado).sort()).toEqual(['ATRASADO', 'CANCELADO']);
   });
 
   it('deriva statusConsolidado QUITADO quando há mistura de parcelas pagas e canceladas sem saldo pendente', async () => {
@@ -181,11 +355,11 @@ describe('listInstallmentPlansAggregated', () => {
     db.charge.findMany.mockResolvedValue([
       {
         externalReference: 'alusa:installment:ip_1:sub_1:payment:1',
-        cobranca: { id: 'cob_1', status: 'CANCELADO', vencimento: new Date('2025-01-15') },
+        cobranca: { id: 'cob_1', status: 'CANCELADO', descricao: 'Parcela 1/2 - Plano', vencimento: new Date('2025-01-15') },
       },
       {
         externalReference: 'alusa:installment:ip_1:sub_1:payment:2',
-        cobranca: { id: 'cob_2', status: 'PAGO', vencimento: new Date('2025-02-15') },
+        cobranca: { id: 'cob_2', status: 'PAGO', descricao: 'Parcela 2/2 - Plano', vencimento: new Date('2025-02-15') },
       },
     ]);
 
@@ -262,6 +436,22 @@ describe('listInstallmentPlansAggregated', () => {
     expect(result.items).toHaveLength(1);
     expect(result.items[0].installmentsPaid).toBe(1);
     expect(result.items[0].statusConsolidado).toBe('EM_DIA');
+    expect(result.items[0].proximoVencimento).toBe('2099-03-15T00:00:00.000Z');
+  });
+
+  it('não projeta vencimento atual quando a fatura não tem data civil', async () => {
+    const db = createMockDb();
+    db.standaloneInstallmentPlan.findMany.mockResolvedValue([
+      makeStandalonePlan({ installmentCount: 2 }),
+    ]);
+    db.charge.findMany.mockResolvedValue([
+      { standaloneInstallmentPlanId: 'sip_1', status: 'OPEN', dueDate: null },
+    ]);
+
+    const result = await listInstallmentPlansAggregated({ contaId: 'ct_1' }, db);
+
+    expect(result.items[0].proximoVencimento).toBeNull();
+    expect(result.items[0].statusConsolidado).toBe('EM_DIA');
   });
 
   it('paginação funciona corretamente', async () => {
@@ -290,6 +480,38 @@ describe('listInstallmentPlansAggregated', () => {
     expect(result.totalPages).toBe(3);
     expect(result.items).toHaveLength(2);
     expect(result.items[0].id).toBe('ip_2');
+  });
+
+  it('ordena grupos acadêmicos e standalone em conjunto, desempata por id e pagina após ordenação', async () => {
+    const db = createMockDb();
+    const sameCreatedAt = new Date('2026-05-02T00:00:00.000Z');
+    db.installmentPlan.findMany.mockResolvedValue([
+      makeAcademicPlan({ id: 'ip-tie', createdAt: sameCreatedAt }),
+      makeAcademicPlan({ id: 'ip-last', createdAt: new Date('2026-05-03T00:00:00.000Z') }),
+    ]);
+    db.standaloneInstallmentPlan.findMany.mockResolvedValue([
+      makeStandalonePlan({ id: 'sip-first', createdAt: new Date('2026-05-01T00:00:00.000Z') }),
+      makeStandalonePlan({ id: 'sip-tie', createdAt: sameCreatedAt }),
+    ]);
+    db.responsavel.findMany.mockResolvedValue([{ id: 'resp_1', nome: 'Carlos Lima' }]);
+
+    const ascPage1 = await listInstallmentPlansAggregated(
+      { contaId: 'ct_1', sortOrder: 'ASC', page: 1, pageSize: 2 },
+      db,
+    );
+    const ascPage2 = await listInstallmentPlansAggregated(
+      { contaId: 'ct_1', sortOrder: 'ASC', page: 2, pageSize: 2 },
+      db,
+    );
+    const descPage1 = await listInstallmentPlansAggregated(
+      { contaId: 'ct_1', sortOrder: 'DESC', page: 1, pageSize: 2 },
+      db,
+    );
+
+    expect(ascPage1.items.map((item) => item.id)).toEqual(['sip-first', 'ip-tie']);
+    expect(ascPage2.items.map((item) => item.id)).toEqual(['sip-tie', 'ip-last']);
+    expect(descPage1.items.map((item) => item.id)).toEqual(['ip-last', 'sip-tie']);
+    expect(ascPage2).toMatchObject({ total: 4, page: 2, pageSize: 2, totalPages: 2 });
   });
 
   it('plano cancelado tem statusConsolidado CANCELADO', async () => {

@@ -37,15 +37,13 @@ import { AsaasSeal } from '@/components/shared/AsaasSeal';
 import { useFinanceListLoad } from '@/features/finance/operations/hooks/use-finance-list-load';
 import { useVisibleChargeConvergence } from '@/features/finance/operations/hooks/use-visible-charge-convergence';
 import { getChargeTipoLabel } from '@/lib/finance/charge-tipo-label';
+import { formatCivilDate } from '@/lib/finance/format-civil-date';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 
 const formatDate = (dateStr?: string | null) => {
-  if (!dateStr) return '—';
-  const date = new Date(dateStr);
-  if (Number.isNaN(date.getTime())) return '—';
-  return date.toLocaleDateString('pt-BR');
+  return formatCivilDate(dateStr);
 };
 
 const getTipoLabel = (tipo: string, description?: string | null) =>
@@ -84,7 +82,7 @@ export default function CobrancasTodasPage() {
   const router = useRouter();
   const [cobrancas, setCobrancas] = useState<Cobranca[]>([]);
   const [page, setPage] = useState<number>(1);
-  const [pageSize] = useState<number>(6);
+  const [pageSize] = useState<number>(20);
   const [totalItems, setTotalItems] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [tipoFilter, setTipoFilter] = useState<string>('TODOS');
@@ -111,6 +109,9 @@ export default function CobrancasTodasPage() {
       const trimmedSearch = searchQuery.trim();
       if (trimmedSearch) params.set('q', trimmedSearch);
       if (tipoFilter !== 'TODOS') params.append('tipo', tipoFilter);
+      // Todas as visões listam faturas individuais; a gestão de grupos vive
+      // nas rotas dedicadas de parcelamentos e assinaturas.
+      params.set('groupInstallments', 'false');
 
       const url = isOperational
         ? `/api/finance/charges/operational?${params.toString()}`
@@ -373,7 +374,6 @@ export default function CobrancasTodasPage() {
                 orderedCobrancas.map((cobranca) => {
                   const isOverdue = cobranca.status === 'OVERDUE' || cobranca.status === 'ATRASADO';
                   const isInstallmentGroup = cobranca.isGroup && cobranca.groupType === 'INSTALLMENT';
-                  const isSubscriptionGroup = cobranca.isGroup && cobranca.groupType === 'SUBSCRIPTION';
                   const displayStatus =
                     cobranca.displayStatus ??
                     (cobranca.status
@@ -381,13 +381,7 @@ export default function CobrancasTodasPage() {
                       : undefined);
 
                   const handleRowClick = () => {
-                    if (isInstallmentGroup && cobranca.groupId) {
-                      router.push(`/charges/installments/${cobranca.groupId}`);
-                    } else if (isSubscriptionGroup && cobranca.groupId) {
-                      router.push(`/charges/subscriptions/${cobranca.groupId}`);
-                    } else {
-                      router.push(`/charges/${cobranca.id}`);
-                    }
+                    router.push(`/charges/${cobranca.id}`);
                   };
 
                   const actionMenuCobranca = {

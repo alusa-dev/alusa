@@ -26,13 +26,13 @@ import { useFinanceListLoad } from '@/features/finance/operations/hooks/use-fina
 import { InstallmentActionsMenu } from '@/features/finance/operations/components/InstallmentActionsMenu';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
 import type { FinanceInstallmentAggregatedItemDTO } from '@/features/finance/dtos';
+import { formatCivilDate } from '@/lib/finance/format-civil-date';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 
 const formatDate = (dateStr: string) => {
-  if (!dateStr) return '-';
-  return new Date(dateStr).toLocaleDateString('pt-BR');
+  return formatCivilDate(dateStr);
 };
 
 type StatusParcelamento = 'EM_DIA' | 'ATRASADO' | 'QUITADO' | 'CANCELADO';
@@ -57,7 +57,8 @@ export default function ParcelamentosPage() {
   const router = useRouter();
   const [parcelamentos, setParcelamentos] = useState<Parcelamento[]>([]);
   const [page, setPage] = useState<number>(1);
-  const [pageSize] = useState<number>(6);
+  const [pageSize] = useState<number>(20);
+  const [total, setTotal] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const searchParams = useSearchParams();
   const statusFilter = searchParams.get('status') || 'all';
@@ -67,6 +68,9 @@ export default function ParcelamentosPage() {
   const { isInitialLoading, refresh } = useFinanceListLoad(
     async ({ signal }) => {
       const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('pageSize', String(pageSize));
+      params.set('sortOrder', sortOrder);
       if (statusFilter !== 'all') {
         params.set('status', statusFilter);
       }
@@ -93,8 +97,9 @@ export default function ParcelamentosPage() {
       }
       const payload = await res.json().catch(() => null);
       setParcelamentos((payload && payload.data) || []);
+      setTotal(payload?.meta?.total ?? 0);
     },
-    { deps: [statusFilter, searchQuery] },
+    { deps: [statusFilter, searchQuery, page, pageSize, sortOrder] },
   );
 
   const handleStatusFilterChange = useCallback(
@@ -111,16 +116,7 @@ export default function ParcelamentosPage() {
     [searchParams, router],
   );
 
-  const orderedParcelamentos = useMemo(() => {
-    const items = [...parcelamentos];
-    items.sort((a, b) => {
-      const ta = new Date(a.createdAt).getTime() || 0;
-      const tb = new Date(b.createdAt).getTime() || 0;
-      return ta - tb;
-    });
-    if (sortOrder === 'DESC') items.reverse();
-    return items;
-  }, [parcelamentos, sortOrder]);
+  const orderedParcelamentos = parcelamentos;
 
   useEffect(() => {
     setPage(1);
@@ -165,9 +161,10 @@ export default function ParcelamentosPage() {
                 </SelectTrigger>
                 <SelectContent align="end" className="text-[13px]">
                   <SelectItem value="all">Todos os status</SelectItem>
-                  <SelectItem value="ACTIVE">Em andamento</SelectItem>
-                  <SelectItem value="COMPLETED">Quitados</SelectItem>
-                  <SelectItem value="CANCELED">Cancelados</SelectItem>
+                  <SelectItem value="EM_DIA">Em dia</SelectItem>
+                  <SelectItem value="ATRASADO">Atrasados</SelectItem>
+                  <SelectItem value="QUITADO">Quitados</SelectItem>
+                  <SelectItem value="CANCELADO">Cancelados</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -234,7 +231,7 @@ export default function ParcelamentosPage() {
                   Nenhum parcelamento encontrado
                 </div>
               ) : (
-                orderedParcelamentos.slice((page - 1) * pageSize, page * pageSize).map((p) => {
+                orderedParcelamentos.map((p) => {
                   const handleRowClick = () => router.push(`/charges/installments/${p.id}`);
                   return (
                     <div key={p.id}>
@@ -343,10 +340,10 @@ export default function ParcelamentosPage() {
                 })
               )}
             </div>
-            {orderedParcelamentos.length > pageSize ? (
+            {total > pageSize ? (
               <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
                 <Pagination
-                  totalItems={orderedParcelamentos.length}
+                  totalItems={total}
                   pageSize={pageSize}
                   page={page}
                   onChange={setPage}

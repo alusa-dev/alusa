@@ -23,14 +23,14 @@ import { Badge, type StatusType } from '@/components/ui/badge';
 import { pushToast } from '@/components/ui/toast';
 import { formatFormaPagamentoLabel } from '@/lib/finance/asaas-sync';
 import { useFinanceListLoad } from '@/features/finance/operations/hooks/use-finance-list-load';
+import { formatCivilDate } from '@/lib/finance/format-civil-date';
 import { ChargeDisplayStatusBadge } from '@/features/finance/operations/components/ChargeDisplayStatusBadge';
 
 const formatCurrency = (value: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 
 const formatDate = (dateStr: string) => {
-  if (!dateStr) return '-';
-  return new Date(dateStr).toLocaleDateString('pt-BR');
+  return formatCivilDate(dateStr);
 };
 
 type StatusParcelamento = 'EM_DIA' | 'ATRASADO' | 'QUITADO' | 'CANCELADO';

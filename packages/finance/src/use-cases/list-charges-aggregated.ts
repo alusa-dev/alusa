@@ -677,7 +677,7 @@ export async function listChargesAggregated(
     ),
   ]);
 
-  const standaloneSubscriptionItems: ChargeListItemDTO[] = standaloneSubscriptions
+  const standaloneSubscriptionItems: ChargeListItemDTO[] = shouldGroup ? standaloneSubscriptions
     .filter((subscription) => {
       if (materializedSubscriptionIds.has(subscription.id)) return false;
       if (tipoFilter?.length && !tipoFilter.includes('RECORRENTE')) return false;
@@ -710,7 +710,7 @@ export async function listChargesAggregated(
       installmentPlanId: subscription.id,
       installmentCount: undefined,
       installmentsPaid: undefined,
-    }));
+    })) : [];
 
   const eventItems: ChargeListItemDTO[] = [
     ...eventFinancialEntries.map((entry) => ({

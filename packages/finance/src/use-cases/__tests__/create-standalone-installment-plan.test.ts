@@ -281,7 +281,6 @@ describe('createStandaloneInstallmentPlan', () => {
         }),
       })
     );
-
     // Standalone parcelamentos must not be written to the academic
     // AsaasIntegrationJob.installmentPlanId foreign key.
     expect(prisma.asaasIntegrationJob.update).not.toHaveBeenCalled();
@@ -334,6 +333,7 @@ describe('createStandaloneInstallmentPlan', () => {
     expect(result.success).toBe(true);
     const update = vi.mocked(prisma.charge.upsert).mock.calls.at(-1)?.[0]?.update;
     expect(update).toBeDefined();
+    expect(update).toMatchObject({ description: 'Parcela 1/2' });
     expect(update).not.toHaveProperty('asaasCreditDate');
     expect(update).not.toHaveProperty('asaasEstimatedCreditDate');
     expect(update).not.toHaveProperty('liquidacaoStatus');

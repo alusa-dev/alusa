@@ -511,7 +511,10 @@ export async function listStandaloneChargesFromReadModel(
   const [rows, total] = await Promise.all([
     prisma.chargeReadModel.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      orderBy: [
+        { dueDate: input.sortOrder === 'ASC' ? 'asc' : 'desc' },
+        { sourceId: input.sortOrder === 'ASC' ? 'asc' : 'desc' },
+      ],
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
