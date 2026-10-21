@@ -291,10 +291,18 @@ async function resolvePaymentToLocalEntityForMappings(
           : { type: 'subscription', subscriptionId: subscriptionByReference.id };
       }
 
-      if (providerSubscription && providerSubscription.matriculaId === referencedMatriculaId) {
+      if (providerSubscription && referencedMatriculaId && providerSubscription.matriculaId !== referencedMatriculaId) {
+        return { type: 'conflict', reason: 'payment_id_mapped_to_different_entity' };
+      }
+      // The tenant-scoped provider subscription mapping is authoritative when
+      // an old V2 externalReference cannot be parsed into a matrícula ID.
+      if (providerSubscription && (!referencedMatriculaId || providerSubscription.matriculaId === referencedMatriculaId)) {
         return { type: 'subscription', subscriptionId: providerSubscription.id };
       }
-      if (providerMatricula && providerMatricula.id === referencedMatriculaId) {
+      if (providerMatricula && referencedMatriculaId && providerMatricula.id !== referencedMatriculaId) {
+        return { type: 'conflict', reason: 'payment_id_mapped_to_different_entity' };
+      }
+      if (providerMatricula && (!referencedMatriculaId || providerMatricula.id === referencedMatriculaId)) {
         return { type: 'subscription', subscriptionId: `legacy:matricula:${providerMatricula.id}` };
       }
 

@@ -369,6 +369,42 @@ describe('resolvePaymentToLocalEntity', () => {
       expect(prisma.installmentPlan.findFirst).not.toHaveBeenCalled();
     });
 
+    it('resolve pelo provider mapping local quando a matrícula da referência V2 não é parseável', async () => {
+      vi.mocked(prisma.subscription.findFirst)
+        .mockResolvedValueOnce(null as never)
+        .mockResolvedValueOnce({ id: 'subscription-local', matriculaId: 'mat-local' } as never);
+
+      const result = await resolvePaymentToLocalEntity({
+        contaId: 'conta-a',
+        asaasPaymentId: 'pay-a',
+        externalReference: 'alusa:subscription:legacy-opaque-reference',
+        asaasSubscriptionId: 'asaas-subscription-a',
+        dueDate: '2026-11-05',
+      });
+
+      expect(result).toEqual({ type: 'subscription', subscriptionId: 'subscription-local' });
+      expect(prisma.subscription.findFirst).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        where: expect.objectContaining({ contaId: 'conta-a', asaasSubscriptionId: 'asaas-subscription-a' }),
+      }));
+    });
+
+    it('resolve matrícula legacy pelo provider mapping quando a referência não codifica seu ID', async () => {
+      vi.mocked(prisma.subscription.findFirst).mockResolvedValue(null as never);
+      vi.mocked(prisma.matricula.findFirst).mockResolvedValue({ id: 'mat-local' } as never);
+
+      const result = await resolvePaymentToLocalEntity({
+        contaId: 'conta-a',
+        asaasPaymentId: 'pay-a',
+        externalReference: 'alusa:subscription:legacy-opaque-reference',
+        asaasSubscriptionId: 'asaas-subscription-a',
+      });
+
+      expect(result).toEqual({ type: 'subscription', subscriptionId: 'legacy:matricula:mat-local' });
+      expect(prisma.matricula.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: expect.objectContaining({ contaId: 'conta-a', asaasSubscriptionId: 'asaas-subscription-a' }),
+      }));
+    });
+
     it('sinaliza conflito quando referência V2 diverge de Charge standalone ligado ao payment', async () => {
       vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce(null as never);
       vi.mocked(prisma.charge.findMany).mockResolvedValueOnce([{

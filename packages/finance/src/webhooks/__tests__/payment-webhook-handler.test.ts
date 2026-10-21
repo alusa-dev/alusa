@@ -1100,6 +1100,24 @@ describe('handlePaymentWebhook', () => {
     }));
   });
 
+  it('mantém PAYMENT_CREATED standalone canônico retryable se a assinatura ainda não está visível', async () => {
+    mockResolvePaymentToLocalEntity.mockResolvedValue({ type: 'not_found', reason: 'alusa_standalone_subscription_not_found' });
+
+    const result = await handlePaymentWebhook('conta-a', {
+      event: 'PAYMENT_CREATED',
+      payment: {
+        id: 'pay-standalone-race',
+        status: 'PENDING',
+        value: 300,
+        netValue: 292,
+        dueDate: '2026-11-05',
+        externalReference: 'alusa:standalone-subscription:sub-local-a',
+      },
+    });
+
+    expect(result).toEqual({ success: false, error: 'PAYMENT_CREATED_LOCAL_MAPPING_NOT_READY' });
+  });
+
   it.each(['PAYMENT_CREATED', 'PAYMENT_OVERDUE'])(
     'reconcilia assinatura Asaas sem matrícula local antes de efeitos para %s',
     async (event) => {
@@ -1932,7 +1950,10 @@ describe('handlePaymentWebhook', () => {
 
   it('cria cobrança apenas quando não existe mensalidade local no ciclo exato', async () => {
     const { prisma } = await import('@alusa/database');
+    const { isPaymentResolutionPolicyEnabled } = await import('../../foundation/payment-resolution-policy');
 
+    vi.mocked(isPaymentResolutionPolicyEnabled).mockReturnValue(true);
+    mockResolvePaymentToLocalEntity.mockResolvedValueOnce({ type: 'subscription', subscriptionId: 'sub_local_1' });
 
     vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce(null as never);
     vi.mocked(prisma.cobranca.findFirst)
@@ -1945,7 +1966,7 @@ describe('handlePaymentWebhook', () => {
       contaId: 'conta-1',
       aluno: { contaId: 'conta-1' },
     } as never);
-    vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce({
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValue({
       id: 'sub_local_1',
       externalReference: 'subscription:matricula:m1',
       matriculaId: 'm1',
@@ -1980,6 +2001,7 @@ describe('handlePaymentWebhook', () => {
         netValue: 72.5,
         subscription: 'sub_asaas_1',
         dueDate: '2026-04-05',
+        externalReference: 'alusa:subscription:m1:p1',
         billingType: 'CREDIT_CARD',
         description: 'Mensalidade - Plano Mensal',
         invoiceUrl: 'https://asaas.test/i/pay_sub_1',
@@ -1998,7 +2020,7 @@ describe('handlePaymentWebhook', () => {
     expect(prisma.subscription.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: {
         contaId: 'conta-1',
-        asaasSubscriptionId: 'sub_asaas_1',
+        OR: [{ asaasSubscriptionId: 'sub_asaas_1' }, { id: 'sub_local_1' }],
         matricula: { contaId: 'conta-1', aluno: { contaId: 'conta-1' } },
       },
       select: expect.objectContaining({
@@ -2029,6 +2051,8 @@ describe('handlePaymentWebhook', () => {
           formaPagamento: 'CARTAO_CREDITO',
           asaasPaymentId: 'pay_sub_1',
           asaasStatus: 'PENDING',
+          valor: 75,
+          vencimento: new Date('2026-04-05T00:00:00.000Z'),
         }),
       }),
     );
@@ -2233,13 +2257,20 @@ describe('handlePaymentWebhook', () => {
     }));
   });
 
-  it('deve persistir invoiceUrl ao criar charge de assinatura standalone via webhook', async () => {
+  it('materializa assinatura standalone e não regride PAID em replay antigo de PAYMENT_CREATED', async () => {
     const { prisma } = await import('@alusa/database');
 
+    mockResolvePaymentToLocalEntity.mockResolvedValue({ type: 'subscription', subscriptionId: 'sub_local_1' });
+    vi.mocked(prisma.charge.findFirst)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({
+        id: 'charge_standalone_1', status: 'PAID', asaasPaymentId: 'pay_sub_standalone_1',
+        asaasStatus: 'RECEIVED', providerStatus: 'RECEIVED', paidAt: new Date('2026-11-05T12:00:00.000Z'),
+      } as never);
     vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce(null as never);
     vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce(null as never);
-    vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce(null as never);
-    vi.mocked(prisma.standaloneSubscription.findFirst).mockResolvedValueOnce({
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.standaloneSubscription.findFirst).mockResolvedValue({
       id: 'sub_local_1',
       asaasSubscriptionId: 'sub_asaas_1',
       externalReference: 'alusa:standalone-subscription:sub_local_1',
@@ -2253,23 +2284,34 @@ describe('handlePaymentWebhook', () => {
       payerId: 'aluno_1',
     } as never);
     vi.mocked(prisma.aluno.findFirst).mockResolvedValueOnce({ nome: 'Bryan de Alencar Bezerra' } as never);
-    vi.mocked(prisma.charge.upsert).mockResolvedValueOnce({ id: 'charge_standalone_1' } as never);
+    vi.mocked(prisma.charge.upsert).mockResolvedValue({ id: 'charge_standalone_1' } as never);
 
-    const result = await handlePaymentWebhook('conta-1', {
-      event: 'PAYMENT_CREATED',
+    const paymentReceived = {
+      event: 'PAYMENT_RECEIVED',
       payment: {
         id: 'pay_sub_standalone_1',
-        status: 'PENDING',
+        status: 'RECEIVED',
         value: 80,
         netValue: 77.92,
         subscription: 'sub_asaas_1',
         dueDate: '2099-04-05',
         billingType: 'CREDIT_CARD',
+        paymentDate: '2026-11-05',
         invoiceUrl: 'https://asaas.test/i/pay_sub_standalone_1',
       },
+    } as const;
+    const result = await handlePaymentWebhook('conta-1', paymentReceived);
+    const replay = await handlePaymentWebhook('conta-1', {
+      ...paymentReceived,
+      event: 'PAYMENT_CREATED',
+      payment: { ...paymentReceived.payment, status: 'PENDING', paymentDate: null },
     });
 
     expect(result.success).toBe(true);
+    expect(replay.success).toBe(true);
+    expect(prisma.standaloneSubscription.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ contaId: 'conta-1', OR: expect.arrayContaining([{ id: 'sub_local_1' }]) }),
+    }));
     expect(prisma.charge.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
@@ -2287,6 +2329,10 @@ describe('handlePaymentWebhook', () => {
         }),
       }),
     );
+    expect(prisma.charge.upsert).toHaveBeenCalledTimes(1);
+    expect(prisma.charge.update).not.toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: 'PENDING' }),
+    }));
   });
 
   it('liga a primeira parcela e dispara fulfillment quando o webhook chega antes da venda', async () => {

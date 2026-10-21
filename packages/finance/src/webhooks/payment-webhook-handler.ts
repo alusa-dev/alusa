@@ -1516,6 +1516,8 @@ async function handlePaymentWebhookCore(
     }
     const isCanonicalSubscriptionReference =
       payload.payment.externalReference?.startsWith('alusa:subscription:') ?? false;
+    const isCanonicalStandaloneSubscriptionReference =
+      payload.payment.externalReference?.startsWith('alusa:standalone-subscription:') ?? false;
     const eventMapOrderReference = payload.payment.externalReference?.startsWith('event-map-order:')
       ? payload.payment.externalReference.slice('event-map-order:'.length)
       : null;
@@ -1563,7 +1565,7 @@ async function handlePaymentWebhookCore(
       (earlyCanonicalResolution.type === 'not_found' ||
         (earlyCanonicalResolution.type !== 'conflict' &&
           (!('cobrancaId' in earlyCanonicalResolution) || !earlyCanonicalResolution.cobrancaId) &&
-          !(payload.payment.subscription && earlyCanonicalResolution.type === 'subscription')));
+          earlyCanonicalResolution.type !== 'subscription'));
     const unmappedSubscriptionPayment = Boolean(
       payload.payment.subscription && earlyCanonicalResolution.type === 'unknown',
     );
@@ -1601,8 +1603,8 @@ async function handlePaymentWebhookCore(
       // place that links/materializes the local invoice on replay.
       if (
         payload.event === 'PAYMENT_CREATED' &&
-        isCanonicalSubscriptionReference &&
-        earlyCanonicalResolution.type === 'not_found' &&
+        (isCanonicalSubscriptionReference || isCanonicalStandaloneSubscriptionReference) &&
+        (earlyCanonicalResolution.type === 'not_found' || earlyCanonicalResolution.type === 'unknown') &&
         !eventMapPaymentConflict &&
         !unresolvedEventMapOrderReference
       ) {
@@ -2086,7 +2088,7 @@ async function handlePaymentWebhookCore(
       unresolvedCanonicalSubscriptionReference =
         (payload.payment.externalReference?.startsWith('alusa:subscription:') ?? false) &&
         !resolvedCobrancaId &&
-        !(payload.payment.subscription && resolveResult.type === 'subscription');
+        resolveResult.type !== 'subscription';
 
       // Se resolver encontrou algo, processar de forma determinística
       if (resolveResult.type !== 'not_found') {
@@ -2432,18 +2434,27 @@ async function handlePaymentWebhookCore(
     if (
       !cobranca &&
       !cobrancaMappingConflict &&
-      payload.payment.subscription &&
+      (payload.payment.subscription || resolveResult.type === 'subscription') &&
       subscriptionPaymentDueDate &&
       !subscriptionChargeMappingBlocked &&
       !unresolvedCanonicalSubscriptionReference
     ) {
-      const subscriptionId = payload.payment.subscription;
+      const subscriptionId = payload.payment.subscription ?? (
+        resolveResult.type === 'subscription' ? resolveResult.subscriptionId : ''
+      );
       
       // Buscar matrícula e subscription para obter dados necessários
       const subscription = await prisma.subscription.findFirst({
         where: {
           contaId,
-          asaasSubscriptionId: subscriptionId,
+          ...(resolveResult.type === 'subscription' && !resolveResult.subscriptionId.startsWith('legacy:matricula:')
+            ? { OR: [
+                ...(payload.payment.subscription ? [{ asaasSubscriptionId: payload.payment.subscription }] : []),
+                { id: resolveResult.subscriptionId },
+              ] }
+            : payload.payment.subscription
+              ? { asaasSubscriptionId: payload.payment.subscription }
+              : { id: resolveResult.type === 'subscription' ? resolveResult.subscriptionId : '' }),
           matricula: { contaId, aluno: { contaId } },
         },
         select: {
@@ -2482,7 +2493,8 @@ async function handlePaymentWebhookCore(
           ? null
           : await findStandaloneSubscription(prisma, {
               contaId,
-              asaasSubscriptionId: subscriptionId,
+              ...(payload.payment.subscription ? { asaasSubscriptionId: payload.payment.subscription } : {}),
+              ...(resolveResult.type === 'subscription' ? { id: resolveResult.subscriptionId } : {}),
             });
 
         // PAYMENT_CREATED pode chegar imediatamente após a criação remota,
@@ -2494,7 +2506,8 @@ async function handlePaymentWebhookCore(
             await new Promise((resolve) => setTimeout(resolve, delayMs));
             standaloneSubRecord = await findStandaloneSubscription(prisma, {
               contaId,
-              asaasSubscriptionId: subscriptionId,
+              ...(payload.payment.subscription ? { asaasSubscriptionId: payload.payment.subscription } : {}),
+              ...(resolveResult.type === 'subscription' ? { id: resolveResult.subscriptionId } : {}),
             });
             if (standaloneSubRecord) break;
           }
@@ -2569,7 +2582,7 @@ async function handlePaymentWebhookCore(
             metadata: {
               event: payload.event,
               asaasPaymentId: payload.payment.id,
-              asaasSubscriptionId: subscriptionId,
+              asaasSubscriptionId: payload.payment.subscription ?? null,
               externalReference: externalRef,
               standaloneSubscriptionId: standaloneSubRecord.id,
               familyGroupId: standaloneSubRecord.familyGroupId,
@@ -2602,7 +2615,7 @@ async function handlePaymentWebhookCore(
             return false;
           }
           const metadata = log.metadata as Record<string, unknown>;
-          return metadata.asaasSubscriptionId === subscriptionId;
+          return Boolean(payload.payment.subscription) && metadata.asaasSubscriptionId === payload.payment.subscription;
         });
 
         if (manualStandalone?.metadata && typeof manualStandalone.metadata === 'object' && !Array.isArray(manualStandalone.metadata)) {
@@ -2679,7 +2692,7 @@ async function handlePaymentWebhookCore(
               metadata: {
                 event: payload.event,
                 asaasPaymentId: payload.payment.id,
-                asaasSubscriptionId: subscriptionId,
+                asaasSubscriptionId: payload.payment.subscription ?? null,
                 externalReference: externalRef,
               },
             });
@@ -2696,11 +2709,17 @@ async function handlePaymentWebhookCore(
         }
 
         // Fallback: buscar matrícula via asaasSubscriptionId diretamente
+        const resolvedLegacyMatriculaId = resolveResult.type === 'subscription' && resolveResult.subscriptionId.startsWith('legacy:matricula:')
+          ? resolveResult.subscriptionId.slice('legacy:matricula:'.length)
+          : null;
         const matriculaFromSub = hasInvalidSubscriptionTenantLink ? null : await prisma.matricula.findFirst({
           where: {
             contaId,
             aluno: { contaId },
-            asaasSubscriptionId: subscriptionId,
+            OR: [
+              ...(payload.payment.subscription ? [{ asaasSubscriptionId: payload.payment.subscription }] : []),
+              ...(resolvedLegacyMatriculaId ? [{ id: resolvedLegacyMatriculaId }] : []),
+            ],
           },
           select: {
             id: true,
@@ -3230,6 +3249,17 @@ async function handlePaymentWebhookCore(
           createdPlaceholderCharge: false,
         },
       });
+
+      // Keep Alusa-owned subscription creates retryable when the local mapping
+      // was not visible during resolution/materialization. A successful no-op
+      // here would permanently acknowledge the inbox row before its invoice exists.
+      if (
+        payload.event === 'PAYMENT_CREATED' &&
+        (paymentExternalReference?.startsWith('alusa:subscription:') ||
+          paymentExternalReference?.startsWith('alusa:standalone-subscription:'))
+      ) {
+        return { success: false, error: 'PAYMENT_CREATED_LOCAL_MAPPING_NOT_READY' };
+      }
 
       return {
         success: true,
