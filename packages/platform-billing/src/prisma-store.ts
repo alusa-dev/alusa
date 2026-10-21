@@ -22,6 +22,7 @@ type PlatformBillingPrismaClientBase = Pick<
   | 'platformBillingAuditLog'
   | 'platformBillingIssue'
   | 'platformBillingPlanChange'
+  | 'conta'
   | '$queryRaw'
   | '$executeRaw'
 >;
@@ -34,6 +35,8 @@ type PlatformBillingPrismaClient = PlatformBillingPrismaClientBase & {
 
 export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient): PlatformBillingStore {
   return {
+    contaExists: async (input) => Boolean(await db.conta.findUnique({ where: { id: input.contaId }, select: { id: true } })),
+
     findAccount: async (input) => {
       const account = await db.platformBillingAccount.findUnique({
         where: {

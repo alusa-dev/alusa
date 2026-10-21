@@ -318,6 +318,7 @@ export interface UpsertPlatformBillingWebhookEventInput {
 }
 
 export interface PlatformBillingStore {
+  contaExists(_input: { contaId: string }): Promise<boolean>;
   findAccount(_input: {
     contaId: string;
     environment: PlatformBillingEnvironment;

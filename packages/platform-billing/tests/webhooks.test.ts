@@ -949,6 +949,105 @@ describe('@alusa/platform-billing webhooks', () => {
     });
     expect(store.accounts[0]?.canceledAt).toBeInstanceOf(Date);
   });
+
+  it('ignora subscription.deleted para Conta inexistente sem criar billing account e deduplica repetição', async () => {
+    const store = createMemoryStore([]);
+    store.contaExists = async () => false;
+    const event = stripeEvent('evt_subscription_deleted_missing_conta', 'customer.subscription.deleted', {
+      id: 'sub_missing_conta',
+      customer: 'cus_missing_conta',
+      status: 'canceled',
+      metadata: { contaId: 'conta_missing' },
+      items: { data: [{ price: { id: 'price_pro_test' } }] },
+    });
+
+    const first = await processPlatformBillingWebhookEvent({ event, environment: 'TEST', envSource }, store);
+    const repeated = await processPlatformBillingWebhookEvent({ event, environment: 'TEST', envSource }, store);
+
+    expect(first.status).toBe('ignored');
+    expect(store.webhookEvents[0]?.status).toBe('IGNORED');
+    expect(repeated.status).toBe('duplicate');
+    expect(store.accounts).toHaveLength(0);
+    expect(store.auditLogs).toHaveLength(0);
+    expect(store.webhookEvents[0]?.attempts).toBe(1);
+  });
+
+  it('cria billing account para subscription.created quando a Conta existe', async () => {
+    const store = createMemoryStore([]);
+    const result = await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_subscription_created_existing_conta', 'customer.subscription.created', {
+        id: 'sub_existing_conta',
+        customer: 'cus_existing_conta',
+        status: 'active',
+        metadata: { contaId: 'conta_1' },
+        items: { data: [{ price: { id: 'price_pro_test' } }] },
+      }),
+      environment: 'TEST',
+      envSource,
+    }, store);
+
+    expect(result.status).toBe('processed');
+    expect(store.accounts).toHaveLength(1);
+    expect(store.accounts[0]).toMatchObject({ contaId: 'conta_1', stripeCustomerId: 'cus_existing_conta' });
+  });
+
+  it('ignora se a Conta for removida entre a checagem e a criação após falha de FK', async () => {
+    const store = createMemoryStore([]);
+    let existenceChecks = 0;
+    store.contaExists = async () => ++existenceChecks === 1;
+    store.createAccount = async () => {
+      throw Object.assign(new Error('Foreign key constraint failed.'), { code: 'P2003' });
+    };
+
+    const result = await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_subscription_deleted_conta_race', 'customer.subscription.deleted', {
+        id: 'sub_removed_conta',
+        customer: 'cus_removed_conta',
+        status: 'canceled',
+        metadata: { contaId: 'conta_removed_during_create' },
+      }),
+      environment: 'TEST',
+      envSource,
+    }, store);
+
+    expect(result.status).toBe('ignored');
+    expect(store.webhookEvents[0]?.status).toBe('IGNORED');
+    expect(store.webhookEvents[0]?.attempts).toBe(1);
+    expect(existenceChecks).toBe(2);
+    expect(store.accounts).toHaveLength(0);
+  });
+
+  it('mantém retry quando createAccount falha com FK mas a Conta ainda existe', async () => {
+    const store = createMemoryStore([]);
+    let existenceChecks = 0;
+    store.contaExists = async () => {
+      existenceChecks += 1;
+      return true;
+    };
+    store.createAccount = async () => {
+      throw Object.assign(new Error('Original foreign key failure.'), { code: 'P2003' });
+    };
+
+    await expect(processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_subscription_deleted_conta_still_exists', 'customer.subscription.deleted', {
+        id: 'sub_still_existing_conta',
+        customer: 'cus_still_existing_conta',
+        status: 'canceled',
+        metadata: { contaId: 'conta_still_exists' },
+      }),
+      environment: 'TEST',
+      envSource,
+    }, store)).rejects.toMatchObject({
+      code: 'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED',
+      details: { cause: 'Original foreign key failure.' },
+    });
+
+    expect(store.webhookEvents[0]?.status).toBe('FAILED');
+    expect(store.webhookEvents[0]?.lastError).toContain('Platform billing webhook processing failed.');
+    expect(store.webhookEvents[0]?.attempts).toBe(1);
+    expect(existenceChecks).toBe(2);
+    expect(store.accounts).toHaveLength(0);
+  });
 });
 
 function stripeEvent(id: string, type: string, object: Record<string, unknown>): StripeWebhookEvent {
@@ -1030,6 +1129,7 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
     auditLogs,
     paidIssueResolutions,
     planChangeFinalizations,
+    async contaExists() { return true; },
     async findAccount(input) {
       return accounts.find((account) => account.contaId === input.contaId && account.environment === input.environment) ?? null;
     },

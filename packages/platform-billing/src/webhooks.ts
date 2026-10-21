@@ -35,6 +35,8 @@ export interface EnqueuePlatformBillingWebhookResult {
 
 type StripeObject = Record<string, unknown>;
 
+class IgnoredPlatformBillingWebhookEvent extends Error {}
+
 const SUPPORTED_EVENTS = new Set([
   'checkout.session.completed',
   'checkout.session.expired',
@@ -158,6 +160,15 @@ export async function processPersistedPlatformBillingWebhookEvent(
       contaId,
     };
   } catch (error) {
+    if (error instanceof IgnoredPlatformBillingWebhookEvent) {
+      const ignored = await store.markWebhookEventIgnored({ id: input.inboxId, contaId: maybeContaId, workerId: input.workerId });
+      return {
+        eventId: input.event.id,
+        eventType: input.event.type,
+        status: 'ignored',
+        contaId: ignored.contaId,
+      };
+    }
     if (error instanceof PlatformBillingError) {
       throw error;
     }
@@ -265,11 +276,28 @@ async function processSubscriptionEvent(
     }));
 
   if (!account && metadata.contaId) {
-    account = await store.createAccount({
-      contaId: metadata.contaId,
-      environment: input.environment,
-      stripeCustomerId: customerId,
-    });
+    if (!(await store.contaExists({ contaId: metadata.contaId }))) {
+      throw new IgnoredPlatformBillingWebhookEvent('Stripe subscription references a missing Conta.');
+    }
+    try {
+      account = await store.createAccount({
+        contaId: metadata.contaId,
+        environment: input.environment,
+        stripeCustomerId: customerId,
+      });
+    } catch (error) {
+      if (!isForeignKeyConstraintError(error)) throw error;
+      try {
+        if (!(await store.contaExists({ contaId: metadata.contaId }))) {
+          throw new IgnoredPlatformBillingWebhookEvent('Stripe subscription references a Conta removed during account creation.');
+        }
+      } catch (verificationError) {
+        if (verificationError instanceof IgnoredPlatformBillingWebhookEvent) throw verificationError;
+        // Preserve the original retryable create error if verification cannot
+        // establish that the Conta was removed.
+      }
+      throw error;
+    }
   }
 
   if (!account) return metadata.contaId ?? null;
@@ -390,6 +418,10 @@ async function processSubscriptionEvent(
   });
 
   return updated.contaId;
+}
+
+function isForeignKeyConstraintError(error: unknown): error is { code: 'P2003' } {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2003';
 }
 
 async function processInvoiceEvent(
