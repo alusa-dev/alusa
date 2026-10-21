@@ -53,11 +53,15 @@ function mockChargeFindMany(
   options: {
     standalone?: unknown[];
     linked?: unknown[];
+    standaloneHistory?: unknown[];
   } = {},
 ) {
-  db.charge.findMany.mockImplementation((args: { where?: { cobrancaId?: unknown } }) => {
+  db.charge.findMany.mockImplementation((args: { where?: { cobrancaId?: unknown; standaloneSubscriptionId?: { in?: string[] } } }) => {
     if (args?.where?.cobrancaId) {
       return Promise.resolve(options.linked ?? []);
+    }
+    if (args?.where?.standaloneSubscriptionId?.in) {
+      return Promise.resolve(options.standaloneHistory ?? []);
     }
     return Promise.resolve(options.standalone ?? []);
   });
@@ -811,6 +815,54 @@ describe('listOperationalCharges', () => {
         standaloneInstallmentPlanId: 'splan_1',
       }),
     ]);
+
+    const result = await listOperationalCharges(BASE_INPUT, db);
+
+    expect(result.items).toHaveLength(0);
+  });
+
+  it('inclui a primeira cobrança materializada futura de uma assinatura standalone', async () => {
+    const db = createMockDb();
+    db.cobranca.findMany.mockResolvedValue([]);
+    const charge = makeCharge({
+      id: 'ch_subscription_first',
+      standaloneSubscriptionId: 'sub_1',
+      externalReference: 'alusa:standalone-subscription:sub_1:payment:pay_1',
+      description: 'Mensalidade familiar',
+      value: 300,
+      dueDate: new Date('2025-07-05T12:00:00.000Z'),
+      createdAt: new Date('2025-01-05T12:00:00.000Z'),
+    });
+    mockChargeFindMany(db, { standalone: [charge], standaloneHistory: [charge] });
+
+    const result = await listOperationalCharges(BASE_INPUT, db);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ id: 'ch_subscription_first', value: 300, tipo: 'RECORRENTE' });
+    const historyCall = db.charge.findMany.mock.calls.find((call) => call[0]?.where?.standaloneSubscriptionId?.in);
+    expect(historyCall?.[0].where).toMatchObject({ contaId: 'ct_1', standaloneSubscriptionId: { in: ['sub_1'] } });
+  });
+
+  it('não promove a segunda cobrança futura se a primeira cobrança da assinatura já existe', async () => {
+    const db = createMockDb();
+    db.cobranca.findMany.mockResolvedValue([]);
+    const secondCharge = makeCharge({
+      id: 'ch_subscription_second',
+      standaloneSubscriptionId: 'sub_1',
+      externalReference: 'alusa:standalone-subscription:sub_1:payment:pay_2',
+      status: 'OPEN',
+      dueDate: new Date('2025-08-05T12:00:00.000Z'),
+    });
+    const firstPaidCharge = makeCharge({
+      id: 'ch_subscription_first_paid',
+      standaloneSubscriptionId: 'sub_1',
+      status: 'PAID',
+      dueDate: new Date('2025-07-05T12:00:00.000Z'),
+    });
+    mockChargeFindMany(db, {
+      standalone: [secondCharge],
+      standaloneHistory: [firstPaidCharge, secondCharge],
+    });
 
     const result = await listOperationalCharges(BASE_INPUT, db);
 

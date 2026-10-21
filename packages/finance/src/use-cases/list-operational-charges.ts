@@ -952,6 +952,41 @@ async function buildOperationalChargesCollection(
     return tipoFilter.includes(resolveStandaloneTipo(chargeType));
   });
 
+  const standaloneSubscriptionInitialCandidates = effectiveStandaloneResult.filter(
+    (charge) =>
+      Boolean(charge.standaloneSubscriptionId) &&
+      Boolean(charge.dueDate && charge.dueDate > endOfMonth),
+  );
+  const standaloneSubscriptionIds = [
+    ...new Set(
+      standaloneSubscriptionInitialCandidates
+        .map((charge) => charge.standaloneSubscriptionId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const standaloneSubscriptionInitialIds = new Set<string>();
+  if (standaloneSubscriptionIds.length) {
+    const history = await _db.charge.findMany({
+      where: {
+        contaId,
+        standaloneSubscriptionId: { in: standaloneSubscriptionIds },
+      },
+      orderBy: [{ dueDate: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+      select: { id: true, standaloneSubscriptionId: true },
+    });
+    const firstChargeBySubscription = new Map<string, string>();
+    for (const charge of history) {
+      if (charge.standaloneSubscriptionId && !firstChargeBySubscription.has(charge.standaloneSubscriptionId)) {
+        firstChargeBySubscription.set(charge.standaloneSubscriptionId, charge.id);
+      }
+    }
+    for (const candidate of standaloneSubscriptionInitialCandidates) {
+      if (candidate.standaloneSubscriptionId && firstChargeBySubscription.get(candidate.standaloneSubscriptionId) === candidate.id) {
+        standaloneSubscriptionInitialIds.add(candidate.id);
+      }
+    }
+  }
+
   const standaloneAlunoIds = Array.from(
     new Set(
       [
@@ -1258,6 +1293,9 @@ async function buildOperationalChargesCollection(
 
   for (const item of allItemsWithMeta) {
     if (academicInitialIds.has(item.id) && ['PENDING', 'PROCESSING'].includes(item.status)) {
+      markOperational(item.id);
+    }
+    if (standaloneSubscriptionInitialIds.has(item.id) && ['PENDING', 'PROCESSING'].includes(item.status)) {
       markOperational(item.id);
     }
   }
