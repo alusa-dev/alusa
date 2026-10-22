@@ -24,7 +24,7 @@ export type NotificationPreferences = z.infer<typeof notificationPreferencesDTOS
 const updatePayloadSchema = updateCurrentProfileInputDTOSchema.extend({
   name: z.string().min(2).max(120),
   locale: z.enum(PROFILE_LOCALE_VALUES),
-  theme: z.enum(PROFILE_THEME_VALUES),
+  theme: z.enum(PROFILE_THEME_VALUES).optional(),
   foto: updateCurrentProfileInputDTOSchema.shape.foto,
 });
 
@@ -33,7 +33,7 @@ export type UpdateProfilePayload = {
   telefone?: string | null;
   bio?: string | null;
   locale: ProfileLocale;
-  theme: ProfileTheme;
+  theme?: ProfileTheme;
   foto?: string | null;
 };
 

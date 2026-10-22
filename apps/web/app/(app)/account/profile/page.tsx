@@ -242,7 +242,6 @@ export default function ContaPerfilPage() {
         setFormTelefone(data.telefone ? formatPhoneBR(data.telefone) : '');
         setFormBio(data.bio ?? '');
         setFormLocale(data.locale ?? 'pt-BR');
-        setFormTheme(data.theme ?? 'system');
         setSchoolName(data.school?.name ?? '');
         setSchoolCpfCnpj(data.school?.cpfCnpj ?? '');
         setSchoolTimezone(data.school?.timezone ?? 'America/Sao_Paulo');
