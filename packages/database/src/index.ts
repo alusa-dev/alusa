@@ -1,5 +1,11 @@
 // Client
 export { prisma } from './client.js';
+export {
+  getTenantRuntimeHealth,
+  isRlsRuntimeEnabled,
+  runWithTenant,
+} from './tenant.js';
+export type { TenantTransactionClient } from './tenant.js';
 
 // Repositories
 export {

@@ -1,59 +1,23 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-const executeRaw = vi.fn().mockResolvedValue(1);
-const transaction = vi.fn(async (callback: (tx: { $executeRaw: typeof executeRaw }) => Promise<unknown>) =>
-  callback({ $executeRaw: executeRaw }),
-);
-
-vi.mock('@/lib/prisma', () => ({
-  prisma: {
-    $transaction: transaction,
-  },
+const tenantMocks = vi.hoisted(() => ({
+  runWithTenant: vi.fn(async (_contaId: string, callback: () => Promise<unknown>) => callback()),
+  isRlsRuntimeEnabled: vi.fn(() => true),
+  normalizeTenantId: vi.fn((contaId: string) => contaId.trim()),
+  getTenantPrismaClient: vi.fn(),
 }));
 
-describe('prisma-tenant', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-    vi.clearAllMocks();
-  });
+vi.mock('@alusa/database', () => tenantMocks);
 
-  it('rejeita contaId vazio', async () => {
-    const { runWithTenant } = await import('@/lib/prisma-tenant');
+import { isRlsRuntimeEnabled, runWithTenant } from '@/lib/prisma-tenant';
 
-    await expect(runWithTenant('  ', async () => null)).rejects.toThrow(
-      'contaId is required for tenant-scoped database access',
-    );
-  });
+describe('web tenant database adapter', () => {
+  it('reexports the canonical database tenant runtime', async () => {
+    const result = await runWithTenant('conta-1', async () => 'tenant result');
 
-  it('define app.current_conta_id na transação quando RLS runtime está desligado', async () => {
-    vi.stubEnv('RLS_RUNTIME_ENABLED', 'false');
-    const { runWithTenant, isRlsRuntimeEnabled } = await import('@/lib/prisma-tenant');
-
-    expect(isRlsRuntimeEnabled()).toBe(false);
-
-    await runWithTenant('conta-abc', async () => 'ok');
-
-    expect(transaction).toHaveBeenCalledTimes(1);
-    expect(executeRaw).toHaveBeenCalled();
-  });
-
-  it('encaminha opções de isolamento para a transação tenant-scoped', async () => {
-    vi.stubEnv('RLS_RUNTIME_ENABLED', 'false');
-    const { runWithTenant } = await import('@/lib/prisma-tenant');
-    const options = { isolationLevel: 'Serializable' as const };
-
-    await runWithTenant('conta-abc', async () => 'ok', options);
-
-    expect(transaction).toHaveBeenCalledWith(expect.any(Function), options);
-  });
-
-  it('exige DATABASE_RLS_URL quando RLS runtime está ligado', async () => {
-    vi.stubEnv('RLS_RUNTIME_ENABLED', 'true');
-    vi.stubEnv('DATABASE_RLS_URL', '');
-    const { runWithTenant } = await import('@/lib/prisma-tenant');
-
-    await expect(runWithTenant('conta-abc', async () => null)).rejects.toThrow(
-      'DATABASE_RLS_URL is required when RLS_RUNTIME_ENABLED=true',
-    );
+    expect(result).toBe('tenant result');
+    expect(tenantMocks.runWithTenant).toHaveBeenCalledWith('conta-1', expect.any(Function));
+    expect(isRlsRuntimeEnabled()).toBe(true);
+    expect(tenantMocks.isRlsRuntimeEnabled).toHaveBeenCalledOnce();
   });
 });

@@ -120,13 +120,19 @@ async function run(req: Request) {
     const creations = creationsResult.value;
     const enrollmentCreations = enrollmentCreationsResult.value;
     const scannedCount = commands.scanned + commands.stale.processed + creations.scanned + enrollmentCreations.inspected;
-    const confirmedWorkCount = commands.synced + commands.stale.marked + creations.recovered;
+    const confirmedWorkCount = commands.synced + commands.stale.marked + creations.recovered +
+      (enrollmentCreations.committed ?? 0) + (enrollmentCreations.compensated ?? 0);
     logJobResult('reconcile-payment-commands', startedAt, {
       commandsScanned: commands.scanned,
       staleCommandsScanned: commands.stale.processed,
       staleCommandsMarked: commands.stale.marked,
       outboundOperationsScanned: creations.scanned,
       enrollmentCreationsInspected: enrollmentCreations.inspected,
+      enrollmentCreationsCommitted: enrollmentCreations.committed ?? 0,
+      enrollmentCreationsCompensated: enrollmentCreations.compensated ?? 0,
+      enrollmentCreationsAttention: enrollmentCreations.attention ?? 0,
+      enrollmentCreationsSuspended: enrollmentCreations.suspended ?? 0,
+      enrollmentCreationsWaiting: enrollmentCreations.waiting ?? 0,
     }, {
       failedStages: 0,
       workStatus: confirmedWorkCount > 0 ? 'worked' : scannedCount === 0 ? 'empty' : 'unknown',

@@ -1014,6 +1014,7 @@ export {
   compensateStagedEnrollmentFinancialResources,
   stageEnrollmentFinancialResources,
 } from './use-cases/stage-enrollment-financial-resources';
+export { reconcileEnrollmentCreationOperations } from './use-cases/reconcile-enrollment-creation-operations';
 export type {
   EnrollmentFeeStageInput,
   EnrollmentFinancialCompensationResult,

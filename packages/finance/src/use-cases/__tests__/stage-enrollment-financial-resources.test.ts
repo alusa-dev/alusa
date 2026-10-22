@@ -617,6 +617,13 @@ describe('compensateStagedEnrollmentFinancialResources', () => {
     );
 
     expect(result).toEqual({
+      discovery: {
+        complete: true,
+        retryable: false,
+        subscriptionFound: true,
+        enrollmentFeeSearchPerformed: false,
+        enrollmentFeeFound: false,
+      },
       complete: true,
       deletedPaymentIds: ['pay_monthly_1'],
       deletedFirstSubscriptionPaymentId: null,
@@ -695,6 +702,141 @@ describe('compensateStagedEnrollmentFinancialResources', () => {
       .toEqual([[0, 'conta-1'], [100, 'conta-1']]);
     expect(result.deletedPaymentIds).toEqual(['pay_monthly_1']);
     expect(deps.deletePayment).toHaveBeenCalledWith('pay_monthly_1', { contaId: 'conta-1' });
+    expect(deps.deleteSubscription).not.toHaveBeenCalled();
+  });
+
+  it.each([408, 429, 503])('classifica HTTP %s em listPayments como transitório e retryable', async (status) => {
+    const deps = dependencies();
+    deps.listPayments.mockRejectedValue(Object.assign(new Error('provider unavailable'), { status }));
+
+    const result = await compensateStagedEnrollmentFinancialResources(
+      { contaId: 'conta-1', asaasSubscriptionId: 'sub_remote_1' },
+      deps,
+    );
+
+    expect(result.discovery).toMatchObject({ complete: false, retryable: true, subscriptionFound: true });
+    expect(result.complete).toBe(false);
+    expect(deps.deleteSubscription).not.toHaveBeenCalled();
+  });
+
+  it('classifica timeout em getPayment como transitório e retryable', async () => {
+    const deps = dependencies();
+    deps.getPayment.mockRejectedValue(Object.assign(new Error('request timeout'), { code: 'ETIMEDOUT' }));
+
+    const result = await compensateStagedEnrollmentFinancialResources(
+      { contaId: 'conta-1', asaasSubscriptionId: 'sub_remote_1' },
+      deps,
+    );
+
+    expect(result.discovery).toMatchObject({ retryable: true, subscriptionFound: true });
+    expect(result.complete).toBe(false);
+    expect(result.errors).toContainEqual(expect.objectContaining({
+      resource: 'PAYMENT', id: 'pay_monthly_1', message: expect.stringContaining('PAYMENT_GET_FAILED'),
+    }));
+    expect(deps.deleteSubscription).not.toHaveBeenCalled();
+  });
+
+  it('suspende sem excluir quando o ID de assinatura persistido diverge do recurso encontrado', async () => {
+    const deps = dependencies();
+    deps.listSubscriptions.mockResolvedValue({
+      object: 'list', hasMore: false, totalCount: 1, limit: 100, offset: 0,
+      data: [subscriptionFixture({ id: 'sub-discovered-b', deleted: true })],
+    });
+
+    const result = await compensateStagedEnrollmentFinancialResources(
+      { contaId: 'conta-1', operationId: 'operation-1', asaasSubscriptionId: 'sub-stored-a' },
+      deps,
+    );
+
+    expect(result.complete).toBe(false);
+    expect(result.deletedSubscriptionId).toBeNull();
+    expect(result.errors).toContainEqual(expect.objectContaining({
+      resource: 'SUBSCRIPTION', id: 'sub-stored-a', message: 'SUBSCRIPTION_IDENTITY_CONFLICT:DISCOVERED_sub-discovered-b',
+    }));
+    expect(deps.listPayments).not.toHaveBeenCalled();
+    expect(deps.getPayment).not.toHaveBeenCalled();
+    expect(deps.deletePayment).not.toHaveBeenCalled();
+    expect(deps.deleteSubscription).not.toHaveBeenCalled();
+  });
+
+  it('suspende sem excluir quando o ID de taxa diverge do recurso encontrado', async () => {
+    const deps = dependencies();
+    deps.listPayments.mockResolvedValue({
+      object: 'list', hasMore: false, totalCount: 1, limit: 100, offset: 0,
+      data: [paymentFixture({
+        id: 'pay-discovered-b', subscription: null, deleted: true,
+        externalReference: 'enrollment-op:operation-1:fee',
+      })],
+    });
+
+    const result = await compensateStagedEnrollmentFinancialResources(
+      {
+        contaId: 'conta-1', operationId: 'operation-1', enrollmentFeePaymentId: 'pay-stored-a',
+        discoverFeeByOperationId: true,
+      },
+      deps,
+    );
+
+    expect(result.complete).toBe(false);
+    expect(result.errors).toContainEqual(expect.objectContaining({
+      resource: 'PAYMENT', id: 'pay-stored-a', message: 'PAYMENT_IDENTITY_CONFLICT:DISCOVERED_pay-discovered-b',
+    }));
+    expect(deps.getPayment).not.toHaveBeenCalled();
+    expect(deps.deletePayment).not.toHaveBeenCalled();
+    expect(deps.deleteSubscription).not.toHaveBeenCalled();
+  });
+
+  it('não classifica conflito de identidade como retry transitório', async () => {
+    const deps = dependencies();
+    deps.getPayment.mockResolvedValue(paymentFixture({ id: 'different-payment' }));
+
+    const result = await compensateStagedEnrollmentFinancialResources(
+      { contaId: 'conta-1', asaasSubscriptionId: 'sub_remote_1' },
+      deps,
+    );
+
+    expect(result.discovery.retryable).toBe(false);
+    expect(result.errors).toContainEqual(expect.objectContaining({ message: 'PAYMENT_IDENTITY_NOT_CONFIRMED' }));
+    expect(deps.deleteSubscription).not.toHaveBeenCalled();
+  });
+
+  it('não exclui fee cujo GET não confirma a externalReference da operação', async () => {
+    const deps = dependencies();
+    deps.getPayment.mockResolvedValue(paymentFixture({
+      id: 'pay_fee_1', subscription: null, externalReference: 'enrollment-op:other-operation:fee',
+    }));
+
+    const result = await compensateStagedEnrollmentFinancialResources(
+      {
+        contaId: 'conta-1', operationId: 'operation-1', asaasSubscriptionId: 'sub_remote_1',
+        enrollmentFeePaymentId: 'pay_fee_1',
+      },
+      deps,
+    );
+
+    expect(result.errors).toContainEqual(expect.objectContaining({
+      resource: 'PAYMENT', id: 'pay_fee_1', message: 'PAYMENT_ASSOCIATION_NOT_CONFIRMED:ENROLLMENT_FEE',
+    }));
+    expect(deps.deletePayment).not.toHaveBeenCalledWith('pay_fee_1', { contaId: 'conta-1' });
+    expect(deps.deleteSubscription).not.toHaveBeenCalled();
+  });
+
+  it('não exclui mensalidade cujo GET associa outro ID de assinatura', async () => {
+    const deps = dependencies();
+    deps.getPayment.mockResolvedValue(paymentFixture({ subscription: 'sub-other' }));
+
+    const result = await compensateStagedEnrollmentFinancialResources(
+      {
+        contaId: 'conta-1', asaasSubscriptionId: 'sub_remote_1',
+        firstSubscriptionPaymentId: 'pay_monthly_1',
+      },
+      deps,
+    );
+
+    expect(result.errors).toContainEqual(expect.objectContaining({
+      resource: 'PAYMENT', id: 'pay_monthly_1', message: 'PAYMENT_ASSOCIATION_NOT_CONFIRMED:FIRST_SUBSCRIPTION_PAYMENT',
+    }));
+    expect(deps.deletePayment).not.toHaveBeenCalled();
     expect(deps.deleteSubscription).not.toHaveBeenCalled();
   });
 

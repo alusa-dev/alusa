@@ -254,6 +254,7 @@ describe('handlePaymentWebhook', () => {
 
     const { isPaymentResolutionPolicyEnabled } = await import('../../foundation/payment-resolution-policy');
     const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.enrollmentCreationOperation.updateMany).mockResolvedValue({ count: 1 } as never);
     vi.mocked(prisma.storeSaleRefundAttempt.findMany).mockResolvedValue([] as never);
     vi.mocked(prisma.storeSaleRefundAttempt.updateMany).mockResolvedValue({ count: 0 } as never);
     vi.mocked(prisma.storeSaleReturn.findFirst).mockResolvedValue(null as never);
@@ -838,6 +839,8 @@ describe('handlePaymentWebhook', () => {
     vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce({
       id: 'op-1',
       status: 'PROCESSING',
+      version: 0,
+      result: null,
     } as never);
 
     const result = await handlePaymentWebhook('conta-1', {
@@ -856,8 +859,12 @@ describe('handlePaymentWebhook', () => {
       error: 'ENROLLMENT_CREATION_IN_PROGRESS',
     });
     expect(prisma.enrollmentCreationOperation.updateMany).toHaveBeenCalledWith({
-      where: { id: 'op-1', contaId: 'conta-1' },
-      data: { asaasEnrollmentFeePaymentId: 'pay-fee-1' },
+      where: {
+        id: 'op-1', contaId: 'conta-1', status: 'PROCESSING',
+        version: 0,
+        OR: [{ asaasEnrollmentFeePaymentId: null }, { asaasEnrollmentFeePaymentId: 'pay-fee-1' }],
+      },
+      data: { asaasEnrollmentFeePaymentId: 'pay-fee-1', version: { increment: 1 } },
     });
     expect(prisma.charge.upsert).not.toHaveBeenCalled();
   });
@@ -953,7 +960,6 @@ describe('handlePaymentWebhook', () => {
         description: 'Mensalidade externa',
       },
     });
-
     expect(result).toMatchObject({
       success: true,
       skipped: true,
@@ -2387,6 +2393,462 @@ describe('handlePaymentWebhook', () => {
       chargeId: 'charge-installment-1',
       trigger: 'webhook_installment_payment_confirmed',
     });
+  });
+
+  it('reativa exceção por webhook tardio usando CAS e sem reiniciar attempts', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce({
+      id: 'op-late', status: 'REQUIRES_RECONCILIATION',
+    } as never);
+    vi.mocked(prisma.enrollmentCreationOperation.updateMany).mockResolvedValueOnce({ count: 1 } as never);
+
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_CREATED',
+      payment: {
+        id: 'pay-late', status: 'PENDING', value: 80, dueDate: '2099-01-01',
+        externalReference: 'enrollment-op:op-late:fee',
+      },
+    });
+
+    expect(prisma.enrollmentCreationOperation.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'op-late', contaId: 'conta-1', status: 'REQUIRES_RECONCILIATION' }),
+      data: expect.objectContaining({
+        asaasEnrollmentFeePaymentId: 'pay-late', status: 'REMOTE_PROVISIONED',
+        lastError: 'WEBHOOK_EVIDENCE', version: { increment: 1 },
+      }),
+    }));
+  });
+
+  it('persiste PAYMENT_AWAITING_CHARGEBACK_REVERSAL como evidência terminal da matrícula', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce({
+      id: 'op-chargeback-reversal', status: 'REQUIRES_RECONCILIATION', version: 7,
+      asaasFirstPaymentId: 'pay-chargeback-reversal', asaasEnrollmentFeePaymentId: null,
+      result: null,
+    } as never);
+    vi.mocked(prisma.enrollmentCreationOperation.updateMany).mockResolvedValueOnce({ count: 1 } as never);
+    mockUpsertFinanceReconciliationIssue.mockResolvedValueOnce({} as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      eventId: 'evt-chargeback-reversal',
+      event: 'PAYMENT_AWAITING_CHARGEBACK_REVERSAL',
+      payment: {
+        id: 'pay-chargeback-reversal', status: 'AWAITING_CHARGEBACK_REVERSAL',
+        value: 80, dueDate: '2099-01-01',
+        externalReference: 'enrollment-op:op-chargeback-reversal:subscription',
+      },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(prisma.enrollmentCreationOperation.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        result: expect.objectContaining({
+          terminalPaymentEvidence: [expect.objectContaining({
+            paymentId: 'pay-chargeback-reversal',
+            status: 'AWAITING_CHARGEBACK_REVERSAL',
+            event: 'PAYMENT_AWAITING_CHARGEBACK_REVERSAL',
+            eventId: 'evt-chargeback-reversal',
+          })],
+        }),
+      }),
+    }));
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      entityId: 'op-chargeback-reversal',
+      asaasId: 'pay-chargeback-reversal',
+      issueType: 'BILLING_OPERATION_UNCERTAIN',
+      severity: 'CRITICAL',
+    }));
+  });
+
+  it('reativa com novo eventId no mesmo payment ID e não rearma no retry desse eventId', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValue(null as never);
+    const operation = {
+      id: 'op-suspended', status: 'REQUIRES_RECONCILIATION',
+      version: 4, result: null,
+      asaasFirstPaymentId: null, asaasEnrollmentFeePaymentId: 'pay-known',
+    };
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst)
+      .mockResolvedValueOnce(operation as never)
+      .mockResolvedValueOnce({
+        ...operation, status: 'REMOTE_PROVISIONED',
+        result: { terminalPaymentEvidence: [{ paymentId: 'pay-known', status: 'RECEIVED', event: 'PAYMENT_RECEIVED', eventId: 'evt-payment-new-evidence' }] },
+      } as never);
+    vi.mocked(prisma.enrollmentCreationOperation.updateMany).mockResolvedValueOnce({ count: 1 } as never);
+
+    const payload = {
+      eventId: 'evt-payment-new-evidence',
+      event: 'PAYMENT_RECEIVED' as const,
+      payment: {
+        id: 'pay-known', status: 'RECEIVED', value: 80, dueDate: '2099-01-01',
+        externalReference: 'enrollment-op:op-suspended:fee',
+      },
+    };
+    const firstResult = await handlePaymentWebhook('conta-1', payload);
+    const retryResult = await handlePaymentWebhook('conta-1', payload);
+
+    expect(firstResult).toEqual({ success: true });
+    expect(retryResult).toEqual({ success: true });
+    expect(prisma.enrollmentCreationOperation.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.enrollmentCreationOperation.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'op-suspended', contaId: 'conta-1', status: 'REQUIRES_RECONCILIATION' }),
+      data: expect.objectContaining({
+        status: 'REMOTE_PROVISIONED', lastError: 'WEBHOOK_EVIDENCE',
+        result: expect.objectContaining({
+          terminalPaymentEvidence: [expect.objectContaining({
+            paymentId: 'pay-known', status: 'RECEIVED', event: 'PAYMENT_RECEIVED', eventId: 'evt-payment-new-evidence',
+          })],
+        }),
+      }),
+    }));
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1', entityType: 'PAYMENT', entityId: 'op-suspended', asaasId: 'pay-known',
+      issueType: 'BILLING_OPERATION_UNCERTAIN', severity: 'CRITICAL', remoteStatus: 'RECEIVED',
+      causeId: 'evt-payment-new-evidence',
+      metadata: expect.objectContaining({ reason: 'TERMINAL_PAYMENT_EVIDENCE_WITHOUT_LOCAL_CHARGE' }),
+    }));
+  });
+
+  it('não confirma evento se o CAS perde para COMPENSATING mesmo com o mesmo payment ID', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst)
+      .mockResolvedValueOnce({
+        id: 'op-race', status: 'REQUIRES_RECONCILIATION', version: 3,
+        asaasFirstPaymentId: null, asaasEnrollmentFeePaymentId: 'pay-race', result: null,
+      } as never)
+      .mockResolvedValueOnce({
+        status: 'COMPENSATING', asaasFirstPaymentId: null, asaasEnrollmentFeePaymentId: 'pay-race', result: null,
+      } as never);
+    vi.mocked(prisma.enrollmentCreationOperation.updateMany).mockResolvedValueOnce({ count: 0 } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_RECEIVED',
+      payment: {
+        id: 'pay-race', status: 'RECEIVED', value: 80, dueDate: '2099-01-01',
+        externalReference: 'enrollment-op:op-race:fee',
+      },
+    });
+
+    expect(result).toEqual({ success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' });
+  });
+
+  it('mantém webhook retryable se a issue terminal não foi persistida e tenta registrá-la novamente', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValue(null as never);
+    const evidence = {
+      terminalPaymentEvidence: [{
+        paymentId: 'pay-retry-issue', status: 'RECEIVED', event: 'PAYMENT_RECEIVED', eventId: 'evt-retry-issue',
+      }],
+    };
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst)
+      .mockResolvedValueOnce({
+        id: 'op-retry-issue', status: 'REQUIRES_RECONCILIATION', version: 2,
+        asaasFirstPaymentId: null, asaasEnrollmentFeePaymentId: 'pay-retry-issue', result: null,
+      } as never)
+      .mockResolvedValueOnce({
+        id: 'op-retry-issue', status: 'REMOTE_PROVISIONED', version: 3,
+        asaasFirstPaymentId: null, asaasEnrollmentFeePaymentId: 'pay-retry-issue', result: evidence,
+      } as never);
+    vi.mocked(prisma.enrollmentCreationOperation.updateMany).mockResolvedValueOnce({ count: 1 } as never);
+    mockUpsertFinanceReconciliationIssue
+      .mockRejectedValueOnce(new Error('issue storage unavailable'))
+      .mockResolvedValueOnce({} as never);
+
+    const payload = {
+      eventId: 'evt-retry-issue',
+      event: 'PAYMENT_RECEIVED' as const,
+      payment: {
+        id: 'pay-retry-issue', status: 'RECEIVED', value: 80, dueDate: '2099-01-01',
+        externalReference: 'enrollment-op:op-retry-issue:fee',
+      },
+    };
+    const first = await handlePaymentWebhook('conta-1', payload);
+    const retry = await handlePaymentWebhook('conta-1', payload);
+
+    expect(first.success).toBe(false);
+    expect(retry).toEqual({ success: true });
+    expect(prisma.enrollmentCreationOperation.updateMany).toHaveBeenCalledTimes(1);
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledTimes(2);
+  });
+
+  it('registra PAYMENT_RECEIVED em operação COMPENSATED depois de retry durante COMPENSATING sem reabrir a saga', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst)
+      .mockResolvedValueOnce({
+        id: 'op-compensated-retry', status: 'COMPENSATING', version: 8,
+        asaasFirstPaymentId: null, asaasEnrollmentFeePaymentId: 'pay-after-comp', result: null,
+      } as never)
+      .mockResolvedValueOnce({
+        id: 'op-compensated-retry', status: 'COMPENSATED', version: 9,
+        asaasFirstPaymentId: null, asaasEnrollmentFeePaymentId: 'pay-after-comp',
+        result: { compensation: { complete: true, deletedSubscriptionId: 'sub-1' } },
+      } as never);
+    vi.mocked(prisma.enrollmentCreationOperation.updateMany).mockResolvedValueOnce({ count: 1 } as never);
+    mockUpsertFinanceReconciliationIssue.mockResolvedValueOnce({} as never);
+
+    const payload = {
+      eventId: 'evt-after-comp',
+      event: 'PAYMENT_RECEIVED' as const,
+      payment: {
+        id: 'pay-after-comp', status: 'RECEIVED', value: 80, dueDate: '2099-01-01',
+        externalReference: 'enrollment-op:op-compensated-retry:fee',
+      },
+    };
+    const whileCompensating = await handlePaymentWebhook('conta-1', payload);
+    const afterCompensated = await handlePaymentWebhook('conta-1', payload);
+
+    expect(whileCompensating).toEqual({ success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' });
+    expect(afterCompensated).toEqual({ success: true });
+    expect(prisma.enrollmentCreationOperation.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.enrollmentCreationOperation.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: 'op-compensated-retry', contaId: 'conta-1', status: 'COMPENSATED', version: 9,
+        OR: [{ asaasEnrollmentFeePaymentId: null }, { asaasEnrollmentFeePaymentId: 'pay-after-comp' }],
+      }),
+      data: expect.objectContaining({
+        version: { increment: 1 },
+        result: expect.objectContaining({
+          compensation: expect.objectContaining({ complete: true }),
+          terminalPaymentEvidence: [expect.objectContaining({ paymentId: 'pay-after-comp', status: 'RECEIVED' })],
+        }),
+      }),
+    }));
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      entityId: 'op-compensated-retry', asaasId: 'pay-after-comp', severity: 'CRITICAL',
+    }));
+  });
+
+  it('reconhece ID de taxa confirmado só no outbox após COMPENSATED e persiste evidência', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce({
+      id: 'op-outbox-only', status: 'COMPENSATED', version: 12,
+      asaasSubscriptionId: 'sub-outbox-only', asaasFirstPaymentId: null,
+      asaasEnrollmentFeePaymentId: null,
+      result: {
+        compensation: { complete: true },
+        outboundEvidence: { subscriptionId: 'sub-outbox-only', enrollmentFeePaymentId: 'fee-outbox-only' },
+      },
+    } as never);
+    vi.mocked(prisma.enrollmentCreationOperation.updateMany).mockResolvedValueOnce({ count: 1 } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      eventId: 'evt-outbox-only-paid',
+      event: 'PAYMENT_RECEIVED',
+      payment: {
+        id: 'fee-outbox-only', status: 'RECEIVED', value: 80, dueDate: '2099-01-01',
+        externalReference: 'enrollment-op:op-outbox-only:fee',
+      },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(prisma.enrollmentCreationOperation.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ status: 'COMPENSATED', version: 12 }),
+      data: expect.objectContaining({
+        asaasEnrollmentFeePaymentId: 'fee-outbox-only',
+        result: expect.objectContaining({
+          compensation: { complete: true },
+          terminalPaymentEvidence: [expect.objectContaining({ paymentId: 'fee-outbox-only', eventId: 'evt-outbox-only-paid' })],
+        }),
+      }),
+    }));
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      entityId: 'op-outbox-only', asaasId: 'fee-outbox-only', severity: 'CRITICAL',
+    }));
+  });
+
+  it('não trata pagamento de ciclo posterior da assinatura como recurso compensado', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.auditLog.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce({
+      id: 'op-compensated-cycle', status: 'COMPENSATED', version: 15,
+      asaasSubscriptionId: 'sub-known', asaasFirstPaymentId: 'pay-first-known',
+      asaasEnrollmentFeePaymentId: null,
+      result: { compensation: { complete: true, deletedSubscriptionId: 'sub-known' } },
+    } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      eventId: 'evt-cycle-two-created',
+      event: 'PAYMENT_CREATED',
+      payment: {
+        id: 'pay-cycle-two', status: 'PENDING', value: 80, dueDate: '2099-02-01',
+        subscription: 'sub-known',
+        externalReference: 'enrollment-op:op-compensated-cycle:subscription',
+      },
+    });
+    expect(result).toMatchObject({
+      success: true,
+      skipped: true,
+      skipReason: 'UNMATCHED_PAYMENT_REQUIRES_RECONCILIATION',
+    });
+    expect(prisma.enrollmentCreationOperation.updateMany).not.toHaveBeenCalled();
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1',
+      asaasId: 'pay-cycle-two',
+      issueType: 'PAYMENT_MISSING_LOCAL_ENTITY',
+    }));
+    expect(mockUpsertFinanceReconciliationIssue).not.toHaveBeenCalledWith(expect.objectContaining({
+      issueType: 'BILLING_OPERATION_UNCERTAIN',
+      severity: 'CRITICAL',
+    }));
+  });
+
+  it('reconcilia PAYMENT_RECEIVED de ciclo posterior associado à assinatura após COMPENSATED', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.auditLog.findMany).mockResolvedValueOnce([] as never);
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce({
+      id: 'op-compensated-cycle-paid', status: 'COMPENSATED', version: 16,
+      asaasSubscriptionId: 'sub-known-paid', asaasFirstPaymentId: 'pay-first-known-paid',
+      asaasEnrollmentFeePaymentId: null,
+      result: { compensation: { complete: true, deletedSubscriptionId: 'sub-known-paid' } },
+    } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      eventId: 'evt-cycle-two-received',
+      event: 'PAYMENT_RECEIVED',
+      payment: {
+        id: 'pay-cycle-two-received', status: 'RECEIVED', value: 80, dueDate: '2099-02-01',
+        subscription: 'sub-known-paid',
+        externalReference: 'enrollment-op:op-compensated-cycle-paid:subscription',
+      },
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      skipped: true,
+      skipReason: 'UNMATCHED_PAYMENT_REQUIRES_RECONCILIATION',
+    });
+    expect(prisma.enrollmentCreationOperation.updateMany).not.toHaveBeenCalled();
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1',
+      entityType: 'PAYMENT',
+      entityId: null,
+      asaasId: 'pay-cycle-two-received',
+      issueType: 'PAYMENT_MISSING_LOCAL_ENTITY',
+      remoteStatus: 'RECEIVED',
+    }));
+    expect(mockUpsertFinanceReconciliationIssue).not.toHaveBeenCalledWith(expect.objectContaining({
+      entityId: 'op-compensated-cycle-paid',
+      issueType: 'BILLING_OPERATION_UNCERTAIN',
+      severity: 'CRITICAL',
+    }));
+  });
+
+  it('abre issue crítica e confirma conflito terminal de ID após COMPENSATED sem reabrir operação', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce({
+      id: 'op-compensated-conflict', status: 'COMPENSATED', version: 14,
+      asaasSubscriptionId: 'sub-known', asaasFirstPaymentId: 'pay-first-known',
+      asaasEnrollmentFeePaymentId: 'fee-known',
+      result: { compensation: { complete: true } },
+    } as never);
+    mockUpsertFinanceReconciliationIssue.mockResolvedValueOnce({} as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      eventId: 'evt-conflicting-terminal',
+      event: 'PAYMENT_RECEIVED',
+      payment: {
+        id: 'fee-observed-different', status: 'RECEIVED', value: 80, dueDate: '2099-01-01',
+        externalReference: 'enrollment-op:op-compensated-conflict:fee',
+      },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(prisma.enrollmentCreationOperation.updateMany).not.toHaveBeenCalled();
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1', entityId: 'op-compensated-conflict', asaasId: 'fee-observed-different',
+      issueType: 'BILLING_OPERATION_UNCERTAIN', severity: 'CRITICAL', causeId: 'evt-conflicting-terminal',
+      metadata: expect.objectContaining({
+        reason: 'COMPENSATED_PAYMENT_ID_DIVERGENCE',
+        expectedPaymentIds: ['fee-known'],
+        observedPaymentId: 'fee-observed-different',
+      }),
+    }));
+  });
+
+  it('não vincula payment da operação de outra conta mesmo quando a referência aponta para ela', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValue(null as never);
+    const operationB = {
+      id: 'op-tenant-b', contaId: 'conta-b', status: 'REQUIRES_RECONCILIATION',
+      asaasEnrollmentFeePaymentId: null, attempts: 7, version: 12,
+    };
+    const operationBBefore = { ...operationB };
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockImplementation(async ({ where }) =>
+      where.id === operationB.id && where.contaId === operationB.contaId ? operationB as never : null as never,
+    );
+
+    const result = await handlePaymentWebhook('conta-a', {
+      event: 'PAYMENT_CREATED',
+      payment: {
+        id: 'pay-tenant-b', status: 'PENDING', value: 80, dueDate: '2099-01-01',
+        externalReference: 'enrollment-op:op-tenant-b:fee',
+      },
+    });
+
+    expect(prisma.enrollmentCreationOperation.findFirst).toHaveBeenCalledWith({
+      where: { id: 'op-tenant-b', contaId: 'conta-a' },
+      select: {
+        id: true, status: true, version: true, asaasSubscriptionId: true, asaasFirstPaymentId: true,
+        asaasEnrollmentFeePaymentId: true, result: true,
+      },
+    });
+    expect(prisma.enrollmentCreationOperation.updateMany).not.toHaveBeenCalled();
+    expect(operationB).toEqual(operationBBefore);
+    expect(result).toMatchObject({ success: true, skipped: true });
+  });
+
+  it('mantém pagamento recebido durante COMPENSATING retryable para o worker', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce({
+      id: 'op-compensating', status: 'COMPENSATING',
+    } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_CREATED',
+      payment: {
+        id: 'pay-racing', status: 'PENDING', value: 80, dueDate: '2099-01-01',
+        externalReference: 'enrollment-op:op-compensating:fee',
+      },
+    });
+
+    expect(result).toEqual({ success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' });
+    expect(prisma.enrollmentCreationOperation.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('registra conflito tenant-scoped se o CAS encontra outro payment vinculado à operação', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst)
+      .mockResolvedValueOnce({ id: 'op-conflict', status: 'REQUIRES_RECONCILIATION' } as never)
+      .mockResolvedValueOnce({
+        status: 'REQUIRES_RECONCILIATION',
+        asaasFirstPaymentId: null,
+        asaasEnrollmentFeePaymentId: 'pay-existing',
+      } as never);
+    vi.mocked(prisma.enrollmentCreationOperation.updateMany).mockResolvedValueOnce({ count: 0 } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_CREATED',
+      payment: {
+        id: 'pay-observed', status: 'PENDING', value: 80, dueDate: '2099-01-01',
+        externalReference: 'enrollment-op:op-conflict:fee',
+      },
+    });
+
+    expect(result).toEqual({ success: false, error: 'ENROLLMENT_CREATION_PAYMENT_ID_CONFLICT' });
+    expect(mockUpsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1', entityId: 'op-conflict', asaasId: 'pay-observed', severity: 'CRITICAL',
+      metadata: expect.objectContaining({ existingAsaasId: 'pay-existing' }),
+    }));
   });
 
   it.each([

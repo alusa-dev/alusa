@@ -51,6 +51,7 @@ import type {
 import { mapAsaasPaymentStatusToCobranca } from '../mappers/charge-status/asaas-to-internal';
 import { resolveMonotonicAsaasPaymentStatus } from '../mappers/asaas-snapshot-monotonicity';
 import { normalizeAsaasPaymentSnapshotStatus as normalizeAsaasPaymentSnapshotStatusInput } from '../mappers/asaas-payment-snapshot-status';
+
 import {
   parseCivilDatePreservingInstant,
   parseOptionalCivilDatePreservingInstant,
@@ -66,11 +67,100 @@ import {
   type PaymentStateSource,
 } from '../state-machine/payment-state-machine';
 import { recordPaymentStateTransition } from '../state-machine/payment-state-transition.service';
+import { isTerminalEnrollmentPaymentEvidence } from './enrollment-payment-evidence';
 import {
   createStructuredLog,
   normalizeMetricDimensions,
   sharedTelemetry,
 } from '@alusa/observability';
+
+function withTerminalEnrollmentPaymentEvidence(
+  result: Prisma.JsonValue | null | undefined,
+  evidence: { paymentId: string; status: string; event: string; eventId: string | null },
+): Prisma.InputJsonValue {
+  const base = result && typeof result === 'object' && !Array.isArray(result)
+    ? result as Prisma.JsonObject
+    : {};
+  const previous = Array.isArray(base.terminalPaymentEvidence)
+    ? base.terminalPaymentEvidence.filter((item): item is Prisma.JsonObject =>
+        Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+    : [];
+  const existing = previous.findIndex((item) => item.paymentId === evidence.paymentId);
+  const terminalPaymentEvidence = [...previous];
+  const nextEvidence = {
+    paymentId: evidence.paymentId,
+    status: evidence.status,
+    event: evidence.event,
+    eventId: evidence.eventId,
+    observedAt: new Date().toISOString(),
+  } satisfies Prisma.InputJsonObject;
+  if (existing >= 0) terminalPaymentEvidence[existing] = { ...terminalPaymentEvidence[existing], ...nextEvidence };
+  else terminalPaymentEvidence.push(nextEvidence);
+  return { ...base, terminalPaymentEvidence };
+}
+
+async function recordTerminalEnrollmentPaymentIssue(params: {
+  contaId: string;
+  operationId: string;
+  paymentId: string;
+  status: string;
+  event: string;
+  eventId: string | null;
+  kind: 'subscription' | 'fee';
+}) {
+  await upsertFinanceReconciliationIssue({
+    contaId: params.contaId,
+    entityType: 'PAYMENT',
+    entityId: params.operationId,
+    asaasId: params.paymentId,
+    issueType: 'BILLING_OPERATION_UNCERTAIN',
+    severity: 'CRITICAL',
+    localStatus: null,
+    remoteStatus: params.status || params.event,
+    causeId: params.eventId,
+    metadata: {
+      source: 'payment-webhook-handler',
+      reason: 'TERMINAL_PAYMENT_EVIDENCE_WITHOUT_LOCAL_CHARGE',
+      operationId: params.operationId,
+      kind: params.kind,
+      event: params.event,
+    },
+  });
+}
+
+async function recordCompensatedEnrollmentPaymentConflict(params: {
+  contaId: string;
+  operationId: string;
+  paymentId: string;
+  status: string;
+  event: string;
+  eventId: string | null;
+  kind: 'subscription' | 'fee';
+  expectedPaymentIds: string[];
+  expectedSubscriptionId: string | null;
+}) {
+  await upsertFinanceReconciliationIssue({
+    contaId: params.contaId,
+    entityType: 'PAYMENT',
+    entityId: params.operationId,
+    asaasId: params.paymentId,
+    issueType: 'BILLING_OPERATION_UNCERTAIN',
+    severity: 'CRITICAL',
+    localStatus: 'COMPENSATED',
+    remoteStatus: params.status || params.event,
+    causeId: params.eventId,
+    metadata: {
+      source: 'payment-webhook-handler',
+      reason: 'COMPENSATED_PAYMENT_ID_DIVERGENCE',
+      operationId: params.operationId,
+      kind: params.kind,
+      event: params.event,
+      expectedPaymentIds: params.expectedPaymentIds,
+      expectedSubscriptionId: params.expectedSubscriptionId,
+      observedPaymentId: params.paymentId,
+    },
+  });
+}
 
 type PaymentWebhookOperation =
   | 'standalone_charge_updated'
@@ -3176,39 +3266,394 @@ async function handlePaymentWebhookCore(
         const [, operationId, kind] = stagedReference;
         const operation = await prisma.enrollmentCreationOperation.findFirst({
           where: { id: operationId, contaId },
-          select: { id: true, status: true },
+          select: {
+            id: true,
+            status: true,
+            version: true,
+            asaasSubscriptionId: true,
+            asaasFirstPaymentId: true,
+            asaasEnrollmentFeePaymentId: true,
+            result: true,
+          },
         });
+        if (operation?.status === 'COMPENSATED') {
+          const existingPaymentId = kind === 'fee'
+            ? operation.asaasEnrollmentFeePaymentId
+            : operation.asaasFirstPaymentId;
+          const rawStatus = typeof payload.payment.status === 'string'
+            ? payload.payment.status.trim().toUpperCase()
+            : '';
+          const resultObject = operation.result && typeof operation.result === 'object' && !Array.isArray(operation.result)
+            ? operation.result as Prisma.JsonObject
+            : {};
+          const outboundEvidence = resultObject.outboundEvidence && typeof resultObject.outboundEvidence === 'object' && !Array.isArray(resultObject.outboundEvidence)
+            ? resultObject.outboundEvidence as Prisma.JsonObject
+            : {};
+          const compensation = resultObject.compensation && typeof resultObject.compensation === 'object' && !Array.isArray(resultObject.compensation)
+            ? resultObject.compensation as Prisma.JsonObject
+            : {};
+          const compensationDiscovery = compensation.discovery && typeof compensation.discovery === 'object' && !Array.isArray(compensation.discovery)
+            ? compensation.discovery as Prisma.JsonObject
+            : {};
+          const expectedPaymentIds = [...new Set([
+            existingPaymentId,
+            kind === 'fee' && typeof outboundEvidence.enrollmentFeePaymentId === 'string'
+              ? outboundEvidence.enrollmentFeePaymentId : null,
+            kind === 'fee' && typeof compensation.deletedEnrollmentFeePaymentId === 'string'
+              ? compensation.deletedEnrollmentFeePaymentId : null,
+            kind === 'subscription' && typeof outboundEvidence.firstSubscriptionPaymentId === 'string'
+              ? outboundEvidence.firstSubscriptionPaymentId : null,
+            kind === 'subscription' && typeof compensation.deletedFirstSubscriptionPaymentId === 'string'
+              ? compensation.deletedFirstSubscriptionPaymentId : null,
+            kind === 'subscription' && typeof compensationDiscovery.firstSubscriptionPaymentId === 'string'
+              ? compensationDiscovery.firstSubscriptionPaymentId : null,
+          ].filter((id): id is string => typeof id === 'string' && id.length > 0))];
+          const expectedSubscriptionId = operation.asaasSubscriptionId ??
+            (typeof outboundEvidence.subscriptionId === 'string' ? outboundEvidence.subscriptionId : null) ??
+            (typeof compensation.deletedSubscriptionId === 'string' ? compensation.deletedSubscriptionId : null);
+          const isExpectedCompensatedPayment = expectedPaymentIds.includes(payload.payment.id);
+          const terminalEvidence = isTerminalEnrollmentPaymentEvidence(payload.event, rawStatus);
+          const belongsToKnownSubscription = kind === 'subscription' && Boolean(
+            expectedSubscriptionId && payload.payment.subscription === expectedSubscriptionId,
+          );
+          if (!isExpectedCompensatedPayment) {
+            if (!terminalEvidence || belongsToKnownSubscription) {
+              // A later subscription cycle is a distinct charge. Leave it to
+              // the normal local matching/unmatched path. The known subscription
+              // associates it with the same billing stream, not with compensation.
+            } else {
+              await recordCompensatedEnrollmentPaymentConflict({
+                contaId,
+                operationId: operation.id,
+                paymentId: payload.payment.id,
+                status: rawStatus,
+                event: payload.event,
+                eventId: payload.eventId ?? null,
+                kind: kind === 'fee' ? 'fee' : 'subscription',
+                expectedPaymentIds,
+                expectedSubscriptionId,
+              });
+              await auditLogService.record({
+                contaId,
+                action: 'finance.webhook.compensated_enrollment_payment_conflict',
+                entity: { type: 'EnrollmentCreationOperation', id: operation.id },
+                metadata: { kind, expectedPaymentIds, expectedSubscriptionId, observedPaymentId: payload.payment.id, event: payload.event },
+              });
+              return { success: true };
+            }
+          } else {
+            // Replays for the exact payment already confirmed by compensation
+            // are harmless. Other payments from the same subscription are not.
+            if (!terminalEvidence) return { success: true };
+          }
+          const evidenceAlreadyStored = operation.result && typeof operation.result === 'object' &&
+            !Array.isArray(operation.result) &&
+            Array.isArray((operation.result as Prisma.JsonObject).terminalPaymentEvidence) &&
+            ((operation.result as Prisma.JsonObject).terminalPaymentEvidence as Prisma.JsonArray).some((item) =>
+              Boolean(item) && typeof item === 'object' && !Array.isArray(item) &&
+              (item as Prisma.JsonObject).paymentId === payload.payment.id);
+          if (isExpectedCompensatedPayment && terminalEvidence && !evidenceAlreadyStored) {
+            const evidenceUpdate = await prisma.enrollmentCreationOperation.updateMany({
+              where: {
+                id: operation.id,
+                contaId,
+                status: 'COMPENSATED',
+                version: operation.version,
+                ...(kind === 'fee'
+                  ? { OR: [{ asaasEnrollmentFeePaymentId: null }, { asaasEnrollmentFeePaymentId: payload.payment.id }] }
+                  : { OR: [{ asaasFirstPaymentId: null }, { asaasFirstPaymentId: payload.payment.id }] }),
+              },
+              data: {
+                result: withTerminalEnrollmentPaymentEvidence(operation.result, {
+                  paymentId: payload.payment.id,
+                  status: rawStatus,
+                  event: payload.event,
+                  eventId: payload.eventId ?? null,
+                }),
+                ...(kind === 'fee' && !operation.asaasEnrollmentFeePaymentId
+                  ? { asaasEnrollmentFeePaymentId: payload.payment.id }
+                  : kind === 'subscription' && expectedPaymentIds.includes(payload.payment.id) && !operation.asaasFirstPaymentId
+                    ? { asaasFirstPaymentId: payload.payment.id }
+                    : {}),
+                version: { increment: 1 },
+              },
+            });
+            if (evidenceUpdate.count !== 1) {
+              const current = await prisma.enrollmentCreationOperation.findFirst({
+                where: { id: operation.id, contaId },
+                select: {
+                  status: true,
+                  asaasFirstPaymentId: true,
+                  asaasEnrollmentFeePaymentId: true,
+                  result: true,
+                },
+              });
+              if (current?.status === 'COMPENSATING') {
+                return { success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' };
+              }
+              const currentPaymentId = kind === 'fee'
+                ? current?.asaasEnrollmentFeePaymentId
+                : current?.asaasFirstPaymentId;
+              const currentEvidenceStored = current?.result && typeof current.result === 'object' &&
+                !Array.isArray(current.result) &&
+                Array.isArray((current.result as Prisma.JsonObject).terminalPaymentEvidence) &&
+                ((current.result as Prisma.JsonObject).terminalPaymentEvidence as Prisma.JsonArray).some((item) =>
+                  Boolean(item) && typeof item === 'object' && !Array.isArray(item) &&
+                  (item as Prisma.JsonObject).paymentId === payload.payment.id);
+              if (current?.status !== 'COMPENSATED' ||
+                !expectedPaymentIds.includes(payload.payment.id) ||
+                (currentPaymentId && currentPaymentId !== payload.payment.id) ||
+                !currentEvidenceStored) {
+                return { success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' };
+              }
+            }
+          }
+          if (isExpectedCompensatedPayment && terminalEvidence) {
+            await recordTerminalEnrollmentPaymentIssue({
+              contaId,
+              operationId: operation.id,
+              paymentId: payload.payment.id,
+              status: rawStatus,
+              event: payload.event,
+              eventId: payload.eventId ?? null,
+              kind: kind === 'fee' ? 'fee' : 'subscription',
+            });
+            await auditLogService.record({
+              contaId,
+              action: 'finance.webhook.enrollment_creation_terminal_payment_after_compensation',
+              entity: { type: 'EnrollmentCreationOperation', id: operation.id },
+              metadata: { kind, asaasPaymentId: payload.payment.id, event: payload.event, status: rawStatus },
+            });
+            return { success: true };
+          }
+          // Other payment IDs from this subscription continue to normal local
+          // matching or unmatched-payment reconciliation below.
+        }
         if (
           operation &&
           ['PROCESSING', 'REMOTE_PROVISIONED', 'REQUIRES_RECONCILIATION'].includes(
             operation.status,
           )
         ) {
-          await prisma.enrollmentCreationOperation.updateMany({
-            where: { id: operation.id, contaId },
+          const existingPaymentId = kind === 'fee'
+            ? operation.asaasEnrollmentFeePaymentId
+            : operation.asaasFirstPaymentId;
+          const rawStatus = typeof payload.payment.status === 'string'
+            ? payload.payment.status.trim().toUpperCase()
+            : '';
+          const terminalEvidence = isTerminalEnrollmentPaymentEvidence(payload.event, rawStatus);
+          const terminalEvidenceAlreadyStored = terminalEvidence &&
+            operation.result && typeof operation.result === 'object' && !Array.isArray(operation.result) &&
+            Array.isArray((operation.result as Prisma.JsonObject).terminalPaymentEvidence) &&
+            ((operation.result as Prisma.JsonObject).terminalPaymentEvidence as Prisma.JsonArray).some((item) =>
+              Boolean(item) && typeof item === 'object' && !Array.isArray(item) &&
+              (item as Prisma.JsonObject).paymentId === payload.payment.id);
+          if (
+            operation.status === 'REMOTE_PROVISIONED' &&
+            existingPaymentId === payload.payment.id
+          ) {
+            if (terminalEvidence && !terminalEvidenceAlreadyStored) {
+              const evidenceUpdate = await prisma.enrollmentCreationOperation.updateMany({
+                where: {
+                  id: operation.id,
+                  contaId,
+                  status: 'REMOTE_PROVISIONED',
+                  version: operation.version,
+                  ...(kind === 'fee'
+                    ? { asaasEnrollmentFeePaymentId: payload.payment.id }
+                    : { asaasFirstPaymentId: payload.payment.id }),
+                },
+                data: {
+                  result: withTerminalEnrollmentPaymentEvidence(operation.result, {
+                    paymentId: payload.payment.id,
+                    status: rawStatus,
+                    event: payload.event,
+                    eventId: payload.eventId ?? null,
+                  }),
+                  version: { increment: 1 },
+                },
+              });
+              if (evidenceUpdate.count !== 1) {
+                const current = await prisma.enrollmentCreationOperation.findFirst({
+                  where: { id: operation.id, contaId },
+                  select: {
+                    status: true,
+                    asaasFirstPaymentId: true,
+                    asaasEnrollmentFeePaymentId: true,
+                    result: true,
+                  },
+                });
+                if (current?.status === 'COMPENSATING') {
+                  return { success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' };
+                }
+                const currentPaymentId = kind === 'fee'
+                  ? current?.asaasEnrollmentFeePaymentId
+                  : current?.asaasFirstPaymentId;
+                if (currentPaymentId !== payload.payment.id) {
+                  return { success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' };
+                }
+                const evidenceStored = current?.result && typeof current.result === 'object' &&
+                  !Array.isArray(current.result) &&
+                  Array.isArray((current.result as Prisma.JsonObject).terminalPaymentEvidence) &&
+                  ((current.result as Prisma.JsonObject).terminalPaymentEvidence as Prisma.JsonArray).some((item) =>
+                    Boolean(item) && typeof item === 'object' && !Array.isArray(item) &&
+                    (item as Prisma.JsonObject).paymentId === payload.payment.id);
+                if (!evidenceStored) {
+                  return { success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' };
+                }
+              }
+              await auditLogService.record({
+                contaId,
+                action: 'finance.webhook.enrollment_creation_terminal_payment_evidence',
+                entity: { type: 'EnrollmentCreationOperation', id: operation.id },
+                metadata: { kind, asaasPaymentId: payload.payment.id, event: payload.event, status: rawStatus },
+              });
+            }
+            if (terminalEvidence) {
+              await recordTerminalEnrollmentPaymentIssue({
+                contaId,
+                operationId: operation.id,
+                paymentId: payload.payment.id,
+                status: rawStatus,
+                event: payload.event,
+                eventId: payload.eventId ?? null,
+                kind: kind === 'fee' ? 'fee' : 'subscription',
+              });
+            }
+            return { success: true };
+          }
+          const stagedUpdate = await prisma.enrollmentCreationOperation.updateMany({
+            where: {
+              id: operation.id,
+              contaId,
+              status: operation.status,
+              version: operation.version,
+              ...(kind === 'fee'
+                ? { OR: [{ asaasEnrollmentFeePaymentId: null }, { asaasEnrollmentFeePaymentId: payload.payment.id }] }
+                : { OR: [{ asaasFirstPaymentId: null }, { asaasFirstPaymentId: payload.payment.id }] }),
+            },
             data:
               kind === 'fee'
-                ? { asaasEnrollmentFeePaymentId: payload.payment.id }
-                : { asaasFirstPaymentId: payload.payment.id },
+                ? {
+                    asaasEnrollmentFeePaymentId: payload.payment.id,
+                    ...(terminalEvidence
+                      ? { result: withTerminalEnrollmentPaymentEvidence(operation.result, {
+                          paymentId: payload.payment.id,
+                          status: rawStatus,
+                          event: payload.event,
+                          eventId: payload.eventId ?? null,
+                        }) }
+                      : {}),
+                    ...(operation.status === 'REQUIRES_RECONCILIATION'
+                      ? { status: 'REMOTE_PROVISIONED', lastError: 'WEBHOOK_EVIDENCE' }
+                      : {}),
+                    version: { increment: 1 },
+                  }
+                : {
+                    asaasFirstPaymentId: payload.payment.id,
+                    ...(terminalEvidence
+                      ? { result: withTerminalEnrollmentPaymentEvidence(operation.result, {
+                          paymentId: payload.payment.id,
+                          status: rawStatus,
+                          event: payload.event,
+                          eventId: payload.eventId ?? null,
+                        }) }
+                      : {}),
+                    ...(operation.status === 'REQUIRES_RECONCILIATION'
+                      ? { status: 'REMOTE_PROVISIONED', lastError: 'WEBHOOK_EVIDENCE' }
+                      : {}),
+                    version: { increment: 1 },
+                  },
           });
+          if (stagedUpdate.count !== 1) {
+            const current = await prisma.enrollmentCreationOperation.findFirst({
+              where: { id: operation.id, contaId },
+              select: {
+                status: true,
+                asaasFirstPaymentId: true,
+                asaasEnrollmentFeePaymentId: true,
+                result: true,
+              },
+            });
+            if (current?.status === 'COMPENSATING') {
+              return { success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' };
+            }
+            const existingPaymentId = kind === 'fee'
+              ? current?.asaasEnrollmentFeePaymentId
+              : current?.asaasFirstPaymentId;
+            if (existingPaymentId && existingPaymentId !== payload.payment.id) {
+              await upsertFinanceReconciliationIssue({
+                contaId,
+                entityType: 'PAYMENT',
+                entityId: operation.id,
+                asaasId: payload.payment.id,
+                issueType: 'BILLING_OPERATION_UNCERTAIN',
+                severity: 'CRITICAL',
+                localStatus: current?.status ?? null,
+                remoteStatus: payload.payment.status ?? null,
+                metadata: {
+                  operationId: operation.id,
+                  kind,
+                  reason: 'ENROLLMENT_CREATION_PAYMENT_ID_CONFLICT',
+                  existingAsaasId: existingPaymentId,
+                  observedAsaasId: payload.payment.id,
+                },
+              });
+              await auditLogService.record({
+                contaId,
+                action: 'finance.webhook.enrollment_creation_payment_conflict',
+                entity: { type: 'EnrollmentCreationOperation', id: operation.id },
+                metadata: { kind, existingAsaasId: existingPaymentId, observedAsaasId: payload.payment.id },
+              });
+              return { success: false, error: 'ENROLLMENT_CREATION_PAYMENT_ID_CONFLICT' };
+            }
+            if (existingPaymentId === payload.payment.id) {
+              const evidenceAlreadyStored = terminalEvidence && current?.result &&
+                typeof current.result === 'object' && !Array.isArray(current.result) &&
+                Array.isArray((current.result as Prisma.JsonObject).terminalPaymentEvidence) &&
+                ((current.result as Prisma.JsonObject).terminalPaymentEvidence as Prisma.JsonArray).some((item) =>
+                  Boolean(item) && typeof item === 'object' && !Array.isArray(item) &&
+                  (item as Prisma.JsonObject).paymentId === payload.payment.id);
+              if (terminalEvidence && !evidenceAlreadyStored) {
+                return { success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' };
+              }
+              return { success: true };
+            }
+            return { success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' };
+          }
           await auditLogService.record({
             contaId,
             action: 'finance.webhook.enrollment_creation_payment_staged',
             entity: { type: 'EnrollmentCreationOperation', id: operation.id },
             metadata: {
               event: payload.event,
-              kind,
+              kind: kind === 'fee' ? 'fee' : 'subscription',
               asaasPaymentId: payload.payment.id,
               subscription: payload.payment.subscription ?? null,
             },
           });
+          if (terminalEvidence) {
+            await recordTerminalEnrollmentPaymentIssue({
+              contaId,
+              operationId: operation.id,
+              paymentId: payload.payment.id,
+              status: rawStatus,
+              event: payload.event,
+              eventId: payload.eventId ?? null,
+              kind: kind === 'fee' ? 'fee' : 'subscription',
+            });
+          }
+          // The durable inbox dedupes a processed eventId. A new eventId for an
+          // already-known provider ID is fresh evidence; acknowledge it after
+          // reactivating so retries of this same inbox row cannot re-arm later.
+          if (operation.status === 'REQUIRES_RECONCILIATION') return { success: true };
           return {
             success: false,
             error: 'ENROLLMENT_CREATION_IN_PROGRESS',
           };
         }
-        if (operation && ['COMPENSATING', 'COMPENSATED'].includes(operation.status)) {
-          return { success: true };
+        if (operation?.status === 'COMPENSATING') {
+          return { success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' };
         }
       }
 

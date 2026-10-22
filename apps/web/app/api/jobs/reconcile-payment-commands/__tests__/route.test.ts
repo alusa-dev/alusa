@@ -29,7 +29,7 @@ describe('GET /api/jobs/reconcile-payment-commands', () => {
     mocks.resolveTenantScope.mockResolvedValue({ ok: true, contaId: undefined, isCron: true });
     mocks.reconcilePendingPaymentCommands.mockResolvedValue({ scanned: 2, synced: 0, stale: { processed: 1, marked: 0 } });
     mocks.reconcileOutboundFinancialOperations.mockResolvedValue({ scanned: 3, recovered: 0, missing: 0, divergent: 0 });
-    mocks.reconcileEnrollmentCreationOperations.mockResolvedValue({ inspected: 4 });
+    mocks.reconcileEnrollmentCreationOperations.mockResolvedValue({ inspected: 4, committed: 0, compensated: 0, attention: 0, suspended: 0, waiting: 0 });
   });
 
   it('keeps scan-only executions unknown and logs fixed stage count aggregates', async () => {
@@ -41,6 +41,11 @@ describe('GET /api/jobs/reconcile-payment-commands', () => {
       staleCommandsMarked: 0,
       outboundOperationsScanned: 3,
       enrollmentCreationsInspected: 4,
+      enrollmentCreationsCommitted: 0,
+      enrollmentCreationsCompensated: 0,
+      enrollmentCreationsAttention: 0,
+      enrollmentCreationsSuspended: 0,
+      enrollmentCreationsWaiting: 0,
     }, expect.objectContaining({ workStatus: 'unknown' }));
 
     mocks.reconcilePendingPaymentCommands.mockResolvedValue({ scanned: 2, synced: 1, stale: { processed: 1, marked: 0 } });
@@ -50,7 +55,7 @@ describe('GET /api/jobs/reconcile-payment-commands', () => {
 
     mocks.reconcilePendingPaymentCommands.mockResolvedValue({ scanned: 0, synced: 0, stale: { processed: 0, marked: 0 } });
     mocks.reconcileOutboundFinancialOperations.mockResolvedValue({ scanned: 0, recovered: 0, missing: 0, divergent: 0 });
-    mocks.reconcileEnrollmentCreationOperations.mockResolvedValue({ inspected: 0 });
+    mocks.reconcileEnrollmentCreationOperations.mockResolvedValue({ inspected: 0, committed: 0, compensated: 0, attention: 0, suspended: 0, waiting: 0 });
     await GET(new Request('http://localhost/api/jobs/reconcile-payment-commands'));
     expect(mocks.logJobResult).toHaveBeenLastCalledWith('reconcile-payment-commands', expect.objectContaining({ startedAt: expect.any(Number), correlationId: expect.any(String) }), expect.any(Object), expect.objectContaining({ workStatus: 'empty' }));
   });

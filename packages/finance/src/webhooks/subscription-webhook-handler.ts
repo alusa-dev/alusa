@@ -314,7 +314,7 @@ export async function handleSubscriptionWebhook(
       const operationId = stagedReference[1]!;
       const operation = await prisma.enrollmentCreationOperation.findFirst({
         where: { id: operationId, contaId },
-        select: { id: true, status: true },
+        select: { id: true, status: true, asaasSubscriptionId: true },
       });
       if (
         operation &&
@@ -329,14 +329,67 @@ export async function handleSubscriptionWebhook(
                 select: { id: true },
               })
             : null;
+        if (
+          operation.status === 'REMOTE_PROVISIONED' &&
+          operation.asaasSubscriptionId === payload.subscription.id &&
+          !locallyCommittedSubscription
+        ) {
+          return { success: false, error: 'ENROLLMENT_CREATION_LOCAL_SUBSCRIPTION_NOT_COMMITTED' };
+        }
         if (locallyCommittedSubscription) {
           // O commit local terminou e apenas a atualização final da saga ainda não.
           // O webhook deve seguir pelo fluxo normal para não perder a transição.
         } else {
-          await prisma.enrollmentCreationOperation.updateMany({
-            where: { id: operation.id, contaId },
-            data: { asaasSubscriptionId: payload.subscription.id },
+          const stagedUpdate = await prisma.enrollmentCreationOperation.updateMany({
+            where: {
+              id: operation.id,
+              contaId,
+              status: operation.status,
+              OR: [{ asaasSubscriptionId: null }, { asaasSubscriptionId: payload.subscription.id }],
+            },
+            data: {
+              asaasSubscriptionId: payload.subscription.id,
+              ...(operation.status === 'REQUIRES_RECONCILIATION'
+                ? { status: 'REMOTE_PROVISIONED', lastError: 'WEBHOOK_EVIDENCE', version: { increment: 1 } }
+                : {}),
+            },
           });
+          if (stagedUpdate.count !== 1) {
+            const current = await prisma.enrollmentCreationOperation.findFirst({
+              where: { id: operation.id, contaId },
+              select: { status: true, asaasSubscriptionId: true },
+            });
+            if (current?.status === 'COMPENSATING') {
+              return { success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' };
+            }
+            if (current?.asaasSubscriptionId && current.asaasSubscriptionId !== payload.subscription.id) {
+              await upsertFinanceReconciliationIssue({
+                contaId,
+                entityType: 'SUBSCRIPTION',
+                entityId: operation.id,
+                asaasId: payload.subscription.id,
+                issueType: 'BILLING_OPERATION_UNCERTAIN',
+                severity: 'CRITICAL',
+                localStatus: current.status,
+                remoteStatus: payload.subscription.status ?? null,
+                metadata: {
+                  operationId: operation.id,
+                  reason: 'ENROLLMENT_CREATION_SUBSCRIPTION_ID_CONFLICT',
+                  existingAsaasId: current.asaasSubscriptionId,
+                  observedAsaasId: payload.subscription.id,
+                },
+              });
+              await auditLogService.record({
+                contaId,
+                action: 'finance.webhook.enrollment_creation_subscription_conflict',
+                entity: { type: 'EnrollmentCreationOperation', id: operation.id },
+                metadata: { existingAsaasId: current.asaasSubscriptionId, observedAsaasId: payload.subscription.id },
+              });
+              return { success: false, error: 'ENROLLMENT_CREATION_SUBSCRIPTION_ID_CONFLICT' };
+            }
+            if (current?.asaasSubscriptionId === payload.subscription.id) return { success: true };
+            return { success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' };
+          }
           await auditLogService.record({
             contaId,
             action: 'finance.webhook.enrollment_creation_subscription_staged',
@@ -347,10 +400,53 @@ export async function handleSubscriptionWebhook(
               status: payload.subscription.status ?? null,
             },
           });
+          // Processed inbox eventIds are durably deduped; a distinct eventId
+          // for the same subscription is new evidence. Acknowledge after the
+          // CAS transition so this row cannot re-arm the operation on retry.
+          if (operation.status === 'REQUIRES_RECONCILIATION') return { success: true };
           return { success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' };
         }
       }
-      if (operation && ['COMPENSATING', 'COMPENSATED'].includes(operation.status)) {
+      if (operation?.status === 'COMPENSATING') {
+        return { success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' };
+      }
+      if (operation?.status === 'COMPENSATED') {
+        const deletionReplay = operation.asaasSubscriptionId === payload.subscription.id &&
+          (payload.subscription.deleted === true || payload.event === 'SUBSCRIPTION_DELETED' ||
+            canonicalStatus === 'INACTIVE' || canonicalStatus === 'EXPIRED' || canonicalStatus === 'DELETED');
+        if (deletionReplay) return { success: true };
+
+        await upsertFinanceReconciliationIssue({
+          contaId,
+          entityType: 'SUBSCRIPTION',
+          entityId: operation.id,
+          asaasId: payload.subscription.id,
+          issueType: 'BILLING_OPERATION_UNCERTAIN',
+          severity: 'CRITICAL',
+          localStatus: operation.status,
+          remoteStatus: payload.subscription.status ?? null,
+          causeId: payload.eventId,
+          metadata: {
+            source: 'subscription-webhook-handler',
+            operationId: operation.id,
+            reason: 'COMPENSATED_SUBSCRIPTION_EVIDENCE_DIVERGENCE',
+            expectedAsaasSubscriptionId: operation.asaasSubscriptionId,
+            observedAsaasSubscriptionId: payload.subscription.id,
+            event: payload.event,
+            deleted: payload.subscription.deleted ?? false,
+          },
+        });
+        await auditLogService.record({
+          contaId,
+          action: 'finance.webhook.compensated_enrollment_subscription_conflict',
+          entity: { type: 'EnrollmentCreationOperation', id: operation.id },
+          metadata: {
+            expectedAsaasSubscriptionId: operation.asaasSubscriptionId,
+            observedAsaasSubscriptionId: payload.subscription.id,
+            event: payload.event,
+            status: payload.subscription.status ?? null,
+          },
+        });
         return { success: true };
       }
     }

@@ -170,6 +170,17 @@ function operationErrorMessage(code: string) {
   return 'Não foi possível criar e confirmar todo o financeiro. Nenhuma matrícula foi concluída.';
 }
 
+function persistedStagingError(error: string, resultUnknown: boolean) {
+  if (!resultUnknown) return error.slice(0, 2000);
+  if (error === 'SUBSCRIPTION_RESULT_UNKNOWN' || error === 'ENROLLMENT_FEE_RESULT_UNKNOWN') {
+    return 'REMOTE_CREATION_RESULT_STILL_UNCERTAIN';
+  }
+  if (/\b(?:HTTP[_ -]?)?(?:408|429|5\d\d)\b|TIMEOUT|TIMED OUT|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN/i.test(error)) {
+    return 'REMOTE_VERIFICATION_TRANSIENT';
+  }
+  return error.slice(0, 2000);
+}
+
 function classifyLocalCommitFailure(error: unknown) {
   const rawMessage = error instanceof Error ? error.message : String(error);
   if (rawMessage === 'PREVIEW_DESATUALIZADO') {
@@ -392,63 +403,18 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
         asaasSubscriptionId: existing.asaasSubscriptionId,
       });
     }
-    if (
-      existing.status === EnrollmentCreationOperationStatus.COMPENSATING ||
-      existing.status === EnrollmentCreationOperationStatus.REQUIRES_RECONCILIATION
-    ) {
-      const recoveryNow = new Date();
-      const recoveryClaim = await withEnrollmentOperationTenant(input.contaId, (operations) =>
-        operations.updateMany({
-          where: {
-            id: existing.id,
-            contaId: input.contaId,
-            version: existing.version,
-            status: existing.status,
-            OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { lte: recoveryNow } }],
-          },
-          data: {
-            status: EnrollmentCreationOperationStatus.COMPENSATING,
-            version: { increment: 1 },
-            attempts: { increment: 1 },
-            lockedAt: recoveryNow,
-            leaseExpiresAt: new Date(recoveryNow.getTime() + ENROLLMENT_OPERATION_LEASE_MS),
-          },
-        }),
-      );
-      if (recoveryClaim.count !== 1) {
-        throw new ImmediateEnrollmentCreationError(
-          'CRIACAO_EM_PROCESSAMENTO',
-          'A reconciliação desta matrícula já está em andamento.',
-          true,
-        );
-      }
-      const recoveryVersion = existing.version + 1;
-      const compensation = await compensateStagedEnrollmentFinancialResources({
-        contaId: input.contaId,
-        operationId: existing.id,
-        asaasSubscriptionId: existing.asaasSubscriptionId,
-        firstSubscriptionPaymentId: existing.asaasFirstPaymentId,
-        enrollmentFeePaymentId: existing.asaasEnrollmentFeePaymentId,
-      });
-      const safelyCompensated = compensationProvesExpectedResourcesRemoved(input, compensation);
-      await withEnrollmentOperationTenant(input.contaId, (operations) => operations.updateMany({
-        where: { id: existing.id, contaId: input.contaId, version: recoveryVersion },
-        data: {
-          status: safelyCompensated
-            ? EnrollmentCreationOperationStatus.COMPENSATED
-            : EnrollmentCreationOperationStatus.REQUIRES_RECONCILIATION,
-          compensatedAt: safelyCompensated ? new Date() : null,
-          result: { compensation } as Prisma.InputJsonValue,
-          lockedAt: null,
-          leaseExpiresAt: null,
-        },
-      }));
+    if (existing.status === EnrollmentCreationOperationStatus.REQUIRES_RECONCILIATION) {
       throw new ImmediateEnrollmentCreationError(
-        safelyCompensated ? 'CRIACAO_ANTERIOR_COMPENSADA' : 'CRIACAO_REQUER_RECONCILIACAO',
-        safelyCompensated
-          ? 'A tentativa anterior foi desfeita com segurança. Gere uma nova confirmação para tentar novamente.'
-          : 'A tentativa anterior precisa de reconciliação técnica antes de uma nova criação.',
-        !safelyCompensated,
+        'CRIACAO_REQUER_RECONCILIACAO',
+        'A tentativa anterior precisa de reconciliação técnica antes de uma nova criação.',
+        true,
+      );
+    }
+    if (existing.status === EnrollmentCreationOperationStatus.COMPENSATING) {
+      throw new ImmediateEnrollmentCreationError(
+        'CRIACAO_EM_PROCESSAMENTO',
+        'A reconciliação desta matrícula está em andamento. Aguarde a conclusão antes de tentar novamente.',
+        true,
       );
     }
     if (
@@ -746,7 +712,7 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
       where: { id: operation.id, contaId: input.contaId, version: leaseVersion },
       data: {
         status,
-        lastError: staged.error.slice(0, 2000),
+        lastError: persistedStagingError(staged.error, staged.resultUnknown),
         compensatedAt:
           status === EnrollmentCreationOperationStatus.COMPENSATED ? new Date() : null,
         result: { compensation: staged.compensation } as Prisma.InputJsonValue,

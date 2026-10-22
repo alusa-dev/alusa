@@ -322,10 +322,225 @@ describe('handleSubscriptionWebhook', () => {
       error: 'ENROLLMENT_CREATION_IN_PROGRESS',
     });
     expect(prisma.enrollmentCreationOperation.updateMany).toHaveBeenCalledWith({
-      where: { id: 'op-1', contaId: 't1' },
+      where: { id: 'op-1', contaId: 't1', status: 'PROCESSING', OR: [{ asaasSubscriptionId: null }, { asaasSubscriptionId: 'asaas-sub-1' }] },
       data: { asaasSubscriptionId: 'asaas-sub-1' },
     });
     expect(prisma.subscription.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('reativa exceção somente uma vez quando chega assinatura tardia', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce({
+      id: 'op-late', status: 'REQUIRES_RECONCILIATION',
+    } as never);
+
+    await handleSubscriptionWebhook('t1', {
+      event: 'SUBSCRIPTION_CREATED',
+      subscription: { id: 'asaas-sub-late', status: 'ACTIVE', externalReference: 'enrollment-op:op-late:subscription' },
+    });
+
+    expect(prisma.enrollmentCreationOperation.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'op-late', contaId: 't1', status: 'REQUIRES_RECONCILIATION' }),
+      data: expect.objectContaining({
+        asaasSubscriptionId: 'asaas-sub-late', status: 'REMOTE_PROVISIONED',
+        lastError: 'WEBHOOK_EVIDENCE', version: { increment: 1 },
+      }),
+    }));
+  });
+
+  it.each([
+    ['same ID reported active', 'sub-compensated', 'SUBSCRIPTION_CREATED', 'ACTIVE'],
+    ['second active ID', 'sub-second-active', 'SUBSCRIPTION_CREATED', 'ACTIVE'],
+  ])('abre divergência crítica pós-compensação para %s', async (_label, observedId, event, status) => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce({
+      id: 'op-compensated', status: 'COMPENSATED', asaasSubscriptionId: 'sub-compensated',
+    } as never);
+
+    const result = await handleSubscriptionWebhook('t1', {
+      event,
+      eventId: `evt-${observedId}`,
+      subscription: {
+        id: observedId,
+        status,
+        externalReference: 'enrollment-op:op-compensated:subscription',
+      },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(prisma.enrollmentCreationOperation.updateMany).not.toHaveBeenCalled();
+    expect(issueMocks.upsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 't1',
+      entityType: 'SUBSCRIPTION',
+      entityId: 'op-compensated',
+      asaasId: observedId,
+      issueType: 'BILLING_OPERATION_UNCERTAIN',
+      severity: 'CRITICAL',
+      causeId: `evt-${observedId}`,
+      metadata: expect.objectContaining({
+        reason: 'COMPENSATED_SUBSCRIPTION_EVIDENCE_DIVERGENCE',
+        expectedAsaasSubscriptionId: 'sub-compensated',
+        observedAsaasSubscriptionId: observedId,
+      }),
+    }));
+  });
+
+  it.each([
+    ['SUBSCRIPTION_DELETED', 'DELETED', true],
+    ['SUBSCRIPTION_INACTIVATED', 'INACTIVE', false],
+  ] as const)('mantém idempotente replay de %s para o ID confirmado após COMPENSATED', async (event, status, deleted) => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce({
+      id: 'op-deleted', status: 'COMPENSATED', asaasSubscriptionId: 'sub-deleted',
+    } as never);
+
+    const result = await handleSubscriptionWebhook('t1', {
+      event,
+      eventId: 'evt-deletion-replay',
+      subscription: {
+        id: 'sub-deleted', status, deleted,
+        externalReference: 'enrollment-op:op-deleted:subscription',
+      },
+    });
+
+    expect(result).toEqual({ success: true });
+    expect(issueMocks.upsertFinanceReconciliationIssue).not.toHaveBeenCalled();
+    expect(prisma.enrollmentCreationOperation.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('deixa evento de status retryable quando REMOTE_PROVISIONED ainda não tem Subscription local', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce({
+      id: 'op-awaiting-local-commit', status: 'REMOTE_PROVISIONED', asaasSubscriptionId: 'sub-awaiting-local-commit',
+    } as never);
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce(null as never);
+
+    const result = await handleSubscriptionWebhook('t1', {
+      event: 'SUBSCRIPTION_INACTIVATED',
+      eventId: 'evt-state-before-commit',
+      subscription: {
+        id: 'sub-awaiting-local-commit', status: 'INACTIVE',
+        externalReference: 'enrollment-op:op-awaiting-local-commit:subscription',
+      },
+    });
+
+    expect(result).toEqual({ success: false, error: 'ENROLLMENT_CREATION_LOCAL_SUBSCRIPTION_NOT_COMMITTED' });
+    expect(prisma.subscription.update).not.toHaveBeenCalled();
+  });
+
+  it('reativa com novo eventId na mesma assinatura e não rearma no retry desse eventId', async () => {
+    const { prisma } = await import('@alusa/database');
+    const operation = { id: 'op-suspended', asaasSubscriptionId: 'sub-known' };
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst)
+      .mockResolvedValueOnce({ ...operation, status: 'REQUIRES_RECONCILIATION' } as never)
+      .mockResolvedValueOnce({ ...operation, status: 'REMOTE_PROVISIONED' } as never);
+    vi.mocked(prisma.enrollmentCreationOperation.updateMany).mockResolvedValueOnce({ count: 1 } as never);
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValue({
+      id: 'subscription-local-known', status: 'ACTIVE', matriculaId: null,
+    } as never);
+
+    const payload = {
+      eventId: 'evt-subscription-new-evidence',
+      event: 'SUBSCRIPTION_CREATED',
+      subscription: {
+        id: 'sub-known', status: 'ACTIVE',
+        externalReference: 'enrollment-op:op-suspended:subscription',
+      },
+    } as const;
+    const firstResult = await handleSubscriptionWebhook('t1', payload);
+    const retryResult = await handleSubscriptionWebhook('t1', payload);
+
+    expect(firstResult).toEqual({ success: true });
+    expect(retryResult).toEqual({ success: true });
+    expect(prisma.enrollmentCreationOperation.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.enrollmentCreationOperation.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'op-suspended', contaId: 't1', status: 'REQUIRES_RECONCILIATION' }),
+      data: expect.objectContaining({ status: 'REMOTE_PROVISIONED', lastError: 'WEBHOOK_EVIDENCE' }),
+    }));
+  });
+
+  it('não vincula assinatura da operação de outra conta mesmo quando a referência aponta para ela', async () => {
+    const { prisma } = await import('@alusa/database');
+    const operationB = {
+      id: 'op-tenant-b', contaId: 'conta-b', status: 'REQUIRES_RECONCILIATION',
+      asaasSubscriptionId: null, attempts: 7, version: 12,
+    };
+    const operationBBefore = { ...operationB };
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockImplementation(async ({ where }) =>
+      where.id === operationB.id && where.contaId === operationB.contaId ? operationB as never : null as never,
+    );
+
+    const result = await handleSubscriptionWebhook('conta-a', {
+      event: 'SUBSCRIPTION_CREATED',
+      subscription: {
+        id: 'sub-tenant-b', status: 'ACTIVE',
+        externalReference: 'enrollment-op:op-tenant-b:subscription',
+      },
+    });
+
+    expect(prisma.enrollmentCreationOperation.findFirst).toHaveBeenCalledWith({
+      where: { id: 'op-tenant-b', contaId: 'conta-a' },
+      select: { id: true, status: true, asaasSubscriptionId: true },
+    });
+    expect(prisma.enrollmentCreationOperation.updateMany).not.toHaveBeenCalled();
+    expect(operationB).toEqual(operationBBefore);
+    expect(result).toEqual({ success: true });
+  });
+
+  it('mantém assinatura recebida durante COMPENSATING retryable para o worker', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst).mockResolvedValueOnce({
+      id: 'op-compensating', status: 'COMPENSATING',
+    } as never);
+
+    const result = await handleSubscriptionWebhook('t1', {
+      event: 'SUBSCRIPTION_CREATED',
+      subscription: { id: 'sub-racing', status: 'ACTIVE', externalReference: 'enrollment-op:op-compensating:subscription' },
+    });
+
+    expect(result).toEqual({ success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' });
+    expect(prisma.enrollmentCreationOperation.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('não confirma evento quando o CAS perde para COMPENSATING com o mesmo subscription ID', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst)
+      .mockResolvedValueOnce({
+        id: 'op-race', status: 'REQUIRES_RECONCILIATION', asaasSubscriptionId: null,
+      } as never)
+      .mockResolvedValueOnce({
+        status: 'COMPENSATING', asaasSubscriptionId: 'sub-race',
+      } as never);
+    vi.mocked(prisma.enrollmentCreationOperation.updateMany).mockResolvedValueOnce({ count: 0 } as never);
+
+    const result = await handleSubscriptionWebhook('t1', {
+      event: 'SUBSCRIPTION_CREATED',
+      subscription: {
+        id: 'sub-race', status: 'ACTIVE',
+        externalReference: 'enrollment-op:op-race:subscription',
+      },
+    });
+
+    expect(result).toEqual({ success: false, error: 'ENROLLMENT_CREATION_IN_PROGRESS' });
+  });
+
+  it('abre divergência tenant-scoped quando o CAS encontra outra assinatura para a solicitação', async () => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.enrollmentCreationOperation.findFirst)
+      .mockResolvedValueOnce({ id: 'op-conflict', status: 'REQUIRES_RECONCILIATION' } as never)
+      .mockResolvedValueOnce({ status: 'REQUIRES_RECONCILIATION', asaasSubscriptionId: 'sub-existing' } as never);
+    vi.mocked(prisma.enrollmentCreationOperation.updateMany).mockResolvedValueOnce({ count: 0 } as never);
+
+    const result = await handleSubscriptionWebhook('t1', {
+      event: 'SUBSCRIPTION_CREATED',
+      subscription: { id: 'sub-observed', status: 'ACTIVE', externalReference: 'enrollment-op:op-conflict:subscription' },
+    });
+
+    expect(result).toEqual({ success: false, error: 'ENROLLMENT_CREATION_SUBSCRIPTION_ID_CONFLICT' });
+    expect(issueMocks.upsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 't1', entityId: 'op-conflict', asaasId: 'sub-observed', severity: 'CRITICAL',
+      metadata: expect.objectContaining({ existingAsaasId: 'sub-existing' }),
+    }));
   });
 
   it('processa normalmente quando o commit local terminou antes da saga ser marcada como concluída', async () => {

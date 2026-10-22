@@ -81,6 +81,13 @@ export type StagedPayment = {
 };
 
 export type EnrollmentFinancialCompensationResult = {
+  discovery: {
+    complete: boolean;
+    retryable: boolean;
+    subscriptionFound: boolean;
+    enrollmentFeeSearchPerformed: boolean;
+    enrollmentFeeFound: boolean;
+  };
   complete: boolean;
   deletedPaymentIds: string[];
   deletedFirstSubscriptionPaymentId: string | null;
@@ -169,6 +176,7 @@ class EnrollmentFinancialStageError extends Error {
   constructor(
     message: string,
     readonly resultUnknown = false,
+    override readonly cause?: unknown,
   ) {
     super(message);
     this.name = 'EnrollmentFinancialStageError';
@@ -221,6 +229,26 @@ function isNotFound(error: unknown) {
   );
 }
 
+function isTransientProviderFailure(error: unknown, depth = 0): boolean {
+  if (depth > 3) return false;
+  if (!error || typeof error !== 'object') return false;
+  const value = error as { status?: unknown; httpStatus?: unknown; code?: unknown; name?: unknown; message?: unknown; cause?: unknown };
+  const status = typeof value.status === 'number'
+    ? value.status
+    : typeof value.httpStatus === 'number'
+      ? value.httpStatus
+      : null;
+  if (status === 408 || status === 429 || (status !== null && status >= 500)) return true;
+  const code = typeof value.code === 'string' ? value.code.toUpperCase() : '';
+  const name = typeof value.name === 'string' ? value.name.toUpperCase() : '';
+  const message = typeof value.message === 'string' ? value.message.toUpperCase() : '';
+  if (/\b429\b|\b5\d\d\b/.test(message)) return true;
+  return /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT)$/.test(code) ||
+    name.includes('TIMEOUT') || message.includes('TIMEOUT') || message.includes('TIMED OUT') ||
+    /ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT/.test(message) ||
+    isTransientProviderFailure(value.cause, depth + 1);
+}
+
 function toStagedPayment(payment: Awaited<ReturnType<typeof getPayment>>): StagedPayment {
   return {
     asaasPaymentId: payment.id,
@@ -266,7 +294,7 @@ async function collectCompletePages<T extends { id: string }>(
     try {
       response = await loadPage(page * 100, 100);
     } catch (error) {
-      throw new EnrollmentFinancialStageError(`${errorCode}:${errorMessage(error)}`, true);
+      throw new EnrollmentFinancialStageError(`${errorCode}:${errorMessage(error)}`, true, error);
     }
     if (
       !response ||
@@ -313,13 +341,13 @@ async function findUniqueSubscriptionByReference(
     throw new EnrollmentFinancialStageError('SUBSCRIPTION_REFERENCE_LOOKUP_MISMATCH', true);
   }
   const matches = items.filter((item) => !item.deleted);
-  if (matches.length > 1) {
+  if (matches.length > 1 || (matches.length === 0 && items.filter((item) => item.deleted).length > 1)) {
     throw new EnrollmentFinancialStageError(
       'MULTIPLE_REMOTE_SUBSCRIPTIONS_FOR_EXTERNAL_REFERENCE',
       true,
     );
   }
-  return matches[0] ?? null;
+  return matches[0] ?? items.find((item) => item.deleted) ?? null;
 }
 
 async function findUniquePaymentByReference(
@@ -338,13 +366,13 @@ async function findUniquePaymentByReference(
     throw new EnrollmentFinancialStageError('PAYMENT_REFERENCE_LOOKUP_MISMATCH', true);
   }
   const matches = items.filter((item) => !item.deleted);
-  if (matches.length > 1) {
+  if (matches.length > 1 || (matches.length === 0 && items.filter((item) => item.deleted).length > 1)) {
     throw new EnrollmentFinancialStageError(
       'MULTIPLE_REMOTE_PAYMENTS_FOR_EXTERNAL_REFERENCE',
       true,
     );
   }
-  return matches[0] ?? null;
+  return matches[0] ?? items.find((item) => item.deleted) ?? null;
 }
 
 async function markUnknown(input: {
@@ -641,6 +669,13 @@ export async function compensateStagedEnrollmentFinancialResources(
 ): Promise<EnrollmentFinancialCompensationResult> {
   const deps = { ...defaultDependencies, ...dependencyOverrides };
   const result: EnrollmentFinancialCompensationResult = {
+    discovery: {
+      complete: true,
+      retryable: false,
+      subscriptionFound: false,
+      enrollmentFeeSearchPerformed: false,
+      enrollmentFeeFound: false,
+    },
     complete: true,
     deletedPaymentIds: [],
     deletedFirstSubscriptionPaymentId: null,
@@ -648,6 +683,7 @@ export async function compensateStagedEnrollmentFinancialResources(
     deletedSubscriptionId: null,
     errors: [],
   };
+  result.discovery.subscriptionFound = Boolean(input.asaasSubscriptionId);
   const paymentIds = new Set<string>();
   const firstSubscriptionPaymentId = input.firstSubscriptionPaymentId ?? null;
   if (firstSubscriptionPaymentId) paymentIds.add(firstSubscriptionPaymentId);
@@ -655,6 +691,7 @@ export async function compensateStagedEnrollmentFinancialResources(
   if (enrollmentFeePaymentId) paymentIds.add(enrollmentFeePaymentId);
 
   let asaasSubscriptionId = input.asaasSubscriptionId ?? null;
+  let subscriptionAlreadyDeleted = false;
   let subscriptionPaymentLookupComplete = true;
   let paymentCleanupComplete = true;
   const preservedTerminalPayments: Array<{ id: string; status: string }> = [];
@@ -666,19 +703,51 @@ export async function compensateStagedEnrollmentFinancialResources(
         `enrollment-op:${input.operationId}:subscription`,
         deps,
       );
+      result.discovery.subscriptionFound ||= Boolean(discoveredSubscription);
+      if (
+        discoveredSubscription &&
+        input.asaasSubscriptionId &&
+        discoveredSubscription.id !== input.asaasSubscriptionId
+      ) {
+        result.complete = false;
+        result.errors.push({
+          resource: 'SUBSCRIPTION',
+          id: input.asaasSubscriptionId,
+          message: `SUBSCRIPTION_IDENTITY_CONFLICT:DISCOVERED_${discoveredSubscription.id}`,
+        });
+        return result;
+      }
+      subscriptionAlreadyDeleted ||= Boolean(discoveredSubscription?.deleted);
       asaasSubscriptionId ??= discoveredSubscription?.id ?? null;
       if (input.discoverFeeByOperationId ?? true) {
+        result.discovery.enrollmentFeeSearchPerformed = true;
         const discoveredFee = await findUniquePaymentByReference(
           input.contaId,
           `enrollment-op:${input.operationId}:fee`,
           deps,
         );
+        result.discovery.enrollmentFeeFound = Boolean(discoveredFee);
+        if (
+          discoveredFee &&
+          input.enrollmentFeePaymentId &&
+          discoveredFee.id !== input.enrollmentFeePaymentId
+        ) {
+          result.complete = false;
+          result.errors.push({
+            resource: 'PAYMENT',
+            id: input.enrollmentFeePaymentId,
+            message: `PAYMENT_IDENTITY_CONFLICT:DISCOVERED_${discoveredFee.id}`,
+          });
+          return result;
+        }
         if (discoveredFee) {
           enrollmentFeePaymentId ??= discoveredFee.id;
           paymentIds.add(discoveredFee.id);
         }
       }
     } catch (error) {
+      result.discovery.complete = false;
+      result.discovery.retryable ||= isTransientProviderFailure(error);
       result.errors.push({
         resource: 'SUBSCRIPTION',
         id: input.operationId,
@@ -703,6 +772,8 @@ export async function compensateStagedEnrollmentFinancialResources(
       );
     } catch (error) {
       subscriptionPaymentLookupComplete = false;
+      result.discovery.complete = false;
+      result.discovery.retryable ||= isTransientProviderFailure(error);
       result.errors.push({
         resource: 'SUBSCRIPTION',
         id: asaasSubscriptionId,
@@ -717,6 +788,8 @@ export async function compensateStagedEnrollmentFinancialResources(
       payment = await deps.getPayment(paymentId, { contaId: input.contaId });
     } catch (error) {
       paymentCleanupComplete = false;
+      result.discovery.complete = false;
+      result.discovery.retryable ||= isTransientProviderFailure(error);
       const reason = isNotFound(error)
         ? 'PAYMENT_GET_NOT_FOUND_IDENTITY_UNCONFIRMED'
         : `PAYMENT_GET_FAILED:${errorMessage(error)}`;
@@ -728,6 +801,25 @@ export async function compensateStagedEnrollmentFinancialResources(
       paymentCleanupComplete = false;
       paymentCleanupBlockers.push({ id: paymentId, reason: 'PAYMENT_IDENTITY_NOT_CONFIRMED' });
       result.errors.push({ resource: 'PAYMENT', id: paymentId, message: 'PAYMENT_IDENTITY_NOT_CONFIRMED' });
+      continue;
+    }
+    const isEnrollmentFee = paymentId === enrollmentFeePaymentId;
+    const isFirstSubscriptionPayment = paymentId === firstSubscriptionPaymentId;
+    const paymentAssociationMatches = isEnrollmentFee
+      ? Boolean(
+          input.operationId &&
+          payment.externalReference === `enrollment-op:${input.operationId}:fee` &&
+          payment.subscription == null
+        )
+      : Boolean(asaasSubscriptionId && payment.subscription === asaasSubscriptionId);
+    if (!paymentAssociationMatches) {
+      paymentCleanupComplete = false;
+      paymentCleanupBlockers.push({ id: paymentId, reason: 'PAYMENT_ASSOCIATION_NOT_CONFIRMED' });
+      result.errors.push({
+        resource: 'PAYMENT',
+        id: paymentId,
+        message: `PAYMENT_ASSOCIATION_NOT_CONFIRMED:${isEnrollmentFee ? 'ENROLLMENT_FEE' : isFirstSubscriptionPayment ? 'FIRST_SUBSCRIPTION_PAYMENT' : 'SUBSCRIPTION_PAYMENT'}`,
+      });
       continue;
     }
     if (payment.deleted || payment.status === 'DELETED') {
@@ -804,7 +896,9 @@ export async function compensateStagedEnrollmentFinancialResources(
   }
 
   if (asaasSubscriptionId && subscriptionPaymentLookupComplete && paymentCleanupComplete) {
-    try {
+    if (subscriptionAlreadyDeleted) {
+      result.deletedSubscriptionId = asaasSubscriptionId;
+    } else try {
       await deps.deleteSubscription(asaasSubscriptionId, { contaId: input.contaId });
       result.deletedSubscriptionId = asaasSubscriptionId;
     } catch (error) {
@@ -908,6 +1002,7 @@ export async function stageEnrollmentFinancialResources(
         error: 'ENROLLMENT_OPERATION_LEASE_LOST',
         resultUnknown: true,
         compensation: {
+          discovery: { complete: false, retryable: false, subscriptionFound: false, enrollmentFeeSearchPerformed: false, enrollmentFeeFound: false },
           complete: false,
           deletedPaymentIds: [],
           deletedFirstSubscriptionPaymentId: null,
@@ -931,11 +1026,12 @@ export async function stageEnrollmentFinancialResources(
             asaasSubscriptionId: stagedIds.asaasSubscriptionId,
             firstSubscriptionPaymentId: stagedIds.firstSubscriptionPaymentId,
             enrollmentFeePaymentId: stagedIds.enrollmentFeePaymentId,
-            discoverFeeByOperationId: stagedIds.feeClaimAcquired,
+            discoverFeeByOperationId: Boolean(input.enrollmentFee) && stagedIds.feeClaimAcquired,
           },
           deps,
         )
       : {
+          discovery: { complete: true, retryable: false, subscriptionFound: false, enrollmentFeeSearchPerformed: false, enrollmentFeeFound: false },
           complete: true,
           deletedPaymentIds: [],
           deletedFirstSubscriptionPaymentId: null,

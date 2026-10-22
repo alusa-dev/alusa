@@ -227,6 +227,77 @@ describe('createImmediateEnrollment', () => {
     );
   });
 
+  it('persiste marcador elegível quando a criação da assinatura tem resultado desconhecido', async () => {
+    stageMock.mockResolvedValueOnce({
+      success: false,
+      error: 'SUBSCRIPTION_RESULT_UNKNOWN',
+      resultUnknown: true,
+      compensation: { complete: false, errors: [] },
+    });
+
+    await expect(createImmediateEnrollment(input())).rejects.toMatchObject({
+      code: 'FINANCEIRO_REQUER_RECONCILIACAO',
+      requiresReconciliation: true,
+    });
+
+    expect(prismaMock.enrollmentCreationOperation.updateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 'op-1', contaId: 'conta-1' }),
+        data: expect.objectContaining({
+          status: 'REQUIRES_RECONCILIATION',
+          lastError: 'REMOTE_CREATION_RESULT_STILL_UNCERTAIN',
+        }),
+      }),
+    );
+    expect(JSON.stringify(prismaMock.enrollmentCreationOperation.updateMany.mock.calls.at(-1))).not.toContain('SUBSCRIPTION_RESULT_UNKNOWN');
+  });
+
+  it('mantém causa estrutural fora da seleção automática mesmo se stage marcou resultUnknown', async () => {
+    stageMock.mockResolvedValueOnce({
+      success: false,
+      error: 'REMOTE_ENROLLMENT_FEE_CONFIRMATION_MISMATCH',
+      resultUnknown: true,
+      compensation: { complete: false, errors: [] },
+    });
+
+    await expect(createImmediateEnrollment(input())).rejects.toMatchObject({
+      code: 'FINANCEIRO_REQUER_RECONCILIACAO',
+      requiresReconciliation: true,
+    });
+
+    expect(prismaMock.enrollmentCreationOperation.updateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'REQUIRES_RECONCILIATION',
+          lastError: 'REMOTE_ENROLLMENT_FEE_CONFIRMATION_MISMATCH',
+        }),
+      }),
+    );
+  });
+
+  it('classifica erro inicial HTTP 408 como falha transitória elegível', async () => {
+    stageMock.mockResolvedValueOnce({
+      success: false,
+      error: 'PROVIDER_HTTP_408_TIMEOUT',
+      resultUnknown: true,
+      compensation: { complete: false, errors: [] },
+    });
+
+    await expect(createImmediateEnrollment(input())).rejects.toMatchObject({
+      code: 'FINANCEIRO_REQUER_RECONCILIACAO',
+      requiresReconciliation: true,
+    });
+
+    expect(prismaMock.enrollmentCreationOperation.updateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'REQUIRES_RECONCILIATION',
+          lastError: 'REMOTE_VERIFICATION_TRANSIENT',
+        }),
+      }),
+    );
+  });
+
   it('compensa os recursos remotos quando o commit local falha', async () => {
     criarMatriculaMock.mockRejectedValueOnce(new Error('DB_COMMIT_FAILED'));
 
@@ -568,6 +639,31 @@ describe('createImmediateEnrollment', () => {
       expect(criarMatriculaMock).not.toHaveBeenCalled();
     },
   );
+
+  it('não reabre criação nem compensação via POST para exceção financeira persistida', async () => {
+    const data = await persistCommittedAttempt();
+    prismaMock.enrollmentCreationOperation.findFirst.mockResolvedValue({
+      ...data,
+      status: 'REQUIRES_RECONCILIATION',
+      attempts: 5639,
+      asaasSubscriptionId: null,
+      asaasFirstPaymentId: null,
+      asaasEnrollmentFeePaymentId: null,
+    });
+    prismaMock.enrollmentCreationOperation.updateMany.mockClear();
+    stageMock.mockClear();
+    compensateMock.mockClear();
+    criarMatriculaMock.mockClear();
+
+    await expect(createImmediateEnrollment(input())).rejects.toMatchObject({
+      code: 'CRIACAO_REQUER_RECONCILIACAO',
+      requiresReconciliation: true,
+    });
+    expect(prismaMock.enrollmentCreationOperation.updateMany).not.toHaveBeenCalled();
+    expect(stageMock).not.toHaveBeenCalled();
+    expect(compensateMock).not.toHaveBeenCalled();
+    expect(criarMatriculaMock).not.toHaveBeenCalled();
+  });
 
   it('não executa replay de matrícula legada sem snapshot da confirmação', async () => {
     prismaMock.matricula.findFirst.mockResolvedValue({ id: 'legacy-enrollment' });
