@@ -10,11 +10,8 @@ import {
   QuestionMarkCircleIcon,
   ArrowRightStartOnRectangleIcon,
   UserCircleIcon,
-  SunIcon,
-  MoonIcon,
   CreditCard,
 } from '@/components/icons/icons';
-import { useTheme } from '@/components/theme/ThemeProvider';
 import { useUserStore, type UserState, type User } from '@/lib/stores/user-store';
 import { usePlatformBilling } from '@/features/platform-billing/PlatformBillingContext';
 import { AccountSwitcher } from './AccountSwitcher';
@@ -28,7 +25,6 @@ type Props = {
 
 /** Itens do menu de usuário — reutilizado no dropdown desktop e no drawer mobile. */
 export function UserMenuPanel({ onClose }: { onClose: () => void }) {
-  const { isDark, toggleTheme } = useTheme();
   const { summary, access } = usePlatformBilling();
   const menuUser = useUserStore((state: UserState) => state.user);
   const role = (menuUser as { role?: string } | null)?.role?.toUpperCase();
@@ -75,10 +71,6 @@ export function UserMenuPanel({ onClose }: { onClose: () => void }) {
       <MenuLink href="/help" icon={<QuestionMarkCircleIcon className="h-5 w-5" />} onClick={onClose}>
         Ajuda
       </MenuLink>
-
-      <Divider />
-
-      <ThemeMenuItem isOn={isDark} onToggle={toggleTheme} />
 
       <Divider />
 
@@ -283,52 +275,5 @@ function MenuButton({
       <span className="text-black/80 alusa-dark:text-[color:rgba(237,239,255,0.72)]">{icon}</span>
       <span>{children}</span>
     </button>
-  );
-}
-
-/**
- * Item "Tema" com switch (UI somente).
- * Usa Sun/Moon do Heroicons.
- */
-function ThemeMenuItem({ isOn, onToggle }: { isOn: boolean; onToggle: () => void }) {
-  return (
-    <div
-      role="menuitem"
-      className="flex w-full items-center justify-between rounded-[12px] px-3 py-2 text-[15px] font-medium text-black transition-colors hover:bg-black/5 alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:hover:bg-white/[0.06]"
-      onClick={onToggle}
-    >
-      <span className="flex items-center gap-3">
-        <span className="text-black/80 alusa-dark:text-[color:rgba(237,239,255,0.72)]">
-          {isOn ? (
-            <MoonIcon className="h-5 w-5 transition-transform duration-200" />
-          ) : (
-            <SunIcon className="h-5 w-5 transition-transform duration-200" />
-          )}
-        </span>
-        <span>Tema</span>
-      </span>
-
-      {/* Switch pill */}
-      <span
-        aria-hidden="true"
-        className={[
-          'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
-          isOn ? 'bg-[#A94DFF]' : 'bg-black/10 alusa-dark:bg-white/12',
-        ].join(' ')}
-      >
-        <span
-          className={[
-            'absolute inline-flex h-5 w-5 items-center justify-center rounded-full bg-white shadow transition-transform duration-200',
-            isOn ? 'translate-x-[22px]' : 'translate-x-[2px]',
-          ].join(' ')}
-        >
-          {isOn ? (
-            <MoonIcon className="h-3.5 w-3.5 text-[#6B21A8]" />
-          ) : (
-            <SunIcon className="h-3.5 w-3.5 text-[#A162F7]" />
-          )}
-        </span>
-      </span>
-    </div>
   );
 }

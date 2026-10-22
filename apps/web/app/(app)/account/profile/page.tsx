@@ -25,7 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { PROFILE_LOCALE_OPTIONS, PROFILE_THEME_OPTIONS } from '@/lib/profile-preferences';
+import { PROFILE_LOCALE_OPTIONS } from '@/lib/profile-preferences';
 import { BRAZIL_IANA_TIMEZONE_OPTIONS } from '@/lib/brazil-iana-timezones';
 import { updateSchool, updateSchoolAddress, type SchoolAddress } from '@/features/account/services/profile-service';
 import { EditActions } from '@/components/ui/edit-actions';
@@ -198,7 +198,6 @@ export default function ContaPerfilPage() {
 
   // Form fields - preferências
   const [formLocale, setFormLocale] = useState('pt-BR');
-  const [formTheme, setFormTheme] = useState('system');
 
   // Foto de perfil
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
@@ -644,16 +643,14 @@ export default function ContaPerfilPage() {
     if (!profile) return;
     setIsSavingPersonal(true);
     try {
-      // Garantir valores válidos para locale e theme
+      // Garantir valor válido para locale
       const validLocale = (profile.locale === 'pt-BR' || profile.locale === 'en-US') ? profile.locale : 'pt-BR';
-      const validTheme = (profile.theme === 'system' || profile.theme === 'light' || profile.theme === 'dark') ? profile.theme : 'system';
 
       const payload: UpdateProfilePayload = {
         name: formName,
         telefone: formTelefone,
         bio: formBio,
         locale: validLocale as UpdateProfilePayload['locale'],
-        theme: validTheme as UpdateProfilePayload['theme'],
       };
       const updated = await updateCurrentProfile(payload);
       setProfile((prev) => (prev ? { ...prev, ...updated } : ({ ...updated, school: profile.school } as UserProfileWithSchool)));
@@ -676,7 +673,6 @@ export default function ContaPerfilPage() {
         telefone: profile.telefone ?? undefined,
         bio: profile.bio ?? undefined,
         locale: formLocale as UpdateProfilePayload['locale'],
-        theme: formTheme as UpdateProfilePayload['theme'],
       };
       const updated = await updateCurrentProfile(payload);
       setProfile((prev) => (prev ? { ...prev, ...updated } : ({ ...updated, school: profile.school } as UserProfileWithSchool)));
@@ -729,7 +725,7 @@ export default function ContaPerfilPage() {
     onlyDigits(formTelefone) !== onlyDigits(profile.telefone ?? '') ||
     (formBio ?? '') !== (profile.bio ?? '');
 
-  const prefsDirty = formLocale !== profile.locale || formTheme !== profile.theme;
+  const prefsDirty = formLocale !== profile.locale;
   const canEditSchoolProfile = profile.role?.toUpperCase() === 'ADMIN';
 
   const schoolDirty =
@@ -1403,7 +1399,6 @@ export default function ContaPerfilPage() {
                 onEdit={() => setIsEditingPrefs(true)}
                 onCancel={() => {
                   setFormLocale(profile.locale ?? 'pt-BR');
-                  setFormTheme(profile.theme ?? 'system');
                   setIsEditingPrefs(false);
                 }}
                 onSave={handleSavePrefs}
@@ -1412,30 +1407,7 @@ export default function ContaPerfilPage() {
             </div>
           </div>
         </CardHeader>
-        <CardContent className="px-6 py-6 grid gap-4 sm:grid-cols-2">
-          <div>
-            <Label className="text-xs text-muted-foreground">Tema</Label>
-            {isEditingPrefs ? (
-              <Select value={formTheme} onValueChange={setFormTheme}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PROFILE_THEME_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : (
-              <Input
-                value={profile.theme || 'system'}
-                disabled
-                className={disabledInputClasses(true)}
-              />
-            )}
-          </div>
+        <CardContent className="px-6 py-6 grid gap-4">
           <div>
             <Label className="text-xs text-muted-foreground">Idioma</Label>
             {isEditingPrefs ? (

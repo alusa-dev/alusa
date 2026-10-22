@@ -40,6 +40,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="pt-BR"
       className={`${inter.variable} ${spaceMono.variable} min-h-full bg-white`}
+      data-theme="light"
       suppressHydrationWarning
     >
       <head />

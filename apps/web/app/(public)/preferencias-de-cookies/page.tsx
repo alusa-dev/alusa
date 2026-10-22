@@ -81,15 +81,8 @@ const CATEGORIES_METADATA: CategoryInfo[] = [
   {
     key: 'preferences',
     title: 'Preferências',
-    description: 'Permitem lembrar suas escolhas de personalização, como idioma de preferência ou a aparência do tema (claro ou escuro) para visitas futuras.',
+    description: 'Permitem lembrar escolhas de personalização, como o idioma de preferência para visitas futuras.',
     cookies: [
-      {
-        name: 'alusa.theme',
-        domain: '.alusa.com.br',
-        type: 'Próprio',
-        duration: 'Persistente',
-        description: 'Armazena a escolha de tema (claro ou escuro) definida pelo usuário.'
-      },
       {
         name: 'alusa.lang',
         domain: '.alusa.com.br',

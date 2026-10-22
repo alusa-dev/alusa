@@ -1,15 +1,12 @@
 "use client";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { usePathname } from "next/navigation";
-
-import { shouldForceLightThemePathname } from "@/lib/auth-light-theme-paths";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo } from "react";
 
 type Theme = "light" | "dark";
 
 type ThemeContextValue = {
-  /** Preferência do usuário (localStorage/cookie), independente da rota atual. */
+  /** O tema escuro está temporariamente desativado em toda a aplicação. */
   theme: Theme;
-  /** Tema aplicado em `document` (modo escuro ignorado nas rotas de auth/onboarding financeiro). */
+  /** Tema aplicado em `document`; permanece sempre claro até a futura refatoração. */
   resolvedTheme: Theme;
   isDark: boolean;
   setTheme: (_t: Theme) => void;
@@ -18,51 +15,19 @@ type ThemeContextValue = {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-function readPersistedPreference(): Theme | null {
-  if (typeof window === "undefined") return null;
-  const saved = window.localStorage.getItem("alusa.theme") as Theme | null;
-  if (saved === "light" || saved === "dark") return saved;
-  const cookieMatch = document.cookie.match(/(?:^|; )alusa\.theme=(light|dark)(?:;|$)/);
-  if (cookieMatch) return cookieMatch[1] as Theme;
-  return null;
-}
-
-function getInitialTheme(): Theme {
-  if (typeof window === "undefined") return "light"; // SSR usa cookie no layout
-  const persisted = readPersistedPreference();
-  if (persisted) return persisted;
-  const attr = document.documentElement.getAttribute("data-theme");
-  if (attr === "light" || attr === "dark") return attr;
-  const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
-  return prefersDark ? "dark" : "light";
-}
-
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
-  const [theme, setThemeState] = useState<Theme>(getInitialTheme);
+  const theme: Theme = "light";
+  const resolvedTheme: Theme = "light";
 
-  const resolvedTheme = useMemo(() => {
-    const p = pathname ?? "";
-    if (shouldForceLightThemePathname(p)) return "light";
-    return theme;
-  }, [pathname, theme]);
-
-  const persistUserThemePreference = useCallback((t: Theme) => {
-    window.localStorage.setItem("alusa.theme", t);
+  useLayoutEffect(() => {
+    document.documentElement.setAttribute("data-theme", "light");
     try {
-      document.cookie = `alusa.theme=${t}; Path=/; Max-Age=${60 * 60 * 24 * 365}; SameSite=Lax`;
+      window.localStorage.removeItem("alusa.theme");
     } catch {
-      /* ignore cookie set errors */
+      // O tema claro não depende de acesso ao armazenamento local.
     }
+    document.cookie = "alusa.theme=; Path=/; Max-Age=0; SameSite=Lax";
   }, []);
-
-  const syncRootToTheme = useCallback((t: Theme) => {
-    document.documentElement.setAttribute("data-theme", t);
-  }, []);
-
-  useEffect(() => {
-    syncRootToTheme(resolvedTheme);
-  }, [resolvedTheme, syncRootToTheme]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -71,34 +36,20 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       // event-map checkout) instead of replacing them with the app theme.
       if (document.querySelector('meta[name="theme-color"][media]')) return;
 
-      const content = resolvedTheme === "dark" ? "#0D1015" : "#FFFFFF";
       let meta = document.querySelector('meta[name="theme-color"]');
       if (!meta) {
         meta = document.createElement("meta");
         meta.setAttribute("name", "theme-color");
         document.head.appendChild(meta);
       }
-      meta.setAttribute("content", content);
+      meta.setAttribute("content", "#FFFFFF");
     } catch {
       /* noop */
     }
   }, [resolvedTheme]);
 
-  const setTheme = useCallback(
-    (t: Theme) => {
-      persistUserThemePreference(t);
-      setThemeState(t);
-    },
-    [persistUserThemePreference],
-  );
-
-  const toggleTheme = useCallback(() => {
-    setThemeState((p) => {
-      const next = p === "light" ? "dark" : "light";
-      persistUserThemePreference(next);
-      return next;
-    });
-  }, [persistUserThemePreference]);
+  const setTheme = useCallback((_t: Theme) => undefined, []);
+  const toggleTheme = useCallback(() => undefined, []);
 
   const value = useMemo<ThemeContextValue>(
     () => ({
