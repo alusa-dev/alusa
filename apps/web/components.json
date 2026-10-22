@@ -12,5 +12,8 @@
   "aliases": {
     "components": "components",
     "utils": "lib"
+  },
+  "registries": {
+    "@spectrumui": "https://ui.spectrumhq.in/r/{name}.json"
   }
 }

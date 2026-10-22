@@ -1,4 +1,3 @@
-import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -37,6 +36,11 @@ describe('HeaderSearch', () => {
     vi.clearAllMocks();
     vi.stubGlobal('fetch', fetchMock);
     vi.stubGlobal('ResizeObserver', resizeObserverMock);
+    vi.stubGlobal('matchMedia', vi.fn().mockReturnValue({
+      matches: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
     Object.defineProperty(window, 'localStorage', {
       value: storage,
       configurable: true,

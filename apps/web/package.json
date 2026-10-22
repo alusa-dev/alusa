@@ -87,6 +87,7 @@
     "@types/react-input-mask": "^3.0.6",
     "add": "^2.0.6",
     "bcryptjs": "^2.4.3",
+    "border-beam": "^1.4.1",
     "cep-promise": "^4.4.1",
     "class-variance-authority": "0.7.0",
     "clsx": "2.1.1",

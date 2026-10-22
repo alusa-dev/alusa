@@ -6,9 +6,9 @@ import { Command as CommandPrimitive } from 'cmdk';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { usePathname, useRouter } from 'next/navigation';
 
-import { Close, Search } from '@/components/icons/icons';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
+import { BeamSearch } from '@/components/spectrumui/beam-search';
 import { cn } from '@/lib/utils';
 
 import { GLOBAL_SEARCH_MIN_QUERY_LENGTH } from '../constants';
@@ -122,11 +122,6 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
     if (!open) setOpen(true);
   };
 
-  const handleClearQuery = () => {
-    setQuery('');
-    floatingInputRef.current?.focus({ preventScroll: true });
-  };
-
   const handleClearRecents = () => {
     clearRecentItems();
     floatingInputRef.current?.focus({ preventScroll: true });
@@ -135,6 +130,7 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
   const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Escape') {
       setOpen(false);
+      setQuery('');
       inputRef.current?.blur();
       floatingInputRef.current?.blur();
       return;
@@ -171,21 +167,23 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
         <label htmlFor={searchId} className="sr-only">
           Pesquisar
         </label>
-        <div className="pointer-events-none absolute left-3 top-1/2 z-20 -translate-y-1/2 text-gray-400 alusa-dark:text-[color:rgba(237,239,255,0.45)]" aria-hidden="true">
-          <Search className="h-4 w-4" />
-        </div>
-        <input
-          id={searchId}
-          type="text"
-          role="combobox"
-          aria-autocomplete="list"
-          aria-expanded={false}
-          aria-haspopup="listbox"
-          value=""
-          readOnly
+        <BeamSearch
+          shape="pill"
           placeholder="Pesquise aqui"
-          aria-label="Pesquisar"
-          className="relative z-10 h-11 w-full rounded-full border border-[#e6e4ea] bg-white pl-9 pr-4 text-[14px] outline-none placeholder:text-gray-400 focus:outline-none alusa-dark:border-[color:rgba(148,146,209,0.14)] alusa-dark:bg-[#12131a] alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:placeholder:text-[color:rgba(237,239,255,0.45)]"
+          clearLabel="Limpar pesquisa"
+          clearOnEscape={false}
+          inputProps={{
+            id: searchId,
+            type: 'text',
+            autoComplete: 'off',
+            role: 'combobox',
+            'aria-autocomplete': 'list',
+            'aria-expanded': false,
+            'aria-haspopup': 'listbox',
+            'aria-label': 'Pesquisar',
+            readOnly: true,
+            className: 'text-[14px]',
+          }}
         />
       </div>
     );
@@ -226,36 +224,29 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
                     <label htmlFor={`${searchId}-floating`} className="sr-only">
                       Pesquisar
                     </label>
-                    <div className="pointer-events-none absolute left-3 top-1/2 z-20 -translate-y-1/2 text-gray-400 alusa-dark:text-[color:rgba(237,239,255,0.45)]" aria-hidden="true">
-                      <Search className="h-4 w-4" />
-                    </div>
-                    <input
-                      ref={floatingInputRef}
-                      id={`${searchId}-floating`}
-                      type="text"
-                      role="combobox"
-                      aria-autocomplete="list"
-                      aria-expanded
-                      aria-haspopup="listbox"
-                      aria-controls={listboxId ?? undefined}
+                    <BeamSearch
+                      shape="pill"
                       value={query}
-                      onChange={(event) => handleInputValueChange(event.target.value)}
-                      onKeyDown={handleInputKeyDown}
-                      onFocus={() => setOpen(true)}
+                      onChange={handleInputValueChange}
+                      inputRef={floatingInputRef}
+                      clearLabel="Limpar pesquisa"
+                      clearOnEscape={false}
                       placeholder="Pesquise aqui"
-                      aria-label="Pesquisar"
-                      className="h-11 w-full rounded-full border border-[#e6e4ea] bg-white pl-9 pr-10 text-[14px] outline-none placeholder:text-gray-400 focus:outline-none alusa-dark:border-[color:rgba(148,146,209,0.14)] alusa-dark:bg-[#12131a] alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:placeholder:text-[color:rgba(237,239,255,0.45)]"
+                      inputProps={{
+                        id: `${searchId}-floating`,
+                        type: 'text',
+                        autoComplete: 'off',
+                        role: 'combobox',
+                        'aria-autocomplete': 'list',
+                        'aria-expanded': true,
+                        'aria-haspopup': 'listbox',
+                        'aria-controls': listboxId ?? undefined,
+                        'aria-label': 'Pesquisar',
+                        onKeyDown: handleInputKeyDown,
+                        onFocus: () => setOpen(true),
+                        className: 'text-[14px]',
+                      }}
                     />
-                    {query.trim() ? (
-                      <button
-                        type="button"
-                        aria-label="Limpar pesquisa"
-                        onClick={handleClearQuery}
-                        className="absolute right-3 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-[#4c6fb3] transition-colors hover:bg-[#f3f6fb] hover:text-[#34548f] focus:outline-none focus:ring-2 focus:ring-[#A94DFF]/40 alusa-dark:text-[color:rgba(237,239,255,0.82)] alusa-dark:hover:bg-white/6 alusa-dark:hover:text-white"
-                      >
-                        <Close className="h-4 w-4" />
-                      </button>
-                    ) : null}
                   </motion.div>
                 </>
               ) : null}
@@ -275,9 +266,6 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
               <label htmlFor={searchId} className="sr-only">
                 Pesquisar
               </label>
-              <div className="pointer-events-none absolute left-3 top-1/2 z-20 -translate-y-1/2 text-gray-400 alusa-dark:text-[color:rgba(237,239,255,0.45)]" aria-hidden="true">
-                <Search className="h-4 w-4" />
-              </div>
               {/* cmdk exige Command.Input para estado de busca/teclado; fora da árvore de acessibilidade — o input visível define o combobox */}
               <div
                 aria-hidden
@@ -295,26 +283,30 @@ export function HeaderSearch({ role = null }: HeaderSearchProps): JSX.Element {
                   readOnly
                 />
               </div>
-              <input
-                ref={inputRef}
-                id={searchId}
-                type="text"
-                role="combobox"
-                aria-autocomplete="list"
-                aria-expanded={shouldShowPopover}
-                aria-haspopup="listbox"
-                aria-controls={shouldShowPopover && listboxId ? listboxId : undefined}
+              <BeamSearch
+                shape="pill"
                 value={query}
-                onChange={(event) => handleInputValueChange(event.target.value)}
-                onFocus={() => setOpen(true)}
-                onKeyDown={handleInputKeyDown}
+                onChange={handleInputValueChange}
+                inputRef={inputRef}
+                clearLabel="Limpar pesquisa"
+                clearOnEscape={false}
                 placeholder="Pesquise aqui"
-                aria-label="Pesquisar"
-                tabIndex={shouldShowPopover ? -1 : 0}
-                className={cn(
-                  'relative z-10 h-11 w-full rounded-full border border-[#e6e4ea] bg-white pl-9 pr-4 text-[14px] outline-none placeholder:text-gray-400 focus:outline-none alusa-dark:border-[color:rgba(148,146,209,0.14)] alusa-dark:bg-[#12131a] alusa-dark:text-[color:var(--color-text-primary)] alusa-dark:placeholder:text-[color:rgba(237,239,255,0.45)]',
-                  shouldShowPopover && 'pointer-events-none opacity-0',
-                )}
+                className={cn('w-full', shouldShowPopover && 'invisible pointer-events-none')}
+                inputProps={{
+                  id: searchId,
+                  type: 'text',
+                  autoComplete: 'off',
+                  role: 'combobox',
+                  'aria-autocomplete': 'list',
+                  'aria-expanded': shouldShowPopover,
+                  'aria-haspopup': 'listbox',
+                  'aria-controls': shouldShowPopover && listboxId ? listboxId : undefined,
+                  'aria-label': 'Pesquisar',
+                  onFocus: () => setOpen(true),
+                  onKeyDown: handleInputKeyDown,
+                  tabIndex: shouldShowPopover ? -1 : 0,
+                  className: 'text-[14px]',
+                }}
               />
             </div>
           </PopoverAnchor>
