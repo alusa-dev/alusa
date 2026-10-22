@@ -102,17 +102,17 @@ function SaleWizardStep({
 
   return (
     <motion.div
-      initial={reducedMotion ? false : { opacity: 0.85, y: 4 }}
+      initial={reducedMotion ? false : { opacity: 0, x: 20 }}
       animate={{
         opacity: 1,
-        y: 0,
-        transition: { duration: reducedMotion ? 0 : 0.18, ease: 'easeOut' },
+        x: 0,
+        transition: { duration: reducedMotion ? 0 : 0.28, ease: [0.22, 1, 0.36, 1] },
       }}
       exit={{
         opacity: reducedMotion ? 1 : 0,
-        y: 0,
+        x: reducedMotion ? 0 : -12,
         pointerEvents: 'none',
-        transition: { duration: reducedMotion ? 0 : 0.1, ease: 'easeIn' },
+        transition: { duration: reducedMotion ? 0 : 0.16, ease: 'easeIn' },
       }}
       inert={!isPresent}
       aria-hidden={!isPresent}
