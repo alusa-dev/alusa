@@ -156,22 +156,22 @@ export function SalesHistoryFeature() {
         align: 'left',
         render: (sale) => (
           <div className="min-w-0">
-            <span className="font-medium text-slate-900">{formatSaleNumber(sale.saleNumber)}</span>
+            <span className="font-medium text-slate-900 financial-data">{formatSaleNumber(sale.saleNumber)}</span>
             <div className="mt-1 space-y-0.5 lg:hidden">
               <p className="text-xs text-slate-600">{formatDateBR(sale.createdAt)}</p>
               <p className="truncate text-xs text-slate-600">{formatProductSummary(sale)}</p>
               <p className="truncate text-xs font-medium text-slate-900">
                 {formatFirstLast(sale.customer.displayName) || sale.customer.displayName}
               </p>
-              <p className="text-xs font-semibold text-slate-900">{formatCurrencyBRL(sale.total)}</p>
+              <p className="text-xs font-medium text-slate-900 financial-data">{formatCurrencyBRL(sale.total)}</p>
               <p className="line-clamp-2 text-[11px] text-slate-500">{formatPaymentSummary(sale)}</p>
               {sale.grossProfit != null ? (
                 <p
                   className={
-                    sale.grossProfit >= 0 ? 'text-xs font-semibold text-emerald-700' : 'text-xs font-semibold text-red-700'
+                    sale.grossProfit >= 0 ? 'text-xs font-normal text-emerald-700' : 'text-xs font-normal text-red-700'
                   }
                 >
-                  Lucro {formatCurrencyBRL(sale.grossProfit)}
+                  Lucro <span className="financial-data">{formatCurrencyBRL(sale.grossProfit)}</span>
                 </p>
               ) : null}
             </div>
@@ -237,7 +237,7 @@ export function SalesHistoryFeature() {
         headerClassName: 'hidden lg:table-cell',
         cellClassName: 'hidden lg:table-cell',
         render: (sale) => (
-          <span className="font-semibold text-slate-900">{formatCurrencyBRL(sale.total)}</span>
+          <span className="font-medium text-slate-900 financial-data">{formatCurrencyBRL(sale.total)}</span>
         ),
       },
       {
@@ -260,7 +260,7 @@ export function SalesHistoryFeature() {
                   : 'text-right font-semibold text-red-700'
               }
             >
-              {formatCurrencyBRL(sale.grossProfit)}
+              <span className="financial-data">{formatCurrencyBRL(sale.grossProfit)}</span>
             </div>
           );
         },

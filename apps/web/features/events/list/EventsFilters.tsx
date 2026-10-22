@@ -31,7 +31,7 @@ export function EventsFilters({
   onTypeChange: (value: string) => void;
 }) {
   return (
-    <div className="flex w-full flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between lg:gap-2">
+    <div className="flex w-full flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-end lg:gap-2">
       <div className="relative w-full min-w-0 shrink-0 lg:w-[360px] xl:w-[420px]">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
         <Input

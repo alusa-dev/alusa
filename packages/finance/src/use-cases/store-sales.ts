@@ -30,6 +30,13 @@ import {
   StoreInventoryError,
 } from './store-inventory';
 import { syncPaymentStateFromAsaas } from './sync-payment-state-from-asaas';
+import {
+  computeStoreSaleReceiptFinancials,
+  type StoreSaleAnticipationSnapshot,
+  type StoreSaleAdditionalFeeSnapshot,
+  type StoreSaleReceiptChargeSnapshot,
+  type StoreSaleReceiptFinancials,
+} from './store-sale-receipt-financials';
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_PAGE_SIZE = 10;
@@ -94,6 +101,7 @@ const SALE_DETAIL_INCLUDE = {
   charge: {
     select: {
       id: true,
+      contaId: true,
       status: true,
       dueDate: true,
       billingType: true,
@@ -101,9 +109,17 @@ const SALE_DETAIL_INCLUDE = {
       invoiceUrl: true,
       description: true,
       value: true,
+      asaasStatus: true,
+      asaasValue: true,
+      asaasNetValue: true,
+      asaasFeeValue: true,
+      asaasAnticipated: true,
+      liquidacaoStatus: true,
+      liquidadoEm: true,
       standaloneInstallmentPlan: {
         select: {
           id: true,
+          contaId: true,
           status: true,
           asaasInstallmentId: true,
           installmentCount: true,
@@ -114,6 +130,7 @@ const SALE_DETAIL_INCLUDE = {
             orderBy: { dueDate: 'asc' },
             select: {
               id: true,
+              contaId: true,
               status: true,
               dueDate: true,
               billingType: true,
@@ -121,6 +138,13 @@ const SALE_DETAIL_INCLUDE = {
               invoiceUrl: true,
               description: true,
               value: true,
+              asaasStatus: true,
+              asaasValue: true,
+              asaasNetValue: true,
+              asaasFeeValue: true,
+              asaasAnticipated: true,
+              liquidacaoStatus: true,
+              liquidadoEm: true,
             },
           },
         },
@@ -130,6 +154,7 @@ const SALE_DETAIL_INCLUDE = {
   standaloneInstallmentPlan: {
     select: {
       id: true,
+      contaId: true,
       status: true,
       asaasInstallmentId: true,
       installmentCount: true,
@@ -140,6 +165,7 @@ const SALE_DETAIL_INCLUDE = {
         orderBy: { dueDate: 'asc' },
         select: {
           id: true,
+          contaId: true,
           status: true,
           dueDate: true,
           billingType: true,
@@ -147,6 +173,13 @@ const SALE_DETAIL_INCLUDE = {
           invoiceUrl: true,
           description: true,
           value: true,
+          asaasStatus: true,
+          asaasValue: true,
+          asaasNetValue: true,
+          asaasFeeValue: true,
+          asaasAnticipated: true,
+          liquidacaoStatus: true,
+          liquidadoEm: true,
         },
       },
     },
@@ -475,6 +508,13 @@ export type StoreSaleChargeDTO = {
   invoiceUrl: string | null;
   description: string | null;
   value: number | null;
+  asaasStatus: string | null;
+  asaasValue: number | null;
+  asaasNetValue: number | null;
+  asaasFeeValue: number | null;
+  asaasAnticipated?: boolean | null;
+  liquidacaoStatus: string | null;
+  liquidadoEm: string | null;
 };
 
 export type StoreSaleInstallmentPlanDTO = {
@@ -523,6 +563,7 @@ export type StoreSaleDTO = {
   customer: StoreSaleCustomerDTO;
   charge: StoreSaleChargeDTO | null;
   installmentPlan: StoreSaleInstallmentPlanDTO | null;
+  receiptFinancials?: StoreSaleReceiptFinancials | null;
   matricula: StoreSaleMatriculaDTO | null;
   operator: {
     id: string;
@@ -843,53 +884,6 @@ function compactAddress(parts: Array<string | null | undefined>): string | null 
   return value || null;
 }
 
-async function convergeStoreSalesFinancialState(params: {
-  contaId: string;
-  sales: SaleRecord[];
-}): Promise<boolean> {
-  const pendingPaymentIds = new Set<string>();
-
-  for (const sale of params.sales) {
-    const installmentPlan =
-      sale.standaloneInstallmentPlan ?? sale.charge?.standaloneInstallmentPlan ?? null;
-
-    if (installmentPlan) {
-      for (const charge of installmentPlan.charges) {
-        if (charge.asaasPaymentId && charge.status !== 'PAID' && charge.status !== 'CANCELED') {
-          pendingPaymentIds.add(charge.asaasPaymentId);
-        }
-      }
-      continue;
-    }
-
-    if (
-      sale.charge?.asaasPaymentId &&
-      sale.charge.status !== 'PAID' &&
-      sale.charge.status !== 'CANCELED'
-    ) {
-      pendingPaymentIds.add(sale.charge.asaasPaymentId);
-    }
-  }
-
-  if (pendingPaymentIds.size === 0) {
-    return false;
-  }
-
-  let converged = false;
-  for (const asaasPaymentId of pendingPaymentIds) {
-    const syncResult = await syncPaymentStateFromAsaas({
-      contaId: params.contaId,
-      asaasPaymentId,
-    });
-
-    if (syncResult.success) {
-      converged = true;
-    }
-  }
-
-  return converged;
-}
-
 function mapSaleRecord(record: SaleRecord): StoreSaleDTO {
   type SaleItemSnapshotShape = {
     unitCostAtSale?: Prisma.Decimal | null;
@@ -900,11 +894,18 @@ function mapSaleRecord(record: SaleRecord): StoreSaleDTO {
     marginAtSale?: Prisma.Decimal | null;
   };
 
-  const installmentPlan =
-    record.standaloneInstallmentPlan ?? record.charge?.standaloneInstallmentPlan ?? null;
+  const scopedCharge = record.charge?.contaId === record.contaId ? record.charge : null;
+  const installmentPlanCandidate =
+    record.standaloneInstallmentPlan ?? scopedCharge?.standaloneInstallmentPlan ?? null;
+  const installmentPlan = installmentPlanCandidate?.contaId === record.contaId
+    ? {
+        ...installmentPlanCandidate,
+        charges: installmentPlanCandidate.charges.filter((charge) => charge.contaId === record.contaId),
+      }
+    : null;
   const effectiveStatus = computeEffectiveSaleStatus(
     record.status,
-    record.charge?.status ?? null,
+    scopedCharge?.status ?? null,
     installmentPlan,
   );
   const alunoName = record.aluno?.nome ?? record.matricula?.aluno.nome ?? null;
@@ -937,7 +938,7 @@ function mapSaleRecord(record: SaleRecord): StoreSaleDTO {
     inventoryStatus: record.inventoryStatus,
     chargeProvisioningPending:
       record.finalizationType === SaleFinalizationType.COBRANCA &&
-      !record.charge &&
+      !scopedCharge &&
       !installmentPlan,
     paymentMethod: record.paymentMethod ?? null,
     subtotal: moneyToNumber(record.subtotal),
@@ -981,16 +982,22 @@ function mapSaleRecord(record: SaleRecord): StoreSaleDTO {
       walkInPhone: record.walkInPhone ?? null,
       walkInNotes: record.walkInNotes ?? null,
     },
-    charge: record.charge
+    charge: scopedCharge
       ? {
-          id: record.charge.id,
-          status: record.charge.status,
-          dueDate: formatDateOnly(record.charge.dueDate),
-          billingType: record.charge.billingType ?? null,
-          asaasPaymentId: record.charge.asaasPaymentId ?? null,
-          invoiceUrl: record.charge.invoiceUrl ?? null,
-          description: record.charge.description ?? null,
-          value: record.charge.value != null ? moneyToNumber(record.charge.value) : null,
+          id: scopedCharge.id,
+          status: scopedCharge.status,
+          dueDate: formatDateOnly(scopedCharge.dueDate),
+          billingType: scopedCharge.billingType ?? null,
+          asaasPaymentId: scopedCharge.asaasPaymentId ?? null,
+          invoiceUrl: scopedCharge.invoiceUrl ?? null,
+          description: scopedCharge.description ?? null,
+          value: scopedCharge.value != null ? moneyToNumber(scopedCharge.value) : null,
+          asaasStatus: scopedCharge.asaasStatus ?? null,
+          asaasValue: scopedCharge.asaasValue != null ? moneyToNumber(scopedCharge.asaasValue) : null,
+          asaasNetValue: scopedCharge.asaasNetValue != null ? moneyToNumber(scopedCharge.asaasNetValue) : null,
+          asaasFeeValue: scopedCharge.asaasFeeValue != null ? moneyToNumber(scopedCharge.asaasFeeValue) : null,
+          liquidacaoStatus: scopedCharge.liquidacaoStatus ?? null,
+          liquidadoEm: scopedCharge.liquidadoEm?.toISOString() ?? null,
         }
       : null,
     installmentPlan: installmentPlan
@@ -1011,6 +1018,12 @@ function mapSaleRecord(record: SaleRecord): StoreSaleDTO {
             invoiceUrl: charge.invoiceUrl ?? null,
             description: charge.description ?? null,
             value: charge.value != null ? moneyToNumber(charge.value) : null,
+            asaasStatus: charge.asaasStatus ?? null,
+            asaasValue: charge.asaasValue != null ? moneyToNumber(charge.asaasValue) : null,
+            asaasNetValue: charge.asaasNetValue != null ? moneyToNumber(charge.asaasNetValue) : null,
+            asaasFeeValue: charge.asaasFeeValue != null ? moneyToNumber(charge.asaasFeeValue) : null,
+            liquidacaoStatus: charge.liquidacaoStatus ?? null,
+            liquidadoEm: charge.liquidadoEm?.toISOString() ?? null,
           })),
         }
       : null,
@@ -2521,23 +2534,8 @@ export async function listStoreSales(input: ListStoreSalesInput): Promise<ListSt
     }),
   ]);
 
-  const converged = await convergeStoreSalesFinancialState({
-    contaId: input.contaId,
-    sales: initialRecords,
-  });
-
-  const records = converged
-    ? await prisma.sale.findMany({
-        where,
-        include: SALE_DETAIL_INCLUDE,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      })
-    : initialRecords;
-
   return {
-    data: records.map(mapSaleRecord),
+    data: initialRecords.map(mapSaleRecord),
     meta: {
       page,
       pageSize,
@@ -2670,20 +2668,112 @@ export async function listStoreSaleOperationalIssues(
 }
 
 export async function getStoreSaleById(input: GetStoreSaleInput): Promise<StoreSaleDTO | null> {
-  let sale = await findSaleById(input.contaId, input.saleId);
+  const sale = await findSaleById(input.contaId, input.saleId);
   if (!sale) return null;
 
-  const converged = await convergeStoreSalesFinancialState({
-    contaId: input.contaId,
-    sales: [sale],
-  });
+  const dto = mapSaleRecord(sale);
+  if (dto.finalizationType !== SaleFinalizationType.COBRANCA) return dto;
 
-  if (converged) {
-    sale = await findSaleById(input.contaId, input.saleId);
-    if (!sale) return null;
+  const saleCharges = [
+    ...(dto.charge ? [dto.charge] : []),
+    ...(dto.installmentPlan?.charges ?? []),
+  ];
+  const paymentIds = [
+    ...new Set(saleCharges.flatMap((charge) => (charge.asaasPaymentId ? [charge.asaasPaymentId] : []))),
+  ];
+  const installmentId = dto.installmentPlan?.asaasInstallmentId ?? null;
+  const anticipationFilters: Prisma.ReceivableAnticipationSnapshotWhereInput[] = [];
+  if (paymentIds.length > 0) anticipationFilters.push({ paymentId: { in: paymentIds } });
+  if (installmentId) anticipationFilters.push({ installmentId });
+
+  let anticipationSnapshots: StoreSaleAnticipationSnapshot[] = [];
+  if (anticipationFilters.length > 0) {
+    const rows = await prisma.receivableAnticipationSnapshot.findMany({
+      where: { contaId: input.contaId, OR: anticipationFilters },
+      select: {
+        id: true,
+        paymentId: true,
+        installmentId: true,
+        status: true,
+        fee: true,
+        netValue: true,
+      },
+    });
+    anticipationSnapshots = rows.map((snapshot) => ({
+      id: snapshot.id,
+      paymentId: snapshot.paymentId,
+      installmentId: snapshot.installmentId,
+      status: snapshot.status,
+      fee: snapshot.fee != null ? moneyToNumber(snapshot.fee) : null,
+      netValue: snapshot.netValue != null ? moneyToNumber(snapshot.netValue) : null,
+    }));
   }
 
-  return mapSaleRecord(sale);
+  let additionalFeeSnapshots: StoreSaleAdditionalFeeSnapshot[] = [];
+  let additionalFeesComplete = false;
+  if (paymentIds.length > 0) {
+    const windowTtl = Number(process.env.FINANCE_EXTRATO_SNAPSHOT_TTL_SECONDS ?? 300);
+    const ttlMs = (Number.isFinite(windowTtl) && windowTtl > 0 ? windowTtl : 300) * 1000;
+    const saleStartDate = dto.createdAt.slice(0, 10);
+    const coverageEndDate = new Date().toISOString().slice(0, 10);
+    const syncWindows = await prisma.financialTransactionSyncWindow.findMany({
+      where: {
+        contaId: input.contaId,
+        syncedAt: { gte: new Date(Date.now() - ttlMs) },
+        AND: [
+          { OR: [{ startDate: null }, { startDate: { lte: saleStartDate } }] },
+          { OR: [{ finishDate: null }, { finishDate: { gte: coverageEndDate } }] },
+        ],
+        truncated: false,
+      },
+      select: { officialTotalCount: true, fetchedCount: true },
+    });
+    additionalFeesComplete = syncWindows.some(
+      (window) => window.fetchedCount === window.officialTotalCount,
+    );
+    const rows = await prisma.financialTransactionSnapshot.findMany({
+      where: { contaId: input.contaId, paymentId: { in: paymentIds } },
+      select: {
+        asaasTransactionId: true,
+        paymentId: true,
+        type: true,
+        description: true,
+        value: true,
+      },
+    });
+    additionalFeeSnapshots = rows.map((transaction) => ({
+      asaasTransactionId: transaction.asaasTransactionId,
+      paymentId: transaction.paymentId,
+      type: transaction.type,
+      description: transaction.description,
+      value: moneyToNumber(transaction.value),
+    }));
+  }
+
+  const receiptCharges: StoreSaleReceiptChargeSnapshot[] = saleCharges.map((charge) => ({
+    id: charge.id,
+    asaasPaymentId: charge.asaasPaymentId,
+    status: charge.status,
+    asaasStatus: charge.asaasStatus,
+    asaasValue: charge.asaasValue,
+    asaasNetValue: charge.asaasNetValue,
+    asaasFeeValue: charge.asaasFeeValue,
+    asaasAnticipated: charge.asaasAnticipated,
+    liquidacaoStatus: charge.liquidacaoStatus,
+    liquidadoEm: charge.liquidadoEm,
+  }));
+  dto.receiptFinancials = computeStoreSaleReceiptFinancials({
+    charges: receiptCharges,
+    anticipations: anticipationSnapshots,
+    additionalFees: additionalFeeSnapshots,
+    additionalFeesComplete,
+    asaasInstallmentId: installmentId,
+    totalCost: dto.totalCost,
+    totalAmount: dto.total,
+    hasReturns: dto.returns.length > 0,
+    canceled: dto.baseStatus === SaleStatus.CANCELADA || dto.canceledAt !== null,
+  });
+  return dto;
 }
 
 export async function cancelStoreSale(input: CancelStoreSaleInput): Promise<StoreSaleDTO> {

@@ -51,6 +51,17 @@ import { resolveFinancialCapabilities } from '@/lib/finance/financial-capabiliti
 export const FINANCE_LOCKED_GROUP_KEYS = new Set(['financeiro', 'meu-dinheiro', 'antecipacoes']);
 export const AUTOMATIC_ANTICIPATION_ITEM_HREF = '/advances/automatic';
 
+const SIDEBAR_ITEM_ACTIVE_ALIASES: Record<string, readonly string[]> = {
+  '/sales/inventory': ['/sales/restocks'],
+};
+
+export function isSidebarItemActive(pathname: string, href: string): boolean {
+  return (
+    pathname.startsWith(href) ||
+    (SIDEBAR_ITEM_ACTIVE_ALIASES[href] ?? []).some((alias) => pathname.startsWith(alias))
+  );
+}
+
 export type SidebarSubItem = {
   label: string;
   href: string;
@@ -345,12 +356,6 @@ export const SIDEBAR_GROUPS: SidebarGroup[] = [
         href: '/sales/inventory',
         icon: <CircleStackIcon className="h-5 w-5" />,
         iconSolid: <CircleStackSolid className="h-5 w-5" />,
-      },
-      {
-        label: 'Reposições de estoque',
-        href: '/sales/restocks',
-        icon: <ArrowPathRoundedSquareIcon className="h-5 w-5" />,
-        iconSolid: <ArrowPathRoundedSquareSolid className="h-5 w-5" />,
       },
       {
         label: 'Categorias',

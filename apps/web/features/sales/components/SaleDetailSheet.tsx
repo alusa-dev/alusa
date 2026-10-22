@@ -63,7 +63,7 @@ export function SaleDetailSheet({
             <SheetHeader>
               <div className="flex items-start justify-between gap-4 pr-10">
                 <div className="space-y-1">
-                  <SheetTitle>{formatSaleNumber(sale.saleNumber)}</SheetTitle>
+                  <SheetTitle><span className="financial-data">{formatSaleNumber(sale.saleNumber)}</span></SheetTitle>
                   <SheetDescription>
                     {sale.customer.displayName} · {formatDateBR(sale.createdAt)}
                   </SheetDescription>
@@ -138,13 +138,13 @@ export function SaleDetailSheet({
                         </p>
                         {item.totalCostAtSale != null && item.grossProfitAtSale != null ? (
                           <p className="text-xs text-slate-500">
-                            Custo: {formatCurrencyBRL(item.totalCostAtSale)} · Lucro:{' '}
+                            Custo: <span className="financial-data">{formatCurrencyBRL(item.totalCostAtSale)}</span> · Lucro:{' '}
                             <span
                               className={
                                 item.grossProfitAtSale >= 0 ? 'text-emerald-700' : 'text-red-700'
                               }
                             >
-                              {formatCurrencyBRL(item.grossProfitAtSale)}
+                              <span className="financial-data">{formatCurrencyBRL(item.grossProfitAtSale)}</span>
                             </span>
                             {item.marginAtSale != null
                               ? ` · ${formatMarginPercent(item.marginAtSale)}`
@@ -154,9 +154,9 @@ export function SaleDetailSheet({
                       </div>
                       <div className="text-right">
                         <p className="font-medium text-slate-900">
-                          {formatCurrencyBRL(item.subtotal)}
+                          <span className="financial-data">{formatCurrencyBRL(item.subtotal)}</span>
                         </p>
-                        <p className="text-slate-500">{formatCurrencyBRL(item.unitPrice)} un.</p>
+                        <p className="text-slate-500"><span className="financial-data">{formatCurrencyBRL(item.unitPrice)}</span> un.</p>
                       </div>
                     </div>
                   ))}
@@ -171,20 +171,20 @@ export function SaleDetailSheet({
                   <div className="mt-3 space-y-2 text-sm text-slate-600">
                     <div className="flex items-center justify-between">
                       <span>Subtotal</span>
-                      <span>{formatCurrencyBRL(sale.subtotal)}</span>
+                      <span className="financial-data">{formatCurrencyBRL(sale.subtotal)}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span>Desconto</span>
-                      <span>{formatCurrencyBRL(sale.discount)}</span>
+                      <span className="financial-data">{formatCurrencyBRL(sale.discount)}</span>
                     </div>
-                    <div className="flex items-center justify-between text-base font-semibold text-slate-900">
+                    <div className="flex items-center justify-between text-base font-medium text-slate-900">
                       <span>Total</span>
-                      <span>{formatCurrencyBRL(sale.total)}</span>
+                      <span className="financial-data">{formatCurrencyBRL(sale.total)}</span>
                     </div>
                     {sale.totalCost != null ? (
                       <div className="flex items-center justify-between">
                         <span>Custo</span>
-                        <span>{formatCurrencyBRL(sale.totalCost)}</span>
+                        <span className="financial-data">{formatCurrencyBRL(sale.totalCost)}</span>
                       </div>
                     ) : null}
                     {sale.grossProfit != null ? (
@@ -197,7 +197,7 @@ export function SaleDetailSheet({
                               : 'font-medium text-red-700'
                           }
                         >
-                          {formatCurrencyBRL(sale.grossProfit)}
+                          <span className="financial-data">{formatCurrencyBRL(sale.grossProfit)}</span>
                         </span>
                       </div>
                     ) : null}
@@ -210,13 +210,13 @@ export function SaleDetailSheet({
                     {sale.amountReceived != null ? (
                       <div className="flex items-center justify-between">
                         <span>Recebido</span>
-                        <span>{formatCurrencyBRL(sale.amountReceived)}</span>
+                        <span className="financial-data">{formatCurrencyBRL(sale.amountReceived)}</span>
                       </div>
                     ) : null}
                     {sale.changeGiven != null && sale.changeGiven > 0 ? (
                       <div className="flex items-center justify-between">
                         <span>Troco</span>
-                        <span>{formatCurrencyBRL(sale.changeGiven)}</span>
+                        <span className="financial-data">{formatCurrencyBRL(sale.changeGiven)}</span>
                       </div>
                     ) : null}
                   </div>
@@ -246,8 +246,7 @@ export function SaleDetailSheet({
                               <span>
                                 Parcela {index + 1}/{sale.installmentPlan?.installmentCount}
                               </span>
-                              <span className="font-medium text-slate-900">
-                                {formatCurrencyBRL(charge.value ?? 0)}
+                              <span className="font-medium text-slate-900 financial-data">{formatCurrencyBRL(charge.value ?? 0)}
                               </span>
                             </div>
                             <div className="mt-1 flex items-center justify-between gap-3 text-xs text-slate-500">

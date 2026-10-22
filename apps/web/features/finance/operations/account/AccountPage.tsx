@@ -373,7 +373,7 @@ function TransferTableSection({
       <div className="min-w-0 border-b border-slate-100 bg-slate-50 px-4 py-4 md:px-5 alusa-dark:border-[color:var(--color-border-subtle)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
         <div className="flex min-w-0 flex-col gap-3 xl:flex-row xl:items-center">
             <div className="relative min-w-0 flex-1 xl:max-w-[520px]">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
               <Input
                 type="text"
                 placeholder="Buscar por nome ou documento do titular"
@@ -609,7 +609,7 @@ function TransferTableSection({
                       {formatOfficialFee(item.feeAmount)}
                     </td>
                     <td className="hidden px-6 py-4 text-right text-sm text-slate-700 lg:table-cell alusa-dark:text-[color:var(--color-text-secondary)]">
-                      {formatCurrency(Number(item.amount))}
+                      <span className="financial-data">{formatCurrency(Number(item.amount))}</span>
                     </td>
                     <td className="hidden px-2 py-2 text-center sm:py-3 lg:table-cell lg:px-6 lg:py-4">
                       <Badge variant={status.variant} size="sm">
@@ -847,7 +847,7 @@ export function AccountPage() {
             <div>
               <p className="text-sm font-medium text-[#6B6480] alusa-dark:text-[color:var(--color-text-secondary)]">Saldo disponível</p>
               <p className="mt-2 break-words text-[37px] font-normal leading-none tracking-tight text-[#3d3a3f] alusa-dark:text-[color:var(--color-text-primary)]">
-                {formatCurrency(availableBalance)}
+                <span className="financial-data">{formatCurrency(availableBalance)}</span>
               </p>
             </div>
 

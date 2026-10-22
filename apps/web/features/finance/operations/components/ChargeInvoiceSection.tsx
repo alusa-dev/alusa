@@ -1032,7 +1032,7 @@ export function ChargeInvoiceSection({ cobrancaId, sectionClassName }: ChargeInv
               <div className="grid gap-3 rounded-lg border border-[#e5e7eb] bg-gray-50/80 p-3 text-sm">
                 <div className="flex items-start justify-between gap-3">
                   <span className="text-gray-600">Valor da nota</span>
-                  <span className="font-medium text-gray-900">{formatCurrency(preview.value)}</span>
+                  <span className="font-medium text-gray-900 financial-data">{formatCurrency(preview.value)}</span>
                 </div>
                 <div className="flex items-start justify-between gap-3">
                   <span className="text-gray-600">Serviço municipal</span>
@@ -1101,7 +1101,7 @@ export function ChargeInvoiceSection({ cobrancaId, sectionClassName }: ChargeInv
                 max={preview?.value}
                 step="0.01"
                 value={Number.isFinite(form.deductions) ? form.deductions : 0}
-                className={fiscalInputClass(Boolean(formError?.includes('deduções')))}
+                className={cn(fiscalInputClass(Boolean(formError?.includes('deduções'))), 'financial-data')}
                 onChange={(e) =>
                   setForm((current) => ({
                     ...current,

@@ -1,14 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { PersonAvatar } from '@/components/shared/PersonAvatar';
+import { Search } from '@/components/icons/icons';
 import { DangerActionDialog } from '@/features/renewals/components/DangerActionDialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/toast';
 
 import {
@@ -39,6 +41,7 @@ export function EventParticipantsPanel({
   const router = useRouter();
   const queryClient = useQueryClient();
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
+  const [participantSearch, setParticipantSearch] = useState('');
   const [participantToCancel, setParticipantToCancel] = useState<{ id: string; name: string; grouped: boolean } | null>(null);
   const [participantToPermanentlyDelete, setParticipantToPermanentlyDelete] = useState<{ id: string; name: string } | null>(null);
 
@@ -77,8 +80,22 @@ export function EventParticipantsPanel({
     },
   });
 
+  const filteredParticipants = useMemo(() => {
+    const normalizedSearch = participantSearch
+      .trim()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLocaleLowerCase('pt-BR');
+    if (!normalizedSearch) return participants;
+    return participants.filter((participant) => participant.displayName
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLocaleLowerCase('pt-BR')
+      .includes(normalizedSearch));
+  }, [participantSearch, participants]);
+
   return (
-    <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+    <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-none">
       <CardHeader className="p-0 pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -95,10 +112,24 @@ export function EventParticipantsPanel({
             Alunos vinculados ao evento, controle de pagamento da taxa e total investido pelo aluno.
           </p>
         </div>
-        <RegisterParticipantDialog eventId={eventId} event={event} open={isRegisterOpen} onOpenChange={setIsRegisterOpen} />
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+          <div className="relative w-full sm:w-80 lg:w-[400px]">
+            <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <Input
+              type="search"
+              value={participantSearch}
+              onChange={(changeEvent) => setParticipantSearch(changeEvent.target.value)}
+              placeholder="Buscar participante"
+              aria-label="Buscar participante pelo nome"
+              className="h-10 rounded-lg border-slate-200 bg-white pl-9 text-sm shadow-none focus-visible:ring-2 focus-visible:ring-brand-accent/20"
+            />
+          </div>
+          <RegisterParticipantDialog eventId={eventId} event={event} open={isRegisterOpen} onOpenChange={setIsRegisterOpen} />
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         <EventPaginatedDataTable
+          key={participantSearch}
           columns={[
               {
                 id: 'student',
@@ -172,12 +203,14 @@ export function EventParticipantsPanel({
                 ),
               },
           ]}
-          data={participants}
+          data={filteredParticipants}
           rowKey={(part) => part.id}
           loading={loading}
           tableClassName="min-w-[840px]"
           onRowClick={(part) => router.push('/events/' + eventId + '/participants/' + part.id)}
-          emptyMessage={<EmptyState title="Nenhum aluno inscrito." description="Inscreva manualmente os alunos participantes do evento." />}
+          emptyMessage={participantSearch.trim()
+            ? <EmptyState title="Nenhum participante encontrado." description="Tente buscar por outro nome de aluno." />
+            : <EmptyState title="Nenhum aluno inscrito." description="Inscreva manualmente os alunos participantes do evento." />}
         />
       </CardContent>
 

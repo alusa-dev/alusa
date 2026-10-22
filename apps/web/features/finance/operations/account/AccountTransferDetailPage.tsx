@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import Link from 'next/link';
 
 import { ArrowLeft, ReceiptText, XCircle } from 'lucide-react';
@@ -129,7 +130,7 @@ function formatAccountType(value: string | null) {
 
 type DetailFieldValue = {
   label: string;
-  value: string;
+  value: ReactNode;
   span?: 'full';
   mono?: boolean;
 };
@@ -208,9 +209,9 @@ function buildRecipientFields(data: TransferDetailResultDTO) {
 function buildTransferInfoFields(data: TransferDetailResultDTO) {
   const items: Array<DetailFieldValue | null> = [
     { label: 'Operação', value: formatTransferOperation(data) },
-    { label: 'Valor solicitado', value: formatCurrencyString(data.amount) },
-    { label: 'Taxa', value: formatCurrencyString(data.feeAmount) },
-    { label: 'Valor líquido', value: formatCurrencyString(data.netAmount) },
+    { label: 'Valor solicitado', value: <span className="financial-data">{formatCurrencyString(data.amount)}</span> },
+    { label: 'Taxa', value: <span className="financial-data">{formatCurrencyString(data.feeAmount)}</span> },
+    { label: 'Valor líquido', value: <span className="financial-data">{formatCurrencyString(data.netAmount)}</span> },
     { label: 'Solicitada em', value: formatMaybeDate(data.createdAt) },
     data.transferDate ? { label: 'Data da transferência', value: formatMaybeDate(data.transferDate) } : null,
     data.scheduleDate ? { label: 'Agendada para', value: formatMaybeDate(data.scheduleDate) } : null,

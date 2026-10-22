@@ -37,6 +37,24 @@ vi.mock('@alusa/finance', () => ({
   getPayment: vi.fn(),
   handlePaymentWebhook: vi.fn(),
   isAsaasEnabled: vi.fn(() => false),
+  resolveAsaasProcessingFee: vi.fn(({
+    explicitFee,
+    grossValue,
+    netValue,
+  }: { explicitFee: number | null; grossValue: number | null; netValue: number | null }) => {
+    if (
+      typeof grossValue !== 'number' ||
+      typeof netValue !== 'number' ||
+      !Number.isFinite(grossValue) ||
+      !Number.isFinite(netValue) ||
+      grossValue < netValue
+    ) return null;
+    const derivedFee = Number((grossValue - netValue).toFixed(2));
+    if (explicitFee == null) return derivedFee;
+    return Number.isFinite(explicitFee) && explicitFee >= 0 && Math.abs(explicitFee - derivedFee) <= 0.01
+      ? explicitFee
+      : null;
+  }),
   recordAsaasReadIntent: vi.fn(),
   mapChargeStatusToCobrancaDisplayStatus: vi.fn((status?: string | null) => ({
     CREATED: 'PENDENTE',
@@ -151,6 +169,7 @@ describe('GET /api/cobrancas/[id]', () => {
       descricao: 'Mensalidade - Plano Básico',
       formaPagamento: 'CARTAO_CREDITO',
       asaasPaymentId: 'pay_1',
+      asaasValue: decimalLike('142.50'),
       asaasNetValue: decimalLike('139.18'),
       asaasFeeValue: decimalLike('3.32'),
       liquidacaoStatus: 'NAO_APLICAVEL',
@@ -179,6 +198,47 @@ describe('GET /api/cobrancas/[id]', () => {
         taxaAsaas: 3.32,
       },
     });
+  });
+
+  it('omits an Asaas fee when the persisted fee disagrees with gross minus net', async () => {
+    vi.mocked(getSessionUser).mockResolvedValue({
+      id: 'u1',
+      contaId: 'conta-1',
+      role: 'FINANCEIRO',
+    } as never);
+
+    const decimalLike = (raw: string) => ({
+      toString: () => raw,
+      valueOf: () => raw,
+    });
+
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce({
+      id: 'cob-fee-mismatch',
+      tipo: 'MENSALIDADE',
+      status: 'PAGO',
+      valor: decimalLike('142.50'),
+      vencimento: new Date('2026-03-05T00:00:00.000Z'),
+      descricao: 'Mensalidade',
+      formaPagamento: 'CARTAO_CREDITO',
+      asaasPaymentId: null,
+      asaasValue: decimalLike('142.50'),
+      asaasNetValue: decimalLike('139.18'),
+      asaasFeeValue: decimalLike('4.00'),
+      liquidacaoStatus: 'NAO_APLICAVEL',
+      matriculaId: 'mat-1',
+      matricula: { aluno: { contaId: 'conta-1' } },
+      pagamentos: [],
+    } as never);
+    vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.installmentPlan.findFirst).mockResolvedValueOnce(null as never);
+
+    const response = await GET(new NextRequest('http://localhost/api/cobrancas/cob-fee-mismatch'), {
+      params: { id: 'cob-fee-mismatch' },
+    });
+
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.data).toMatchObject({ valorBruto: 142.5, valorLiquido: 139.18, taxaAsaas: null });
   });
 
   it('usa snapshot local da cobranca e evita GET remoto quando já há link oficial local', async () => {

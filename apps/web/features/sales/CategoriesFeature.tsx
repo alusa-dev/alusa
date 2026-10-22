@@ -158,27 +158,32 @@ const { canWrite, loading: billingLoading } = usePlatformBillingWriteAccess();
         title="Categorias"
         subtitle="Organize seus produtos por categoria para facilitar a gestão e as vendas."
         actions={
-          <Button
-            disabled={billingLoading || !canWrite}
-            className="h-10 bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90"
-            onClick={() => {
-              setCreateError(null);
-              setCreateOpen(true);
-            }}
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            Nova categoria
-          </Button>
+          <div className="flex w-full flex-col gap-2 lg:flex-row lg:flex-wrap lg:justify-end">
+            <Button
+              type="button"
+              disabled={billingLoading || !canWrite}
+              className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 lg:w-auto"
+              onClick={() => {
+                setCreateError(null);
+                setCreateOpen(true);
+              }}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Nova categoria
+            </Button>
+          </div>
         }
         filtersBar={
-          <div className="relative min-w-0 w-full sm:w-[280px]">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <Input
-              placeholder="Buscar categoria..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-10 rounded-xl border-slate-200 bg-white pl-10 shadow-none"
-            />
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-end">
+            <div className="relative w-full lg:w-[400px]">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                placeholder="Buscar categoria..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="h-10 rounded-lg border-slate-200 bg-white pl-10 text-sm shadow-none focus-visible:border-brand-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-accent"
+              />
+            </div>
           </div>
         }
       >

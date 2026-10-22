@@ -220,8 +220,8 @@ export default function ChargesTable() {
                       <div className="text-xs text-gray-500 mt-0.5">{r.description}</div>
                     )}
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap font-medium">
-                    {r.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                  <td className="px-4 py-3 whitespace-nowrap font-normal">
+                    <span className="financial-data">{r.valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</span>
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap text-gray-600">
                     {formatarTipo(r.tipo)}

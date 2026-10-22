@@ -53,7 +53,7 @@ export function FinancialRulesSection({
             <div>
               <label className={labelClass}>Valor fixo de juros ao mês</label>
               <Input
-                className={controlClass}
+              className={`${controlClass} financial-data`}
                 value={state.interestFixed}
                 onChange={(e) => onChangeField('interestFixed', formatBRLInput(e.target.value))}
                 placeholder="R$ 0,00"
@@ -79,7 +79,7 @@ export function FinancialRulesSection({
               {state.fineType === 'PERCENTAGE' ? 'Multa (%)' : 'Multa (R$)'}
             </label>
             <Input
-              className={controlClass}
+              className={state.fineType === 'FIXED' ? `${controlClass} financial-data` : controlClass}
               value={state.fineType === 'PERCENTAGE' ? state.finePercent : state.fineFixed}
               onChange={(e) =>
                 state.fineType === 'PERCENTAGE'
@@ -115,7 +115,7 @@ export function FinancialRulesSection({
               {state.discountType === 'PERCENTAGE' ? 'Desconto (%)' : 'Desconto (R$)'}
             </label>
             <Input
-              className={controlClass}
+              className={state.discountType === 'FIXED' ? `${controlClass} financial-data` : controlClass}
               value={state.discountType === 'PERCENTAGE' ? state.discountPercent : state.discountFixed}
               onChange={(e) =>
                 state.discountType === 'PERCENTAGE'

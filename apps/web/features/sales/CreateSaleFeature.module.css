@@ -1,0 +1,51 @@
+.wizardShell .wizardWidthTransition {
+  /* Specificity overrides the theme's global transition list within this wizard. */
+  transition-property: width;
+  transition-duration: 300ms;
+  transition-timing-function: ease-in-out;
+}
+
+.wizardShell .stepContent {
+  /* Framer Motion drives these styles directly; suppress the theme transition to avoid lag. */
+  transition: none !important;
+}
+
+.wizardShell .cartTotalCharacters span {
+  transition: none !important;
+}
+
+.wizardShell .cartItemMotion {
+  transition: none !important;
+}
+
+.wizardShell .cartRemoveButton:hover:not(:disabled),
+.wizardShell .cartRemoveButton:focus-visible {
+  background-color: #dc2626 !important;
+  color: #fff !important;
+}
+
+.wizardShell .cartQuantityButton {
+  border-radius: 9999px;
+}
+
+.wizardShell .stepperConnector::after {
+  transition-property: transform;
+  transition-duration: 500ms;
+  transition-timing-function: ease-in-out;
+}
+
+.wizardShell .stepCircle,
+.wizardShell .stepIndicator {
+  transition-property: opacity, transform, background-color, color;
+  transition-duration: 300ms;
+  transition-timing-function: ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wizardShell .wizardWidthTransition,
+  .wizardShell .stepperConnector::after,
+  .wizardShell .stepCircle,
+  .wizardShell .stepIndicator {
+    transition: none !important;
+  }
+}

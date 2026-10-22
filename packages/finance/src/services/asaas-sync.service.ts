@@ -38,6 +38,7 @@ export interface AsaasPaymentSnapshot {
   originalValue: number | null;
   /** Taxa do Asaas (value - netValue) */
   feeValue: number;
+  anticipated: boolean | null;
   /** Data de vencimento */
   dueDate: string;
   /** Data de pagamento (preenchida em RECEIVED_IN_CASH) */
@@ -92,6 +93,22 @@ export interface PersistSnapshotError {
 }
 
 export type PersistAsaasPaymentSnapshotResult = PersistSnapshotResult | PersistSnapshotError;
+
+async function persistMonotonicAnticipation(
+  entity: 'cobranca' | 'charge',
+  id: string,
+  anticipated: boolean | null,
+): Promise<void> {
+  if (anticipated === null) return;
+  const where = anticipated
+    ? { id }
+    : { id, OR: [{ asaasAnticipated: null }, { asaasAnticipated: false }] };
+  if (entity === 'cobranca') {
+    await prisma.cobranca.updateMany({ where, data: { asaasAnticipated: anticipated } });
+  } else {
+    await prisma.charge.updateMany({ where, data: { asaasAnticipated: anticipated } });
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Environment / Feature Flags
@@ -194,6 +211,7 @@ function computeSnapshotHash(payment: AsaasPayment): string {
     dueDate: payment.dueDate,
     creditDate: payment.creditDate,
     estimatedCreditDate: payment.estimatedCreditDate,
+    anticipated: payment.anticipated,
     deleted: payment.deleted,
   };
   return createHash('sha256').update(JSON.stringify(relevantData)).digest('hex').slice(0, 16);
@@ -247,6 +265,7 @@ export async function fetchAsaasPaymentSnapshot(
       netValue: payment.netValue,
       originalValue: payment.originalValue ?? null,
       feeValue: payment.value - payment.netValue,
+      anticipated: typeof payment.anticipated === 'boolean' ? payment.anticipated : null,
       dueDate: payment.dueDate,
       paymentDate: payment.paymentDate ?? null,
       creditDate: payment.creditDate ?? null,
@@ -342,29 +361,50 @@ export async function persistAsaasPaymentSnapshot(
       select: { lastAsaasFetchHash: true },
     });
 
-    if (current?.lastAsaasFetchHash === snapshot.snapshotHash) {
-      // Nada mudou, apenas atualizar timestamp
-      await prisma.cobranca.update({
-        where: { id: cobrancaId },
-        data: { lastAsaasFetchAt: snapshot.fetchedAt },
-      });
-
-      const liquidacaoStatus = computeLiquidacaoStatus(snapshot);
-      return { success: true, updated: false, liquidacaoStatus };
-    }
-
-    // 2. Calcular status de liquidação
     const liquidacaoStatus = computeLiquidacaoStatus(snapshot);
     const creditDate = parseOptionalCivilDatePreservingInstant(snapshot.creditDate);
     const estimatedCreditDate = parseOptionalCivilDatePreservingInstant(snapshot.estimatedCreditDate);
     const hasInvalidCreditDate = creditDate === undefined;
-    // Para RECEIVED_IN_CASH, creditDate é null - usar paymentDate como fallback
     const liquidacaoDateStr = snapshot.creditDate ?? snapshot.paymentDate;
     const liquidadoEm = liquidacaoStatus === 'DISPONIVEL'
       ? parseCivilDatePreservingInstant(liquidacaoDateStr)
       : null;
 
-    // 3. Atualizar campos asaas*
+    const syncLinkedChargeSnapshot = async () => {
+      const linkedCharge = await prisma.charge.findFirst({
+        where: { cobrancaId },
+        select: { id: true },
+      });
+      if (!linkedCharge) return;
+      await prisma.charge.update({
+        where: { id: linkedCharge.id },
+        data: {
+          asaasStatus: snapshot.asaasStatus,
+          asaasValue: snapshot.value,
+          asaasNetValue: snapshot.netValue,
+          asaasOriginalValue: snapshot.originalValue,
+          asaasFeeValue: snapshot.feeValue,
+          ...(creditDate === undefined ? {} : { asaasCreditDate: creditDate }),
+          ...(estimatedCreditDate === undefined ? {} : { asaasEstimatedCreditDate: estimatedCreditDate }),
+          lastAsaasFetchAt: snapshot.fetchedAt,
+          ...(!hasInvalidCreditDate ? { liquidacaoStatus, liquidadoEm } : {}),
+        },
+      });
+      await persistMonotonicAnticipation('charge', linkedCharge.id, snapshot.anticipated);
+    };
+
+    if (current?.lastAsaasFetchHash === snapshot.snapshotHash) {
+      // Mesmo hash pode seguir uma falha parcial anterior: reparar as duas projeções.
+      await prisma.cobranca.update({
+        where: { id: cobrancaId },
+        data: { lastAsaasFetchAt: snapshot.fetchedAt },
+      });
+      await persistMonotonicAnticipation('cobranca', cobrancaId, snapshot.anticipated);
+      await syncLinkedChargeSnapshot();
+      return { success: true, updated: false, liquidacaoStatus };
+    }
+
+    // Persistir o snapshot, mantendo a antecipação em update atômico separado.
     await prisma.cobranca.update({
       where: { id: cobrancaId },
       data: {
@@ -380,27 +420,8 @@ export async function persistAsaasPaymentSnapshot(
         ...(!hasInvalidCreditDate ? { liquidacaoStatus, liquidadoEm } : {}),
       },
     });
-
-    const linkedCharge = await prisma.charge.findFirst({
-      where: { cobrancaId },
-      select: { id: true },
-    });
-    if (linkedCharge) {
-      await prisma.charge.update({
-        where: { id: linkedCharge.id },
-        data: {
-          asaasStatus: snapshot.asaasStatus,
-          asaasValue: snapshot.value,
-          asaasNetValue: snapshot.netValue,
-          asaasOriginalValue: snapshot.originalValue,
-          asaasFeeValue: snapshot.feeValue,
-          ...(creditDate === undefined ? {} : { asaasCreditDate: creditDate }),
-          ...(estimatedCreditDate === undefined ? {} : { asaasEstimatedCreditDate: estimatedCreditDate }),
-          lastAsaasFetchAt: snapshot.fetchedAt,
-          ...(!hasInvalidCreditDate ? { liquidacaoStatus, liquidadoEm } : {}),
-        },
-      });
-    }
+    await persistMonotonicAnticipation('cobranca', cobrancaId, snapshot.anticipated);
+    await syncLinkedChargeSnapshot();
 
     return { success: true, updated: true, liquidacaoStatus };
   } catch (error) {

@@ -117,7 +117,7 @@ export function StatementTable({ entries, loading, hasActiveFilters, onSelect }:
                         <span className="text-[13px] font-semibold leading-snug text-gray-900 lg:text-sm lg:font-medium">
                           {displayName}
                         </span>
-                        <span className={`text-xs font-semibold tabular-nums lg:hidden ${amountClass}`}>
+                        <span className={`text-xs font-normal financial-data lg:hidden ${amountClass}`}>
                           {amountText}
                         </span>
                       </li>
@@ -176,12 +176,12 @@ export function StatementTable({ entries, loading, hasActiveFilters, onSelect }:
                   <span className="block truncate font-medium text-gray-900">{formatExtratoDescription(entry.description)}</span>
                 </td>
                 <td className="hidden whitespace-nowrap px-6 py-4 text-right text-sm lg:table-cell">
-                  <span className={`font-medium ${isPositive ? 'text-emerald-600' : 'text-red-600'}`}>
+                  <span className={`font-normal financial-data ${isPositive ? 'text-emerald-600' : 'text-red-600'}`}>
                     {amountText}
                   </span>
                 </td>
                 <td className="hidden whitespace-nowrap px-6 py-4 text-right text-sm font-medium text-emerald-700 lg:table-cell">
-                  {entry.balanceAfter != null ? formatCurrency(entry.balanceAfter) : '—'}
+                  {entry.balanceAfter != null ? <span className="financial-data">{formatCurrency(entry.balanceAfter)}</span> : '—'}
                 </td>
               </tr>
             );

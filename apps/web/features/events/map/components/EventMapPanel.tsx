@@ -177,7 +177,7 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
                 EVENT_MAP_CARD_WIDTH_CLASS,
               )}
             >
-              <span className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-accent text-white shadow-sm">
+              <span className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-accent text-white shadow-none">
                 <CreatorIcon name="add" size={24} />
               </span>
               <span className="mt-4 text-base font-semibold text-slate-950">
@@ -193,7 +193,7 @@ export function EventMapPanel({ event }: { event: SchoolEventDTO }) {
             <Card
               key={map.id}
               className={cn(
-                'group flex min-h-52 flex-col rounded-xl border-slate-200 bg-white p-5 shadow-sm shadow-slate-200/40',
+                'group flex min-h-52 flex-col rounded-xl border-slate-200 bg-white p-5 shadow-none',
                 EVENT_MAP_CARD_WIDTH_CLASS,
               )}
             >

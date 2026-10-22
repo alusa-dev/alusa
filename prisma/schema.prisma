@@ -3490,6 +3490,7 @@ model Cobranca {
   asaasNetValue            Decimal?  @db.Decimal(12, 2) // Valor líquido após taxa (netValue)
   asaasOriginalValue       Decimal?  @db.Decimal(12, 2) // Valor original se houve desconto antecipado
   asaasFeeValue            Decimal?  @db.Decimal(12, 2) // Taxa Asaas = asaasValue - asaasNetValue
+  asaasAnticipated         Boolean? // Confirmação explícita do Asaas sobre antecipação
   asaasCreditDate          DateTime? // Data em que o saldo foi/será creditado
   asaasEstimatedCreditDate DateTime? // Data estimada de crédito (antes de liquidar)
   lastAsaasFetchAt         DateTime? // Última busca no Asaas (throttle)
@@ -6385,6 +6386,7 @@ model Charge {
   asaasNetValue            Decimal?         @db.Decimal(12, 2)
   asaasOriginalValue       Decimal?         @db.Decimal(12, 2)
   asaasFeeValue            Decimal?         @db.Decimal(12, 2)
+  asaasAnticipated         Boolean?
   asaasCreditDate          DateTime?
   asaasEstimatedCreditDate DateTime?
   lastAsaasFetchAt         DateTime?

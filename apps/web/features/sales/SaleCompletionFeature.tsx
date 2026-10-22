@@ -2,10 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 
 import type { StoreSaleChargeDTO, StoreSaleDTO } from '@alusa/finance';
 
 import {
+  Check,
   ChevronDown,
   Download,
   DocumentText,
@@ -135,16 +137,18 @@ function ReceiptLine({
   label,
   value,
   strong = false,
+  numeric = false,
 }: {
   label: string;
-  value: string;
+  value: ReactNode;
   strong?: boolean;
+  numeric?: boolean;
 }) {
   return (
     <div className="flex items-start justify-between gap-4 text-[13px]">
       <span className="text-slate-500">{label}</span>
       <span
-        className={strong ? 'text-right font-semibold text-slate-950' : 'text-right text-slate-800'}
+        className={`${strong ? (numeric ? 'text-right text-slate-950' : 'text-right font-semibold text-slate-950') : 'text-right text-slate-800'}${numeric ? ` financial-data ${strong ? 'font-medium' : 'font-normal'} tabular-nums` : ''}`}
       >
         {value}
       </span>
@@ -355,7 +359,7 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
     const merchantPhone = formatPhone(sale.merchant.phone);
 
     return (
-      <div className="mx-auto w-full max-w-5xl px-4 pb-12 pt-6 md:px-6">
+      <div className="mx-auto flex w-full max-w-6xl flex-col px-4 py-6 md:px-6 lg:h-full lg:min-h-0 lg:overflow-hidden lg:py-4">
         <style jsx global>{`
           @media print {
             @page {
@@ -414,62 +418,109 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
           }
         `}</style>
 
-        <div className="receipt-screen-only mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 text-sm font-medium text-slate-500">
-              <Receipt className="h-4 w-4" />
-              Loja
+        <div className="grid items-center justify-center gap-8 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,384px),400px]">
+          <section className="receipt-screen-only mx-auto flex w-full max-w-sm flex-col items-center pt-2 text-center lg:sticky lg:top-8" aria-labelledby="sale-complete-title">
+            <div className="flex flex-col items-center">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-green-100 text-green-700">
+                <Check className="h-6 w-6" aria-hidden="true" />
+              </div>
+              <div className="mt-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Venda registrada</p>
+                <h1 id="sale-complete-title" className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">
+                  Compra confirmada
+                </h1>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-                Comprovante da compra
-              </h1>
-              <p className="mt-1 text-sm text-slate-500">
-                {formatSaleNumber(sale.saleNumber)} · {sale.customer.displayName} ·{' '}
-                {formatDateBR(sale.createdAt)}
+            <div className="mt-6 w-full space-y-3">
+              <p className="text-base leading-7 text-slate-600">
+                A venda de <span className="font-medium text-slate-800">{sale.customer.displayName}</span> foi registrada. O comprovante com os detalhes da compra está disponível ao lado.
               </p>
             </div>
-          </div>
+            <div className="mt-8 flex w-full flex-col gap-2">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" disabled={downloadingReceipt !== null} className="h-11 w-full">
+                    <Download className="mr-2 h-4 w-4" />
+                    {downloadingReceipt ? 'Preparando...' : 'Baixar comprovante'}
+                    <ChevronDown className="ml-2 h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="center" className="w-52">
+                  <DropdownMenuItem disabled={downloadingReceipt !== null} onClick={() => void downloadReceipt('pdf')}>
+                    <DocumentText className="mr-2 h-4 w-4" />
+                    Baixar em PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled={downloadingReceipt !== null} onClick={() => void downloadReceipt('image')}>
+                    <Download className="mr-2 h-4 w-4" />
+                    Baixar como imagem
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button asChild variant="outline" className="h-11 w-full">
+                <Link href="/sales/new"><ShoppingBag className="mr-2 h-4 w-4" />Nova venda</Link>
+              </Button>
+            </div>
+          </section>
 
-          <div className="flex flex-wrap gap-2">
-            <Button asChild variant="outline">
-              <Link href="/sales/new">
-                <ShoppingBag className="mr-2 h-4 w-4" />
-                Nova venda
-              </Link>
-            </Button>
-            <Button asChild variant="outline">
-              <Link href="/sales/history">Histórico</Link>
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button type="button" disabled={downloadingReceipt !== null}>
-                  <Download className="mr-2 h-4 w-4" />
-                  {downloadingReceipt ? 'Preparando...' : 'Baixar comprovante'}
-                  <ChevronDown className="ml-2 h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-52">
-                <DropdownMenuItem
-                  disabled={downloadingReceipt !== null}
-                  onClick={() => void downloadReceipt('pdf')}
-                >
-                  <DocumentText className="mr-2 h-4 w-4" />
-                  Em PDF
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={downloadingReceipt !== null}
-                  onClick={() => void downloadReceipt('image')}
-                >
-                  <Download className="mr-2 h-4 w-4" />
-                  Em imagem
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
+          <section className="sale-receipt-summary flex max-h-[min(40rem,calc(100dvh-2rem))] min-h-0 flex-col overflow-y-auto overscroll-contain rounded-2xl bg-gray-50 p-5 sm:p-6 lg:h-[min(40rem,calc(100dvh-16rem))] lg:max-h-[min(40rem,calc(100dvh-16rem))]" aria-labelledby="receipt-summary-title">
+            <header className="flex items-start justify-between gap-4 pb-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Comprovante nº</p>
+                <h2 id="receipt-summary-title" className="mt-1 text-lg font-normal text-slate-950 financial-data tabular-nums">{formatSaleNumber(sale.saleNumber)}</h2>
+                <p className="mt-1 text-sm text-slate-500">Emitido em {formatDateBR(sale.createdAt)}</p>
+              </div>
+            </header>
 
-        <div className="receipt-print-area flex justify-center">
+            <div className="border-b border-dashed border-slate-300 py-5">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Cliente</p>
+              <p className="mt-1 font-semibold text-slate-900">{sale.customer.displayName}</p>
+              {sale.customer.alunoName && sale.customer.alunoName !== sale.customer.displayName ? (
+                <p className="mt-0.5 text-sm text-slate-600">Aluno: {sale.customer.alunoName}</p>
+              ) : null}
+            </div>
+
+            <div className="border-b border-dashed border-slate-300 py-5">
+              <div className="mb-3 grid grid-cols-[minmax(0,1fr),34px,76px,76px] gap-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                <span>Produto</span><span className="text-right">Qtd.</span><span className="text-right">Unitário</span><span className="text-right">Total</span>
+              </div>
+              <div>
+                {sale.items.map((item) => (
+                  <div key={item.id} className="grid grid-cols-[minmax(0,1fr),34px,76px,76px] items-start gap-2 py-3 text-sm tabular-nums first:pt-0 last:pb-0">
+                    <div className="min-w-0">
+                      <p className="break-words font-medium leading-5 text-slate-900">{item.productName}</p>
+                    </div>
+                    <span className="text-right text-slate-600 financial-data">{item.quantity}</span>
+                    <span className="whitespace-nowrap text-right text-slate-600 financial-data">{formatCurrencyBRL(item.unitPrice)}</span>
+                    <span className="whitespace-nowrap text-right font-normal text-slate-900 financial-data">{formatCurrencyBRL(item.subtotal)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="border-b border-dashed border-slate-300 py-5 text-sm tabular-nums">
+              <ReceiptLine label="Subtotal" value={formatCurrencyBRL(sale.subtotal)} numeric />
+              {sale.discount > 0 ? <ReceiptLine label="Desconto" value={formatCurrencyBRL(sale.discount)} numeric /> : null}
+              <div className="mt-3 flex items-baseline justify-between gap-4 pt-3">
+                <span className="font-semibold text-slate-800">Total</span>
+                <span className="text-xl font-medium tabular-nums text-slate-950 financial-data">{formatCurrencyBRL(sale.total)}</span>
+              </div>
+            </div>
+
+            <div className="pt-5">
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Pagamento</p>
+              <div className="mt-3 space-y-2 text-sm tabular-nums">
+                <ReceiptLine label="Forma de pagamento" value={getPaymentLabel(sale)} />
+                {sale.installmentPlan ? (
+                  <ReceiptLine label="Parcelamento" value={<><span className="financial-data tabular-nums">{sale.installmentPlan.installmentCount}</span> parcelas</>} />
+                ) : null}
+                {sale.amountReceived != null ? <ReceiptLine label="Recebido" value={formatCurrencyBRL(sale.amountReceived)} numeric /> : null}
+                {sale.changeGiven != null && sale.changeGiven > 0 ? <ReceiptLine label="Troco" value={formatCurrencyBRL(sale.changeGiven)} numeric /> : null}
+                {charges[0] ? <ReceiptLine label="Status da cobrança" value={formatChargeStatus(charges[0].status)} /> : null}
+              </div>
+            </div>
+          </section>
+
+          <div className="receipt-print-area absolute left-[-10000px] top-0 w-[360px] overflow-hidden" aria-hidden="true">
           <article
             ref={receiptRef}
             className="receipt-paper relative mx-auto w-[360px] max-w-full rounded-[22px] border border-slate-200 bg-white px-6 py-7 shadow-sm"
@@ -482,11 +533,11 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
               <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">
                 Comprovante de venda
               </p>
-              <h2 className="mt-2 text-xl font-semibold text-slate-950">
+              <h2 className="mt-2 text-xl font-normal text-slate-950 financial-data">
                 {formatSaleNumber(sale.saleNumber)}
               </h2>
               <p className="mt-1 text-xs text-slate-500">
-                Emitido em {formatDateTimeBR(sale.createdAt)}
+                Emitido em <span>{formatDateTimeBR(sale.createdAt)}</span>
               </p>
             </header>
 
@@ -497,7 +548,7 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
                 Dados da Escola
               </p>
               <ReceiptLine label="Nome" value={sale.merchant.name} strong />
-              <ReceiptLine label="CPF/CNPJ" value={merchantDocument ?? 'Não informado'} />
+              <ReceiptLine label="CPF/CNPJ" value={merchantDocument ?? 'Não informado'} numeric={merchantDocument !== null} />
               <ReceiptLine label="Telefone" value={merchantPhone ?? 'Não informado'} />
               <ReceiptLine label="Email" value={sale.merchant.email ?? 'Não informado'} />
             </section>
@@ -509,7 +560,7 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
                 Cliente
               </p>
               <ReceiptLine label="Nome" value={sale.customer.displayName} strong />
-              <ReceiptLine label="CPF" value={customerDocument ?? 'Não informado'} />
+              <ReceiptLine label="CPF" value={customerDocument ?? 'Não informado'} numeric={customerDocument !== null} />
               {sale.customer.alunoName && sale.customer.alunoName !== sale.customer.displayName ? (
                 <ReceiptLine label="Aluno" value={sale.customer.alunoName} />
               ) : null}
@@ -517,7 +568,7 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
                 <ReceiptLine label="Responsável" value={sale.customer.responsavelName} />
               ) : null}
               {sale.customer.phone ? (
-                <ReceiptLine label="Telefone" value={sale.customer.phone} />
+                <ReceiptLine label="Telefone" value={formatPhone(sale.customer.phone) ?? sale.customer.phone} />
               ) : null}
               {sale.customer.email ? (
                 <ReceiptLine label="E-mail" value={sale.customer.email} />
@@ -538,11 +589,11 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
                     <div>
                       <p className="font-medium text-slate-950">{item.productName}</p>
                       <p className="text-xs text-slate-500">
-                        {formatCurrencyBRL(item.unitPrice)} un.
+                        <span className="financial-data">{formatCurrencyBRL(item.unitPrice)}</span> un.
                       </p>
                     </div>
-                    <span className="text-right text-slate-700">{item.quantity}</span>
-                    <span className="text-right font-semibold text-slate-950">
+                    <span className="text-right text-slate-700 financial-data">{item.quantity}</span>
+                    <span className="text-right font-normal text-slate-950 financial-data">
                       {formatCurrencyBRL(item.subtotal)}
                     </span>
                   </div>
@@ -553,10 +604,10 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
             <div className="my-5 border-t border-dashed border-slate-200" />
 
             <section className="space-y-2">
-              <ReceiptLine label="Subtotal" value={formatCurrencyBRL(sale.subtotal)} />
-              <ReceiptLine label="Desconto" value={formatCurrencyBRL(sale.discount)} />
+              <ReceiptLine label="Subtotal" value={formatCurrencyBRL(sale.subtotal)} numeric />
+              <ReceiptLine label="Desconto" value={formatCurrencyBRL(sale.discount)} numeric />
               <div className="pt-2">
-                <ReceiptLine label="Total" value={formatCurrencyBRL(sale.total)} strong />
+                <ReceiptLine label="Total" value={formatCurrencyBRL(sale.total)} strong numeric />
               </div>
             </section>
 
@@ -575,10 +626,10 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
               <ReceiptLine label="Estoque" value={INVENTORY_STATUS_LABELS[sale.inventoryStatus]} />
               <ReceiptLine label="Operador" value={sale.operator.name} />
               {sale.amountReceived != null ? (
-                <ReceiptLine label="Recebido" value={formatCurrencyBRL(sale.amountReceived)} />
+                <ReceiptLine label="Recebido" value={formatCurrencyBRL(sale.amountReceived)} numeric />
               ) : null}
               {sale.changeGiven != null && sale.changeGiven > 0 ? (
-                <ReceiptLine label="Troco" value={formatCurrencyBRL(sale.changeGiven)} />
+                <ReceiptLine label="Troco" value={formatCurrencyBRL(sale.changeGiven)} numeric />
               ) : null}
             </section>
 
@@ -602,7 +653,8 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
                 )}
               </div>
             </footer>
-          </article>
+            </article>
+          </div>
         </div>
       </div>
     );
@@ -621,7 +673,7 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
               {sale.chargeProvisioningPending ? 'Cobrança pendente de preparação' : 'Cobrança gerada'}
             </h1>
             <p className="mt-2 text-sm text-slate-500">
-              {formatSaleNumber(sale.saleNumber)} · {sale.customer.displayName} ·{' '}
+              <span className="financial-data">{formatSaleNumber(sale.saleNumber)}</span> · {sale.customer.displayName} ·{' '}
               {formatDateBR(sale.createdAt)}
             </p>
           </div>
@@ -652,10 +704,10 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold text-slate-900">{item.productName}</p>
                     <p className="mt-1 text-xs text-slate-500">
-                      {item.quantity} un. · {formatCurrencyBRL(item.unitPrice)}
+                      <span className="financial-data">{item.quantity}</span> un. · <span className="financial-data">{formatCurrencyBRL(item.unitPrice)}</span>
                     </p>
                   </div>
-                  <p className="shrink-0 text-sm font-semibold text-slate-900">
+                  <p className="shrink-0 text-sm font-medium text-slate-900 financial-data">
                     {formatCurrencyBRL(item.subtotal)}
                   </p>
                 </div>
@@ -718,7 +770,7 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
                       </p>
                     </div>
                     <div className="flex items-center justify-between gap-3 md:justify-end">
-                      <span className="text-sm font-semibold tabular-nums text-slate-900">
+                      <span className="text-sm font-medium financial-data text-slate-900">
                         {formatCurrencyBRL(charge.value ?? 0)}
                       </span>
                       {charge.invoiceUrl ? (
@@ -772,15 +824,15 @@ export function SaleCompletionFeature({ saleId, mode }: SaleCompletionFeaturePro
               <div className="border-t border-slate-100 pt-3">
                 <div className="flex items-center justify-between text-slate-600">
                   <span>Subtotal</span>
-                  <span>{formatCurrencyBRL(sale.subtotal)}</span>
+                  <span className="financial-data">{formatCurrencyBRL(sale.subtotal)}</span>
                 </div>
                 <div className="mt-2 flex items-center justify-between text-slate-600">
                   <span>Desconto</span>
-                  <span>{formatCurrencyBRL(sale.discount)}</span>
+                  <span className="financial-data">{formatCurrencyBRL(sale.discount)}</span>
                 </div>
                 <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 text-base font-semibold text-slate-900">
                   <span>Total</span>
-                  <span className="tabular-nums">{formatCurrencyBRL(sale.total)}</span>
+                  <span className="financial-data">{formatCurrencyBRL(sale.total)}</span>
                 </div>
               </div>
             </CardContent>

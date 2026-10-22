@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Info } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -44,7 +45,7 @@ function SimulationLoadingState() {
   );
 }
 
-function ResultRow({ label, value, emphasis = false }: { label: string; value: string; emphasis?: boolean }) {
+function ResultRow({ label, value, emphasis = false }: { label: string; value: ReactNode; emphasis?: boolean }) {
   return (
     <div className="flex items-center justify-between gap-4 border-b border-slate-100 py-3 last:border-b-0">
       <span className={emphasis ? 'font-semibold text-slate-800' : 'text-slate-500'}>{label}</span>
@@ -59,19 +60,19 @@ function SimulationResult({ result }: { result: PaymentSimulationResult }) {
   return (
     <div className="space-y-3 p-4 sm:p-5">
       <div className="rounded-xl bg-slate-50 px-3.5 py-2">
-        <ResultRow label="Total da cobrança" value={formatCurrency(result.chargeValue)} emphasis />
-        <ResultRow label={result.installmentCount === 1 ? '1 parcela' : `${result.installmentCount} parcelas`} value={formatCurrency(installmentValue)} />
+        <ResultRow label="Total da cobrança" value={<span className="financial-data">{formatCurrency(result.chargeValue)}</span>} emphasis />
+        <ResultRow label={result.installmentCount === 1 ? '1 parcela' : `${result.installmentCount} parcelas`} value={<span className="financial-data">{formatCurrency(installmentValue)}</span>} />
       </div>
 
       <div className="flex items-center justify-between gap-4 rounded-xl border border-brand-accent/20 bg-brand-accent/[0.04] px-3.5 py-3">
         <p className="text-sm font-semibold text-slate-800">Você recebe (líquido)</p>
-        <p className="text-xl font-semibold tabular-nums text-brand-accent">{formatCurrency(result.netValue)}</p>
+        <p className="financial-data text-xl font-medium text-brand-accent">{formatCurrency(result.netValue)}</p>
       </div>
 
       <div className="rounded-xl border border-slate-200 px-3.5 py-1">
         <ResultRow label="Taxa percentual" value={formatPercent(result.feePercentage)} />
-        <ResultRow label="Tarifa de operação" value={result.operationFee == null ? '—' : formatCurrency(result.operationFee)} />
-        <ResultRow label="Taxa total" value={formatCurrency(result.feeValue)} emphasis />
+        <ResultRow label="Tarifa de operação" value={result.operationFee == null ? '—' : <span className="financial-data">{formatCurrency(result.operationFee)}</span>} />
+        <ResultRow label="Taxa total" value={<span className="financial-data">{formatCurrency(result.feeValue)}</span>} emphasis />
       </div>
 
       <p className="text-[11px] leading-4 text-slate-500">Simulação baseada nas condições atuais da conta Asaas.</p>
@@ -150,7 +151,7 @@ export function SalesSimulatorPage() {
                     placeholder="0,00"
                     value={value}
                     onChange={(event) => setValue(maskCurrencyInput(event.target.value))}
-                    className="h-full rounded-none border-0 text-sm shadow-none focus-visible:ring-0"
+                    className="financial-data h-full rounded-none border-0 text-sm shadow-none focus-visible:ring-0"
                     aria-describedby="simulation-value-help"
                   />
                 </div>

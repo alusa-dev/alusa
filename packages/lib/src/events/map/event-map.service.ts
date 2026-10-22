@@ -2338,6 +2338,7 @@ export async function listEventPublicMapOrdersForAdmin(
     id: order.id,
     buyerName: order.buyerName,
     buyerEmail: order.buyerEmail,
+    buyerPhone: order.buyerPhone,
     whatsappAvailable: Boolean(order.buyerPhone && order.whatsappOptInAt && order.whatsappOptInSource && !order.whatsappOptOutAt),
     whatsappStatus: latestWhatsAppStatus.get(order.id) ?? null,
     totalAmount: toMoney(order.totalAmount),

@@ -344,7 +344,7 @@ function ReceivablesComposition({
                   <p className="text-[10px] font-medium uppercase tracking-[0.08em] text-gray-400 alusa-dark:text-[color:var(--color-text-secondary)]">
                     Recebido
                   </p>
-                  <p className="mt-1 text-sm font-semibold tabular-nums text-brand-primary alusa-dark:text-[color:var(--color-text-primary)]">
+                  <p className="mt-1 text-sm font-medium financial-data text-brand-primary alusa-dark:text-[color:var(--color-text-primary)]">
                     {formatReportMoney(summary.received)}
                   </p>
                 </div>
@@ -369,7 +369,7 @@ function CompositionItem({ color, label, value }: { color: string; label: string
       <dt className="min-w-0 flex-1 text-sm text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
         {label}
       </dt>
-      <dd className="text-sm font-semibold tabular-nums text-brand-primary alusa-dark:text-[color:var(--color-text-primary)]">
+      <dd className="text-sm font-normal financial-data text-brand-primary alusa-dark:text-[color:var(--color-text-primary)]">
         {formatReportMoney(value)}
       </dd>
     </div>
@@ -428,7 +428,7 @@ function AcademicContext({
               color="bg-blue-400"
               label="Turma com maior recebimento"
               name={strongestClass?.name}
-              value={strongestClass ? formatReportMoney(strongestClass.received) : '—'}
+              value={strongestClass ? <span className="financial-data">{formatReportMoney(strongestClass.received)}</span> : '—'}
             />
             <AcademicItem
               color="bg-violet-300"
@@ -441,7 +441,7 @@ function AcademicContext({
               color="bg-amber-400"
               label="Plano com maior recebimento"
               name={strongestPlan?.name}
-              value={strongestPlan ? formatReportMoney(strongestPlan.received) : '—'}
+              value={strongestPlan ? <span className="financial-data">{formatReportMoney(strongestPlan.received)}</span> : '—'}
             />
             <AcademicItem
               color="bg-red-400"
@@ -548,7 +548,7 @@ function AcademicItem({
   color: string;
   label: string;
   name?: string;
-  value: string;
+  value: React.ReactNode;
   danger?: boolean;
 }) {
   return (
@@ -564,7 +564,7 @@ function AcademicItem({
       </div>
       <dd
         className={cn(
-          'shrink-0 text-sm font-semibold tabular-nums',
+          'shrink-0 text-sm font-normal',
           danger
             ? 'text-[#d93f47] alusa-dark:text-red-400'
             : 'text-brand-primary alusa-dark:text-[color:var(--color-text-primary)]',

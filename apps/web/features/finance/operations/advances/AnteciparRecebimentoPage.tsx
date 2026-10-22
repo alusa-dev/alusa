@@ -74,8 +74,8 @@ function LimitCard({
         <div className="h-full rounded-full bg-primary" style={{ width: `${percentage}%` }} />
       </div>
       <div className="mt-3 flex items-center justify-between text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">
-        <span>Disponível {formatCurrency(available)}</span>
-        <span>Total {formatCurrency(total)}</span>
+        <span>Disponível <span className="financial-data">{formatCurrency(available)}</span></span>
+        <span>Total <span className="financial-data">{formatCurrency(total)}</span></span>
       </div>
     </div>
   );
@@ -128,7 +128,7 @@ function CandidateDesktopRow({
       </div>
 
       <div className="justify-self-end text-right">
-        <p className="text-sm font-semibold text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{formatCurrency(candidate.value)}</p>
+        <p className="text-sm font-normal text-slate-900 financial-data alusa-dark:text-[color:var(--color-text-primary)]">{formatCurrency(candidate.value)}</p>
       </div>
     </div>
   );
@@ -171,7 +171,7 @@ function CandidateMobileRow({
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
           <span className="text-[13px] font-semibold leading-snug text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{clientName}</span>
           <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
-            {formatCurrency(candidate.value)}
+            <span className="financial-data">{formatCurrency(candidate.value)}</span>
           </span>
         </div>
         <div className="break-all text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">ID {candidateIdentifier}</div>
@@ -221,7 +221,7 @@ function CandidatePreviewBody({ candidate }: { candidate: AnticipationCandidate 
       <div className="grid grid-cols-2 gap-3">
         <div>
           <p className="text-xs font-medium text-slate-500">Valor</p>
-          <p className="font-semibold tabular-nums text-slate-900">{formatCurrency(candidate.value)}</p>
+          <p className="font-normal financial-data text-slate-900">{formatCurrency(candidate.value)}</p>
         </div>
         <div>
           <p className="text-xs font-medium text-slate-500">Forma</p>
@@ -251,7 +251,7 @@ function CandidatePreviewBody({ candidate }: { candidate: AnticipationCandidate 
       {candidate.netValue != null ? (
         <div>
           <p className="text-xs font-medium text-slate-500">Líquido estimado (lista)</p>
-          <p className="font-semibold tabular-nums text-emerald-700">{formatCurrency(candidate.netValue)}</p>
+          <p className="font-normal financial-data text-emerald-700">{formatCurrency(candidate.netValue)}</p>
         </div>
       ) : null}
       {candidate.invoiceUrl ? (
@@ -318,20 +318,20 @@ function SummaryPanel({
       <div className="mt-5 space-y-3 border-t border-slate-100 pt-4 alusa-dark:border-[color:var(--color-border-subtle)]">
         <div className="flex items-center justify-between text-sm">
           <span className="text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">Total selecionado</span>
-          <span className="font-medium text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{formatCurrency(singleSelection ? (simulation?.value ?? selectedValue) : selectedValue)}</span>
+          <span className="font-medium financial-data text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{formatCurrency(singleSelection ? (simulation?.value ?? selectedValue) : selectedValue)}</span>
         </div>
         <div className="flex items-center justify-between text-sm">
           <span className="text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">Taxa</span>
-          <span className="font-medium text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{feeValue == null ? '-' : formatCurrency(feeValue)}</span>
+          <span className="font-medium text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{feeValue == null ? '-' : <span className="financial-data">{formatCurrency(feeValue)}</span>}</span>
         </div>
         <div className="flex items-center justify-between text-sm">
           <span className="text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">Valor a receber</span>
           <span className="font-semibold text-emerald-700">
             {singleSelection
-              ? formatCurrency(simulation?.netValue ?? selectedNetValue ?? 0)
+              ? <span className="financial-data">{formatCurrency(simulation?.netValue ?? selectedNetValue ?? 0)}</span>
               : selectedNetValue == null
                 ? '-'
-                : formatCurrency(selectedNetValue)}
+                : <span className="financial-data">{formatCurrency(selectedNetValue)}</span>}
           </span>
         </div>
         <div className="flex items-center justify-between text-sm">
@@ -609,7 +609,7 @@ export function AnteciparRecebimentoPage() {
               </div>
               <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(280px,320px)_180px] sm:justify-end">
                 <div className="relative min-w-0 w-full sm:w-[320px]">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                   <Input
                     value={search}
                     onChange={(event) => setSearch(event.target.value)}

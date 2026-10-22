@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 import { formatPaymentDate } from '@alusa/shared';
 
 import { ExternalLink } from '@/components/icons/icons';
@@ -151,11 +152,11 @@ export function ReportDetailsTable({
       width: 'w-[28%] sm:w-[24%] lg:w-[20%] xl:w-[14%]',
       render: (row) => (
         <div className="tabular-nums">
-          <p className="font-medium">{formatReportMoney(receipts ? row.receivedAmount : row.grossAmount)}</p>
-          {receipts && <p className="text-xs text-gray-500">{formatReportMoney(row.netAmount)} líquido</p>}
+          <p className="financial-data">{formatReportMoney(receipts ? row.receivedAmount : row.grossAmount)}</p>
+          {receipts && <p className="text-xs text-gray-500 financial-data">{formatReportMoney(row.netAmount)} líquido</p>}
           {!receipts && row.outstandingAmount !== row.grossAmount && (
             <p className="text-xs text-gray-500">
-              {formatReportMoney(row.outstandingAmount)} em aberto
+              <span className="financial-data">{formatReportMoney(row.outstandingAmount)}</span> em aberto
             </p>
           )}
         </div>
@@ -289,7 +290,7 @@ export function DelinquencyDetailsTable({
       width: 'w-[44%] sm:w-[30%] lg:w-[26%] xl:w-[16%]',
       render: (row) => (
         <div>
-          <p className="font-semibold text-red-600 tabular-nums">{formatReportMoney(row.overdueAmount)}</p>
+          <p className="font-medium text-red-600 financial-data">{formatReportMoney(row.overdueAmount)}</p>
           {row.chargeIds[0] && (
             <Link className="text-[11px] text-brand-accent hover:underline" href={`/charges/${row.chargeIds[0]}`}>Ver cobranças</Link>
           )}
@@ -350,24 +351,24 @@ export function ReportDetailsDrawer({
                 <span className="text-xs text-gray-500">{item.origin === 'ACADEMIC' ? 'Cobrança acadêmica' : 'Cobrança avulsa'}</span>
               </div>
               <DrawerSection title="Composição">
-                <DrawerValue label="Valor da cobrança" value={formatReportMoney(item.grossAmount)} />
-                <DrawerValue label="Valor recebido" value={formatReportMoney(item.receivedAmount)} />
-                <DrawerValue label="Saldo em aberto" value={formatReportMoney(item.outstandingAmount)} />
+                <DrawerValue label="Valor da cobrança" value={<span className="financial-data">{formatReportMoney(item.grossAmount)}</span>} />
+                <DrawerValue label="Valor recebido" value={<span className="financial-data">{formatReportMoney(item.receivedAmount)}</span>} />
+                <DrawerValue label="Saldo em aberto" value={<span className="financial-data">{formatReportMoney(item.outstandingAmount)}</span>} />
                 <DrawerValue
                   label="Em processamento"
-                  value={formatReportMoney(item.processingAmount)}
+                  value={<span className="financial-data">{formatReportMoney(item.processingAmount)}</span>}
                 />
                 <DrawerValue
                   label="A liquidar"
-                  value={formatReportMoney(item.toSettleAmount)}
+                  value={<span className="financial-data">{formatReportMoney(item.toSettleAmount)}</span>}
                 />
                 <DrawerValue
                   label="Disponível"
-                  value={formatReportMoney(item.availableAmount)}
+                  value={<span className="financial-data">{formatReportMoney(item.availableAmount)}</span>}
                 />
-                <DrawerValue label="Taxas" value={formatReportMoney(item.feeAmount)} />
-                <DrawerValue label="Estornos" value={formatReportMoney(item.refundedAmount)} />
-                <DrawerValue label="Valor líquido" value={formatReportMoney(item.netAmount)} strong />
+                <DrawerValue label="Taxas" value={<span className="financial-data">{formatReportMoney(item.feeAmount)}</span>} />
+                <DrawerValue label="Estornos" value={<span className="financial-data">{formatReportMoney(item.refundedAmount)}</span>} />
+                <DrawerValue label="Valor líquido" value={<span className="financial-data">{formatReportMoney(item.netAmount)}</span>} strong />
               </DrawerSection>
               <DrawerSection title="Datas">
                 <DrawerValue label="Vencimento" value={formatReportDate(item.dueDate, timeZone)} />
@@ -413,7 +414,7 @@ function DrawerSection({ title, children }: { title: string; children: React.Rea
   );
 }
 
-function DrawerValue({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+function DrawerValue({ label, value, strong }: { label: string; value: ReactNode; strong?: boolean }) {
   return (
     <div className="flex items-start justify-between gap-4 text-sm">
       <dt className="text-gray-500">{label}</dt>

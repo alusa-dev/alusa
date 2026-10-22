@@ -664,7 +664,7 @@ export function ProductVariantsTab({
                         </div>
                       </td>
                       <td className="px-4 py-4 text-right align-middle">
-                        <div className="font-semibold tabular-nums text-slate-900">
+                        <div className="font-normal text-slate-900 financial-data">
                           {group.available} disponível
                         </div>
                       </td>
@@ -754,7 +754,7 @@ export function ProductVariantsTab({
                   onChange={(event) => setBulkPricingForm((prev) => ({ ...prev, price: maskCurrencyInput(event.target.value) }))}
                   placeholder="0,00"
                   inputMode="decimal"
-                  className={inputMd}
+                  className={cn(inputMd, 'financial-data')}
                 />
               </div>
               <div className="space-y-1.5">
@@ -766,7 +766,7 @@ export function ProductVariantsTab({
                   onChange={(event) => setBulkPricingForm((prev) => ({ ...prev, averageCost: maskCurrencyInput(event.target.value) }))}
                   placeholder="0,00"
                   inputMode="decimal"
-                  className={inputMd}
+                  className={cn(inputMd, 'financial-data')}
                 />
               </div>
             </div>
@@ -774,7 +774,7 @@ export function ProductVariantsTab({
               <span className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
                 <span>Lucro</span>
                 <strong className={cn('font-semibold', bulkPricing.profitPerUnit >= 0 ? 'text-emerald-700' : 'text-red-700')}>
-                  {formatCurrency(bulkPricing.profitPerUnit)}
+                  <span className="financial-data">{formatCurrency(bulkPricing.profitPerUnit)}</span>
                 </strong>
               </span>
               <span className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
@@ -875,10 +875,10 @@ export function ProductVariantsTab({
                       <td className="px-4 py-4 align-middle text-slate-700">{valueLabel}</td>
                       <td className="px-4 py-4 align-middle">
                         <div className="font-semibold tabular-nums text-slate-900">
-                          {formatCurrency(variant.price ?? defaultPrice)}
+                          <span className="financial-data">{formatCurrency(variant.price ?? defaultPrice)}</span>
                         </div>
                         <div className="mt-1 text-xs tabular-nums text-slate-500">
-                          Custo: {formatCurrency(variant.averageCost)}
+                          Custo: <span className="financial-data">{formatCurrency(variant.averageCost)}</span>
                         </div>
                       </td>
                       <td className="px-4 py-4 text-right align-middle">
@@ -979,7 +979,7 @@ export function ProductVariantsTab({
                   onChange={(event) => patchVariantForm('price', event.target.value)}
                   placeholder="0,00"
                   inputMode="decimal"
-                  className={inputMd}
+                  className={cn(inputMd, 'financial-data')}
                 />
               </div>
             </section>
@@ -1001,7 +1001,7 @@ export function ProductVariantsTab({
                     onChange={(event) => patchVariantForm('averageCost', event.target.value)}
                     placeholder="0,00"
                     inputMode="decimal"
-                    className="h-6 w-24 border-0 bg-transparent p-0 text-sm font-semibold text-slate-900 shadow-none focus-visible:ring-0"
+                    className="financial-data h-6 w-24 border-0 bg-transparent p-0 text-sm font-normal text-slate-900 shadow-none focus-visible:ring-0"
                   />
                 </label>
                 <span className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
@@ -1012,7 +1012,7 @@ export function ProductVariantsTab({
                       editingPricing.profitPerUnit >= 0 ? 'text-emerald-700' : 'text-red-700',
                     )}
                   >
-                    {formatCurrency(editingPricing.profitPerUnit)}
+                    <span className="financial-data">{formatCurrency(editingPricing.profitPerUnit)}</span>
                   </strong>
                 </span>
                 <span className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
@@ -1055,7 +1055,7 @@ export function ProductVariantsTab({
                     min="0"
                     value={variantForm.lowStockThreshold}
                     onChange={(event) => patchVariantForm('lowStockThreshold', event.target.value)}
-                    className={inputMd}
+                    className={cn(inputMd, 'financial-data')}
                   />
                 </div>
               </div>

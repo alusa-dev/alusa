@@ -171,6 +171,17 @@ Este arquivo (**`AGENTS.md`**) espelha as **regras universais** do agente **core
 - Não depender apenas de estado em memória para processos críticos.
 - Sempre considerar comportamento em produção, não apenas em ambiente local.
 
+### Meta Ads
+
+- Para consultas e operações de anúncios, priorizar o MCP oficial da Meta (`meta-ads`, `https://mcp.facebook.com/ads`) quando autenticado e com ferramentas disponíveis; usar a CLI oficial `meta-ads` como alternativa controlada.
+- A configuração do servidor ou o retorno de login não comprovam acesso funcional. Validar com uma consulta autenticada somente de leitura antes de declarar a integração pronta.
+- Manter `default_tools_approval_mode = "prompt"` no servidor MCP Meta Ads; não liberar chamadas automaticamente.
+- Começar somente com leitura. Não criar, editar, ativar, pausar, excluir anúncios/campanhas, alterar públicos ou mudar orçamento sem aprovação explícita para a operação específica.
+- Antes de qualquer operação futura, confirmar a conta, o ID, a moeda e o fuso horário; não escolher arbitrariamente entre várias contas.
+- Nunca pedir ou registrar tokens no chat, em logs, neste arquivo, em `.env` ou no repositório. Usar armazenamento seguro do sistema e não reutilizar automaticamente token MCP na CLI sem validar compatibilidade.
+- Não usar conectores de terceiros para Meta Ads sem autorização explícita.
+- Registrar erros de autenticação e limitações sem inventar resultados ou afirmar acesso que não foi testado.
+
 ### Convenções de implementação
 
 - Usar TypeScript de forma estrita e segura.

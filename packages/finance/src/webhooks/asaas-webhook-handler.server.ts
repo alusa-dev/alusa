@@ -349,6 +349,9 @@ async function processAsaasWebhookForRecord(params: {
           clientPaymentDate: payload.payment.clientPaymentDate ?? null,
           creditDate: payload.payment.creditDate ?? null,
           estimatedCreditDate: payload.payment.estimatedCreditDate ?? null,
+          anticipated: typeof (payload.payment as typeof payload.payment & { anticipated?: unknown }).anticipated === 'boolean'
+            ? (payload.payment as typeof payload.payment & { anticipated: boolean }).anticipated
+            : null,
           deleted: typeof payload.payment.deleted === 'boolean' ? payload.payment.deleted : null,
           refunds: Array.isArray(payload.payment.refunds)
             ? payload.payment.refunds.map((refund) => ({

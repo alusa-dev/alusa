@@ -24,6 +24,7 @@ export function formatEventReportDateKey(value: string): string {
 type EventReportRevenueTotals = Pick<EventReportDetailDTO['totals'],
   | 'registrationCommitted' | 'registrationReceived' | 'registrationRefunded'
   | 'ticketCommittedRevenue' | 'ticketReceivedNet' | 'ticketPendingRevenue' | 'ticketRefunded'
+  | 'availableTicketPotential'
   | 'otherRevenueExpected' | 'otherRevenueReceived' | 'otherRevenueRefunded'
 >;
 
@@ -36,7 +37,8 @@ export function buildEventReportRevenueRows(totals: EventReportRevenueTotals): E
       refunded: totals.registrationRefunded,
     },
     {
-      id: 'tickets', source: 'Bilheteria', planned: totals.ticketCommittedRevenue,
+      id: 'tickets', source: 'Bilheteria',
+      planned: totals.ticketCommittedRevenue + totals.availableTicketPotential,
       received: totals.ticketReceivedNet,
       pending: Math.max(totals.ticketCommittedRevenue - totals.ticketReceivedNet, 0),
       refunded: totals.ticketRefunded,

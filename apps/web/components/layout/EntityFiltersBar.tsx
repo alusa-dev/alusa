@@ -74,7 +74,7 @@ export default function EntityFiltersBar<TStatus extends EntityStatusValue = Sta
     >
       {/* Ordem: busca → extraLeft → status → Filtro; no desktop o bloco alinha à direita da seção. */}
       <div className="relative w-full min-w-0 shrink-0 lg:w-[360px] xl:w-[420px]">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400 alusa-dark:text-[color:var(--color-text-muted)]" />
         <Input
           placeholder={searchPlaceholder}
           value={searchValue}

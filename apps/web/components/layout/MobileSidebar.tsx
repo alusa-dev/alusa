@@ -12,7 +12,10 @@ import {
 import { useTheme } from '@/components/theme/ThemeProvider';
 import { usePortalNotifications } from '@/hooks/use-portal-notifications';
 import { SidebarLogoMark } from '@/components/layout/SidebarLogoMark';
-import { FINANCE_LOCKED_GROUP_KEYS } from '@/components/layout/sidebar-config';
+import {
+  FINANCE_LOCKED_GROUP_KEYS,
+  isSidebarItemActive,
+} from '@/components/layout/sidebar-config';
 import { useSidebarNavAccess } from '@/components/layout/use-sidebar-nav-access';
 
 const SETTINGS_HREF = '/admin/settings';
@@ -105,7 +108,7 @@ export function MobileSidebar({ open, onOpenChange }: MobileSidebarProps) {
                 </p>
                 <ul className="space-y-1">
                   {group.items.map((item) => {
-                    const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                    const active = isSidebarItemActive(pathname, item.href);
                     const itemLocked =
                       sidebarLocked || (isFinanceGroup && financeLocked) || isComingSoon;
                     const badgeCount =

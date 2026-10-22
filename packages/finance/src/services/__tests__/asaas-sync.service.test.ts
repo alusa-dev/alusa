@@ -7,10 +7,12 @@ vi.mock('@alusa/database', () => ({
     cobranca: {
       findUnique: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     charge: {
       findFirst: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
 }));
@@ -34,10 +36,12 @@ const mockPrisma = prisma as unknown as {
   cobranca: {
     findUnique: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
+    updateMany: ReturnType<typeof vi.fn>;
   };
   charge: {
     findFirst: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
+    updateMany: ReturnType<typeof vi.fn>;
   };
 };
 
@@ -130,6 +134,7 @@ describe('asaas-sync.service', () => {
       invoiceUrl: 'https://asaas.com/i/123',
       bankSlipUrl: null,
       deleted: false,
+      anticipated: false,
     };
 
     it('fetches and returns snapshot successfully', async () => {
@@ -149,6 +154,7 @@ describe('asaas-sync.service', () => {
         expect(result.snapshot.value).toBe(150);
         expect(result.snapshot.netValue).toBe(142.5);
         expect(result.snapshot.feeValue).toBe(7.5);
+        expect(result.snapshot.anticipated).toBe(false);
         expect(result.snapshot.creditDate).toBe('2024-01-17');
       }
     });
@@ -212,6 +218,7 @@ describe('asaas-sync.service', () => {
       netValue: 142.5,
       originalValue: null,
       feeValue: 7.5,
+      anticipated: false,
       dueDate: '2024-01-15',
       creditDate: '2024-01-17',
       estimatedCreditDate: '2024-01-17',
@@ -248,6 +255,10 @@ describe('asaas-sync.service', () => {
           }),
         })
       );
+      expect(mockPrisma.cobranca.updateMany).toHaveBeenCalledWith({
+        where: { id: 'cobranca-1', OR: [{ asaasAnticipated: null }, { asaasAnticipated: false }] },
+        data: { asaasAnticipated: false },
+      });
     });
 
     it('persists an Asaas civil credit date at noon UTC to preserve its Brazilian calendar day', async () => {

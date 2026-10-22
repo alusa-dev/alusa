@@ -1,5 +1,11 @@
 @import '../../../packages/ui/src/styles/button.css';
 
+/* Semantic typography for monetary amounts, quantities, and reference numbers. */
+.sale-receipt-summary .financial-data {
+	font-family: var(--font-space-mono), ui-monospace, monospace;
+	font-variant-numeric: tabular-nums;
+}
+
 /* por quê: define fundação Tailwind + tokens CSS custom para fallback */
 @tailwind base;
 

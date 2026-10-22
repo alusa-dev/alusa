@@ -411,7 +411,7 @@ export function ProductFormFeature({ mode, productId }: Props) {
                     inputMode="decimal"
                     className={cn(
                       inputClass,
-                      'mt-1',
+                      'financial-data mt-1',
                       errors.price &&
                         'border-[#DC2626] focus:border-[#DC2626] focus:ring-[#DC2626]/20',
                     )}
@@ -439,7 +439,7 @@ export function ProductFormFeature({ mode, productId }: Props) {
                       placeholder="0,00"
                       autoComplete="off"
                       inputMode="decimal"
-                      className="h-6 w-24 border-0 bg-transparent p-0 text-sm font-semibold text-slate-900 shadow-none focus-visible:ring-0"
+                      className="financial-data h-6 w-24 border-0 bg-transparent p-0 text-sm font-normal text-slate-900 shadow-none focus-visible:ring-0"
                     />
                   </label>
                   <span className={priceChipClass}>
@@ -450,7 +450,7 @@ export function ProductFormFeature({ mode, productId }: Props) {
                         pricing.profitPerUnit >= 0 ? 'text-emerald-700' : 'text-red-700',
                       )}
                     >
-                      {formatCurrency(pricing.profitPerUnit)}
+                      <span className="financial-data">{formatCurrency(pricing.profitPerUnit)}</span>
                     </strong>
                   </span>
                   <span className={priceChipClass}>
@@ -522,7 +522,7 @@ export function ProductFormFeature({ mode, productId }: Props) {
                     autoComplete="off"
                     className={cn(
                       inputClass,
-                      'mt-1',
+                      'financial-data mt-1',
                       errors.initialStock &&
                         'border-[#DC2626] focus:border-[#DC2626] focus:ring-[#DC2626]/20',
                     )}

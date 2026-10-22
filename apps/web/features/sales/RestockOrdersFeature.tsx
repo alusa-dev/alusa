@@ -13,6 +13,7 @@ import {
 } from '@/components/icons/icons';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 import TableLayout from '@/components/layout/TableLayout';
+import { InventorySectionTabs } from './components/InventorySectionTabs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -233,14 +234,14 @@ export function RestockOrdersFeature() {
       header: 'Recebido',
       align: 'center',
       width: 'w-[14%]',
-      render: (order) => `${countReceived(order)}/${countExpected(order)}`,
+      render: (order) => <span className="financial-data">{countReceived(order)}/{countExpected(order)}</span>,
     },
     {
       id: 'value',
       header: 'Estimado',
       align: 'right',
       width: 'w-[14%]',
-      render: (order) => formatInventoryCurrency(estimateOrderValue(order)),
+      render: (order) => <span className="financial-data">{formatInventoryCurrency(estimateOrderValue(order))}</span>,
     },
     {
       id: 'actions',
@@ -400,8 +401,8 @@ export function RestockOrdersFeature() {
 
   return (
     <>
+      <InventorySectionTabs />
       <TableLayout
-        title="Reposições"
         subtitle="Planeje compras antes da chegada e receba parcialmente sem misturar com o estoque físico."
         actions={
           <Button
@@ -420,7 +421,7 @@ export function RestockOrdersFeature() {
               <Input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                className="h-10 pl-9"
+                className="h-10 rounded-lg border-slate-200 bg-white pl-9 text-sm shadow-none focus-visible:border-brand-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-accent"
                 placeholder="Buscar por fornecedor ou produto"
               />
             </div>
@@ -592,7 +593,7 @@ export function RestockOrdersFeature() {
                     <Input
                       type="number"
                       min="1"
-                      className={RESTOCK_CONTROL_CLASS}
+                      className={`${RESTOCK_CONTROL_CLASS} financial-data`}
                       value={item.quantity}
                       onChange={(event) =>
                         setDraftItems((current) =>
@@ -609,7 +610,7 @@ export function RestockOrdersFeature() {
                       type="number"
                       min="0"
                       step="0.01"
-                      className={RESTOCK_CONTROL_CLASS}
+                      className={`${RESTOCK_CONTROL_CLASS} financial-data`}
                       value={item.unitCost}
                       onChange={(event) =>
                         setDraftItems((current) =>
@@ -703,7 +704,7 @@ export function RestockOrdersFeature() {
                         {item.productName}
                         {item.variantTitle ? ` · ${item.variantTitle}` : ''}
                       </div>
-                      <div className="text-xs text-gray-500">Pendente: {item.quantityPending}</div>
+                      <div className="text-xs text-gray-500">Pendente: <span className="financial-data">{item.quantityPending}</span></div>
                     </div>
                     <div className="space-y-1">
                       <label className="text-xs font-medium text-gray-500">Recebido agora</label>
@@ -712,6 +713,7 @@ export function RestockOrdersFeature() {
                         min="0"
                         max={item.quantityPending}
                         value={receiptValues[item.id] ?? '0'}
+                        className="financial-data"
                         onChange={(event) =>
                           setReceiptValues((current) => ({
                             ...current,
@@ -722,7 +724,7 @@ export function RestockOrdersFeature() {
                     </div>
                     <div className="space-y-1 text-sm text-gray-500">
                       <span className="block text-xs font-medium text-gray-500">Custo estimado</span>
-                      <span>{formatInventoryCurrency(Number(item.estimatedUnitCost ?? 0))}</span>
+                      <span className="financial-data">{formatInventoryCurrency(Number(item.estimatedUnitCost ?? 0))}</span>
                     </div>
                   </div>
                 ))}

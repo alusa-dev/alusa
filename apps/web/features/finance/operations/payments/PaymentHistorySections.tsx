@@ -107,7 +107,7 @@ function PaymentHistorySection({
           ) : null}
         </div>
         {totalGrupo > 0 ? (
-          <span className="text-[13px] font-semibold text-gray-700">{formatCurrency(totalGrupo)}</span>
+          <span className="text-[13px] font-normal text-gray-700 financial-data">{formatCurrency(totalGrupo)}</span>
         ) : null}
       </div>
 
@@ -190,7 +190,7 @@ function PaymentHistoryRow({
           paga ? 'text-emerald-700' : 'text-gray-900',
         )}
       >
-        {formatCurrency(valor)}
+        <span className="financial-data">{formatCurrency(valor)}</span>
       </div>
 
       <div className="text-center text-[13px] tabular-nums text-gray-600">{formatDate(cobranca.vencimento)}</div>

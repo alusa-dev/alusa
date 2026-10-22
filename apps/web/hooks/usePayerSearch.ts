@@ -16,7 +16,7 @@ interface UsePayerSearchReturn {
   reset: () => void;
 }
 
-export function usePayerSearch(): UsePayerSearchReturn {
+export function usePayerSearch(options: { context?: 'sales' } = {}): UsePayerSearchReturn {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<FinancePayerCandidateDTO[]>([]);
   const [searching, setSearching] = useState(false);
@@ -33,7 +33,8 @@ export function usePayerSearch(): UsePayerSearchReturn {
 
     setSearching(true);
     try {
-      const res = await fetch(`/api/finance/payers/search?q=${encodeURIComponent(query.trim())}`, {
+      const context = options.context === 'sales' ? '&context=sales' : '';
+      const res = await fetch(`/api/finance/payers/search?q=${encodeURIComponent(query.trim())}${context}`, {
         cache: 'no-store',
       });
       if (!res.ok) throw new Error('Erro ao buscar pagadores');
@@ -45,7 +46,7 @@ export function usePayerSearch(): UsePayerSearchReturn {
     } finally {
       setSearching(false);
     }
-  }, []);
+  }, [options.context]);
 
   useEffect(() => {
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);

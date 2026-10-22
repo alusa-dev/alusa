@@ -1,13 +1,23 @@
 'use client';
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useRouter } from 'next/navigation';
+import { AnimatePresence, motion, useIsPresent, useReducedMotion } from 'framer-motion';
 
 import type { FinancePayerCandidateDTO } from '@/features/finance/dtos';
 import { PayerSearchInput } from '@/features/finance/operations/components/PayerSearchInput';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { AlusaLogoLoader } from '@/components/feedback/AlusaLogoLoader';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -20,10 +30,21 @@ import {
 } from '@/components/ui/select';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 import Pagination from '@/components/layout/Pagination';
-import { Check, Minus, Plus, ShoppingBag, Trash2, User, UserPlus } from '@/components/icons/icons';
+import {
+  Check,
+  Minus,
+  Plus,
+  Search,
+  ShoppingBag,
+  Trash2,
+  User,
+  UserPlus,
+} from '@/components/icons/icons';
 import { toast } from '@/components/ui/toast';
 import { useProducts } from '@/features/sales/hooks/use-products';
 import { usePayerSearch } from '@/hooks/usePayerSearch';
+import { SelectedSaleCustomerSummary } from '@/features/sales/components/SelectedSaleCustomerSummary';
+import styles from '@/features/sales/CreateSaleFeature.module.css';
 import { cn } from '@/lib/utils';
 import { formatBRLInput, labelClass, parseNumber } from '@/lib/finance-form-utils';
 import {
@@ -65,16 +86,151 @@ const STEP_LABELS = ['Cliente', 'Produtos', 'Pagamento'] as const;
 const WIZARD_STEP_ACTIVE_CLASSNAME =
   'bg-[#e6d6fb] text-brand-accent alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:text-[color:var(--color-brand-300)]';
 
-const CUSTOMER_MODE_CARD_SELECTED_CLASSNAME =
-  'alusa-venda-customer-card--selected text-[#2b2634] alusa-dark:text-[color:var(--color-text-primary)]';
+const SALE_PAYMENT_FIELD_CLASSNAME =
+  'h-11 w-full rounded-lg border-slate-200 bg-white py-2 text-sm shadow-none focus-visible:border-[#A94DFF] focus-visible:ring-2 focus-visible:ring-[#A94DFF]/30 focus-visible:ring-offset-0';
+
+function SaleWizardStep({
+  children,
+  className,
+  reducedMotion,
+}: {
+  children: React.ReactNode;
+  className: string;
+  reducedMotion: boolean;
+}) {
+  const isPresent = useIsPresent();
+
+  return (
+    <motion.div
+      initial={reducedMotion ? false : { opacity: 0.85, y: 4 }}
+      animate={{
+        opacity: 1,
+        y: 0,
+        transition: { duration: reducedMotion ? 0 : 0.18, ease: 'easeOut' },
+      }}
+      exit={{
+        opacity: reducedMotion ? 1 : 0,
+        y: 0,
+        pointerEvents: 'none',
+        transition: { duration: reducedMotion ? 0 : 0.1, ease: 'easeIn' },
+      }}
+      inert={!isPresent}
+      aria-hidden={!isPresent}
+      className={cn(className, styles.stepContent)}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+function AnimatedCustomerModeContent({
+  children,
+  reducedMotion,
+}: {
+  children: React.ReactNode;
+  reducedMotion: boolean;
+}) {
+  const isPresent = useIsPresent();
+
+  return (
+    <motion.div
+      initial={reducedMotion ? false : { opacity: 0.85, y: 4 }}
+      animate={{
+        opacity: 1,
+        y: 0,
+        transition: { duration: reducedMotion ? 0 : 0.18, ease: 'easeOut' },
+      }}
+      exit={{
+        opacity: reducedMotion ? 1 : 0,
+        y: 0,
+        position: 'absolute',
+        inset: 0,
+        pointerEvents: 'none',
+        transition: { duration: reducedMotion ? 0 : 0.1, ease: 'easeIn' },
+      }}
+      inert={!isPresent}
+      aria-hidden={!isPresent}
+      className="relative w-full"
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+function AnimatedCartTotal({
+  amount,
+  reducedMotion,
+}: {
+  amount: number;
+  reducedMotion: boolean;
+}) {
+  const formattedAmount = formatCurrencyBRL(amount);
+
+  return (
+    <p className="shrink-0 text-sm font-semibold text-slate-900 tabular-nums">
+      <span className="sr-only">Total do item: {formattedAmount}</span>
+      <span
+        aria-hidden="true"
+        className={cn('financial-data inline-grid whitespace-nowrap', styles.cartTotalCharacters)}
+      >
+        <AnimatePresence initial={false} mode="sync">
+          <motion.span
+            key={formattedAmount}
+            initial={reducedMotion ? false : 'hidden'}
+            animate="visible"
+            exit="exit"
+            variants={{
+              hidden: {},
+              visible: {
+                transition: { staggerChildren: reducedMotion ? 0 : 0.07 },
+              },
+              exit: { transition: { staggerChildren: 0 } },
+            }}
+            className="col-start-1 row-start-1 inline-flex whitespace-nowrap"
+          >
+            {Array.from(formattedAmount).map((character, index) => (
+              <motion.span
+                key={`${index}-${character}`}
+                variants={{
+                  hidden: { opacity: 0, filter: 'blur(4px)', y: 8 },
+                  visible: {
+                    opacity: 1,
+                    filter: 'blur(0px)',
+                    y: 0,
+                    transition: {
+                      duration: reducedMotion ? 0 : 0.5,
+                      ease: [0.34, 1.45, 0.64, 1],
+                    },
+                  },
+                  exit: {
+                    opacity: reducedMotion ? 1 : 0,
+                    filter: 'blur(4px)',
+                    y: reducedMotion ? 0 : -4,
+                    transition: {
+                      duration: reducedMotion ? 0 : 0.12,
+                      ease: 'easeIn',
+                    },
+                  },
+                }}
+                className="inline-block"
+              >
+                {character}
+              </motion.span>
+            ))}
+          </motion.span>
+        </AnimatePresence>
+      </span>
+    </p>
+  );
+}
 
 function customerModeCardClass(selected: boolean) {
   return cn(
-    'relative flex min-h-[5.5rem] flex-col gap-3 rounded-xl p-4 text-left transition-colors active:scale-[0.99] sm:min-h-0 sm:p-5',
-    'outline-none ring-0 ring-offset-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0',
-    selected
-      ? CUSTOMER_MODE_CARD_SELECTED_CLASSNAME
-      : 'border-2 border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50',
+    'relative flex min-h-[5.5rem] flex-col gap-3 rounded-xl border-0 p-4 text-left transition-colors active:scale-[0.99] sm:min-h-0 sm:p-5',
+    'bg-slate-50 hover:border-0 hover:bg-slate-100 focus:border-0 focus-visible:border-0 active:border-0 alusa-dark:bg-[color:var(--color-bg-card-soft)] alusa-dark:hover:bg-[color:var(--color-bg-card-soft)] alusa-dark:active:bg-[color:var(--color-bg-card-soft)]',
+    'outline-none ring-0 ring-offset-0 focus:outline-none focus:ring-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-accent focus-visible:ring-0',
+    selected &&
+      'bg-[#e6d6fb] hover:bg-[#e6d6fb] active:bg-[#e6d6fb] alusa-dark:bg-[color:var(--color-card-bg-purple)] alusa-dark:hover:bg-[color:var(--color-card-bg-purple)] alusa-dark:active:bg-[color:var(--color-card-bg-purple)]',
   );
 }
 
@@ -129,11 +285,52 @@ function getTomorrow() {
 
 export function CreateSaleFeature() {
   const router = useRouter();
-  const payerSearch = usePayerSearch();
+  const prefersReducedMotion = useReducedMotion() ?? false;
+  const payerSearch = usePayerSearch({ context: 'sales' });
   const { items: products, categories, loading, error, meta, reload } = useProducts();
 
   const [wizardStep, setWizardStep] = useState<WizardStep>(0);
   const [customerMode, setCustomerMode] = useState<CustomerMode>('REGISTRADO');
+  const [customerPanelHeight, setCustomerPanelHeight] = useState<number | null>(null);
+  const [customerPanelMeasured, setCustomerPanelMeasured] = useState(false);
+  const [customerPanelAnimating, setCustomerPanelAnimating] = useState(false);
+  const customerPanelRef = useRef<HTMLDivElement>(null);
+  const [customerCardContentElement, setCustomerCardContentElement] =
+    useState<HTMLDivElement | null>(null);
+  const customerCardContentRef = useCallback((element: HTMLDivElement | null) => {
+    setCustomerCardContentElement(element);
+  }, []);
+  const customerPanelTargetHeight = useRef<number | null>(null);
+  const reportCustomerPanelHeight = useCallback(
+    (height: number) => {
+      const previousHeight = customerPanelTargetHeight.current;
+      if (previousHeight !== null && Math.abs(previousHeight - height) < 1) return;
+
+      customerPanelTargetHeight.current = height;
+      setCustomerPanelHeight(height);
+      if (customerPanelMeasured && !prefersReducedMotion) setCustomerPanelAnimating(true);
+      else setCustomerPanelAnimating(false);
+      setCustomerPanelMeasured(true);
+    },
+    [customerPanelMeasured, prefersReducedMotion],
+  );
+  useLayoutEffect(() => {
+    const cardContent = customerCardContentElement;
+    const card = cardContent?.parentElement;
+    if (!cardContent || !card) return;
+
+    const reportCardHeight = () => {
+      const cardStyles = window.getComputedStyle(card);
+      const borderHeight =
+        (Number.parseFloat(cardStyles.borderTopWidth) || 0) +
+        (Number.parseFloat(cardStyles.borderBottomWidth) || 0);
+      reportCustomerPanelHeight(cardContent.getBoundingClientRect().height + borderHeight);
+    };
+    reportCardHeight();
+    const observer = new ResizeObserver(reportCardHeight);
+    observer.observe(cardContent);
+    return () => observer.disconnect();
+  }, [customerCardContentElement, reportCustomerPanelHeight]);
   const [walkInName, setWalkInName] = useState('');
   const [walkInDocument, setWalkInDocument] = useState('');
   const [walkInEmail, setWalkInEmail] = useState('');
@@ -158,6 +355,7 @@ export function CreateSaleFeature() {
   const [page, setPage] = useState(1);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [navigatingToCompletion, setNavigatingToCompletion] = useState(false);
 
   // Variant selector
   const [variantSelectorProduct, setVariantSelectorProduct] = useState<
@@ -306,7 +504,9 @@ export function CreateSaleFeature() {
     {
       id: 'produto',
       header: 'Produto',
-      width: 'min-w-0 w-[40%]',
+      width: 'min-w-0 w-[46%]',
+      headerClassName: '!px-3 text-left md:!px-4',
+      cellClassName: '!px-3 text-left md:!px-4',
       noWrap: false,
       render: (product) => (
         <div className="min-w-0 space-y-1">
@@ -321,28 +521,28 @@ export function CreateSaleFeature() {
     {
       id: 'preco',
       header: 'Preço',
-      width: 'w-[16%]',
+      width: 'w-[18%]',
       align: 'right',
-      headerClassName: 'text-right',
-      cellClassName: 'text-right tabular-nums',
-      render: (product) => formatCurrencyBRL(product.price),
+      headerClassName: '!px-3 text-right md:!px-4',
+      cellClassName: '!px-3 text-right tabular-nums md:!px-4',
+      render: (product) => <span className="financial-data">{formatCurrencyBRL(product.price)}</span>,
     },
     {
       id: 'estoque',
       header: 'Disponível',
       width: 'w-[14%]',
       align: 'center',
-      headerClassName: 'text-center',
-      cellClassName: 'text-center tabular-nums',
+      headerClassName: '!px-3 text-center md:!px-4',
+      cellClassName: '!px-3 text-center tabular-nums md:!px-4',
       render: (product) => String(product.totalAvailable),
     },
     {
       id: 'acoes',
       header: '',
-      width: 'w-[30%] min-w-[9.5rem]',
+      width: 'w-[22%] min-w-[9rem]',
       align: 'right',
-      headerClassName: 'pr-4 text-right md:pr-6',
-      cellClassName: 'pr-4 text-right md:pr-6',
+      headerClassName: '!px-3 text-right md:!px-4',
+      cellClassName: '!px-3 text-right md:!px-4',
       noWrap: false,
       render: (product) => {
         const availableStock = product.totalAvailable;
@@ -351,14 +551,14 @@ export function CreateSaleFeature() {
           <div className="flex justify-end">
             <Button
               size="sm"
-              className="max-w-full shrink-0"
+              className="h-10 min-w-32 max-w-full shrink-0 gap-2 whitespace-nowrap px-3"
               disabled={availableStock <= 0}
               onClick={(event) => {
                 event.stopPropagation();
                 addProductToCart(product);
               }}
             >
-              <Plus className="mr-2 h-4 w-4 shrink-0" />
+              <Plus className="h-4 w-4 shrink-0" />
               {product.hasVariants ? 'Variante' : 'Adicionar'}
             </Button>
           </div>
@@ -543,13 +743,13 @@ export function CreateSaleFeature() {
                 : 'Cobrança gerada. O estoque ficou reservado até a confirmação.',
       });
 
+      setNavigatingToCompletion(true);
       resetForm();
       router.push(
         sale.finalizationType === 'RECEBIMENTO_PRESENCIAL'
           ? `/sales/${sale.id}/receipt`
           : `/sales/${sale.id}/charge`,
       );
-      router.refresh();
     } catch (submitError) {
       toast.error({
         title: 'Falha ao concluir venda',
@@ -591,6 +791,10 @@ export function CreateSaleFeature() {
   };
   const goBack = () => setWizardStep((s) => Math.max(0, s - 1) as WizardStep);
   const isIntroStep = wizardStep === 0;
+
+  if (navigatingToCompletion) {
+    return <AlusaLogoLoader className="min-h-[640px]" />;
+  }
 
   return (
     <>
@@ -641,14 +845,16 @@ export function CreateSaleFeature() {
       )}
       <div
         className={cn(
-          'mx-auto w-full min-w-0',
+          `mx-auto w-full min-w-0 ${styles.wizardShell}`,
           isIntroStep && 'md:grid md:min-h-[min(100%,720px)] md:place-items-center',
         )}
       >
         <div
           className={cn(
-            'mx-auto w-full min-w-0 space-y-4 sm:space-y-5 md:space-y-6',
-            isIntroStep ? 'max-w-full md:max-w-xl lg:max-w-2xl' : 'max-w-4xl',
+            `mx-auto min-w-0 space-y-4 sm:space-y-5 md:space-y-6 ${styles.wizardWidthTransition}`,
+            isIntroStep
+              ? 'w-full md:w-[min(100%,36rem)] lg:w-[min(100%,42rem)]'
+              : 'w-full md:w-[min(100%,76rem)]',
           )}
         >
           {/* Cabeçalho */}
@@ -673,14 +879,33 @@ export function CreateSaleFeature() {
                     className="flex w-[4.5rem] shrink-0 flex-col items-center gap-1.5 sm:w-[5.5rem] md:w-24"
                   >
                     <div
+                      role="img"
+                      aria-label={`${label}: ${isDone ? 'concluída' : isActive ? 'atual' : 'pendente'}`}
                       className={cn(
-                        'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold transition-colors',
+                        `relative flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${styles.stepCircle}`,
                         isDone && 'bg-brand-accent text-white',
                         isActive && WIZARD_STEP_ACTIVE_CLASSNAME,
                         !isDone && !isActive && 'bg-slate-100 text-slate-400',
                       )}
                     >
-                      {isDone ? <Check className="h-4 w-4" /> : index + 1}
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          `absolute inset-0 flex items-center justify-center ${styles.stepIndicator}`,
+                          isDone ? 'scale-100 opacity-100' : 'scale-75 opacity-0',
+                        )}
+                      >
+                        <Check className="h-4 w-4" />
+                      </span>
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          styles.stepIndicator,
+                          isDone ? 'scale-75 opacity-0' : 'scale-100 opacity-100',
+                        )}
+                      >
+                        {index + 1}
+                      </span>
                     </div>
                     <span
                       className={cn(
@@ -701,8 +926,8 @@ export function CreateSaleFeature() {
                   <div
                     key={`${label}-sep`}
                     className={cn(
-                      'mx-0.5 mt-4 h-px min-w-[8px] flex-1 sm:mx-2 md:mx-3',
-                      index < wizardStep ? 'bg-brand-accent' : 'bg-slate-200',
+                      `relative mx-0.5 mt-4 h-px min-w-[8px] flex-1 bg-slate-200 before:absolute before:top-0 before:h-px before:bg-inherit before:content-[''] before:-left-[22px] before:-right-[22px] after:absolute after:top-0 after:h-px after:origin-left after:bg-brand-accent after:content-[''] after:-left-[22px] after:-right-[22px] ${styles.stepperConnector} sm:mx-2 sm:before:-left-9 sm:before:-right-9 sm:after:-left-9 sm:after:-right-9 md:mx-3 md:before:-left-11 md:before:-right-11 md:after:-left-11 md:after:-right-11`,
+                      index < wizardStep ? 'after:scale-x-100' : 'after:scale-x-0',
                     )}
                     aria-hidden
                   />
@@ -713,12 +938,18 @@ export function CreateSaleFeature() {
           </div>
 
           {/* Conteúdo da etapa */}
-          {wizardStep === 0 && (
-            <div className="space-y-4">
+          <AnimatePresence initial={false} mode="wait">
+            {wizardStep === 0 && (
+            <SaleWizardStep
+              key="customer-step"
+              reducedMotion={prefersReducedMotion}
+              className="space-y-4"
+            >
               <div className="grid gap-4 sm:grid-cols-2">
                 <button
                   type="button"
                   onClick={() => setCustomerMode('REGISTRADO')}
+                  aria-pressed={customerMode === 'REGISTRADO'}
                   className={customerModeCardClass(customerMode === 'REGISTRADO')}
                   onMouseUp={(event) => event.currentTarget.blur()}
                 >
@@ -760,6 +991,7 @@ export function CreateSaleFeature() {
                 <button
                   type="button"
                   onClick={() => setCustomerMode('AVULSO')}
+                  aria-pressed={customerMode === 'AVULSO'}
                   className={customerModeCardClass(customerMode === 'AVULSO')}
                   onMouseUp={(event) => event.currentTarget.blur()}
                 >
@@ -799,110 +1031,145 @@ export function CreateSaleFeature() {
                 </button>
               </div>
 
-              <Card>
-                <CardContent className="space-y-4 pt-6">
-                  {customerMode === 'REGISTRADO' ? (
-                    <>
-                      <PayerSearchInput
-                        search={payerSearch}
-                        label="Nome ou CPF"
-                        placeholder="Busque pelo nome ou CPF"
-                      />
-                      {selectedPayer ? (
-                        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
-                          <p className="font-medium text-slate-900">{selectedPayer.name}</p>
-                          <p className="text-slate-500">
-                            {selectedPayer.type === 'aluno' ? 'Aluno' : 'Responsável financeiro'}
-                            {selectedPayer.payerResolved.type === 'responsavel' &&
-                            selectedPayer.type === 'aluno'
-                              ? ` · Pagador: ${selectedPayer.payerResolved.name}`
-                              : ''}
-                          </p>
-                          {selectedPayer.financialStatus === 'INCOMPLETE' ? (
-                            <p className="mt-2 text-amber-700">
-                              Cadastro financeiro incompleto. Para gerar cobrança, complete os
-                              dados do pagador no cadastro.
+              <motion.div
+                ref={customerPanelRef}
+                className="relative"
+                animate={{ height: customerPanelHeight ?? 'auto' }}
+                transition={{
+                  height: {
+                    duration: prefersReducedMotion || !customerPanelMeasured ? 0 : 0.22,
+                    ease: 'easeInOut',
+                  },
+                }}
+                style={{ overflow: customerPanelAnimating ? 'hidden' : 'visible' }}
+                onAnimationComplete={() => {
+                  const target = customerPanelTargetHeight.current;
+                  const current = customerPanelRef.current?.getBoundingClientRect().height;
+                  if (target !== null && current !== undefined && Math.abs(current - target) < 1) {
+                    setCustomerPanelAnimating(false);
+                  }
+                }}
+              >
+                <Card className="h-full">
+                  <CardContent ref={customerCardContentRef} className="space-y-4 pt-6">
+                    <div className="relative">
+                      <AnimatePresence initial={false} mode="sync">
+                        {customerMode === 'REGISTRADO' ? (
+                          <AnimatedCustomerModeContent
+                            key="registered-customer-content"
+                            reducedMotion={prefersReducedMotion}
+                          >
+                            <div className="space-y-4">
+                              <div className="relative [&_label]:mb-2 [&_label]:block [&_input]:pl-9">
+                                <PayerSearchInput
+                                  search={payerSearch}
+                                  label="Aluno ou responsável"
+                                  placeholder="Busque pelo nome do aluno ou responsável"
+                                  salesDisplay
+                                />
+                                <Search
+                                  className="pointer-events-none absolute left-3 top-[2.375rem] h-4 w-4 text-slate-400"
+                                  aria-hidden="true"
+                                />
+                              </div>
+                              {selectedPayer ? (
+                                <SelectedSaleCustomerSummary customer={selectedPayer} />
+                              ) : null}
+                            </div>
+                          </AnimatedCustomerModeContent>
+                        ) : (
+                          <AnimatedCustomerModeContent
+                            key="walk-in-customer-content"
+                            reducedMotion={prefersReducedMotion}
+                          >
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <div className="space-y-2 sm:col-span-2">
+                              <label className={cn(labelClass, 'block')}>Nome *</label>
+                              <Input
+                                className={SALE_PAYMENT_FIELD_CLASSNAME}
+                                value={walkInName}
+                                onChange={(event) => setWalkInName(event.target.value)}
+                                placeholder="Nome completo"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <div className="flex min-h-4 items-center gap-2">
+                                <label className={cn(labelClass, 'block')}>
+                                  CPF/CNPJ{requiresWalkInFinancialData ? ' *' : ''}
+                                </label>
+                                {walkInDocumentError ? (
+                                  <span className="text-xs font-medium text-red-600">
+                                    {walkInDocumentError}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <Input
+                                className={SALE_PAYMENT_FIELD_CLASSNAME}
+                                value={walkInDocument}
+                                onChange={(event) =>
+                                  setWalkInDocument(formatCpfCnpjBR(event.target.value))
+                                }
+                                aria-required={requiresWalkInFinancialData}
+                                placeholder="000.000.000-00"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <label className={cn(labelClass, 'block')}>
+                                Telefone{requiresWalkInFinancialData ? ' *' : ''}
+                              </label>
+                              <Input
+                                className={SALE_PAYMENT_FIELD_CLASSNAME}
+                                value={walkInPhone}
+                                onChange={(event) => setWalkInPhone(formatPhoneBR(event.target.value))}
+                                aria-required={requiresWalkInFinancialData}
+                                placeholder="(00) 00000-0000"
+                              />
+                            </div>
+                            <div className="space-y-2 sm:col-span-2">
+                              <label className={cn(labelClass, 'block')}>
+                                E-mail{requiresWalkInFinancialData ? ' *' : ''}
+                              </label>
+                              <Input
+                                type="email"
+                                className={SALE_PAYMENT_FIELD_CLASSNAME}
+                                value={walkInEmail}
+                                onChange={(event) => setWalkInEmail(event.target.value)}
+                                aria-required={requiresWalkInFinancialData}
+                                placeholder="cliente@email.com"
+                              />
+                            </div>
+                            <div className="space-y-2 sm:col-span-2">
+                              <label className={cn(labelClass, 'block')}>Observação interna</label>
+                              <Textarea
+                                className="rounded-lg border-slate-200 bg-white text-sm shadow-none focus-visible:border-[#A94DFF] focus-visible:ring-2 focus-visible:ring-[#A94DFF]/30 focus-visible:ring-offset-0"
+                                value={walkInNotes}
+                                onChange={(event) => setWalkInNotes(event.target.value)}
+                                rows={3}
+                                placeholder="Informações adicionais"
+                              />
+                            </div>
+                            <p className="text-xs text-slate-500 sm:col-span-2">
+                              {requiresWalkInFinancialData
+                                ? 'CPF/CNPJ, telefone e e-mail são obrigatórios para gerar cobrança ou salvar o cliente.'
+                                : 'CPF/CNPJ, telefone e e-mail são opcionais para recebimento presencial.'}
                             </p>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </>
-                  ) : (
-                    <div className="grid gap-4 sm:grid-cols-2">
-                      <div className="space-y-2 sm:col-span-2">
-                        <label className={cn(labelClass, 'block')}>Nome *</label>
-                        <Input
-                          value={walkInName}
-                          onChange={(event) => setWalkInName(event.target.value)}
-                          placeholder="Nome completo"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <div className="flex min-h-4 items-center gap-2">
-                          <label className={cn(labelClass, 'block')}>
-                            CPF/CNPJ{requiresWalkInFinancialData ? ' *' : ''}
-                          </label>
-                          {walkInDocumentError ? (
-                            <span className="text-xs font-medium text-red-600">
-                              {walkInDocumentError}
-                            </span>
-                          ) : null}
-                        </div>
-                        <Input
-                          value={walkInDocument}
-                          onChange={(event) =>
-                            setWalkInDocument(formatCpfCnpjBR(event.target.value))
-                          }
-                          aria-required={requiresWalkInFinancialData}
-                          placeholder="000.000.000-00"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className={cn(labelClass, 'block')}>
-                          Telefone{requiresWalkInFinancialData ? ' *' : ''}
-                        </label>
-                        <Input
-                          value={walkInPhone}
-                          onChange={(event) => setWalkInPhone(formatPhoneBR(event.target.value))}
-                          aria-required={requiresWalkInFinancialData}
-                          placeholder="(00) 00000-0000"
-                        />
-                      </div>
-                      <div className="space-y-2 sm:col-span-2">
-                        <label className={cn(labelClass, 'block')}>
-                          E-mail{requiresWalkInFinancialData ? ' *' : ''}
-                        </label>
-                        <Input
-                          type="email"
-                          value={walkInEmail}
-                          onChange={(event) => setWalkInEmail(event.target.value)}
-                          aria-required={requiresWalkInFinancialData}
-                          placeholder="cliente@email.com"
-                        />
-                      </div>
-                      <div className="space-y-2 sm:col-span-2">
-                        <label className={cn(labelClass, 'block')}>Observação interna</label>
-                        <Textarea
-                          value={walkInNotes}
-                          onChange={(event) => setWalkInNotes(event.target.value)}
-                          rows={3}
-                          placeholder="Informações adicionais"
-                        />
-                      </div>
-                      <p className="text-xs text-slate-500 sm:col-span-2">
-                        {requiresWalkInFinancialData
-                          ? 'CPF/CNPJ, telefone e e-mail são obrigatórios para gerar cobrança ou salvar o cliente.'
-                          : 'CPF/CNPJ, telefone e e-mail são opcionais para recebimento presencial.'}
-                      </p>
+                          </div>
+                          </AnimatedCustomerModeContent>
+                        )}
+                      </AnimatePresence>
                     </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            </SaleWizardStep>
           )}
 
           {wizardStep === 1 && (
-            <div className="grid gap-5 xl:grid-cols-[1fr,360px] xl:gap-6">
+            <SaleWizardStep
+              key="products-step"
+              reducedMotion={prefersReducedMotion}
+              className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_22rem] xl:gap-6"
+            >
               {/* Tabela de produtos */}
               <Card className="min-w-0">
                 <CardHeader className="space-y-1 pb-4">
@@ -912,16 +1179,26 @@ export function CreateSaleFeature() {
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-5">
-                  <div className="flex flex-col gap-3 sm:grid sm:grid-cols-[1fr,200px] sm:items-stretch">
-                    <Input
-                      className="h-11"
-                      placeholder="Buscar por produto ou SKU"
-                      value={productSearch}
-                      onChange={(event) => {
-                        setPage(1);
-                        setProductSearch(event.target.value);
-                      }}
-                    />
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(12rem,14rem)]">
+                    <div className="relative min-w-0">
+                      <label className="sr-only" htmlFor="sale-product-search">
+                        Buscar por produto ou SKU
+                      </label>
+                      <Search
+                        aria-hidden="true"
+                        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                      />
+                      <Input
+                        id="sale-product-search"
+                        className="financial-data h-11 w-full rounded-lg border-slate-200 bg-white py-2 pl-10 text-sm shadow-none focus-visible:border-[#A94DFF] focus-visible:ring-2 focus-visible:ring-[#A94DFF]/30 focus-visible:ring-offset-0"
+                        placeholder="Buscar produto ou SKU"
+                        value={productSearch}
+                        onChange={(event) => {
+                          setPage(1);
+                          setProductSearch(event.target.value);
+                        }}
+                      />
+                    </div>
                     <Select
                       value={categoryId}
                       onValueChange={(value) => {
@@ -929,7 +1206,10 @@ export function CreateSaleFeature() {
                         setCategoryId(value);
                       }}
                     >
-                      <SelectTrigger className="h-11 w-full">
+                      <SelectTrigger
+                        className="h-11 w-full"
+                        aria-label="Filtrar produtos por categoria"
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -989,7 +1269,7 @@ export function CreateSaleFeature() {
                                   <span>
                                     Preço{' '}
                                     <span className="font-medium text-slate-900">
-                                      {formatCurrencyBRL(product.price)}
+                                      <span className="financial-data">{formatCurrencyBRL(product.price)}</span>
                                     </span>
                                   </span>
                                   <span>
@@ -1014,12 +1294,13 @@ export function CreateSaleFeature() {
                     )}
                   </div>
 
-                  <div className="hidden rounded-xl border border-slate-200 bg-white md:block [&_.alusa-session-panel]:rounded-none [&_.alusa-session-panel]:border-0">
+                  <div className="hidden overflow-hidden rounded-xl border border-slate-200 bg-white md:block [&_.alusa-session-panel]:rounded-none [&_.alusa-session-panel]:border-0">
                     <DataTable
                       columns={productColumns}
                       data={activeProducts}
                       rowKey={(product) => product.id}
                       loading={loading}
+                      tableClassName="min-w-[46rem]"
                       emptyMessage={
                         <div className="px-6 py-10 text-center text-sm text-slate-500">
                           Nenhum produto disponível para venda.
@@ -1049,17 +1330,60 @@ export function CreateSaleFeature() {
                     ) : null}
                   </CardHeader>
                   <CardContent className="space-y-5">
-                    {cart.length === 0 ? (
-                      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500">
-                        Nenhum item adicionado.
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {cart.map((item) => (
-                          <div
-                            key={`${item.productId}-${item.variantId ?? 'base'}`}
-                            className="rounded-xl border border-slate-200 p-4"
+                    <div className="relative space-y-3">
+                      <AnimatePresence initial={false} mode="popLayout">
+                        {cart.length === 0 ? (
+                          <motion.div
+                            key="empty-cart"
+                            initial={prefersReducedMotion ? false : { opacity: 0, y: 6 }}
+                            animate={{
+                              opacity: 1,
+                              y: 0,
+                              transition: { duration: prefersReducedMotion ? 0 : 0.18, ease: 'easeOut' },
+                            }}
+                            exit={{
+                              opacity: prefersReducedMotion ? 1 : 0,
+                              y: prefersReducedMotion ? 0 : -4,
+                              transition: { duration: prefersReducedMotion ? 0 : 0.12, ease: 'easeIn' },
+                            }}
+                            className={cn(
+                              'rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-sm text-slate-500',
+                              styles.cartItemMotion,
+                            )}
                           >
+                            Nenhum item adicionado.
+                          </motion.div>
+                        ) : (
+                          cart.map((item) => (
+                            <motion.div
+                              key={`${item.productId}-${item.variantId ?? 'base'}`}
+                              layout={!prefersReducedMotion}
+                              initial={
+                                prefersReducedMotion ? false : { opacity: 0, y: 8, scale: 0.98 }
+                              }
+                              animate={{
+                                opacity: 1,
+                                y: 0,
+                                scale: 1,
+                                transition: {
+                                  duration: prefersReducedMotion ? 0 : 0.2,
+                                  ease: 'easeOut',
+                                },
+                              }}
+                              exit={{
+                                opacity: prefersReducedMotion ? 1 : 0,
+                                y: prefersReducedMotion ? 0 : -4,
+                                scale: prefersReducedMotion ? 1 : 0.98,
+                                transition: {
+                                  duration: prefersReducedMotion ? 0 : 0.14,
+                                  ease: 'easeIn',
+                                },
+                              }}
+                              className={cn(
+                                'rounded-xl border border-slate-200 p-4',
+                                styles.cartItemMotion,
+                              )}
+                            >
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0 flex-1">
                                 <p className="font-medium leading-snug text-slate-900">
@@ -1068,13 +1392,16 @@ export function CreateSaleFeature() {
                                 <p className="mt-1 text-xs text-slate-500">
                                   {item.variantTitle ? `${item.variantTitle} · ` : ''}
                                   {item.categoryName ?? 'Sem categoria'} ·{' '}
-                                  {formatCurrencyBRL(item.price)}
+                                  <span className="financial-data">{formatCurrencyBRL(item.price)}</span>
                                 </p>
                               </div>
                               <Button
                                 size="icon"
                                 variant="ghost"
-                                className="h-10 w-10 shrink-0 text-slate-500 md:h-9 md:w-9"
+                                className={cn(
+                                  'h-10 w-10 shrink-0 text-slate-500 focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:ring-offset-2 md:h-9 md:w-9',
+                                  styles.cartRemoveButton,
+                                )}
                                 aria-label="Remover do carrinho"
                                 onClick={() =>
                                   setCart((current) =>
@@ -1096,7 +1423,7 @@ export function CreateSaleFeature() {
                                 <Button
                                   size="icon"
                                   variant="ghost"
-                                  className="h-9 w-9 md:h-7 md:w-7"
+                                  className={cn('h-9 w-9 md:h-7 md:w-7', styles.cartQuantityButton)}
                                   aria-label="Diminuir quantidade"
                                   onClick={() =>
                                     setCart((current) =>
@@ -1116,13 +1443,13 @@ export function CreateSaleFeature() {
                                 >
                                   <Minus className="h-4 w-4" />
                                 </Button>
-                                <span className="min-w-[2rem] px-1 text-center text-sm font-medium text-slate-900 tabular-nums">
+                                <span className="financial-data min-w-[2rem] px-1 text-center text-sm font-medium text-slate-900">
                                   {item.quantity}
                                 </span>
                                 <Button
                                   size="icon"
                                   variant="ghost"
-                                  className="h-9 w-9 md:h-7 md:w-7"
+                                  className={cn('h-9 w-9 md:h-7 md:w-7', styles.cartQuantityButton)}
                                   aria-label="Aumentar quantidade"
                                   onClick={() => {
                                     if (item.quantity >= item.stock) {
@@ -1145,48 +1472,64 @@ export function CreateSaleFeature() {
                                   <Plus className="h-4 w-4" />
                                 </Button>
                               </div>
-                              <p className="text-sm font-semibold tabular-nums text-slate-900">
-                                {formatCurrencyBRL(item.price * item.quantity)}
-                              </p>
+                              <AnimatedCartTotal
+                                amount={item.price * item.quantity}
+                                reducedMotion={prefersReducedMotion}
+                              />
                             </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                            </motion.div>
+                          ))
+                        )}
+                      </AnimatePresence>
+                    </div>
 
                     <div className="space-y-2">
                       <label className={labelClass}>Desconto</label>
-                      <Input
-                        className="h-11"
-                        inputMode="numeric"
-                        placeholder="0,00"
-                        value={discountInput}
-                        onChange={(event) => setDiscountInput(formatBRLInput(event.target.value))}
-                      />
+                      <div className="relative">
+                        <span
+                          aria-hidden="true"
+                          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500"
+                        >
+                          R$
+                        </span>
+                        <Input
+                          className="financial-data h-11 w-full rounded-lg border-slate-200 bg-white py-2 pl-10 text-sm shadow-none focus-visible:border-[#A94DFF] focus-visible:ring-2 focus-visible:ring-[#A94DFF]/30 focus-visible:ring-offset-0"
+                          inputMode="numeric"
+                          placeholder="0,00"
+                          value={discountInput}
+                          onChange={(event) =>
+                            setDiscountInput(formatBRLInput(event.target.value))
+                          }
+                        />
+                      </div>
                     </div>
 
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                      <div className="flex items-center justify-between gap-2">
+                    <div className="space-y-2 text-sm text-slate-600">
+                      <div className="flex items-center justify-between gap-2 border-b border-dashed border-slate-200 pb-2">
                         <span>Subtotal</span>
-                        <span className="tabular-nums">{formatCurrencyBRL(cartSubtotal)}</span>
+                        <span className="financial-data">{formatCurrencyBRL(cartSubtotal)}</span>
                       </div>
-                      <div className="mt-2 flex items-center justify-between gap-2">
+                      <div className="flex items-center justify-between gap-2 border-b border-dashed border-slate-200 pb-2">
                         <span>Desconto</span>
-                        <span className="tabular-nums">{formatCurrencyBRL(discount)}</span>
+                        <span className="financial-data">{formatCurrencyBRL(discount)}</span>
                       </div>
-                      <div className="mt-3 flex items-center justify-between gap-2 text-base font-semibold text-slate-900">
+                      <div className="flex items-center justify-between gap-2 text-base font-semibold text-slate-900">
                         <span>Total</span>
-                        <span className="tabular-nums">{formatCurrencyBRL(total)}</span>
+                        <span className="financial-data">{formatCurrencyBRL(total)}</span>
                       </div>
                     </div>
                   </CardContent>
                 </Card>
               </div>
-            </div>
+            </SaleWizardStep>
           )}
 
           {wizardStep === 2 && (
-            <div className="grid gap-5 xl:grid-cols-[1fr,320px] xl:gap-6">
+            <SaleWizardStep
+              key="payment-step"
+              reducedMotion={prefersReducedMotion}
+              className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_25rem] xl:gap-6"
+            >
               {/* Opções de pagamento */}
               <Card className="min-w-0 order-2 xl:order-none">
                 <CardHeader className="space-y-1 pb-4">
@@ -1203,7 +1546,7 @@ export function CreateSaleFeature() {
                       onValueChange={(value: InventoryModeValue) => setInventoryMode(value)}
                       disabled={finalizationType === 'COBRANCA'}
                     >
-                      <SelectTrigger className="h-11 w-full">
+                      <SelectTrigger className={SALE_PAYMENT_FIELD_CLASSNAME}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -1223,24 +1566,80 @@ export function CreateSaleFeature() {
                     </p>
                   </div>
 
-                  <div className="space-y-2">
-                    <label className={labelClass}>Tipo de finalização</label>
-                    <Select
-                      value={finalizationType}
-                      onValueChange={(value: SaleFinalizationValue) => setFinalizationType(value)}
-                    >
-                      <SelectTrigger className="h-11 w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="RECEBIMENTO_PRESENCIAL">
-                          {SALE_FINALIZATION_LABELS.RECEBIMENTO_PRESENCIAL}
-                        </SelectItem>
-                        <SelectItem value="COBRANCA">
-                          {SALE_FINALIZATION_LABELS.COBRANCA}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <div
+                    className={cn(
+                      'grid grid-cols-1 gap-4 sm:gap-5',
+                      finalizationType === 'RECEBIMENTO_PRESENCIAL' &&
+                        (paymentMethod === 'DINHEIRO'
+                          ? 'md:grid-cols-2 lg:grid-cols-3'
+                          : 'md:grid-cols-2'),
+                    )}
+                  >
+                    <div className="space-y-2">
+                      <label className={labelClass}>Tipo de finalização</label>
+                      <Select
+                        value={finalizationType}
+                        onValueChange={(value: SaleFinalizationValue) => setFinalizationType(value)}
+                      >
+                        <SelectTrigger className={SALE_PAYMENT_FIELD_CLASSNAME}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="RECEBIMENTO_PRESENCIAL">
+                            {SALE_FINALIZATION_LABELS.RECEBIMENTO_PRESENCIAL}
+                          </SelectItem>
+                          <SelectItem value="COBRANCA">
+                            {SALE_FINALIZATION_LABELS.COBRANCA}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {finalizationType === 'RECEBIMENTO_PRESENCIAL' ? (
+                      <>
+                        <div className="space-y-2">
+                          <label className={labelClass}>Método de recebimento</label>
+                          <Select
+                            value={paymentMethod}
+                            onValueChange={(value: SalePaymentMethodValue) => setPaymentMethod(value)}
+                          >
+                            <SelectTrigger className={SALE_PAYMENT_FIELD_CLASSNAME}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {Object.entries(SALE_PAYMENT_METHOD_LABELS).map(([value, label]) => (
+                                <SelectItem key={value} value={value}>
+                                  {label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        {paymentMethod === 'DINHEIRO' ? (
+                          <div className="space-y-2">
+                            <label className={labelClass}>Valor recebido</label>
+                            <div className="relative">
+                              <span
+                                aria-hidden="true"
+                                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500"
+                              >
+                                R$
+                              </span>
+                              <Input
+                                className={cn(SALE_PAYMENT_FIELD_CLASSNAME, 'financial-data pl-10')}
+                                inputMode="numeric"
+                                placeholder="0,00"
+                                value={amountReceivedInput}
+                                onChange={(event) =>
+                                  setAmountReceivedInput(formatBRLInput(event.target.value))
+                                }
+                              />
+                            </div>
+                          </div>
+                        ) : null}
+                      </>
+                    ) : null}
                   </div>
 
                   {customerMode === 'AVULSO' ? (
@@ -1250,7 +1649,7 @@ export function CreateSaleFeature() {
                         value={saveWalkInCustomer}
                         onValueChange={(value: 'NAO' | 'SIM') => setSaveWalkInCustomer(value)}
                       >
-                        <SelectTrigger className="h-11 w-full">
+                        <SelectTrigger className={SALE_PAYMENT_FIELD_CLASSNAME}>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -1261,50 +1660,12 @@ export function CreateSaleFeature() {
                     </div>
                   ) : null}
 
-                  {finalizationType === 'RECEBIMENTO_PRESENCIAL' ? (
-                    <div className="grid gap-4 sm:gap-5 md:grid-cols-2">
-                      <div className="space-y-2">
-                        <label className={labelClass}>Método de recebimento</label>
-                        <Select
-                          value={paymentMethod}
-                          onValueChange={(value: SalePaymentMethodValue) => setPaymentMethod(value)}
-                        >
-                          <SelectTrigger className="h-11 w-full">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {Object.entries(SALE_PAYMENT_METHOD_LABELS).map(([value, label]) => (
-                              <SelectItem key={value} value={value}>
-                                {label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      {paymentMethod === 'DINHEIRO' ? (
-                        <div className="space-y-2">
-                          <label className={labelClass}>Valor recebido</label>
-                          <Input
-                            className="h-11"
-                            inputMode="numeric"
-                            placeholder="0,00"
-                            value={amountReceivedInput}
-                            onChange={(event) =>
-                              setAmountReceivedInput(formatBRLInput(event.target.value))
-                            }
-                          />
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-
                   {finalizationType === 'COBRANCA' ? (
                     <div className="grid gap-4 sm:gap-5 md:grid-cols-2">
                       <div className="space-y-2">
                         <label className={labelClass}>Vencimento</label>
                         <DatePicker
-                          className="h-11 w-full"
+                          className={SALE_PAYMENT_FIELD_CLASSNAME}
                           value={chargeDueDate}
                           onChange={setChargeDueDate}
                           variant="input"
@@ -1321,7 +1682,7 @@ export function CreateSaleFeature() {
                             }
                           }}
                         >
-                          <SelectTrigger className="h-11 w-full">
+                          <SelectTrigger className={SALE_PAYMENT_FIELD_CLASSNAME}>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -1340,7 +1701,7 @@ export function CreateSaleFeature() {
                           disabled={!canUseInstallments}
                           onValueChange={(value) => setInstallmentCount(Number(value))}
                         >
-                          <SelectTrigger className="h-11 w-full">
+                          <SelectTrigger className={SALE_PAYMENT_FIELD_CLASSNAME}>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -1348,7 +1709,7 @@ export function CreateSaleFeature() {
                               <SelectItem key={count} value={String(count)}>
                                 {count === 1
                                   ? 'À vista'
-                                  : `${count}x de ${formatCurrencyBRL(total / count)}`}
+                                  : <><span className="financial-data">{count}x</span> de <span className="financial-data">{formatCurrencyBRL(total / count)}</span></>}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -1388,32 +1749,32 @@ export function CreateSaleFeature() {
                             </span>
                           </span>
                           <span className="shrink-0 font-medium tabular-nums text-slate-900">
-                            {formatCurrencyBRL(item.price * item.quantity)}
+                            <span className="financial-data">{formatCurrencyBRL(item.price * item.quantity)}</span>
                           </span>
                         </div>
                       ))}
                     </div>
 
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                      <div className="flex items-center justify-between gap-2">
+                    <div className="space-y-2 text-sm text-slate-600">
+                      <div className="flex items-center justify-between gap-2 border-b border-dashed border-slate-200 pb-2">
                         <span>Subtotal</span>
-                        <span className="tabular-nums">{formatCurrencyBRL(cartSubtotal)}</span>
+                        <span className="financial-data">{formatCurrencyBRL(cartSubtotal)}</span>
                       </div>
                       {discount > 0 ? (
-                        <div className="mt-1.5 flex items-center justify-between gap-2">
+                        <div className="flex items-center justify-between gap-2 border-b border-dashed border-slate-200 pb-2">
                           <span>Desconto</span>
-                          <span className="tabular-nums">−{formatCurrencyBRL(discount)}</span>
+                          <span className="financial-data">−{formatCurrencyBRL(discount)}</span>
                         </div>
                       ) : null}
-                      <div className="mt-3 flex items-center justify-between gap-2 text-base font-semibold text-slate-900">
+                      <div className="flex items-center justify-between gap-2 text-base font-semibold text-slate-900">
                         <span>Total</span>
-                        <span className="tabular-nums">{formatCurrencyBRL(total)}</span>
+                        <span className="financial-data">{formatCurrencyBRL(total)}</span>
                       </div>
                       {paymentMethod === 'DINHEIRO' && amountReceivedInput ? (
-                        <div className="mt-2 flex items-center justify-between gap-2">
+                        <div className="flex items-center justify-between gap-2 border-t border-dashed border-slate-200 pt-2">
                           <span>Troco</span>
                           <span className="tabular-nums">
-                            {formatCurrencyBRL(Math.max(amountReceived - total, 0))}
+                            <span className="financial-data">{formatCurrencyBRL(Math.max(amountReceived - total, 0))}</span>
                           </span>
                         </div>
                       ) : null}
@@ -1421,8 +1782,9 @@ export function CreateSaleFeature() {
                   </CardContent>
                 </Card>
               </div>
-            </div>
+            </SaleWizardStep>
           )}
+          </AnimatePresence>
 
           {/* Navegação entre etapas — mobile: Voltar acima, ação principal abaixo (alvo de toque maior) */}
           <div

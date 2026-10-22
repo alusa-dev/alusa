@@ -144,7 +144,7 @@ export function InventoryHistoryFeature() {
     {
       id: 'item',
       header: 'Produto',
-      width: 'w-[30%]',
+      width: 'w-[27%]',
       align: 'left',
       noWrap: false,
       render: (item) => (
@@ -163,7 +163,7 @@ export function InventoryHistoryFeature() {
       id: 'type',
       header: 'Movimento',
       align: 'center',
-      width: 'w-[15%]',
+      width: 'w-[14%]',
       render: (item) => (
         <Badge variant={MOVEMENT_BADGE_VARIANTS[item.movementType]} size="sm">
           {MOVEMENT_LABELS[item.movementType]}
@@ -171,84 +171,98 @@ export function InventoryHistoryFeature() {
       ),
     },
     {
-      id: 'before',
-      header: 'Saldo anterior',
+      id: 'balance',
+      header: 'Saldo',
       align: 'right',
-      width: 'w-[11%]',
-      render: (item) => item.onHandBefore,
-    },
-    {
-      id: 'change',
-      header: 'Mudança',
-      align: 'right',
-      width: 'w-[10%]',
+      width: 'w-[19%]',
+      noWrap: false,
       render: (item) => (
-        <span className={item.onHandDelta >= 0 ? 'text-emerald-700' : 'text-red-700'}>
-          {formatSignedQuantity(item.onHandDelta)}
-        </span>
+        <div className="space-y-1">
+          <div
+            className="financial-data flex items-center justify-end gap-1.5 font-medium text-slate-900"
+          >
+            <span className="sr-only">Saldo anterior </span>
+            <span>{item.onHandBefore}</span>
+            <span aria-hidden className="text-slate-400">→</span>
+            <span className="sr-only">Saldo final </span>
+            <span>{item.onHandAfter}</span>
+          </div>
+          <div className="text-xs text-slate-500">
+            Variação:{' '}
+            <span
+              className={`financial-data ${item.onHandDelta >= 0 ? 'text-emerald-700' : 'text-red-700'}`}
+            >
+              {formatSignedQuantity(item.onHandDelta)}
+            </span>
+          </div>
+        </div>
       ),
-    },
-    {
-      id: 'after',
-      header: 'Saldo final',
-      align: 'right',
-      width: 'w-[10%]',
-      render: (item) => item.onHandAfter,
     },
     {
       id: 'cost',
       header: 'Custo',
       align: 'right',
       width: 'w-[12%]',
-      render: (item) => (item.totalCost != null ? formatInventoryCurrency(item.totalCost) : '—'),
+      render: (item) => item.totalCost != null ? <span className="financial-data">{formatInventoryCurrency(item.totalCost)}</span> : '—',
     },
     {
       id: 'actor',
       header: 'Responsável',
       align: 'left',
-      width: 'w-[11%]',
+      width: 'w-[13%]',
       render: (item) => item.actor.name || 'Sistema',
     },
     {
       id: 'date',
-      header: 'Data',
+      header: 'Data/hora',
       align: 'left',
-      width: 'w-[11%]',
+      width: 'w-[15%]',
+      headerClassName: 'whitespace-nowrap',
       render: (item) => formatInventoryDateTime(item.createdAt),
     },
   ];
 
   return (
-    <TableLayout
-      title="Histórico de estoque"
-      subtitle="Auditoria operacional com saldo anterior, mudança, saldo final, custo e responsável."
-      actions={
-        <Button asChild type="button" variant="outline" className="h-10 bg-white px-4 shadow-none">
-          <Link href="/sales/inventory">
-            <ArrowPrev className="mr-2 h-4 w-4" />
-            Voltar ao estoque
-          </Link>
-        </Button>
-      }
-      filtersBar={
-        <div className="w-full md:min-w-[820px]">
-          <div className="grid gap-3 rounded-xl border border-slate-200 bg-[#F8FAFC] p-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
-            <div className="relative w-full max-w-xl">
+    <div className="space-y-4">
+      <Link
+        href="/sales/inventory"
+        className="inline-flex items-center gap-2 text-sm text-gray-600 transition-colors hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-accent"
+      >
+        <ArrowPrev className="h-4 w-4" />
+        Voltar
+      </Link>
+      <TableLayout
+        title="Histórico de estoque"
+        subtitle="Auditoria operacional com saldo anterior, mudança, saldo final, custo e responsável."
+        actions={
+          <Button
+            type="button"
+            onClick={() => void handleExport()}
+            disabled={exporting || loading || sortedItems.length === 0}
+            className="h-10 w-full bg-brand-accent px-4 text-white shadow-none hover:bg-brand-accent/90 disabled:opacity-50 md:w-auto"
+          >
+            <Download className="mr-2 h-4 w-4" />
+            {exporting ? 'Exportando...' : 'Exportar Dados'}
+          </Button>
+        }
+        filtersBar={
+          <div className="flex w-full flex-col gap-3 lg:flex-row lg:items-center lg:justify-end">
+            <div className="relative w-full lg:w-[400px]">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
               <Input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                className="h-10 rounded-xl border-slate-200 bg-white pl-9 shadow-sm"
+                className="h-10 rounded-lg border-slate-200 bg-white pl-9 text-sm shadow-none focus-visible:border-brand-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-accent"
                 placeholder="Buscar por produto, motivo ou origem"
               />
             </div>
 
-            <div className="flex flex-col gap-2 sm:flex-row xl:justify-end">
+            <div className="flex w-full flex-col gap-3 lg:w-auto lg:flex-row">
               <Select
                 value={direction}
                 onValueChange={(value) => setDirection(value as 'asc' | 'desc')}
               >
-                <SelectTrigger className="h-10 w-full min-w-[170px] rounded-xl border-slate-200 bg-white shadow-sm sm:w-[170px]">
+                <SelectTrigger className="h-10 w-full rounded-lg border-slate-200 bg-white shadow-none lg:w-[170px]">
                   <SelectValue placeholder="Ordem" />
                 </SelectTrigger>
                 <SelectContent>
@@ -261,7 +275,7 @@ export function InventoryHistoryFeature() {
                 <PopoverTrigger asChild>
                   <Button
                     variant="outline"
-                    className="relative h-10 rounded-xl border-slate-200 bg-white px-4 shadow-sm"
+                    className="relative h-10 w-full whitespace-nowrap rounded-lg border-slate-200 bg-white px-4 shadow-none lg:w-auto"
                   >
                     <Filter className="mr-2 h-4 w-4" />
                     Filtros avançados
@@ -298,7 +312,7 @@ export function InventoryHistoryFeature() {
                           type="date"
                           value={toDateInputValue(fromDate)}
                           onChange={(event) => setFromDate(parseDateInput(event.target.value))}
-                          className="h-9 rounded-xl border-slate-200 bg-white"
+                          className="h-9 rounded-lg border-slate-200 bg-white"
                           max={toDate ? toDateInputValue(toDate) : undefined}
                         />
                       </div>
@@ -309,7 +323,7 @@ export function InventoryHistoryFeature() {
                           type="date"
                           value={toDateInputValue(toDate)}
                           onChange={(event) => setToDate(parseDateInput(event.target.value))}
-                          className="h-9 rounded-xl border-slate-200 bg-white"
+                          className="h-9 rounded-lg border-slate-200 bg-white"
                           min={fromDate ? toDateInputValue(fromDate) : undefined}
                         />
                       </div>
@@ -322,7 +336,7 @@ export function InventoryHistoryFeature() {
                             setMovementType(value)
                           }
                         >
-                          <SelectTrigger className="h-9 w-full rounded-xl border-slate-200 bg-white">
+                          <SelectTrigger className="h-9 w-full rounded-lg border-slate-200 bg-white">
                             <SelectValue placeholder="Todos os movimentos" />
                           </SelectTrigger>
                           <SelectContent>
@@ -340,35 +354,27 @@ export function InventoryHistoryFeature() {
                 </PopoverContent>
               </Popover>
 
-              <Button
-                type="button"
-                onClick={() => void handleExport()}
-                disabled={exporting || loading || sortedItems.length === 0}
-                className="h-10 rounded-xl bg-[#A78BFA] px-4 text-white hover:bg-[#8B5CF6] disabled:bg-[#DDD6FE]"
-              >
-                <Download className="mr-2 h-4 w-4" />
-                {exporting ? 'Exportando...' : 'Exportar Dados'}
-              </Button>
             </div>
           </div>
+        }
+      >
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
+          <DataTable
+            columns={columns}
+            data={sortedItems}
+            rowKey={(item) => item.id}
+            tableClassName="min-w-[1200px]"
+            loading={loading}
+            emptyMessage={
+              <div className="px-6 py-12 text-center text-sm text-gray-500">
+                Nenhum movimento encontrado.
+              </div>
+            }
+            ariaLabel="Tabela do histórico de estoque"
+          />
         </div>
-      }
-    >
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
-        <DataTable
-          columns={columns}
-          data={sortedItems}
-          rowKey={(item) => item.id}
-          loading={loading}
-          emptyMessage={
-            <div className="px-6 py-12 text-center text-sm text-gray-500">
-              Nenhum movimento encontrado.
-            </div>
-          }
-          ariaLabel="Tabela do histórico de estoque"
-        />
-      </div>
-    </TableLayout>
+      </TableLayout>
+    </div>
   );
 }
 

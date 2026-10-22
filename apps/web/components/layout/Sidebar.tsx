@@ -13,7 +13,7 @@ import {
 import { useTheme } from '@/components/theme/ThemeProvider';
 import { usePortalNotifications } from '@/hooks/use-portal-notifications';
 
-import { FINANCE_LOCKED_GROUP_KEYS } from './sidebar-config';
+import { FINANCE_LOCKED_GROUP_KEYS, isSidebarItemActive } from './sidebar-config';
 import { SidebarLogoMark } from './SidebarLogoMark';
 import { useSidebarNavAccess } from './use-sidebar-nav-access';
 
@@ -138,7 +138,7 @@ function Sidebar() {
   useEffect(() => {
     let found: string | null = null;
     for (const g of sourceGroups) {
-      if (g.items.some((i) => pathname.startsWith(i.href))) {
+      if (g.items.some((i) => isSidebarItemActive(pathname, i.href))) {
         found = g.key;
         break;
       }
@@ -325,7 +325,7 @@ function Sidebar() {
           {/* Grupos */}
           {allowedGroups.map((group) => {
             const isOpen = openKey === group.key && !collapsed;
-            const groupHasRoute = group.items.some((i) => pathname.startsWith(i.href));
+            const groupHasRoute = group.items.some((i) => isSidebarItemActive(pathname, i.href));
             const groupSelected = activeKey === group.key;
             const isFinanceGroup = FINANCE_LOCKED_GROUP_KEYS.has(group.key);
             const isComingSoonGroup = Boolean(group.comingSoon);
@@ -407,7 +407,7 @@ function Sidebar() {
                 <Collapsible open={isOpen}>
                   <ul className="mt-1 flex flex-col gap-2">
                     {group.items.map((item) => {
-                      const subActive = pathname.startsWith(item.href);
+                      const subActive = isSidebarItemActive(pathname, item.href);
                       const isItemLocked = sidebarLocked || (isFinanceGroup && financeLocked);
                       return (
                         <li key={item.href} className="relative">

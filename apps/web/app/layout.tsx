@@ -2,7 +2,7 @@ import "./globals.css";
 import "@/lib/zod-error-map";
 import { AppProviders } from "./providers";
 import React from "react";
-import { inter } from "./fonts";
+import { inter, spaceMono } from "./fonts";
 import type { Metadata, Viewport } from "next";
 import { WebVitalsReporter } from "./WebVitalsReporter";
 import { CookieConsentBanner } from "@/components/legal/CookieConsentBanner";
@@ -39,7 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html
       lang="pt-BR"
-      className={`${inter.variable} min-h-full bg-white`}
+      className={`${inter.variable} ${spaceMono.variable} min-h-full bg-white`}
       suppressHydrationWarning
     >
       <head />

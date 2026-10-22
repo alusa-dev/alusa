@@ -29,6 +29,8 @@ type SearchCandidate = {
   hasResponsible: boolean;
   responsibleId: string | null;
   responsibleName: string | null;
+  salesDisplayName?: string;
+  salesStudentCount?: number;
   payerResolved: {
     type: 'aluno' | 'responsavel';
     id: string;
@@ -41,6 +43,11 @@ type SearchCandidate = {
 function alunoMatchesQueryDirectly(aluno: { nome: string; cpf: string | null }, query: string, digitsQuery: string) {
   if (aluno.nome.toLowerCase().includes(query.toLowerCase())) return true;
   return digitsQuery.length > 0 && Boolean(aluno.cpf?.includes(digitsQuery));
+}
+
+function formatSalesStudentName(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return parts.length > 1 ? `${parts[0]} ${parts[parts.length - 1]}` : name.trim();
 }
 
 function buildResponsavelCandidate(resp: ResponsavelSearchRow, canonicalCustomerId?: string | null): SearchCandidate {
@@ -62,7 +69,7 @@ function buildResponsavelCandidate(resp: ResponsavelSearchRow, canonicalCustomer
 }
 
 /** Busca pagadores financeiros sempre dentro da conta informada. */
-export async function searchFinancePayers(contaId: string, rawQuery: string) {
+export async function searchFinancePayers(contaId: string, rawQuery: string, options: { sales?: boolean } = {}) {
   const parsedQuery = financePayerSearchQueryDTOSchema.safeParse({ q: rawQuery.trim() });
   if (!parsedQuery.success) return financePayerSearchResultDTOSchema.parse({ results: [] });
 
@@ -135,6 +142,27 @@ export async function searchFinancePayers(contaId: string, rawQuery: string) {
     const respFinanceiro = aluno.responsaveis[0]?.responsavel ?? null;
     const matchedDirectly = alunoMatchesQueryDirectly(aluno, query, digitsQuery);
 
+    if (options.sales && menor && !respFinanceiro) continue;
+
+    if (options.sales && (matchedDirectly || Boolean(respFinanceiro))) {
+      const canonicalAlunoCustomer = await findCustomerForPayer(contaId, 'ALUNO', aluno.id);
+      const payerIsResponsible = Boolean(menor && respFinanceiro);
+      const payerId = payerIsResponsible ? respFinanceiro!.id : aluno.id;
+      const payerType = payerIsResponsible ? 'RESPONSAVEL' : 'ALUNO';
+      const payerCustomer = payerIsResponsible
+        ? await findCustomerForPayer(contaId, 'RESPONSAVEL', payerId)
+        : canonicalAlunoCustomer;
+      const hasAsaasCustomerId = Boolean(payerCustomer?.asaasCustomerId ?? (payerIsResponsible ? respFinanceiro?.asaasCustomerId : aluno.asaasCustomerId));
+      results.push({
+        id: aluno.id, name: aluno.nome, type: 'aluno', photo: aluno.foto,
+        cpf: aluno.cpf ?? undefined, cpfMasked: aluno.cpf ?? null, isMinor: menor,
+        hasResponsible: Boolean(respFinanceiro), responsibleId: respFinanceiro?.id ?? null,
+        responsibleName: respFinanceiro?.nome === aluno.nome ? null : (respFinanceiro?.nome ?? null),
+        payerResolved: { type: payerType === 'RESPONSAVEL' ? 'responsavel' : 'aluno', id: payerId, name: payerIsResponsible ? respFinanceiro!.nome : aluno.nome, hasAsaasCustomerId },
+        financialStatus: hasAsaasCustomerId ? 'OK' : 'INCOMPLETE',
+      });
+      continue;
+    }
     if (menor || !matchedDirectly) {
       if (respFinanceiro) await upsertResponsavel(respFinanceiro);
       continue;
@@ -160,6 +188,23 @@ export async function searchFinancePayers(contaId: string, rawQuery: string) {
 
   for (const responsavel of responsaveis) await upsertResponsavel(responsavel);
   for (const responsavel of responsavelById.values()) {
+    if (options.sales) {
+      const linkedStudents = results.filter((item) => item.type === 'aluno' && item.responsibleId === responsavel.id);
+      if (linkedStudents.length > 0 && responsaveis.some((item) => item.id === responsavel.id)) {
+        const names = [...new Set(linkedStudents.map((item) => item.name))];
+        const displayNames = names.length > 1 ? names.map(formatSalesStudentName) : names;
+        results.push({
+          ...responsavel,
+          salesDisplayName: displayNames.length > 1 ? `${displayNames.slice(0, -1).join(', ')} e ${displayNames.at(-1)}` : displayNames[0],
+          salesStudentCount: names.length,
+        });
+        for (let i = results.length - 1; i >= 0; i--) {
+          const item = results[i];
+          if (item.type === 'aluno' && item.responsibleId === responsavel.id) results.splice(i, 1);
+        }
+        continue;
+      }
+    }
     if (!results.some((item) => item.type === 'responsavel' && item.id === responsavel.id)) results.push(responsavel);
   }
 

@@ -74,7 +74,7 @@ function SummaryCard({ label, detail, value, icon, tone, loading }: SummaryCardP
           </div>
         </div>
         <span className={`block text-3xl font-semibold tracking-tight ${styles.value}`}>
-          {formatCurrency(value)}
+          <span className="financial-data">{formatCurrency(value)}</span>
         </span>
       </div>
     </div>

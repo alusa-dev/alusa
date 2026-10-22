@@ -12,7 +12,7 @@ export function EventMapSection({ event }: { event: SchoolEventDTO }) {
 
   return (
     <div className="space-y-5">
-      <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-none">
         <CardHeader className="p-0 pb-4">
           <CardTitle className="text-base font-semibold text-slate-800">Mapa do Evento</CardTitle>
           <p className="text-xs text-slate-500 mt-1">Organize setores, fileiras e assentos para a bilheteria.</p>
@@ -23,7 +23,7 @@ export function EventMapSection({ event }: { event: SchoolEventDTO }) {
       </Card>
 
       {showPublicOrders ? (
-        <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-none">
           <CardHeader className="p-0 pb-4">
             <CardTitle className="text-base font-semibold text-slate-800">Bilheteria online</CardTitle>
             <p className="text-xs text-slate-500 mt-1">Pedidos online, pagamentos e check-in de ingressos.</p>

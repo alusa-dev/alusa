@@ -4,23 +4,9 @@ import { formatCurrency, formatDate, type EventScopedResources, type TicketLotDT
 import { EventEmptyState as EmptyState } from '../shared/EventEmptyState';
 import { EventPaginatedDataTable } from '../shared/EventPaginatedDataTable';
 import { EventSoftBadge as SoftBadge } from '../shared/EventSoftBadge';
+import { EventWhatsAppStatusIndicator } from '../shared/EventWhatsAppStatusIndicator';
 import { TicketActions } from './TicketActions';
 import { EXTENDED_TICKET_SALE_STATUS_LABELS, getTicketSaleFinancialSummary, getTicketSaleTone } from './ticket-sale-ui';
-
-function getWhatsAppStatus(status: TicketSaleDTO['whatsappStatus']) {
-  switch (status) {
-    case 'PENDING':
-    case 'QUEUED': return { label: 'Na fila', tone: 'info' as const };
-    case 'PROCESSING': return { label: 'Enviando', tone: 'warning' as const };
-    case 'SENT': return { label: 'Enviado', tone: 'success' as const };
-    case 'DELIVERED': return { label: 'Entregue', tone: 'success' as const };
-    case 'READ': return { label: 'Lida', tone: 'success' as const };
-    case 'FAILED':
-    case 'DLQ': return { label: 'Não enviado', tone: 'danger' as const };
-    case 'SKIPPED': return { label: 'Não enviado', tone: 'neutral' as const };
-    default: return { label: 'Sem envio', tone: 'neutral' as const };
-  }
-}
 
 export function TicketSalesTable({
   sales,
@@ -38,7 +24,20 @@ export function TicketSalesTable({
   return (
     <EventPaginatedDataTable
       columns={[
-        { id: 'buyer', header: 'Comprador', width: 'w-[19%]', align: 'left', render: (sale: TicketSaleDTO) => <span className="font-medium text-slate-950">{sale.buyerName}</span> },
+        {
+          id: 'buyer',
+          header: 'Comprador',
+          width: 'w-[19%]',
+          cellClassName: 'min-w-0',
+          align: 'left',
+          render: (sale: TicketSaleDTO) => (
+            <div className="w-full min-w-0 overflow-hidden">
+              <span className="block truncate font-medium text-slate-950" title={sale.buyerName}>
+                {sale.buyerName}
+              </span>
+            </div>
+          ),
+        },
         {
           id: 'lot',
           header: 'Mapa/Lote',
@@ -71,8 +70,7 @@ export function TicketSalesTable({
           return <SoftBadge tone={financial.label ? financial.tone : getTicketSaleTone(sale.status)}>{financial.label ?? EXTENDED_TICKET_SALE_STATUS_LABELS[sale.status]}</SoftBadge>;
         } },
         { id: 'whatsapp', header: 'WhatsApp', width: 'w-[13%]', align: 'center', render: (sale: TicketSaleDTO) => {
-          const whatsapp = getWhatsAppStatus(sale.whatsappStatus);
-          return <SoftBadge tone={whatsapp.tone}>{whatsapp.label}</SoftBadge>;
+          return <EventWhatsAppStatusIndicator status={sale.whatsappStatus} />;
         } },
         { id: 'date', header: 'Venda', width: 'w-[10%]', align: 'left', render: (sale: TicketSaleDTO) => formatDate(sale.soldAt) },
         { id: 'actions', header: 'Ações', width: 'w-[11%]', align: 'right', render: (sale: TicketSaleDTO) => <TicketActions sale={sale} eventId={eventId} lots={lots} scopedResources={scopedResources} /> },

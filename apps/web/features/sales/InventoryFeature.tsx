@@ -18,6 +18,7 @@ import {
 } from '@/components/icons/icons';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 import TableLayout from '@/components/layout/TableLayout';
+import { InventorySectionTabs } from './components/InventorySectionTabs';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -420,14 +421,14 @@ export function InventoryFeature() {
       header: 'Em estoque',
       align: 'right',
       width: 'lg:w-[14%]',
-      render: (item) => item.onHand,
+      render: (item) => <span className="financial-data">{item.onHand}</span>,
     },
     {
       id: 'available',
       header: 'Disponível',
       align: 'right',
       width: 'lg:w-[14%]',
-      render: (item) => item.available,
+      render: (item) => <span className="financial-data">{item.available}</span>,
     },
     {
       id: 'alert',
@@ -525,8 +526,8 @@ export function InventoryFeature() {
 
   return (
     <>
+      <InventorySectionTabs />
       <TableLayout
-        title="Estoque"
         subtitle="Acompanhe estoque físico, reservas e compras pendentes com histórico automático."
         actions={
           <div className="flex w-full flex-col gap-2 lg:flex-row lg:flex-wrap lg:justify-end">
@@ -567,7 +568,7 @@ export function InventoryFeature() {
               <Input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                className="h-10 pl-9"
+                className="h-10 rounded-lg border-slate-200 bg-white pl-9 text-sm shadow-none focus-visible:border-brand-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-accent"
                 placeholder="Buscar por produto, variante ou SKU"
               />
             </div>
@@ -798,7 +799,7 @@ export function InventoryFeature() {
                 <label className="text-xs font-medium text-slate-600">Quantidade recebida</label>
                 <Input
                   type="number"
-                  className="h-10 rounded-lg border-slate-200 bg-white shadow-none focus-visible:border-brand-accent focus-visible:ring-brand-accent/20"
+                  className="financial-data h-10 rounded-lg border-slate-200 bg-white shadow-none focus-visible:border-brand-accent focus-visible:ring-brand-accent/20"
                   min="1"
                   value={entryForm.quantity}
                   onChange={(event) =>
@@ -815,7 +816,7 @@ export function InventoryFeature() {
                 </label>
                 <Input
                   type="number"
-                  className="h-10 rounded-lg border-slate-200 bg-white shadow-none focus-visible:border-brand-accent focus-visible:ring-brand-accent/20"
+                  className="financial-data h-10 rounded-lg border-slate-200 bg-white shadow-none focus-visible:border-brand-accent focus-visible:ring-brand-accent/20"
                   min="0"
                   step="0.01"
                   value={entryForm.unitCost}
@@ -829,9 +830,9 @@ export function InventoryFeature() {
             {selectedEntryTarget ? (
               <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-600">
                 Saldo atual:{' '}
-                <span className="font-semibold text-gray-900">{selectedEntryTarget.onHand}</span>
+                <span className="financial-data font-normal text-gray-900">{selectedEntryTarget.onHand}</span>
                 {' → '}
-                Novo saldo: <span className="font-semibold text-gray-900">{entryNewBalance}</span>
+                Novo saldo: <span className="financial-data font-normal text-gray-900">{entryNewBalance}</span>
               </div>
             ) : null}
             <div className="space-y-2">
@@ -933,7 +934,7 @@ export function InventoryFeature() {
                 </label>
                 <Input
                   type="number"
-                  className="h-10 rounded-lg border-slate-200 bg-white shadow-none focus-visible:border-brand-accent focus-visible:ring-brand-accent/20"
+                  className="financial-data h-10 rounded-lg border-slate-200 bg-white shadow-none focus-visible:border-brand-accent focus-visible:ring-brand-accent/20"
                   value={adjustForm.quantity}
                   onChange={(event) =>
                     setAdjustForm((current) => ({ ...current, quantity: event.target.value }))
@@ -945,9 +946,9 @@ export function InventoryFeature() {
             {selectedAdjustTarget ? (
               <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-xs text-slate-600">
                 Saldo atual:{' '}
-                <span className="font-semibold text-gray-900">{selectedAdjustTarget.onHand}</span>
+                <span className="financial-data font-normal text-gray-900">{selectedAdjustTarget.onHand}</span>
                 {' → '}
-                Novo saldo: <span className="font-semibold text-gray-900">{adjustNewBalance}</span>
+                Novo saldo: <span className="financial-data font-normal text-gray-900">{adjustNewBalance}</span>
                 {' | '}
                 Mudança:{' '}
                 <span

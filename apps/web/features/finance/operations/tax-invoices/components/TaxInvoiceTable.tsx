@@ -293,7 +293,7 @@ export function TaxInvoiceTable({
                 <ServiceCell nota={nota} className="truncate text-[12px] text-gray-600" />
               </div>
               <div className="mt-2 text-[13px] font-semibold text-gray-900">
-                {formatCurrency(nota.value)}
+                <span className="financial-data">{formatCurrency(nota.value)}</span>
               </div>
             </div>
             <div className="flex shrink-0 flex-col items-end gap-2 self-start">
@@ -318,7 +318,7 @@ export function TaxInvoiceTable({
               </div>
               <div className="col-span-2 min-w-0 text-center">
                 <div className="truncate text-sm font-semibold text-gray-900">
-                  {formatCurrency(nota.value)}
+                  <span className="financial-data">{formatCurrency(nota.value)}</span>
                 </div>
               </div>
               <div className="col-span-2 flex min-w-0 justify-center" title={resolveStatusHint(nota)}>

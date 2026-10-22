@@ -198,7 +198,7 @@ export default function FinanceiroPagamentosPage() {
         width: 'lg:w-[16%]',
         align: 'center',
         render: (pessoa) => (
-          <span className="font-medium tabular-nums text-gray-900">
+          <span className="font-medium financial-data text-gray-900">
             {formatCurrency(pessoa.valorTotal)}
           </span>
         ),

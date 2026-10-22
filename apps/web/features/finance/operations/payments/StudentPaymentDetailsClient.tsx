@@ -326,7 +326,7 @@ export function StudentPaymentDetailsClient({
           <div className="flex items-center gap-3">
             <div className="flex min-w-[120px] flex-col justify-between rounded-2xl bg-[#f4ecfd] px-5 py-4">
               <span className="text-[10px] font-bold uppercase tracking-wider text-[#8a7ab0]">Total Pago</span>
-              <span className="text-[18px] font-semibold tracking-tight text-[#2b2634]">
+              <span className="text-[18px] font-medium financial-data tracking-tight text-[#2b2634]">
                 {formatCurrency(totalPagoFiltrado)}
               </span>
             </div>

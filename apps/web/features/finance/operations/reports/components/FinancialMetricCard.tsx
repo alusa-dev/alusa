@@ -65,7 +65,7 @@ export function FinancialMetricCard({
       {loading ? (
         <Skeleton className="h-9 w-36 bg-[#e9dffc] alusa-dark:bg-[color:var(--color-border-strong)]/40" />
       ) : (
-        <p className="truncate text-[26px] font-medium leading-none tracking-tight text-[#2b2634] tabular-nums alusa-dark:text-[color:var(--color-text-primary)]">
+        <p className={cn('truncate text-[26px] leading-none tracking-tight text-[#2b2634] tabular-nums alusa-dark:text-[color:var(--color-text-primary)]', format === 'money' && 'financial-data font-medium')}>
           {content}
         </p>
       )}

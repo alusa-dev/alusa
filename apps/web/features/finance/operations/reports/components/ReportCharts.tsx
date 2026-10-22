@@ -230,8 +230,8 @@ function OverviewGroupedBarChart({
           {data.map((item) => (
             <tr key={item.key}>
               <td>{item.label}</td>
-              <td>{formatReportMoney(item.charged)}</td>
-              <td>{formatReportMoney(item.received)}</td>
+              <td className="financial-data">{formatReportMoney(item.charged)}</td>
+              <td className="financial-data">{formatReportMoney(item.received)}</td>
             </tr>
           ))}
         </tbody>
@@ -279,8 +279,8 @@ export function FinancialDistributionChart({
                 <span className="truncate font-medium text-gray-700 alusa-dark:text-[color:var(--color-text-primary)]">
                   {item.label}
                 </span>
-                <span className="shrink-0 tabular-nums text-gray-500">
-                  {formatReportMoney(item.amount)} · {item.percentage}%
+                <span className="shrink-0 text-gray-500">
+                  <span className="financial-data">{formatReportMoney(item.amount)}</span> · {item.percentage}%
                 </span>
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-slate-100 alusa-dark:bg-[color:var(--color-bg-card-soft)]">

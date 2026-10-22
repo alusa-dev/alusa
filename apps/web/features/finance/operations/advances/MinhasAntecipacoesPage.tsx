@@ -61,7 +61,7 @@ function SummaryCard({
           <p className="text-[11px] text-[#2b2634]/65 alusa-dark:text-[color:var(--color-text-muted)]">{detail}</p>
         </div>
       </div>
-      <span className="block text-[30px] font-semibold leading-none tracking-tight text-[#2b2634] alusa-dark:text-[color:var(--color-text-primary)]">
+      <span className="financial-data block text-[30px] font-medium leading-none tracking-tight text-[#2b2634] alusa-dark:text-[color:var(--color-text-primary)]">
         {formatCurrency(value)}
       </span>
     </div>
@@ -184,8 +184,8 @@ function AnticipationsTable({
                     <ul className="m-0 min-w-0 flex-1 list-none space-y-1 p-0" role="list">
                       <li className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
                         <span className="text-[13px] font-semibold leading-snug text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">{title}</span>
-                        <span className="text-xs font-semibold tabular-nums text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
-                          {formatCurrency(item.value)}
+                        <span className="text-xs font-normal text-slate-900 alusa-dark:text-[color:var(--color-text-primary)]">
+                          <span className="financial-data">{formatCurrency(item.value)}</span>
                         </span>
                       </li>
                       <li className="truncate text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-muted)]">{subtitle}</li>
@@ -193,9 +193,9 @@ function AnticipationsTable({
                         <li className="text-[12px] font-medium text-slate-800 alusa-dark:text-[color:var(--color-text-secondary)]">{billing}</li>
                       ) : null}
                       <li className="text-[12px] font-semibold text-emerald-700">
-                        Líquido {formatCurrency(item.netValue)}
+                        Líquido <span className="financial-data">{formatCurrency(item.netValue)}</span>
                       </li>
-                      <li className="text-[12px] tabular-nums text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">Taxa {formatCurrency(item.fee)}</li>
+                      <li className="text-[12px] text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">Taxa <span className="financial-data">{formatCurrency(item.fee)}</span></li>
                       <li className="text-[12px] tabular-nums text-slate-600 alusa-dark:text-[color:var(--color-text-secondary)]">
                         {formatDate(item.anticipationDate ?? item.dueDate)}
                       </li>
@@ -244,13 +244,13 @@ function AnticipationsTable({
                   <StatusBadge status={item.status} />
                 </td>
                 <td className="hidden px-5 py-4 text-right text-sm text-slate-700 lg:table-cell alusa-dark:text-[color:var(--color-text-secondary)]">
-                  {formatCurrency(item.value)}
+                  <span className="financial-data">{formatCurrency(item.value)}</span>
                 </td>
                 <td className="hidden px-5 py-4 text-right text-sm text-slate-700 lg:table-cell alusa-dark:text-[color:var(--color-text-secondary)]">
-                  {formatCurrency(item.fee)}
+                  <span className="financial-data">{formatCurrency(item.fee)}</span>
                 </td>
                 <td className="hidden px-5 py-4 text-right text-sm font-semibold text-emerald-700 lg:table-cell">
-                  {formatCurrency(item.netValue)}
+                  <span className="financial-data">{formatCurrency(item.netValue)}</span>
                 </td>
                 <td className="hidden px-5 py-4 text-sm text-slate-600 lg:table-cell alusa-dark:text-[color:var(--color-text-secondary)]">
                   {formatDate(item.anticipationDate ?? item.dueDate)}
@@ -384,7 +384,7 @@ export function MinhasAntecipacoesPage() {
             </div>
             <div className="grid gap-3 lg:grid-cols-[minmax(280px,320px)_180px_104px] lg:justify-end">
               <div className="relative min-w-0 lg:w-[320px]">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                 <Input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
@@ -480,17 +480,17 @@ export function MinhasAntecipacoesPage() {
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div>
                       <p className="text-xs font-medium text-slate-500">Valor</p>
-                      <p className="font-semibold tabular-nums text-slate-900">{formatCurrency(previewItem.value)}</p>
+                      <p className="font-medium financial-data text-slate-900">{formatCurrency(previewItem.value)}</p>
                     </div>
                     <div>
                       <p className="text-xs font-medium text-slate-500">Taxa</p>
-                      <p className="tabular-nums text-slate-800">{formatCurrency(previewItem.fee)}</p>
+                      <p className="financial-data text-slate-800">{formatCurrency(previewItem.fee)}</p>
                     </div>
                   </div>
                   <div>
                     <p className="text-xs font-medium text-slate-500">Líquido</p>
                     <p className="font-semibold tabular-nums text-emerald-700">
-                      {formatCurrency(previewItem.netValue)}
+                      <span className="financial-data">{formatCurrency(previewItem.netValue)}</span>
                     </p>
                   </div>
                   <div>

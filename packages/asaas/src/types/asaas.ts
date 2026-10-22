@@ -495,6 +495,8 @@ export interface AsaasPayment {
   creditDate?: string;
   /** Data estimada em que o crédito ficará disponível */
   estimatedCreditDate?: string;
+  /** Indica que o pagamento foi antecipado; null/ausente permanece desconhecido. */
+  anticipated?: boolean | null;
 
   creditCard?: {
     creditCardNumber?: string;

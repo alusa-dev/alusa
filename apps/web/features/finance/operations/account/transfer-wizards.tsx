@@ -728,7 +728,7 @@ function ChoiceCard({
   );
 }
 
-function SummaryRow({ label, value }: { label: string; value: string }) {
+function SummaryRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4 border-b border-slate-100 py-2 last:border-none last:pb-0">
       <span className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</span>
@@ -1584,13 +1584,13 @@ export function TransferWizardDialog({
                 }}
                 placeholder="0,00"
                 inputMode="numeric"
-                className="h-auto border-0 bg-transparent p-0 text-left text-5xl font-semibold tracking-tight text-slate-950 shadow-none outline-none ring-0 placeholder:text-slate-300 focus-visible:ring-0 md:text-6xl"
+                className="financial-data h-auto border-0 bg-transparent p-0 text-left text-5xl font-normal tracking-tight text-slate-950 shadow-none outline-none ring-0 placeholder:text-slate-300 focus-visible:ring-0 md:text-6xl"
                 style={{ width: `calc(${Math.max((form.amount || '0,00').length, 4)}ch + 10px)` }}
               />
             </div>
 
             <p className="mt-4 text-center text-sm text-slate-500">
-              Saldo disponível {formatCurrency(maxAmount)}
+              Saldo disponível <span className="financial-data">{formatCurrency(maxAmount)}</span>
             </p>
             <p className="mt-2 text-center text-xs text-slate-400">
               Digite os centavos ou use vírgula. Exemplo: 10,00.
@@ -1661,16 +1661,16 @@ export function TransferWizardDialog({
             <div>
               <SummaryRow
                 label="Valor enviado"
-                value={amountNumber != null ? formatCurrency(amountNumber) : '—'}
+                value={amountNumber != null ? <span className="financial-data">{formatCurrency(amountNumber)}</span> : '—'}
               />
               {hasFeeEstimate ? (
                 <SummaryRow
                   label={feeMayUseMonthlyFreeQuota ? 'Taxa de referência' : 'Taxa estimada'}
-                  value={formatCurrency(estimatedFee)}
+                  value={<span className="financial-data">{formatCurrency(estimatedFee)}</span>}
                 />
               ) : null}
               {estimatedDebit != null ? (
-                <SummaryRow label="Total estimado" value={formatCurrency(estimatedDebit)} />
+                <SummaryRow label="Total estimado" value={<span className="financial-data">{formatCurrency(estimatedDebit)}</span>} />
               ) : null}
               {hasFeeEstimate ? (
                 <p className="pt-2 text-xs leading-relaxed text-slate-500">

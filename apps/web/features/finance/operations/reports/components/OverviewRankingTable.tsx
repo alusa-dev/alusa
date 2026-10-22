@@ -21,9 +21,9 @@ export function OverviewRankingTable({
   const columns: DataTableColumn<FinancialReportRankingItem>[] = [
     { id: 'name', header: dimension === 'class' ? 'Turma' : 'Plano', width: 'w-[30%]', noWrap: false, render: (row) => <span className="font-medium">{row.name}</span> },
     { id: 'students', header: 'Alunos', align: 'center', width: 'w-[12%]', render: (row) => row.studentCount },
-    { id: 'charged', header: 'Em cobranças', align: 'right', width: 'w-[20%]', render: (row) => <span className="tabular-nums">{formatReportMoney(row.charged)}</span> },
-    { id: 'received', header: 'Recebido', align: 'right', width: 'w-[20%]', render: (row) => <span className="tabular-nums">{formatReportMoney(row.received)}</span> },
-    { id: 'overdue', header: 'Em atraso', align: 'right', width: 'w-[18%]', render: (row) => <span className="font-medium text-red-600 tabular-nums">{formatReportMoney(row.overdue)}</span> },
+    { id: 'charged', header: 'Em cobranças', align: 'right', width: 'w-[20%]', render: (row) => <span className="financial-data">{formatReportMoney(row.charged)}</span> },
+    { id: 'received', header: 'Recebido', align: 'right', width: 'w-[20%]', render: (row) => <span className="financial-data">{formatReportMoney(row.received)}</span> },
+    { id: 'overdue', header: 'Em atraso', align: 'right', width: 'w-[18%]', render: (row) => <span className="font-medium text-red-600 financial-data">{formatReportMoney(row.overdue)}</span> },
   ];
   return (
     <section className="space-y-3">

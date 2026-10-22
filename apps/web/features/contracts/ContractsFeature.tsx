@@ -44,6 +44,7 @@ export function ContratosFeature() {
     <TableLayout
       title="Gestão de Contratos"
       subtitle="Acompanhe os status das assinaturas e gerencie contratos gerados."
+      toolbarClassName="border-gray-300"
       actions={
         <StudentContractsFiltersBar
           mode="search"

@@ -48,7 +48,7 @@ export function EventDetailFeature({ eventId }: { eventId: string }) {
       <EventParticipantsPanel eventId={eventId} event={event} participants={participants} loading={participantsQuery.isLoading} />
 
       {event.hasCostumes && (
-        <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-none">
           <CardHeader className="p-0 pb-4">
             <CardTitle className="text-base font-semibold text-slate-800">Controle de Figurinos</CardTitle>
             <p className="text-xs text-slate-500 mt-1">Gestão de entregas, tamanhos definidos e status de pagamentos.</p>
@@ -60,7 +60,7 @@ export function EventDetailFeature({ eventId }: { eventId: string }) {
       )}
 
       {event.hasTickets && (
-        <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-none">
           <CardHeader className="p-0 pb-4">
             <CardTitle className="text-base font-semibold text-slate-800">Ingressos & Bilheteria</CardTitle>
             <p className="text-xs text-slate-500 mt-1">Acompanhe lotes ativos, vendas realizadas e cortesias emitidas.</p>
@@ -72,7 +72,7 @@ export function EventDetailFeature({ eventId }: { eventId: string }) {
       )}
 
       {event.hasFinancialControl && (
-        <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-none">
           <CardHeader className="p-0 pb-4">
             <CardTitle className="text-base font-semibold text-slate-800">Fluxo de Caixa Operacional</CardTitle>
             <p className="text-xs text-slate-500 mt-1">Controle detalhado de receitas de bilheteria/taxas e despesas com fornecedores.</p>

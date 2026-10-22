@@ -439,15 +439,23 @@ export function EventReportDetail({ eventId }: { eventId: string }) {
             <div className="mt-3 space-y-3">
               {revenueRows.map((row) => (
                 <ReportFact key={row.id} label={row.source}>
-                  <>
-                    <Money value={row.planned} tone="revenue" /> previstos; <Money value={row.received} tone="received" /> recebidos; <Money value={row.pending} tone="pending" /> pendentes{row.refunded > 0 ? <>; <Money value={row.refunded} tone="negative" /> estornados</> : null}.
-                    {row.id === 'registrations' ? <> Valor original: <Money value={totals.registrationGross} tone="revenue" />; descontos: <Money value={totals.registrationDiscount} tone="negative" />.</> : null}
-                  </>
+                  <span className="block space-y-0.5">
+                    <span className="block"><Money value={row.planned} tone="revenue" /> previstos</span>
+                    <span className="block"><Money value={row.received} tone="received" /> recebidos</span>
+                    <span className="block"><Money value={row.pending} tone="pending" /> pendentes</span>
+                    {row.id === 'registrations' ? (
+                      <>
+                        <span className="block">Valor original: <Money value={totals.registrationGross} tone="revenue" /></span>
+                        <span className="block">Descontos: <Money value={totals.registrationDiscount} tone="negative" /></span>
+                      </>
+                    ) : null}
+                    {row.refunded > 0 ? <span className="block"><Money value={row.refunded} tone="negative" /> estornados</span> : null}
+                  </span>
                 </ReportFact>
               ))}
             </div>
             <p className="mt-4 text-xs leading-5 text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">
-              Os valores previstos consideram inscrições ativas, ingressos pagos ou pendentes e outras receitas válidas registradas.
+              O previsto da Bilheteria soma as vendas registradas ao valor potencial da venda de todos os ingressos disponíveis.
             </p>
           </div>
 

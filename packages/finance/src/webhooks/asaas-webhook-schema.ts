@@ -11,7 +11,10 @@ import type { AsaasWebhookPayload } from '@alusa/asaas-gateway';
  * Alusa.
  */
 const providerResourceSchema = z
-  .object({ id: z.string().trim().min(1) })
+  .object({
+    id: z.string().trim().min(1),
+    anticipated: z.boolean().nullable().optional(),
+  })
   .passthrough();
 
 export const asaasWebhookPayloadSchema = z

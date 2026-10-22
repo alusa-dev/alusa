@@ -154,6 +154,8 @@ export const financePayerCandidateDTOSchema = z.object({
   hasResponsible: z.boolean(),
   responsibleId: nullableStringDTOSchema.default(null),
   responsibleName: nullableStringDTOSchema.default(null),
+  salesDisplayName: z.string().optional(),
+  salesStudentCount: z.number().int().positive().optional(),
   payerResolved: financePayerResolvedDTOSchema,
   financialStatus: z.enum(['OK', 'INCOMPLETE']),
 });

@@ -749,6 +749,8 @@ export type {
 
 export { getAsaasPaymentDetails } from './use-cases/get-asaas-payment-details';
 export type { GetAsaasPaymentDetailsResult } from './use-cases/get-asaas-payment-details';
+export { resolveAsaasProcessingFee } from './use-cases/resolve-asaas-processing-fee';
+export type { ResolveAsaasProcessingFeeInput } from './use-cases/resolve-asaas-processing-fee';
 
 export {
   StoreSaleError,
@@ -762,6 +764,10 @@ export {
   registerStoreSaleReturn,
   listEligibleStoreSaleMatriculas,
 } from './use-cases/store-sales';
+export type {
+  StoreSaleAdditionalFee,
+  StoreSaleReceiptFinancials,
+} from './use-cases/store-sale-receipt-financials';
 export type {
   CreateStoreSaleInput,
   StoreSaleItemInput,

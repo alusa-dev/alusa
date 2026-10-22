@@ -239,7 +239,7 @@ export function PersonTaxInvoicesClient({
           { label: 'Total de notas', value: String(kpis.totalNotas) },
           { label: 'Emitidas', value: String(kpis.totalEmitidas) },
           { label: 'Pendentes', value: String(kpis.pendentes) },
-          { label: 'Valor emitido', value: formatCurrency(kpis.totalValor) },
+          { label: 'Valor emitido', value: <span className="financial-data">{formatCurrency(kpis.totalValor)}</span> },
         ].map((tile) => (
           <div
             key={tile.label}

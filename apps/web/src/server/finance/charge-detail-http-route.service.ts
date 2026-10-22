@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getSessionUser } from '@/lib/auth/session';
-import { AsaasEnvError, getPayment, isAsaasEnabled, mapAsaasPaymentStatusToCobranca, resolveCobrancaDisplayStatus, resolveLiquidacaoFromAsaasPayment, resolveOperationalChargePayment, mapOperationalStatusToCobrancaDisplay, resolveStandaloneChargeTipo } from '@alusa/finance';
+import { AsaasEnvError, getPayment, isAsaasEnabled, mapAsaasPaymentStatusToCobranca, resolveAsaasProcessingFee, resolveCobrancaDisplayStatus, resolveLiquidacaoFromAsaasPayment, resolveOperationalChargePayment, mapOperationalStatusToCobrancaDisplay, resolveStandaloneChargeTipo } from '@alusa/finance';
 import type { LiquidacaoStatus, StatusCobranca } from '@prisma/client';
 import { cobrancaDetailResultDTOSchema } from '@/features/finance/operations/charges/dtos';
 import { mapCobrancaDetailResultToDTO } from '@/features/finance/operations/charges/mappers';
@@ -189,6 +189,17 @@ export async function getCobrancaDetailRoute(_req: NextRequest, { params }: { pa
         }
 
         const asaasData = remoteAsaasData ?? buildStandaloneAsaasData(charge);
+        const asaasGrossValue = remoteAsaasData
+          ? toNullableNumber(remoteAsaasData.value)
+          : toNullableNumber(charge.asaasValue);
+        const asaasNetValue = remoteAsaasData
+          ? toNullableNumber(remoteAsaasData.netValue)
+          : toNullableNumber(charge.asaasNetValue);
+        const asaasProcessingFee = resolveAsaasProcessingFee({
+          explicitFee: remoteAsaasData ? null : toNullableNumber(charge.asaasFeeValue),
+          grossValue: asaasGrossValue,
+          netValue: asaasNetValue,
+        });
         const participantPaymentRules = await findEventPaymentRulesForCharge({
           contaId,
           chargeId: charge.id,
@@ -264,14 +275,9 @@ export async function getCobrancaDetailRoute(_req: NextRequest, { params }: { pa
                 formaPagamento: effectiveFormaPagamento,
                 atrasado: effectiveStatus === 'ATRASADO',
                 asaasPaymentId: charge.asaasPaymentId,
-                valorBruto: charge.value != null ? Number(charge.value) : 0,
-                valorLiquido: toNullableNumber(remoteAsaasData?.netValue ?? asaasData?.netValue),
-                taxaAsaas:
-                  (remoteAsaasData?.netValue ?? asaasData?.netValue) != null &&
-                  (remoteAsaasData?.value ?? asaasData?.value) != null
-                    ? Number(remoteAsaasData?.value ?? asaasData?.value) -
-                      Number(remoteAsaasData?.netValue ?? asaasData?.netValue)
-                    : null,
+                valorBruto: asaasGrossValue ?? (charge.value != null ? Number(charge.value) : 0),
+                valorLiquido: asaasNetValue,
+                taxaAsaas: asaasProcessingFee,
                 ...mapPaymentRulesToCobrancaFields(effectivePaymentRules),
                 liquidacaoStatus: effectiveLiquidacaoStatus,
                 displayStatus: standaloneDisplayStatus,
@@ -371,6 +377,8 @@ export async function getCobrancaDetailRoute(_req: NextRequest, { params }: { pa
                 invoiceUrl: operationalCharge.invoiceUrl,
               }
             : null);
+        const eventAsaasGrossValue = toNullableNumber(remoteAsaasData?.value);
+        const eventAsaasNetValue = toNullableNumber(remoteAsaasData?.netValue);
 
         return respondDetail(
           cobrancaDetailResultDTOSchema.parse(
@@ -389,12 +397,13 @@ export async function getCobrancaDetailRoute(_req: NextRequest, { params }: { pa
                 formaPagamento: effectiveFormaPagamento,
                 atrasado: effectiveStatus === 'ATRASADO',
                 asaasPaymentId: operationalCharge.asaasPaymentId,
-                valorBruto: operationalCharge.value,
-                valorLiquido: toNullableNumber(remoteAsaasData?.netValue),
-                taxaAsaas:
-                  remoteAsaasData?.netValue != null && remoteAsaasData?.value != null
-                    ? Number(remoteAsaasData.value) - Number(remoteAsaasData.netValue)
-                    : null,
+                valorBruto: eventAsaasGrossValue ?? operationalCharge.value,
+                valorLiquido: eventAsaasNetValue,
+                taxaAsaas: resolveAsaasProcessingFee({
+                  explicitFee: null,
+                  grossValue: eventAsaasGrossValue,
+                  netValue: eventAsaasNetValue,
+                }),
                 liquidacaoStatus: effectiveLiquidacaoStatus,
                 displayStatus: eventDisplayStatus,
                 invoiceUrl:
@@ -478,6 +487,22 @@ export async function getCobrancaDetailRoute(_req: NextRequest, { params }: { pa
 
     const asaasData =
       remoteAsaasData ?? buildAcademicAsaasData(effectiveCobranca as unknown as Record<string, unknown>);
+    const localAsaasSnapshot = effectiveCobranca as unknown as {
+      asaasValue?: unknown;
+      asaasNetValue?: unknown;
+      asaasFeeValue?: unknown;
+    };
+    const academicAsaasGrossValue = remoteAsaasData
+      ? toNullableNumber(remoteAsaasData.value)
+      : toNullableNumber(localAsaasSnapshot.asaasValue);
+    const academicAsaasNetValue = remoteAsaasData
+      ? toNullableNumber(remoteAsaasData.netValue)
+      : toNullableNumber(localAsaasSnapshot.asaasNetValue);
+    const academicAsaasProcessingFee = resolveAsaasProcessingFee({
+      explicitFee: remoteAsaasData ? null : toNullableNumber(localAsaasSnapshot.asaasFeeValue),
+      grossValue: academicAsaasGrossValue,
+      netValue: academicAsaasNetValue,
+    });
     const remotePaymentStatus = getEffectiveRemotePaymentStatus(remoteAsaasData ?? asaasData);
 
     const remoteBillingTypeForForma =
@@ -562,13 +587,9 @@ export async function getCobrancaDetailRoute(_req: NextRequest, { params }: { pa
             asaasData,
             installmentPlanId,
             subscriptionId,
-            valorBruto: Number(effectiveCobranca.valor),
-            valorLiquido: toNullableNumber(
-              (effectiveCobranca as unknown as { asaasNetValue?: unknown }).asaasNetValue,
-            ),
-            taxaAsaas: toNullableNumber(
-              (effectiveCobranca as unknown as { asaasFeeValue?: unknown }).asaasFeeValue,
-            ),
+            valorBruto: academicAsaasGrossValue ?? Number(effectiveCobranca.valor),
+            valorLiquido: academicAsaasNetValue,
+            taxaAsaas: academicAsaasProcessingFee,
             liquidacaoStatus: effectiveLiquidacaoStatus,
             displayStatus,
           },

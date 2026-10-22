@@ -178,7 +178,7 @@ export function InventoryMetricCard({
           </div>
         </div>
       </div>
-      <span className="block text-3xl font-semibold tracking-tight text-[#2b2634]">{value}</span>
+      <span className="financial-data block text-3xl font-medium tracking-tight text-[#2b2634]">{value}</span>
     </div>
   );
 }

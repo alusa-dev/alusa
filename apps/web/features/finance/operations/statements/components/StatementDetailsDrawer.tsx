@@ -53,7 +53,7 @@ export function StatementDetailsDrawer({ entry, onClose }: StatementDetailsDrawe
         <div>
           <p className="text-xs text-slate-500">{heroTitle}</p>
           <p className={`mt-1 text-3xl font-medium tracking-tight ${amountClass}`}>
-            {formatCurrency(heroAmount, { absolute: true })}
+            <span className="financial-data">{formatCurrency(heroAmount, { absolute: true })}</span>
           </p>
           <p className="mt-1 text-xs text-slate-400">{formatDate(entry.date)} · ID: {receiptId}</p>
         </div>
@@ -62,7 +62,7 @@ export function StatementDetailsDrawer({ entry, onClose }: StatementDetailsDrawe
       <div data-testid="drawer-description">
         <DetailsDialogSection>
         <DetailsDialogRow label="Descrição" value={heroDescription} />
-        <DetailsDialogRow label="Valor líquido" value={formatCurrency(entry.netValue, { absolute: true })} />
+        <DetailsDialogRow label="Valor líquido" value={<span className="financial-data">{formatCurrency(entry.netValue, { absolute: true })}</span>} />
         <DetailsDialogRow label="Método" value={formatTypeLabel(entry.type)} />
         <DetailsDialogRow label="Status" value={formatStatusLabel(entry.status)} />
         {secondaryContext && <DetailsDialogRow label="Referência" value={secondaryContext} />}

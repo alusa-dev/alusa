@@ -212,7 +212,7 @@ export function PaymentDetailsDialog({
                         Valor Total Pago
                       </p>
                       <p className="mt-2 text-2xl font-bold text-purple-700">
-                        {formatCurrency(totalPago)}
+                        <span className="financial-data">{formatCurrency(totalPago)}</span>
                       </p>
                     </div>
                     <div>
@@ -251,7 +251,7 @@ export function PaymentDetailsDialog({
                             <div>
                               <p className="text-xs text-gray-500 font-medium">Valor Pago</p>
                               <p className="mt-1 font-semibold text-purple-700">
-                                {formatCurrency(pag.valorPago)}
+                                <span className="financial-data">{formatCurrency(pag.valorPago)}</span>
                               </p>
                             </div>
                             <div>

@@ -77,8 +77,8 @@ export function FinanceSummary() {
           <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
             {c.label}
           </span>
-          <span className="mt-2 text-2xl font-semibold">{c.value}</span>
-          <span className="text-xs text-gray-600 mt-1">{c.sub}</span>
+          <span className="mt-2 text-2xl font-normal financial-data">{c.value}</span>
+          <span className="text-xs text-gray-600 mt-1 financial-data">{c.sub}</span>
         </div>
       ))}
     </div>

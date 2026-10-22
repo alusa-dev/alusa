@@ -13,15 +13,17 @@ function InfoCard({
   label,
   value,
   detail,
+  monetary = false,
 }: {
   label: string;
   value: string;
-  detail: string;
+  detail: React.ReactNode;
+  monetary?: boolean;
 }) {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-5">
       <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-2 text-lg font-semibold text-slate-900">{value}</p>
+      <p className={`mt-2 text-lg font-normal text-slate-900${monetary ? ' financial-data' : ''}`}>{value}</p>
       <p className="mt-1 text-xs leading-5 text-slate-500">{detail}</p>
     </div>
   );
@@ -186,12 +188,14 @@ export function AntecipacaoAutomaticaPage() {
           <InfoCard
             label="Limite de cartão"
             value={formatCurrency(limits?.creditCard?.available ?? 0)}
-            detail={`Liberado na conta: ${formatCurrency(limits?.creditCard?.total ?? 0)}`}
+            detail={<>Liberado na conta: <span className="financial-data">{formatCurrency(limits?.creditCard?.total ?? 0)}</span></>}
+            monetary
           />
           <InfoCard
             label="Limite de boleto"
             value={formatCurrency(limits?.bankSlip?.available ?? 0)}
-            detail={`Liberado na conta: ${formatCurrency(limits?.bankSlip?.total ?? 0)}`}
+            detail={<>Liberado na conta: <span className="financial-data">{formatCurrency(limits?.bankSlip?.total ?? 0)}</span></>}
+            monetary
           />
         </aside>
       </div>

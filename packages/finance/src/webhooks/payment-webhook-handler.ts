@@ -224,6 +224,7 @@ export type PaymentWebhookPayload = {
     creditDate?: string | null;
     /** Data estimada para crédito */
     estimatedCreditDate?: string | null;
+    anticipated?: boolean | null;
     /** Forma de pagamento (ex: BOLETO, CREDIT_CARD, RECEIVED_IN_CASH) */
     billingType?: string | null;
     /** Descrição retornada pelo payment oficial */
@@ -3685,6 +3686,17 @@ async function handlePaymentWebhookCore(
       });
     }
 
+    if (typeof p.anticipated === 'boolean') {
+      await prisma.cobranca.updateMany({
+        where: {
+          id: cobranca.id,
+          contaId,
+          ...(p.anticipated ? {} : { OR: [{ asaasAnticipated: null }, { asaasAnticipated: false }] }),
+        },
+        data: { asaasAnticipated: p.anticipated },
+      });
+    }
+
     if (cobranca.tipo === 'TAXA_MATRICULA') {
       await projectAcademicEnrollmentFeeState({
         contaId,
@@ -3773,6 +3785,16 @@ async function handlePaymentWebhookCore(
         await prisma.charge.update({
           where: { id: charge.id },
           data: baseChargeUpdate,
+        });
+      }
+      if (typeof p.anticipated === 'boolean') {
+        await prisma.charge.updateMany({
+          where: {
+            id: charge.id,
+            contaId,
+            ...(p.anticipated ? {} : { OR: [{ asaasAnticipated: null }, { asaasAnticipated: false }] }),
+          },
+          data: { asaasAnticipated: p.anticipated },
         });
       }
     }

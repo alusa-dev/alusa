@@ -122,7 +122,7 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
             ) : null}
             {canRefundAsaas ? (
               <>
-                {(sale.ticketsUrl || sale.invoiceUrl || sale.chargeDetailUrl) ? <DropdownMenuSeparator /> : null}
+                {(sale.ticketsUrl || sale.invoiceUrl || sale.chargeDetailUrl || canResendWhatsApp) ? <DropdownMenuSeparator /> : null}
                 <DropdownMenuItem
                   className="text-rose-600 focus:bg-rose-50 hover:bg-rose-50"
                   onClick={() => setRefundOpen(true)}
@@ -165,7 +165,7 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
           ) : null}
           {sale.ticketsUrl && sale.hasSeatedTickets ? (
             <DropdownMenuItem asChild>
-              <Link href={sale.ticketsUrl} target="_blank">Ver ingressos</Link>
+              <Link href={sale.ticketsUrl} target="_blank">Ver ticket</Link>
             </DropdownMenuItem>
           ) : null}
           {!sale.hasSeatedTickets ? (
@@ -176,13 +176,17 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
 
           {sale.status === 'PENDING' && (
             <DropdownMenuItem onClick={() => paid.mutate()}>
-              Marcar como Pago
+              Marcar como pago
             </DropdownMenuItem>
           )}
 
+          {(sale.status === 'PENDING' || sale.status === 'COMPLIMENTARY') &&
+            (sale.chargeDetailUrl || (sale.ticketsUrl && sale.hasSeatedTickets) || !sale.hasSeatedTickets || sale.status === 'PENDING' || sale.whatsappAvailable)
+              ? <DropdownMenuSeparator />
+              : null}
           {(sale.status === 'PENDING' || sale.status === 'COMPLIMENTARY') && (
-            <DropdownMenuItem onClick={() => cancel.mutate()}>
-              Cancelar Venda
+            <DropdownMenuItem className="text-rose-600 focus:bg-rose-50 hover:bg-rose-50" onClick={() => cancel.mutate()}>
+              Cancelar venda
             </DropdownMenuItem>
           )}
 
@@ -191,7 +195,16 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
               Reenviar ingresso pelo WhatsApp
             </DropdownMenuItem>
           ) : null}
-          {sale.status === 'PAID' && <DropdownMenuItem onClick={() => refund.mutate()}>Estornar</DropdownMenuItem>}
+          {sale.status === 'PAID' && (
+            <>
+              {(sale.chargeDetailUrl || (sale.ticketsUrl && sale.hasSeatedTickets) || !sale.hasSeatedTickets || sale.whatsappAvailable)
+                ? <DropdownMenuSeparator />
+                : null}
+              <DropdownMenuItem className="text-rose-600 focus:bg-rose-50 hover:bg-rose-50" onClick={() => refund.mutate()}>
+                Estornar pagamento
+              </DropdownMenuItem>
+            </>
+          )}
 
           <DropdownMenuSeparator />
 

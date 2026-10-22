@@ -110,12 +110,41 @@ type MockState = {
   responsaveis: Map<string, StoredResponsavel>;
   charges: Map<
     string,
-    { id: string; contaId: string; status: string; asaasPaymentId: string | null }
+    {
+      id: string;
+      contaId: string;
+      status: string;
+      asaasPaymentId: string | null;
+      asaasStatus?: string | null;
+      asaasValue?: Prisma.Decimal | null;
+      asaasNetValue?: Prisma.Decimal | null;
+      asaasFeeValue?: Prisma.Decimal | null;
+      liquidacaoStatus?: string | null;
+      liquidadoEm?: Date | null;
+    }
   >;
+  anticipations: Array<{
+    id: string;
+    contaId: string;
+    paymentId: string | null;
+    installmentId: string | null;
+    status: string;
+    fee: Prisma.Decimal | null;
+    netValue: Prisma.Decimal | null;
+  }>;
+  financialTransactions: Array<{
+    asaasTransactionId: string;
+    contaId: string;
+    paymentId: string | null;
+    type: string;
+    description: string;
+    value: Prisma.Decimal;
+  }>;
   installmentPlans: Map<
     string,
     {
       id: string;
+      contaId: string;
       status: string;
       asaasInstallmentId: string | null;
       installmentCount: number;
@@ -158,6 +187,9 @@ type MockState = {
     };
     saleItem: { create: ReturnType<typeof vi.fn> };
     charge: { findFirst: ReturnType<typeof vi.fn> };
+    receivableAnticipationSnapshot: { findMany: ReturnType<typeof vi.fn> };
+    financialTransactionSnapshot: { findMany: ReturnType<typeof vi.fn> };
+    financialTransactionSyncWindow: { findMany: ReturnType<typeof vi.fn> };
     $executeRaw: ReturnType<typeof vi.fn>;
     $transaction: ReturnType<typeof vi.fn>;
   };
@@ -171,6 +203,8 @@ function createMockState(): MockState {
     saleItems: new Map(),
     responsaveis: new Map(),
     charges: new Map(),
+    anticipations: [],
+    financialTransactions: [],
     installmentPlans: new Map(),
     prisma: {} as MockState['prisma'],
   };
@@ -210,6 +244,7 @@ function createMockState(): MockState {
       nome: 'Operador Loja',
     },
     items: state.saleItems.get(sale.id) ?? [],
+    returns: [],
   });
 
   state.prisma = {
@@ -431,6 +466,42 @@ function createMockState(): MockState {
         },
       ),
     },
+    receivableAnticipationSnapshot: {
+      findMany: vi.fn(async (args?: {
+        where?: {
+          contaId?: string;
+          OR?: Array<{ paymentId?: { in?: string[] }; installmentId?: string }>;
+        };
+      }) => {
+        const where = args?.where;
+        return state.anticipations.filter((anticipation) => {
+          if (where?.contaId && anticipation.contaId !== where.contaId) return false;
+          const filters = where?.OR ?? [];
+          return filters.length === 0 || filters.some((filter) => {
+            if (filter.installmentId) return anticipation.installmentId === filter.installmentId;
+            if (filter.paymentId?.in) return anticipation.paymentId !== null && filter.paymentId.in.includes(anticipation.paymentId);
+            return false;
+          });
+        });
+      }),
+    },
+    financialTransactionSnapshot: {
+      findMany: vi.fn(async (args?: {
+        where?: { contaId?: string; paymentId?: { in?: string[] } };
+      }) => {
+        const where = args?.where;
+        return state.financialTransactions.filter((transaction) => {
+          if (where?.contaId && transaction.contaId !== where.contaId) return false;
+          if (where?.paymentId?.in) {
+            return transaction.paymentId !== null && where.paymentId.in.includes(transaction.paymentId);
+          }
+          return true;
+        });
+      }),
+    },
+    financialTransactionSyncWindow: {
+      findMany: vi.fn(async () => []),
+    },
     $transaction: vi.fn(async (callback: (_tx: MockState['prisma']) => Promise<unknown>) =>
       callback(state.prisma),
     ),
@@ -501,6 +572,8 @@ describe('store-sales', () => {
     state.saleItems.clear();
     state.responsaveis.clear();
     state.charges.clear();
+    state.anticipations.length = 0;
+    state.financialTransactions.length = 0;
     state.installmentPlans.clear();
     vi.clearAllMocks();
   });
@@ -799,6 +872,7 @@ describe('store-sales', () => {
     vi.mocked(createStandaloneCharge).mockImplementationOnce(async (input) => {
       state.installmentPlans.set('plan-1', {
         id: 'plan-1',
+        contaId: 'conta-1',
         status: 'ACTIVE',
         asaasInstallmentId: 'inst-1',
         installmentCount: 2,
@@ -1101,7 +1175,7 @@ describe('store-sales', () => {
     });
   });
 
-  it('converge cobrança pendente ao listar vendas e reflete baixa local centralizada', async () => {
+  it('lista vendas sem sincronizar cobranças em tempo de leitura', async () => {
     state.charges.set('charge-1', {
       id: 'charge-1',
       contaId: 'conta-1',
@@ -1145,49 +1219,65 @@ describe('store-sales', () => {
     });
 
     const { syncPaymentStateFromAsaas } = await import('../sync-payment-state-from-asaas');
-    vi.mocked(syncPaymentStateFromAsaas).mockImplementationOnce(async () => {
-      const charge = state.charges.get('charge-1');
-      if (charge) {
-        charge.status = 'PAID';
-        state.charges.set(charge.id, charge);
-      }
-
-      const sale = state.sales.get('sale-1');
-      if (sale) {
-        sale.status = SaleStatus.CONCLUIDA;
-        sale.inventoryStatus = SaleInventoryStatus.FULFILLED;
-        state.sales.set(sale.id, sale);
-      }
-
-      return {
-        success: true,
-        asaasPaymentId: 'pay-1',
-        paymentStatus: 'RECEIVED',
-        appliedEvent: 'PAYMENT_RECEIVED',
-        invoiceUrl: null,
-        bankSlipUrl: null,
-        transactionReceiptUrl: null,
-      };
-    });
 
     const result = await listStoreSales({ contaId: 'conta-1' });
 
-    expect(syncPaymentStateFromAsaas).toHaveBeenCalledWith({
-      contaId: 'conta-1',
-      asaasPaymentId: 'pay-1',
-    });
-    expect(result.data[0]?.status).toBe('CONCLUIDA');
-    expect(result.data[0]?.inventoryStatus).toBe('FULFILLED');
-    expect(result.data[0]?.charge?.status).toBe('PAID');
+    expect(syncPaymentStateFromAsaas).not.toHaveBeenCalled();
+    expect(result.data[0]?.status).toBe(SaleStatus.PENDENTE);
+    expect(result.data[0]?.inventoryStatus).toBe(SaleInventoryStatus.RESERVED);
+    expect(result.data[0]?.charge?.status).toBe('OPEN');
   });
 
-  it('converge cobrança pendente ao obter detalhe da venda', async () => {
+  it('obtém detalhe da venda e seus snapshots sem sincronizar cobrança em tempo de leitura', async () => {
     state.charges.set('charge-2', {
       id: 'charge-2',
       contaId: 'conta-1',
-      status: 'OPEN',
+      status: 'PAID',
       asaasPaymentId: 'pay-2',
+      asaasStatus: 'RECEIVED',
+      asaasValue: new Prisma.Decimal('150'),
+      asaasNetValue: new Prisma.Decimal('148'),
+      asaasFeeValue: new Prisma.Decimal('2'),
+      liquidacaoStatus: 'DISPONIVEL',
     });
+    state.anticipations.push(
+      {
+        id: 'anticipation-own',
+        contaId: 'conta-1',
+        paymentId: 'pay-2',
+        installmentId: null,
+        status: 'CREDITED',
+        fee: new Prisma.Decimal('1'),
+        netValue: new Prisma.Decimal('147'),
+      },
+      {
+        id: 'anticipation-foreign',
+        contaId: 'conta-2',
+        paymentId: 'pay-2',
+        installmentId: null,
+        status: 'CREDITED',
+        fee: new Prisma.Decimal('50'),
+        netValue: new Prisma.Decimal('1'),
+      },
+    );
+    state.financialTransactions.push(
+      {
+        asaasTransactionId: 'transaction-own',
+        contaId: 'conta-1',
+        paymentId: 'pay-2',
+        type: 'PAYMENT_MESSAGING_NOTIFICATION_FEE',
+        description: 'Taxa de notificação',
+        value: new Prisma.Decimal('-0.50'),
+      },
+      {
+        asaasTransactionId: 'transaction-foreign',
+        contaId: 'conta-2',
+        paymentId: 'pay-2',
+        type: 'PAYMENT_DUNNING_FEE',
+        description: 'Taxa de cobrança de outra conta',
+        value: new Prisma.Decimal('-10'),
+      },
+    );
 
     state.sales.set('sale-2', {
       id: 'sale-2',
@@ -1224,36 +1314,42 @@ describe('store-sales', () => {
       updatedAt: new Date('2026-04-21T10:00:00.000Z'),
     });
 
+    state.prisma.financialTransactionSyncWindow.findMany.mockResolvedValueOnce([
+      { officialTotalCount: 1, fetchedCount: 1 },
+    ]);
     const { syncPaymentStateFromAsaas } = await import('../sync-payment-state-from-asaas');
-    vi.mocked(syncPaymentStateFromAsaas).mockImplementationOnce(async () => {
-      const charge = state.charges.get('charge-2');
-      if (charge) {
-        charge.status = 'PAID';
-        state.charges.set(charge.id, charge);
-      }
-
-      const sale = state.sales.get('sale-2');
-      if (sale) {
-        sale.status = SaleStatus.CONCLUIDA;
-        sale.inventoryStatus = SaleInventoryStatus.FULFILLED;
-        state.sales.set(sale.id, sale);
-      }
-
-      return {
-        success: true,
-        asaasPaymentId: 'pay-2',
-        paymentStatus: 'CONFIRMED',
-        appliedEvent: 'PAYMENT_CONFIRMED',
-        invoiceUrl: null,
-        bankSlipUrl: null,
-        transactionReceiptUrl: null,
-      };
-    });
 
     const result = await getStoreSaleById({ contaId: 'conta-1', saleId: 'sale-2' });
 
-    expect(result?.status).toBe('CONCLUIDA');
-    expect(result?.inventoryStatus).toBe('FULFILLED');
+    expect(syncPaymentStateFromAsaas).not.toHaveBeenCalled();
+    expect(result?.status).toBe(SaleStatus.CONCLUIDA);
+    expect(result?.baseStatus).toBe(SaleStatus.PENDENTE);
+    expect(result?.inventoryStatus).toBe(SaleInventoryStatus.RESERVED);
     expect(result?.charge?.status).toBe('PAID');
+    expect(state.prisma.receivableAnticipationSnapshot.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          contaId: 'conta-1',
+          OR: [{ paymentId: { in: ['pay-2'] } }],
+        },
+      }),
+    );
+    expect(result?.receiptFinancials?.anticipationFeeRecorded).toBe(1);
+    expect(result?.receiptFinancials?.additionalFeesRecorded).toBe(0.5);
+    expect(result?.receiptFinancials?.netReceivedRecorded).toBe(146.5);
+    expect(state.prisma.financialTransactionSnapshot.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { contaId: 'conta-1', paymentId: { in: ['pay-2'] } },
+      }),
+    );
+    expect(state.prisma.financialTransactionSyncWindow.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          contaId: 'conta-1',
+          syncedAt: expect.objectContaining({ gte: expect.any(Date) }),
+          truncated: false,
+        }),
+      }),
+    );
   });
 });

@@ -32,7 +32,7 @@ export function StatementFiltersBar({ filters, onChange, onClear }: StatementFil
       <div className="rounded-xl border border-slate-200 bg-gray-50 p-3">
         <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start">
           <div className="relative min-w-0 w-full">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <Input
               type="text"
               placeholder="Buscar por descrição, cliente, payment ID..."

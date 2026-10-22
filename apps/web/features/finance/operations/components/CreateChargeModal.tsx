@@ -680,7 +680,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                               type="text"
                               inputMode="numeric"
                               placeholder={currencyFormatter.format(0)}
-                              className="h-11 min-h-11 md:h-10 md:min-h-0"
+                              className="financial-data h-11 min-h-11 md:h-10 md:min-h-0"
                               value={value ? currencyFormatter.format(value) : ''}
                               onChange={(e) => {
                                 const cents = parseCurrencyBRLToCents(e.target.value);
@@ -706,13 +706,13 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                               <SelectContent>
                                 {Array.from({ length: 21 }, (_, i) => i + 1).map((count) => {
                                   const installmentValue = count > 0 ? value / count : 0;
-                                  const label =
-                                    count === 1
-                                      ? `À vista (${formatCurrency(value)})`
-                                      : `Em até ${count}x de ${formatCurrency(installmentValue || 0)}`;
                                   return (
                                     <SelectItem key={count} value={String(count)}>
-                                      {label}
+                                      {count === 1 ? (
+                                        <>À vista (<span className="financial-data">{formatCurrency(value)}</span>)</>
+                                      ) : (
+                                        <>Em até <span className="financial-data">{count}x</span> de <span className="financial-data">{formatCurrency(installmentValue || 0)}</span></>
+                                      )}
                                     </SelectItem>
                                   );
                                 })}
@@ -740,7 +740,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                               type="text"
                               inputMode="numeric"
                               placeholder={currencyFormatter.format(0)}
-                              className="h-11 min-h-11 md:h-10 md:min-h-0"
+                              className="financial-data h-11 min-h-11 md:h-10 md:min-h-0"
                               value={value ? currencyFormatter.format(value) : ''}
                               onChange={(e) => {
                                 const cents = parseCurrencyBRLToCents(e.target.value);
@@ -915,7 +915,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                                 disabled
                                 readOnly
                                 value={((baseValue * (watch('interestValue') || 0)) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                className="h-11 min-h-11 pl-10 bg-gray-100 text-gray-500 font-medium md:h-10 md:min-h-0"
+                                className="financial-data h-11 min-h-11 pl-10 bg-gray-100 text-gray-500 font-normal md:h-10 md:min-h-0"
                               />
                               <span className="absolute left-3 top-2.5 text-gray-500 text-sm font-bold">R$</span>
                             </div>
@@ -991,7 +991,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                                     ? (baseValue > 0 ? ((watch('fineValue') || 0) / baseValue * 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0,00')
                                     : ((baseValue * (watch('fineValue') || 0)) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                                 }
-                                className="h-11 min-h-11 pl-10 bg-gray-100 text-gray-500 font-medium md:h-10 md:min-h-0"
+                                className="financial-data h-11 min-h-11 pl-10 bg-gray-100 text-gray-500 font-normal md:h-10 md:min-h-0"
                               />
                               <span className="absolute left-3 top-2.5 text-gray-500 text-sm font-bold">
                                 {watch('fineType') === 'FIXED' ? '%' : 'R$'}
@@ -1069,7 +1069,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                                     ? (baseValue > 0 ? ((watch('discountValue') || 0) / baseValue * 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0,00')
                                     : ((baseValue * (watch('discountValue') || 0)) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
                                 }
-                                className="h-11 min-h-11 pl-10 bg-gray-100 text-gray-500 font-medium md:h-10 md:min-h-0"
+                                className="financial-data h-11 min-h-11 pl-10 bg-gray-100 text-gray-500 font-normal md:h-10 md:min-h-0"
                               />
                               <span className="absolute left-3 top-2.5 text-gray-500 text-sm font-bold">
                                 {watch('discountType') === 'FIXED' ? '%' : 'R$'}
@@ -1128,7 +1128,7 @@ export function CreateChargeModal({ open, onOpenChange, onSuccess, defaultCharge
                           <span className="text-slate-500">Tipo</span>
                           <span className="font-medium text-slate-900 sm:text-right">{isSubscription ? 'Assinatura' : installments > 1 ? 'Parcelada' : 'À vista'}</span>
                           <span className="text-slate-500">Valor</span>
-                          <span className="font-medium text-slate-900 sm:text-right">{!isSubscription && installments > 1 ? `${installments}x ${formatCurrency((value || 0) / installments)}` : formatCurrency(value || 0)}</span>
+                          <span className="font-medium text-slate-900 sm:text-right financial-data">{!isSubscription && installments > 1 ? `${installments}x ${formatCurrency((value || 0) / installments)}` : formatCurrency(value || 0)}</span>
                           <span className="text-slate-500">Vencimento</span>
                           <span className="font-medium text-slate-900 sm:text-right">{isSubscription ? formatDate(watch('nextDueDate')) : formatDate(watch('dueDate'))}</span>
                           {isSubscription && <><span className="text-slate-500">Fim da assinatura</span><span className="font-medium text-slate-900 sm:text-right">{formatDate(watch('endDate'))}</span></>}

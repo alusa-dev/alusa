@@ -1188,6 +1188,21 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
   }
 
   const isPago = cobranca.status === 'PAGO' || isRemotePaid;
+  const isAsaasCreditAvailable =
+    remoteAsaasStatus === 'RECEIVED' ||
+    remoteAsaasStatus === 'RECEIVED_IN_CASH' ||
+    (remoteAsaasStatus === null && cobranca.liquidacaoStatus === 'DISPONIVEL');
+  const netUnavailableReason =
+    ['REFUND_REQUESTED', 'REFUND_IN_PROGRESS'].includes(remoteAsaasStatus ?? '')
+      ? 'Estorno solicitado ou em andamento; líquido final aguarda atualização.'
+      : ['CHARGEBACK_REQUESTED', 'CHARGEBACK_DISPUTE', 'AWAITING_CHARGEBACK_REVERSAL'].includes(
+            remoteAsaasStatus ?? '',
+          )
+        ? 'Pagamento contestado; líquido final indisponível.'
+        : remoteAsaasStatus === 'REFUNDED'
+          ? 'Pagamento estornado; líquido final indisponível.'
+          : null;
+  const recordedAsaasFee = cobranca.taxaAsaas ?? null;
   const canViewAlusaEventTicketReceipt = canViewManualEventTicketSaleReceipt(cobranca);
   const isPendente = chargeActions.canEdit;
   
@@ -1523,34 +1538,54 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
             </div>
           )}
 
-          {isPago && cobranca.valorLiquido != null && (
+          {isPago && (cobranca.valorLiquido != null || recordedAsaasFee != null) && (
             <>
-              <div className="space-y-1">
-                <label className={labelClass}>Valor Líquido</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
-                    R$
-                  </span>
-                  <input
-                    type="text"
-                    value={formatBRL(cobranca.valorLiquido)}
-                    disabled
-                    className="w-full pl-10 pr-3 py-2 text-sm border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed rounded-md text-right"
-                  />
-                </div>
-                <p className="text-xs text-slate-500">Após taxas</p>
-              </div>
-
-              {cobranca.taxaAsaas != null && cobranca.taxaAsaas > 0 && (
+              {cobranca.valorLiquido != null && netUnavailableReason === null ? (
                 <div className="space-y-1">
-                  <label className={labelClass}>Taxa da plataforma financeira</label>
+                  <label className={labelClass}>
+                    {remoteAsaasStatus === 'CONFIRMED'
+                      ? 'Valor líquido confirmado'
+                      : wasReceivedInCash
+                        ? 'Valor líquido recebido'
+                        : isAsaasCreditAvailable
+                          ? 'Valor líquido disponível'
+                          : 'Valor líquido registrado'}
+                  </label>
                   <div className="relative">
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
                       R$
                     </span>
                     <input
                       type="text"
-                      value={`-${formatBRL(cobranca.taxaAsaas)}`}
+                      value={formatBRL(cobranca.valorLiquido)}
+                      disabled
+                      className="w-full pl-10 pr-3 py-2 text-sm border border-gray-200 bg-gray-50 text-gray-500 cursor-not-allowed rounded-md text-right"
+                    />
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    {remoteAsaasStatus === 'CONFIRMED'
+                      ? 'Pagamento confirmado; saldo ainda indisponível na conta Asaas.'
+                      : wasReceivedInCash
+                        ? 'Pagamento recebido em dinheiro.'
+                        : isAsaasCreditAvailable
+                          ? 'Crédito disponível na conta Asaas.'
+                          : 'Disponibilidade na conta Asaas ainda não confirmada.'}
+                  </p>
+                </div>
+              ) : netUnavailableReason ? (
+                <p className="text-xs text-slate-500">{netUnavailableReason}</p>
+              ) : null}
+
+              {recordedAsaasFee != null && recordedAsaasFee >= 0 && (
+                <div className="space-y-1">
+                  <label className={labelClass}>Taxa do Asaas registrada</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-gray-500">
+                      R$
+                    </span>
+                    <input
+                      type="text"
+                      value={`-${formatBRL(recordedAsaasFee)}`}
                       disabled
                       className="w-full pl-10 pr-3 py-2 text-sm border border-red-200 bg-red-50 text-red-600 cursor-not-allowed rounded-md text-right"
                     />

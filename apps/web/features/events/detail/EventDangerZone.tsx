@@ -45,7 +45,7 @@ export function EventDangerZone({ event }: { event: SchoolEventDTO }) {
   });
 
   return (
-    <Card className="rounded-xl border border-rose-200 bg-rose-50/10 p-5 shadow-sm mt-8">
+    <Card className="rounded-xl border border-rose-200 bg-rose-50/10 p-5 shadow-none mt-8">
       <CardHeader className="p-0 pb-4">
         <CardTitle className="text-base font-semibold text-rose-800">Zona de Perigo</CardTitle>
         <p className="text-xs text-rose-600 mt-1">

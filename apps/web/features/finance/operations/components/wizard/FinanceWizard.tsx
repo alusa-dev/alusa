@@ -928,7 +928,7 @@ export function FinanceWizard() {
                 onChange={(event) => updateDraft('incomeValue', formatMoneyInput(event.target.value))}
                 placeholder="R$ 0,00"
                 inputMode="numeric"
-                className={FIELD_CLASS}
+                className={cn(FIELD_CLASS, 'financial-data')}
               />
             </Field>
           </div>
@@ -1213,7 +1213,7 @@ export function FinanceWizard() {
               <SummaryItem label="Telefone celular" value={maskPhone(draft.mobilePhone)} />
               <SummaryItem label="Telefone fixo" value={maskPhone(draft.landlinePhone)} />
               {!isExternalAsaasMode ? <SummaryItem label="E-mail financeiro" value={draft.subaccountEmail} /> : null}
-              <SummaryItem label="Faturamento mensal" value={draft.incomeValue} />
+              <SummaryItem label="Faturamento mensal" value={<span className="financial-data">{draft.incomeValue}</span>} />
             </ReviewSection>
 
             <ReviewSection title="Endereço oficial">
@@ -1228,9 +1228,9 @@ export function FinanceWizard() {
 
             <ReviewSection title="Plano e ativação">
               <SummaryItem label="Plano" value={selectedPlan.name} />
-              <SummaryItem label="Valor" value={selectedPlan.price} />
+              <SummaryItem label="Valor" value={<span className="financial-data">{selectedPlan.price}</span>} />
               <SummaryItem label="Ciclo" value={formatBillingCycle(billingCycle)} />
-              <SummaryItem label="Capacidade" value={selectedPlan.students} />
+              <SummaryItem label="Capacidade" value={<span className="financial-data">{selectedPlan.students}</span>} />
               <SummaryItem label="Cartão" value={cardConfirmed ? 'Confirmado' : trialDeferred ? 'Cadastrar depois' : 'Pendente'} />
               <SummaryItem
                 label="Modo da conta"

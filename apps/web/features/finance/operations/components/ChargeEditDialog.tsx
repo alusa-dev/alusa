@@ -229,7 +229,7 @@ export function ChargeEditDialog({
                 inputMode="decimal"
                 value={formData.valor}
                 onChange={(e) => handleDecimalFieldChange('valor', e.target.value)}
-                className="pl-12"
+                className="financial-data pl-12"
                 placeholder="0,00"
                 required
                 disabled={loading}
@@ -373,7 +373,7 @@ export function ChargeEditDialog({
                         onChange={(e) => handleDecimalFieldChange('desconto', e.target.value)}
                         placeholder="0,00"
                         disabled={loading}
-                        className="pl-10 text-right"
+                        className={formData.descontoTipo === 'fixo' ? 'financial-data pl-10 text-right' : 'pl-10 text-right'}
                       />
                     </div>
                   </div>

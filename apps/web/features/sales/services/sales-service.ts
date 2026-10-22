@@ -99,6 +99,7 @@ export const BILLING_TYPE_LABELS: Record<BillingTypeValue, string> = {
 export const CHARGE_STATUS_LABELS: Record<string, string> = {
   CREATED: 'Criada',
   PENDING_SYNC: 'Sincronizando',
+  ACTIVE: 'Ativo',
   OPEN: 'Aberta',
   PAID: 'Paga',
   OVERDUE: 'Atrasada',
