@@ -90,6 +90,7 @@ vi.mock('@alusa/finance', () => ({
   }),
   expectedEventsForPaymentCommand: vi.fn(() => ['PAYMENT_REFUNDED']),
   registerPaymentCommand: vi.fn(async () => ({ id: 'job-1' })),
+  claimPaymentCommandForDispatch: vi.fn(async () => ({ claimed: true })),
   markPaymentCommandSent: vi.fn(async () => undefined),
   failPaymentCommand: vi.fn(async () => undefined),
   refundCobranca: vi.fn(async () => undefined),

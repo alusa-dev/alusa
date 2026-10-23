@@ -7,7 +7,7 @@ import { Progress } from '@/components/ui/progress';
 import { UnsavedChangesDialog } from '@/components/ui/UnsavedChangesDialog';
 import { LoadingDots } from '@/components/ui/LoadingDots';
 import { useForm, FormProvider, type FieldPath } from 'react-hook-form';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ImageCropDialog } from '@/components/image/ImageCropDialog';
 import { alunoSchema, alunoWizardStepSchema, type AlunoInput } from '../../../../../prisma/zod/aluno';
@@ -51,6 +51,7 @@ export default function StudentRegistrationWizard({
   onFinish,
   contaId,
 }: StudentRegistrationWizardProps) {
+  const prefersReducedMotion = useReducedMotion() ?? false;
   // --- VISUAL STATE (não afeta lógica de formulário) ---
   const resolvedContaId = React.useMemo(() => {
     if (typeof contaId === 'string' && contaId.trim().length > 0) return contaId;
@@ -97,6 +98,27 @@ export default function StudentRegistrationWizard({
   }, [isMinor]);
   const [activeIndex, setActiveIndex] = React.useState(0);
   const activeStep = steps[activeIndex].id;
+  const [stepContentElement, setStepContentElement] = React.useState<HTMLDivElement | null>(null);
+  const [stepContentHeight, setStepContentHeight] = React.useState<number | null>(null);
+  const stepViewportRef = React.useRef<HTMLDivElement | null>(null);
+  React.useLayoutEffect(() => {
+    if (!stepContentElement) return;
+    const measure = () => {
+      const contentHeight = stepContentElement.scrollHeight;
+      if (contentHeight <= 0) return;
+      const viewport = stepViewportRef.current;
+      const viewportStyle = viewport ? window.getComputedStyle(viewport) : null;
+      const verticalPadding = viewportStyle
+        ? Number.parseFloat(viewportStyle.paddingTop) + Number.parseFloat(viewportStyle.paddingBottom)
+        : 0;
+      setStepContentHeight(contentHeight + verticalPadding);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(stepContentElement);
+    return () => observer.disconnect();
+  }, [stepContentElement]);
+  const animatedStepHeight = stepContentHeight ?? 'auto';
 
   const [cropOpen, setCropOpen] = React.useState(false);
 
@@ -380,8 +402,9 @@ export default function StudentRegistrationWizard({
         fullScreenMobile
         closeDisabled={submitting}
         disableBackdropBlur
+        disableScaleAnimation
         overlayClass="alusa-registration-wizard-overlay"
-        className={`aluno-registration-wizard flex max-w-[1020px] w-full flex-col rounded-[20px] gap-0 overflow-hidden bg-white p-0 alusa-dark:bg-[color:var(--color-bg-card)] sm:rounded-[20px] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0 ${activeStep === 'confirmar' ? 'md:h-[min(640px,calc(100dvh-2rem))] md:min-h-0' : 'md:min-h-[492px]'}`}
+        className="aluno-registration-wizard flex max-w-[1020px] w-full flex-col rounded-[20px] gap-0 overflow-hidden bg-white p-0 alusa-dark:bg-[color:var(--color-bg-card)] sm:rounded-[20px] max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0 md:min-h-[min(492px,calc(100dvh-3rem))] md:max-h-[calc(100dvh-3rem)]"
         data-testid="aluno-wizard"
       >
         <div inert={submitting || undefined} className="relative shrink-0 bg-white pb-5 pl-8 pr-10 pt-8 alusa-dark:bg-[color:var(--color-bg-card-soft)] max-md:pb-4 max-md:pl-4 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))]">
@@ -418,17 +441,22 @@ export default function StudentRegistrationWizard({
         <FormProvider {...methods}>
           <WizardErrorVisibilityProvider visible={errorsVisible}>
             <div inert={submitting || undefined} className="flex min-h-0 flex-1 flex-col overflow-x-clip max-md:max-h-none">
-            <div
-              className={`flex-1 overflow-x-clip bg-white pb-6 pl-8 pr-10 pt-3 alusa-dark:bg-[color:var(--color-bg-card-soft)] max-md:min-h-0 max-md:overflow-x-hidden max-md:overflow-y-auto max-md:p-4 ${activeStep === 'confirmar' ? 'md:min-h-0 md:overflow-x-hidden md:overflow-y-auto' : ''}`}
+            <motion.div
+              ref={stepViewportRef}
+              className={`min-h-0 flex-[1_1_auto] overflow-x-clip bg-white pb-6 pl-8 pr-10 pt-3 alusa-dark:bg-[color:var(--color-bg-card-soft)] max-md:overflow-x-hidden max-md:overflow-y-auto max-md:p-4 md:overflow-y-auto`}
+              animate={{ height: animatedStepHeight }}
+              transition={{ height: { duration: prefersReducedMotion ? 0 : 0.24, ease: 'easeInOut' } }}
+              style={{ overflowY: 'auto' }}
             >
               <div className="mx-auto w-full max-w-5xl">
                 <AnimatePresence mode="wait">
                   <motion.div
+                    ref={setStepContentElement}
                     key={activeStep}
-                    initial={{ opacity: 0, x: 12 }}
+                    initial={prefersReducedMotion ? false : { opacity: 0, x: 12 }}
                     animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -12 }}
-                    transition={{ duration: 0.18, ease: 'easeOut' }}
+                    exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, x: -12 }}
+                    transition={{ duration: prefersReducedMotion ? 0 : 0.18, ease: 'easeOut' }}
                     className="space-y-6 w-full overflow-x-hidden"
                   >
                     <StepHeader title={steps[activeIndex]?.label ?? 'Identificação'} />
@@ -495,7 +523,7 @@ export default function StudentRegistrationWizard({
                   </motion.div>
                 </AnimatePresence>
               </div>
-            </div>
+            </motion.div>
             <div className="flex shrink-0 flex-col-reverse items-stretch gap-2 bg-white pb-8 pl-8 pr-10 pt-4 alusa-dark:bg-[color:var(--color-bg-card-soft)] max-md:p-4 md:flex-row md:items-center md:justify-end md:gap-3">
               <Button
                 type="button"

@@ -1472,6 +1472,7 @@ model Conta {
   eventMapOrders                    EventMapOrder[]
   eventMapOrderItems                EventMapOrderItem[]
   eventTickets                      EventTicket[]
+  eventTicketScannerAccesses        EventTicketScannerAccess[]
   eventTicketLots                   EventTicketLot[]
   eventTicketSales                  EventTicketSale[]
   eventTicketWhatsAppNotifications EventTicketWhatsAppNotification[]
@@ -1767,6 +1768,7 @@ model Usuario {
   eventFinancialPaymentsCreated   EventFinancialPayment[]          @relation("EventFinancialPaymentCreatedBy")
   eventReportsGenerated           EventReport[]                    @relation("EventReportGeneratedBy")
   eventAudits                     EventAudit[]                     @relation("EventAuditActor")
+  eventTicketScannerAccessesCreated EventTicketScannerAccess[]      @relation("EventTicketScannerAccessCreator")
   platformBillingCheckoutSessions PlatformBillingCheckoutSession[] @relation("PlatformBillingCheckoutCreatedBy")
   platformBillingAuditLogs        PlatformBillingAuditLog[]        @relation("PlatformBillingAuditActor")
   platformBillingPlanChanges      PlatformBillingPlanChange[]      @relation("PlatformBillingPlanChangeCreatedBy")
@@ -4610,7 +4612,9 @@ model SchoolEvent {
   contratos         EventoContrato[]
   reports           EventReport[]
   audits            EventAudit[]
+  ticketScannerAccesses EventTicketScannerAccess[]
 
+  @@unique([contaId, id], name: "uq_school_event_conta_id")
   @@index([contaId], name: "idx_school_event_conta")
   @@index([contaId, status, startsAt], name: "idx_school_event_conta_status_start")
   @@index([contaId, type, startsAt], name: "idx_school_event_conta_type_start")
@@ -4994,6 +4998,7 @@ model EventTicket {
   saleSeatId        String?           @unique
   ticketCode        String            @unique
   checkInCode       String?
+  legacyCheckInCode String?
   status            EventTicketStatus @default(VALID)
   issuedAt          DateTime          @default(now())
   usedAt            DateTime?
@@ -5009,9 +5014,26 @@ model EventTicket {
   saleSeat  EventTicketSaleSeat? @relation(fields: [saleSeatId], references: [id], onDelete: Cascade)
 
   @@unique([contaId, checkInCode], name: "uq_event_ticket_conta_check_in_code", map: "uq_event_ticket_conta_check_in_code")
+  @@index([contaId, legacyCheckInCode], name: "idx_event_ticket_conta_legacy_check_in_code")
   @@index([contaId, eventId, status], name: "idx_event_ticket_conta_event_status")
   @@index([contaId, eventMapOrderId], name: "idx_event_ticket_conta_order")
   @@index([contaId, eventTicketSaleId], name: "idx_event_ticket_conta_sale")
+}
+
+model EventTicketScannerAccess {
+  id              String   @id @default(cuid())
+  contaId         String
+  eventId         String
+  operatorName    String   @db.VarChar(120)
+  gateName        String   @db.VarChar(120)
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+
+  conta     Conta       @relation(fields: [contaId], references: [id], onDelete: Cascade)
+  event     SchoolEvent @relation(fields: [contaId, eventId], references: [contaId, id], onDelete: Cascade)
+  createdBy Usuario?    @relation("EventTicketScannerAccessCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  @@index([contaId, eventId, createdAt], name: "idx_event_ticket_scanner_access_conta_event_created")
 }
 
 model EventTicketSale {

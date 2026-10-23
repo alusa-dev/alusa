@@ -25,7 +25,7 @@ export function EventCheckInsTable({
           { id: 'session', header: 'Mapa/Sessão', width: 'w-[18%]', align: 'left', render: (row: EventCheckInDTO) => row.sessionName ?? '—' },
           { id: 'lotSeat', header: 'Lote/Assento', width: 'w-[20%]', align: 'left', render: (row: EventCheckInDTO) => [row.lotName, row.seatLabel].filter(Boolean).join(' · ') || '—' },
           { id: 'date', header: 'Check-in', width: 'w-[18%]', align: 'left', render: (row: EventCheckInDTO) => formatDateTime(row.usedAt) },
-          { id: 'operator', header: 'Operador', width: 'w-[18%]', align: 'left', render: (row: EventCheckInDTO) => row.operatorName ?? 'Não rastreado' },
+          { id: 'operator', header: 'Operador/Portaria', width: 'w-[18%]', align: 'left', render: (row: EventCheckInDTO) => [row.operatorName, row.gateName].filter(Boolean).join(' · ') || 'Não rastreado' },
         ]}
         data={checkIns}
         rowKey={(row) => row.id}

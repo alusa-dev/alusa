@@ -76,3 +76,26 @@ export const eventPublicTicketCheckInInputDTOSchema = z.object({
   confirm: z.boolean().optional(),
 });
 export type EventPublicTicketCheckInInputDTO = z.infer<typeof eventPublicTicketCheckInInputDTOSchema>;
+
+export const eventTicketScannerAccessRouteParamsDTOSchema = z.object({
+  eventId: z.string().trim().min(1).max(128),
+});
+
+export const eventTicketScannerAccessIdParamsDTOSchema = z.object({
+  eventId: z.string().trim().min(1).max(128),
+  accessId: z.string().trim().min(1).max(128),
+});
+
+export const eventTicketScannerAccessInputDTOSchema = z.object({
+  operatorName: z.string().trim().min(2).max(120),
+  gateName: z.string().trim().min(2).max(120),
+});
+
+export const publicEventTicketScannerTokenParamsDTOSchema = z.object({
+  token: z.string().trim().min(24).max(512),
+});
+
+export const publicEventTicketScannerInputDTOSchema = z.object({
+  ticketCode: z.string().trim().min(4).max(64),
+  confirm: z.boolean().optional().default(false),
+});

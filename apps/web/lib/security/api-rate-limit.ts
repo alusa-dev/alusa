@@ -174,8 +174,9 @@ function resolvePolicy(pathname: string, method: string): RateLimitPolicy | null
   if (
     normalizedMethod === 'GET' &&
     pathSegments[0] === 'api' &&
-    ((pathSegments[1] === 'financeiro' && pathSegments[2] === 'relatorios' && pathSegments[3] !== 'export') ||
-      (pathSegments[1] === 'events' && pathSegments[2] === 'reports'))
+    pathSegments[1] === 'financeiro' &&
+    pathSegments[2] === 'relatorios' &&
+    pathSegments[3] !== 'export'
   ) {
     return REPORT_POLICY;
   }
@@ -285,6 +286,7 @@ export const apiRateLimitPolicyNames = [
   FINANCIAL_POLICY.name,
   EXPENSIVE_POLICY.name,
   REPORT_POLICY.name,
+  EVENT_REPORT_POLICY.name,
   ADMIN_POLICY.name,
   PUBLIC_WRITE_POLICY.name,
   PUBLIC_TELEMETRY_POLICY.name,

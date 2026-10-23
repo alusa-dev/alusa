@@ -85,6 +85,8 @@
     "@tanstack/react-query": "^5.90.0",
     "@tanstack/react-table": "^8.21.3",
     "@types/react-input-mask": "^3.0.6",
+    "@zxing/browser": "^0.1.5",
+    "@zxing/library": "0.21.3",
     "add": "^2.0.6",
     "bcryptjs": "^2.4.3",
     "border-beam": "^1.4.1",

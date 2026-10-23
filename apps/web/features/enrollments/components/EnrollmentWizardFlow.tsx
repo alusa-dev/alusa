@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
 import { Progress } from '@/components/ui/progress';
 import { LoadingDots } from '@/components/ui/LoadingDots';
 import { Button } from '@/components/ui/button';
@@ -143,10 +144,36 @@ export function EnrollmentWizardFlow({
   onClose,
   onCompleted,
 }: MatriculaWizardFlowProps) {
+  const prefersReducedMotion = useReducedMotion() ?? false;
   const wizard = useEnrollmentWizard(contaId);
   const prevOpenRef = useRef<boolean | undefined>(open);
   const prevContaRef = useRef<string | undefined>(contaId);
   const [familyOutcome, setFamilyOutcome] = useState<FamilyEnrollmentOutcome | null>(null);
+  const stepViewportRef = useRef<HTMLDivElement | null>(null);
+  const [stepContentElement, setStepContentElement] = useState<HTMLDivElement | null>(null);
+  const [stepContentHeight, setStepContentHeight] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    if (variant !== 'dialog' || !stepContentElement) return;
+
+    const measureContentHeight = () => {
+      const viewport = stepViewportRef.current;
+      if (!viewport) return;
+
+      const contentHeight = stepContentElement.scrollHeight;
+      if (contentHeight <= 0) return;
+
+      const viewportStyle = window.getComputedStyle(viewport);
+      const paddingTop = Number.parseFloat(viewportStyle.paddingTop) || 0;
+      const paddingBottom = Number.parseFloat(viewportStyle.paddingBottom) || 0;
+      setStepContentHeight(contentHeight + paddingTop + paddingBottom);
+    };
+
+    measureContentHeight();
+    const observer = new ResizeObserver(measureContentHeight);
+    observer.observe(stepContentElement);
+    return () => observer.disconnect();
+  }, [stepContentElement, variant]);
 
   // Hook de submissão de matrícula
   const { submit, loading: submitting } = useMatriculaSubmit({
@@ -323,7 +350,7 @@ export function EnrollmentWizardFlow({
         inert={isSubmitting || undefined}
         className={
           variant === 'dialog'
-            ? 'relative bg-[#f8fafc] px-4 pb-3 pt-4 alusa-dark:bg-[color:var(--color-bg-card)] max-md:pb-3 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6 md:py-5'
+            ? 'relative shrink-0 bg-[#f8fafc] px-4 pb-3 pt-4 alusa-dark:bg-[color:var(--color-bg-card)] max-md:pb-3 max-md:pr-14 max-md:pt-[calc(3rem+env(safe-area-inset-top,0px))] md:px-6 md:py-5'
             : 'relative rounded-t-2xl border-b border-slate-200 bg-slate-50 p-4 md:p-6'
         }
       >
@@ -362,18 +389,25 @@ export function EnrollmentWizardFlow({
           variant === 'dialog' ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'flex flex-col'
         }
       >
-        <div
-          className={`flex-1 overflow-y-auto bg-[#f8fafc] px-4 py-4 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent alusa-dark:bg-[color:var(--color-bg-card)] md:px-6 md:py-5 max-md:min-h-0 ${variant === 'dialog' ? 'scroll-smooth' : ''}`}
+        <motion.div
+          ref={stepViewportRef}
+          className={
+            variant === 'dialog'
+              ? 'min-h-0 flex-[1_1_auto] overflow-y-auto bg-[#f8fafc] px-4 py-4 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent alusa-dark:bg-[color:var(--color-bg-card)] md:px-6 md:py-5 max-md:min-h-0 scroll-smooth'
+              : 'flex-1 overflow-y-auto bg-[#f8fafc] px-4 py-4 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-transparent alusa-dark:bg-[color:var(--color-bg-card)] md:px-6 md:py-5 max-md:min-h-0'
+          }
+          animate={variant === 'dialog' ? { height: stepContentHeight ?? 'auto' } : undefined}
+          transition={{ height: { duration: prefersReducedMotion ? 0 : 0.34, ease: [0.42, 0, 0.58, 1] } }}
           style={{
             scrollbarWidth: 'thin',
             scrollbarGutter: 'stable',
             scrollbarColor: '#d1d5db transparent',
           }}
         >
-          <div className="mx-auto w-full max-w-4xl space-y-4" id="wizard-step-content">
+          <div ref={setStepContentElement} className="mx-auto w-full max-w-4xl space-y-4" id="wizard-step-content">
             {renderStep(wizard)}
           </div>
-        </div>
+        </motion.div>
         <div
           className={
             variant === 'dialog'

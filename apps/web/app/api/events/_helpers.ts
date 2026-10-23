@@ -24,6 +24,7 @@ export type EventsPermission =
   | 'events.deleteParticipant'
   | 'eventTickets.view'
   | 'eventTickets.checkIn'
+  | 'eventTickets.manageScannerAccess'
   | 'eventTickets.manageLots'
   | 'eventTickets.createSale'
   | 'eventTickets.cancelSale'
@@ -57,6 +58,7 @@ const ALL_PERMISSIONS: EventsPermission[] = [
   'events.deleteParticipant',
   'eventTickets.view',
   'eventTickets.checkIn',
+  'eventTickets.manageScannerAccess',
   'eventTickets.manageLots',
   'eventTickets.createSale',
   'eventTickets.cancelSale',
@@ -91,6 +93,7 @@ const ROLE_PERMISSIONS: Record<string, EventsPermission[]> = {
     'events.cancel',
     'eventTickets.view',
     'eventTickets.checkIn',
+    'eventTickets.manageScannerAccess',
     'eventTickets.manageLots',
     'eventTickets.createSale',
     'eventTickets.cancelSale',
@@ -133,6 +136,7 @@ export function jsonError(status: number, code: string, message: string, details
 
 export async function getEventsContext(
   permission: EventsPermission,
+  options: { requireWrite?: boolean } = {},
 ): Promise<EventsContext & { role: string }> {
   const auth = await resolveTenantSession();
   if (!auth.ok) {
@@ -163,7 +167,8 @@ export async function getEventsContext(
     'eventReports.view',
     'eventAudit.view',
   ]);
-  if (!readOnlyPermissions.has(permission)) {
+  const requireWrite = options.requireWrite ?? !readOnlyPermissions.has(permission);
+  if (requireWrite) {
     await assertPlatformAccessForConta({ contaId, capability: 'EVENT_WRITE' });
   }
 

@@ -6,18 +6,24 @@ vi.mock('../prisma', () => ({
       findFirst: vi.fn(),
       findMany: vi.fn(),
       count: vi.fn(),
+      updateMany: vi.fn(),
     },
-    eventAudit: { findMany: vi.fn() },
+    eventAudit: { findMany: vi.fn(), create: vi.fn() },
+    auditLog: { create: vi.fn() },
+    eventMapOrder: { findFirst: vi.fn() },
+    $transaction: vi.fn(),
   },
 }));
 
 import { prisma } from '../prisma';
+import { toCheckInCode } from './map/ticket-code';
 import {
   assertEventAllowsCheckIn,
   listEventTicketCheckIns,
   isEventMapOrderRefundFinalized,
   isTicketPaymentBlocked,
   verifyEventTicketForCheckInAcrossEvents,
+  markEventTicketUsed,
 } from './ticket-checkin.service';
 
 function ticket(overrides: Record<string, unknown> = {}) {
@@ -42,7 +48,7 @@ function ticket(overrides: Record<string, unknown> = {}) {
 
 describe('verifyEventTicketForCheckInAcrossEvents', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   it('identifica o evento automaticamente pelo código completo dentro da conta', async () => {
@@ -67,14 +73,15 @@ describe('verifyEventTicketForCheckInAcrossEvents', () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(ticket() as never);
-    vi.mocked(prisma.eventTicket.findMany).mockResolvedValue([
-      { id: 'ticket-1', eventId: 'event-1', ticketCode: 'TICKET-123456789' },
-    ] as never);
+    vi.mocked(prisma.eventTicket.findMany).mockResolvedValue([{ id: 'ticket-1' }] as never);
 
-    const result = await verifyEventTicketForCheckInAcrossEvents('conta-1', '23456789');
+    const legacyHash = toCheckInCode('TICKET_ABCD');
+    const result = await verifyEventTicketForCheckInAcrossEvents('conta-1', legacyHash);
 
     expect(prisma.eventTicket.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { contaId: 'conta-1' },
+      where: { contaId: 'conta-1', legacyCheckInCode: legacyHash },
+      take: 2,
+      select: { id: true },
     }));
     expect(result.event.id).toBe('event-1');
 
@@ -83,8 +90,8 @@ describe('verifyEventTicketForCheckInAcrossEvents', () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null);
     vi.mocked(prisma.eventTicket.findMany).mockResolvedValue([
-      { id: 'ticket-1', eventId: 'event-1', ticketCode: 'TICKET-123456789' },
-      { id: 'ticket-2', eventId: 'event-2', ticketCode: 'OTHER-123456789' },
+      { id: 'ticket-1' },
+      { id: 'ticket-2' },
     ] as never);
 
     await expect(verifyEventTicketForCheckInAcrossEvents('conta-1', '23456789')).rejects.toMatchObject({
@@ -104,6 +111,52 @@ describe('verifyEventTicketForCheckInAcrossEvents', () => {
     }));
     expect(prisma.eventTicket.findMany).not.toHaveBeenCalled();
     expect(result.event.id).toBe('event-1');
+  });
+});
+
+describe('markEventTicketUsed concurrency', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('records one check-in under concurrent retries and reports the other as already used', async () => {
+    let status = 'VALID';
+    const tx = {
+      eventTicket: {
+        updateMany: vi.fn(async ({ where }: { where: { status: string } }) => {
+          expect(where.status).toBe('VALID');
+          if (status !== 'VALID') return { count: 0 };
+          status = 'USED';
+          return { count: 1 };
+        }),
+      },
+      eventMapOrder: { findFirst: vi.fn() },
+      auditLog: { create: vi.fn() },
+      eventAudit: { create: vi.fn() },
+    };
+    vi.mocked(prisma.eventTicket.findFirst).mockImplementation(async () => ticket({ status }) as never);
+    vi.mocked(prisma.$transaction).mockImplementation(async (callback: never) => (callback as (_transaction: typeof tx) => Promise<unknown>)(tx) as never);
+
+    const results = await Promise.all([
+      markEventTicketUsed('conta-a', 'event-a', 'TICKET-123456789', null, {
+        auditAction: 'events.map.ticket.check_in',
+        auditMetadata: { operatorName: 'João', gateName: 'Portaria Leste', scannerAccessId: 'access-a' },
+      }),
+      markEventTicketUsed('conta-a', 'event-a', 'TICKET-123456789', null, {
+        auditAction: 'events.map.ticket.check_in',
+        auditMetadata: { operatorName: 'João', gateName: 'Portaria Leste', scannerAccessId: 'access-a' },
+      }),
+    ]);
+
+    expect(results.filter((result) => result.alreadyUsed)).toHaveLength(1);
+    expect(results.filter((result) => !result.alreadyUsed)).toHaveLength(1);
+    expect(status).toBe('USED');
+    expect(tx.eventTicket.updateMany).toHaveBeenCalledTimes(2);
+    expect(tx.eventAudit.create).toHaveBeenCalledTimes(1);
+    expect(tx.eventAudit.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        actorUserId: null,
+        metadata: expect.objectContaining({ operatorName: 'João', gateName: 'Portaria Leste', scannerAccessId: 'access-a' }),
+      }),
+    }));
   });
 });
 

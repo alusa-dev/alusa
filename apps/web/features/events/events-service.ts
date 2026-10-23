@@ -384,6 +384,7 @@ export type EventCheckInDTO = {
   seatLabel: string | null;
   usedAt: string | null;
   operatorName: string | null;
+  gateName: string | null;
 };
 
 export async function listEventCheckIns(eventId: string, page: number, pageSize: number) {

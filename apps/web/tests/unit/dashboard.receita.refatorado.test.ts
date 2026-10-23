@@ -2,41 +2,31 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
 // Mocks need to be hoisted - use vi.hoisted() for variables used in vi.mock
-const mockGetServerSession = vi.hoisted(() => vi.fn());
+const mockResolveTenantSession = vi.hoisted(() => vi.fn());
 const mockPrismaCobranca = vi.hoisted(() => ({
   findMany: vi.fn(),
 }));
+const mockRunWithTenant = vi.hoisted(() => vi.fn());
 
-vi.mock('next-auth', () => ({
-  getServerSession: () => mockGetServerSession(),
+vi.mock('@/lib/api/with-tenant-session', () => ({
+  resolveTenantSession: () => mockResolveTenantSession(),
 }));
 
-vi.mock('@/lib/auth-options', () => ({
-  authOptions: {},
-}));
-
-vi.mock('@/lib/prisma', () => ({
-  prisma: {
-    cobranca: mockPrismaCobranca,
-    $executeRaw: vi.fn().mockResolvedValue(1),
-    $transaction: vi.fn(async (callback: (_tx: { cobranca: typeof mockPrismaCobranca }) => unknown) =>
-      callback({ cobranca: mockPrismaCobranca, $executeRaw: vi.fn().mockResolvedValue(1) }),
-    ),
-  },
+vi.mock('@/lib/prisma-tenant', () => ({
+  runWithTenant: (contaId: string, callback: (_tx: { cobranca: typeof mockPrismaCobranca }) => unknown) =>
+    mockRunWithTenant(contaId, callback),
 }));
 
 // Import after mocks
 import { GET } from '@/app/api/dashboard/receita/route';
 
 describe('GET /api/dashboard/receita (refatorado)', () => {
-  const mockUser = {
-    id: 'user-1',
-    contaId: 'conta-1',
-  };
-
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetServerSession.mockResolvedValue({ user: mockUser });
+    mockResolveTenantSession.mockResolvedValue({ ok: true, userId: 'user-1', contaId: 'conta-1' });
+    mockRunWithTenant.mockImplementation(async (_contaId: string, callback: (_tx: { cobranca: typeof mockPrismaCobranca }) => unknown) =>
+      callback({ cobranca: mockPrismaCobranca }),
+    );
   });
 
   it('deve usar liquidacaoStatus=DISPONIVEL para buscar receita', async () => {
@@ -128,7 +118,7 @@ describe('GET /api/dashboard/receita (refatorado)', () => {
   });
 
   it('deve retornar 401 se a sessão não tiver tenant', async () => {
-    mockGetServerSession.mockResolvedValue({ user: { id: 'user-1' } });
+    mockResolveTenantSession.mockResolvedValue({ ok: false, reason: 'UNAUTHENTICATED' });
 
     const url = new URL('http://localhost/api/dashboard/receita');
     const request = new NextRequest(url);

@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import {
   useCallback,
@@ -12,7 +13,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 
-import { CheckCircle, ExternalLink, Loader2, MoreVertical, Refresh as RefreshCw, Search } from '@/components/icons/icons';
+import { CheckCircle, ExternalLink, Loader2, MoreVertical, QrCode, Refresh as RefreshCw, Search } from '@/components/icons/icons';
 import { Button } from '@/components/ui/button';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 import { Input } from '@/components/ui/input';
@@ -37,6 +38,7 @@ import type { SchoolEventDTO } from '../../events-service';
 import { EventSoftBadge } from '../../shared/EventSoftBadge';
 import { EventWhatsAppStatusIndicator } from '../../shared/EventWhatsAppStatusIndicator';
 import { EventTablePanel } from '../../shared/EventTablePanel';
+import { EventTicketScannerAccesses } from './EventTicketScannerAccesses';
 import { canRequestEventRefund } from '../../shared/event-refund-permission';
 import { isSafePaymentUrl, publicOrderAdminActions, publicOrderAdminStatusDescription, publicOrderAdminStatusLabel, publicOrderAdminStatusVariant } from './public-order-admin-utils';
 
@@ -177,6 +179,7 @@ type OrdersResponse = {
 };
 
 export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
+  const router = useRouter();
   const { data: session } = useSession();
   const mayRequestRefund = canRequestEventRefund(session?.user?.role);
   const queryClient = useQueryClient();
@@ -334,18 +337,18 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
   });
 
   const verifyMutation = useMutation({
-    mutationFn: async (confirm: boolean) =>
+    mutationFn: async ({ code, confirm }: { code: string; confirm: boolean }) =>
       parseResponse<TicketVerifyApiResponse>(
         await fetch(`/api/events/${event.id}/public-orders/verify-ticket`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ticketCode, confirm }),
+          body: JSON.stringify({ ticketCode: code, confirm }),
         }),
       ),
-    onSuccess: async (data, confirm) => {
+    onSuccess: async (data, variables) => {
       const ticket = extractTicketInfo(data);
       setVerifyResult(ticket);
-      if (confirm) {
+      if (variables.confirm) {
         await queryClient.invalidateQueries({ queryKey: ['events', event.id, 'public-orders'] });
         const alreadyUsed = 'alreadyUsed' in data && data.alreadyUsed;
         toast.success({
@@ -613,8 +616,18 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
             type="button"
             variant="outline"
             className="h-10 whitespace-nowrap shadow-none"
+            disabled={verifyMutation.isPending}
+            onClick={() => router.push(`/events/${event.id}/check-in/scan`)}
+          >
+            <QrCode className="h-4 w-4" />
+            Ler QR Code
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-10 whitespace-nowrap shadow-none"
             disabled={!ticketCode.trim() || verifyMutation.isPending}
-            onClick={() => verifyMutation.mutate(false)}
+            onClick={() => verifyMutation.mutate({ code: ticketCode, confirm: false })}
           >
             <Search className="h-4 w-4" />
             Verificar
@@ -623,7 +636,7 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
             type="button"
             className="h-10 whitespace-nowrap bg-emerald-700 text-white shadow-none hover:bg-emerald-800"
             disabled={!verifiedCurrentTicket || verifiedCurrentTicket.status !== 'VALID' || verifyMutation.isPending}
-            onClick={() => verifyMutation.mutate(true)}
+            onClick={() => verifyMutation.mutate({ code: ticketCode, confirm: true })}
           >
             <CheckCircle className="h-4 w-4" />
             Confirmar entrada
@@ -641,6 +654,8 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
           </div>
         ) : null}
       </section>
+
+      <EventTicketScannerAccesses event={event} />
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-none">
         <div className="flex items-center justify-between gap-3">

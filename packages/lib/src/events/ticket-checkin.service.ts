@@ -3,7 +3,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import { prisma } from '../prisma';
 import { EventsError } from './events.service';
 import { isTicketPaymentBlocked } from './ticket-payment-eligibility';
-import { normalizeCheckInCode, toCheckInCode } from './map/ticket-code';
+import { normalizeCheckInCode } from './map/ticket-code';
 
 export { isTicketPaymentBlocked } from './ticket-payment-eligibility';
 export { isEventMapOrderRefundFinalized } from './ticket-payment-eligibility';
@@ -108,10 +108,20 @@ export async function listEventTicketCheckIns(
       action: { in: ['events.ticket.check_in', 'events.map.ticket.check_in'] },
     },
     orderBy: { createdAt: 'desc' },
-    select: { entityId: true, actor: { select: { nome: true } } },
+    select: { entityId: true, metadata: true, actor: { select: { nome: true } } },
   });
   const operators = new Map<string, string>();
-  for (const audit of audits) if (!operators.has(audit.entityId) && audit.actor?.nome) operators.set(audit.entityId, audit.actor.nome);
+  const gates = new Map<string, string>();
+  for (const audit of audits) {
+    const metadata = audit.metadata && typeof audit.metadata === 'object' && !Array.isArray(audit.metadata)
+      ? audit.metadata as Record<string, unknown>
+      : null;
+    if (!operators.has(audit.entityId)) {
+      const name = audit.actor?.nome ?? (typeof metadata?.operatorName === 'string' ? metadata.operatorName : null);
+      if (name) operators.set(audit.entityId, name);
+    }
+    if (!gates.has(audit.entityId) && typeof metadata?.gateName === 'string') gates.set(audit.entityId, metadata.gateName);
+  }
 
   const items = tickets.map((ticket) => {
     const seat = ticket.orderItem ?? ticket.saleSeat;
@@ -124,6 +134,7 @@ export async function listEventTicketCheckIns(
       seatLabel: seat ? [seat.sectionName, seat.seatLabel].filter(Boolean).join(' · ') : null,
       usedAt: ticket.usedAt?.toISOString() ?? null,
       operatorName: operators.get(ticket.id) ?? null,
+      gateName: gates.get(ticket.id) ?? null,
     };
   });
   return { items, total, page, pageSize };
@@ -194,16 +205,17 @@ async function findTicket(
     }
   }
 
-  // Os ingressos PDF legados imprimem apenas o código curto no Code 128.
-  // A busca permanece limitada à conta e ao evento, e colisões são recusadas.
+  // Os PDFs legados também podem usar um hash do ticketCode quando ele tem
+  // menos de oito dígitos. O campo de compatibilidade é preenchido uma vez na
+  // migration e indexado por conta; duas linhas bastam para rejeitar colisões.
   if (!ticket) {
     const candidates = await db.eventTicket.findMany({
-      where: eventScope,
-      select: { id: true, eventId: true, ticketCode: true },
+      where: { ...eventScope, legacyCheckInCode: normalized },
+      take: 2,
+      select: { id: true },
     });
-    const matchingCandidates = candidates.filter((candidate) => toCheckInCode(candidate.ticketCode) === normalized);
 
-    if (matchingCandidates.length > 1) {
+    if (candidates.length > 1) {
       throw new EventsError(
         'CODIGO_AMBIGUO',
         'Não conseguimos identificar este ingresso. Use uma versão atualizada para tentar novamente.',
@@ -211,7 +223,7 @@ async function findTicket(
       );
     }
 
-    const candidate = matchingCandidates[0];
+    const candidate = candidates[0];
     if (candidate) {
       ticket = await db.eventTicket.findFirst({
         where: { id: candidate.id, ...eventScope },
@@ -223,8 +235,13 @@ async function findTicket(
   return ticket;
 }
 
-export async function verifyEventTicketForCheckIn(contaId: string, eventId: string, ticketCode: string) {
-  const ticket = await findTicket(prisma, contaId, eventId, ticketCode);
+export async function verifyEventTicketForCheckIn(
+  contaId: string,
+  eventId: string,
+  ticketCode: string,
+  db: DbClient = prisma,
+) {
+  const ticket = await findTicket(db, contaId, eventId, ticketCode);
   if (!ticket) throw new EventsError('INGRESSO_NAO_ENCONTRADO', 'Ingresso não encontrado para este evento.', 404);
   assertEventAllowsCheckIn(ticket.event.status);
   return mapTicket(ticket);
@@ -250,10 +267,15 @@ export async function markEventTicketUsed(
   contaId: string,
   eventId: string,
   ticketCode: string,
-  actorUserId: string,
-  options: { requireSeat?: boolean; auditAction?: string } = {},
+  actorUserId: string | null,
+  options: {
+    requireSeat?: boolean;
+    auditAction?: string;
+    tx?: Prisma.TransactionClient;
+    auditMetadata?: Record<string, string | null>;
+  } = {},
 ) {
-  const verified = await verifyEventTicketForCheckIn(contaId, eventId, ticketCode);
+  const verified = await verifyEventTicketForCheckIn(contaId, eventId, ticketCode, options.tx ?? prisma);
 
   if (options.requireSeat && !verified.seat) {
     throw new EventsError('INGRESSO_INVALIDO', 'Ingresso sem assento vinculado.', 409);
@@ -275,7 +297,7 @@ export async function markEventTicketUsed(
   }
 
   const now = new Date();
-  const updated = await prisma.$transaction(async (tx) => {
+  const updateTicket = async (tx: Prisma.TransactionClient) => {
     if (verified.order) {
       // Serialize check-in with refund/dispute transitions, which update the
       // same tenant-scoped order row. The provider event remains authoritative.
@@ -299,7 +321,7 @@ export async function markEventTicketUsed(
     await tx.auditLog.create({
       data: {
         contaId,
-        actorType: 'USER',
+        actorType: actorUserId ? 'USER' : 'SYSTEM',
         actorId: actorUserId,
         action: options.auditAction ?? 'events.ticket.check_in',
         entityType: 'EventTicket',
@@ -308,6 +330,7 @@ export async function markEventTicketUsed(
           eventId,
           orderId: verified.order?.id ?? verified.sale?.id ?? null,
           ticketCode: verified.ticketCode,
+          ...options.auditMetadata,
         }),
       },
     });
@@ -324,15 +347,17 @@ export async function markEventTicketUsed(
           orderId: verified.order?.id ?? verified.sale?.id ?? null,
           ticketCode: verified.ticketCode,
           seatLabel: verified.seat?.seatLabel ?? null,
+          ...options.auditMetadata,
         }),
       },
     });
 
     return true;
-  });
+  };
+  const updated = options.tx ? await updateTicket(options.tx) : await prisma.$transaction(updateTicket);
 
   if (!updated) {
-    const current = await verifyEventTicketForCheckIn(contaId, eventId, verified.ticketCode);
+    const current = await verifyEventTicketForCheckIn(contaId, eventId, verified.ticketCode, options.tx ?? prisma);
     if (current.status === 'USED') return { ok: true as const, alreadyUsed: true, ticket: current };
     throw new EventsError('INGRESSO_INVALIDO', 'Ingresso não pode ser utilizado.', 409);
   }

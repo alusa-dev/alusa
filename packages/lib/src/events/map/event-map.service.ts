@@ -2369,8 +2369,13 @@ export async function listEventPublicMapOrdersForAdmin(
 
 export type EventPublicMapOrderListItemDTO = Awaited<ReturnType<typeof listEventPublicMapOrdersForAdmin>>['items'][number];
 
-export async function verifyEventMapTicketForCheckIn(contaId: string, eventId: string, ticketCode: string) {
-  const ticket = await verifyEventTicketForCheckIn(contaId, eventId, ticketCode);
+export async function verifyEventMapTicketForCheckIn(
+  contaId: string,
+  eventId: string,
+  ticketCode: string,
+  tx?: Prisma.TransactionClient,
+) {
+  const ticket = await verifyEventTicketForCheckIn(contaId, eventId, ticketCode, tx);
   if (!ticket.seat) throw new EventsError('INGRESSO_INVALIDO', 'Ingresso sem assento vinculado.', 409);
   return ticket;
 }
@@ -2379,10 +2384,19 @@ export async function markEventMapTicketUsed(
   contaId: string,
   eventId: string,
   ticketCode: string,
-  actorUserId: string,
+  actorUserId: string | null,
+  options: { tx?: Prisma.TransactionClient; operatorName?: string; gateName?: string; scannerAccessId?: string } = {},
 ) {
   return markEventTicketUsed(contaId, eventId, ticketCode, actorUserId, {
     requireSeat: true,
     auditAction: 'events.map.ticket.check_in',
+    tx: options.tx,
+    auditMetadata: options.operatorName || options.gateName
+      ? {
+          operatorName: options.operatorName ?? null,
+          gateName: options.gateName ?? null,
+          scannerAccessId: options.scannerAccessId ?? null,
+        }
+      : undefined,
   });
 }
