@@ -128,4 +128,18 @@ describe('public event ticket scanner route', () => {
     expect(response.status).toBe(404);
     expect(runWithTenantMock).not.toHaveBeenCalled();
   });
+
+  it('rejects a revoked capability before confirming a ticket', async () => {
+    tx.$queryRaw.mockResolvedValueOnce([]);
+
+    const response = await POST(new NextRequest('http://localhost/api/public/event-ticket-check-in/opaque-scanner-capability-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticketCode: 'TICKET-1', confirm: true }),
+    }), params);
+
+    expect(response.status).toBe(404);
+    expect(markTicketUsedMock).not.toHaveBeenCalled();
+    expect(findAccessMock).not.toHaveBeenCalled();
+  });
 });

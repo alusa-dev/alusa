@@ -50,6 +50,32 @@ describe('redaction and logs', () => {
     expect(redactSensitiveData('document 12345678901 company 12345678000190 phone (11) 3234-5678'))
       .toBe('document [REDACTED] company [REDACTED] phone [REDACTED]');
   });
+
+  it('redacts scanner capabilities in page and API URL path segments', () => {
+    const event = {
+      request: {
+        url: 'https://alusa.app/ticket-check-in/page-capability?mode=scan#reader',
+      },
+      contexts: {
+        scanner: 'https://alusa.app/api/public/event-ticket-check-in/api-capability',
+      },
+      breadcrumbs: [
+        { message: '/ticket-check-in/encoded%2Ecapability' },
+        { message: '/api/public/event-ticket-check-in/relative-capability?confirm=1' },
+      ],
+      unrelated: '/events/ticket-check-in-help',
+    };
+
+    expect(redactSensitiveData(event)).toEqual({
+      request: { url: 'https://alusa.app/ticket-check-in/[REDACTED]?mode=scan#reader' },
+      contexts: { scanner: 'https://alusa.app/api/public/event-ticket-check-in/[REDACTED]' },
+      breadcrumbs: [
+        { message: '/ticket-check-in/[REDACTED]' },
+        { message: '/api/public/event-ticket-check-in/[REDACTED]?confirm=1' },
+      ],
+      unrelated: '/events/ticket-check-in-help',
+    });
+  });
 });
 
 describe('metric normalization', () => {

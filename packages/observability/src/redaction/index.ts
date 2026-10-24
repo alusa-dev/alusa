@@ -9,11 +9,13 @@ const STRING_PATTERNS = [
   /(?<!\w)(?:\+\d{1,3}[\s.-]?)?\(?\d{2,3}\)?[\s.-]\d{4,5}[\s.-]\d{4}(?!\w)/g,
   /\b(?:password|passwd|[\w-]*senha[\w-]*|secret|token|api[-_]?key|access[-_]?key|private[-_]?key)\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;}&]+)/gi,
 ];
+const SCANNER_CAPABILITY_PATH = /(\/(?:api\/public\/)?(?:event-)?ticket-check-in\/)[^/?#\s]+/gi;
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 export function redactString(value: string): string {
-  return STRING_PATTERNS.reduce((result, pattern) => result.replace(pattern, REDACTED), value);
+  const redacted = STRING_PATTERNS.reduce((result, pattern) => result.replace(pattern, REDACTED), value);
+  return redacted.replace(SCANNER_CAPABILITY_PATH, `$1${REDACTED}`);
 }
 
 export function redactSensitiveData(value: unknown, maxDepth = 12): unknown {
