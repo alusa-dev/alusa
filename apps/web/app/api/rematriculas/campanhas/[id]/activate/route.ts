@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
 import { activateRenewalCampaignFromHttp } from '@/src/server/enrollments/renewal-http-commands.service';
 import { hasRenewalPermission } from '@/src/server/enrollments/renewal-permissions.service';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -17,6 +18,8 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
   if (!hasRenewalPermission(user.role, 'renewal.campaign.manage')) {
     return jsonError(403, 'PERMISSAO_NEGADA', 'Usuário não tem permissão para ativar campanhas.');
   }
+  const billingBlocked = await platformBillingAccessResponseForConta({ contaId: user.contaId, capability: 'ENROLLMENT_WRITE' });
+  if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
   try {
     const { id } = await context.params;

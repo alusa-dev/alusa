@@ -1,19 +1,24 @@
 import type { StripeWebhookEvent } from '@alusa/stripe';
+import { createDefaultPlatformBillingStripeGateway } from './stripe-gateway';
 import { computeGracePeriodEnd } from './access-policy';
 import { PlatformBillingError } from './errors';
 import { resolvePlanCodeFromStripePriceId, resolveStripePriceId } from './price-mapping';
 import type { PlatformPlanCode } from './plans';
 import type {
+  PlatformBillingAccountRecord,
   PlatformBillingAccountStatus,
   PlatformBillingEnvironment,
   PlatformBillingInvoiceStatus,
   PlatformBillingStore,
+  PlatformBillingStripeGateway,
 } from './types';
 
 export interface ProcessPlatformBillingWebhookInput {
   event: StripeWebhookEvent;
   environment: PlatformBillingEnvironment;
   envSource?: Record<string, string | undefined>;
+  stripeGateway?: Pick<PlatformBillingStripeGateway, 'retrieveSubscription' | 'retrieveSubscriptionSnapshot'> &
+    Partial<Pick<PlatformBillingStripeGateway, 'retrieveCheckoutSession' | 'retrieveLatestSubscriptionInvoice'>>;
   workerId?: string;
   inboxId?: string;
 }
@@ -194,26 +199,103 @@ async function processCheckoutCompleted(
     return contaId ?? null;
   }
 
-  const account =
-    (await store.findAccountByStripeCustomerId({ environment: input.environment, stripeCustomerId: customerId })) ??
-    (await store.createAccount({ contaId, environment: input.environment, stripeCustomerId: customerId }));
+  const account = await store.findAccountByStripeCustomerId({ environment: input.environment, stripeCustomerId: customerId });
+  if (!account) {
+    throw new PlatformBillingError('Checkout customer is not bound to a platform billing account.', 'PLATFORM_BILLING_ACCOUNT_NOT_FOUND');
+  }
   if (account.contaId !== contaId) {
     throw new PlatformBillingError('Checkout customer is bound to another Conta.', 'PLATFORM_BILLING_WEBHOOK_INVALID');
   }
-  // Checkout completion is not a canonical payment or subscription-state
-  // signal (a trial checkout may complete with no amount paid). Subscription
-  // and invoice resources drive activation independently.
-
   const checkoutRequestKey = readString(metadata.checkoutRequestKey);
   if (checkoutRequestKey) {
-    await store.bindCheckoutSubscription({
-      accountId: account.id,
+    const localCheckout = await store.findCheckoutSessionByIdempotencyKey({
       contaId,
       environment: input.environment,
-      stripeCustomerId: customerId,
-      stripeSubscriptionId: subscriptionId,
       idempotencyKey: checkoutRequestKey,
     });
+    if (!localCheckout) return contaId;
+
+    const defaultGateway = createDefaultPlatformBillingStripeGateway(input.envSource);
+    const gateway = input.stripeGateway ?? defaultGateway;
+    const remoteCheckout = await (gateway.retrieveCheckoutSession ?? defaultGateway.retrieveCheckoutSession)(localCheckout.stripeCheckoutSessionId);
+    const resolvedPriceId = resolveStripePriceId({
+      planCode: localCheckout.planCode,
+      environment: input.environment,
+      source: input.envSource,
+    });
+    const checkoutMatches = localCheckout.contaId === contaId &&
+      localCheckout.billingAccountId === account.id &&
+      localCheckout.environment === input.environment &&
+      localCheckout.stripeCheckoutSessionId === readString(session.id) &&
+      localCheckout.stripeCustomerId === customerId &&
+      localCheckout.idempotencyKey === checkoutRequestKey &&
+      readCheckoutCancelRequestKey(localCheckout.cancelUrl) === checkoutRequestKey &&
+      localCheckout.status === 'CREATED' &&
+      localCheckout.stripePriceId === resolvedPriceId &&
+      remoteCheckout.id === localCheckout.stripeCheckoutSessionId &&
+      remoteCheckout.status === 'complete' &&
+      remoteCheckout.livemode === (input.environment === 'LIVE') &&
+      remoteCheckout.customerId === customerId &&
+      remoteCheckout.clientReferenceId === contaId &&
+      remoteCheckout.subscriptionId === subscriptionId &&
+      remoteCheckout.metadata.contaId === contaId &&
+      remoteCheckout.metadata.billingContext === 'platform' &&
+      remoteCheckout.metadata.checkoutRequestKey === checkoutRequestKey &&
+      remoteCheckout.metadata.planCode === localCheckout.planCode &&
+      remoteCheckout.priceIds.length === 1 &&
+      remoteCheckout.priceIds[0] === localCheckout.stripePriceId;
+    if (!checkoutMatches) {
+      throw new PlatformBillingError('Completed Checkout does not match its persisted request.', 'PLATFORM_BILLING_WEBHOOK_INVALID');
+    }
+
+    const ownsCurrentAttempt = account.checkoutClaimKey === checkoutRequestKey &&
+      account.pendingPlanCode === localCheckout.planCode;
+    const alreadyBound = account.stripeSubscriptionId === subscriptionId;
+    const isCanceledReactivation = account.status === 'CANCELED' &&
+      account.pendingChangeType === 'REACTIVATE' && ownsCurrentAttempt;
+    const isNewPendingCheckout = account.status === 'CHECKOUT_PENDING' && ownsCurrentAttempt &&
+      !account.stripeSubscriptionId;
+    if (!alreadyBound && (!isNewPendingCheckout && !isCanceledReactivation)) {
+      // A stale completion must not replace a subscription or consume a newer claim.
+      return contaId;
+    }
+
+    if (!alreadyBound) {
+      await store.bindCheckoutSubscription({
+        accountId: account.id,
+        contaId,
+        environment: input.environment,
+        stripeCustomerId: customerId,
+        stripeSubscriptionId: subscriptionId,
+        idempotencyKey: checkoutRequestKey,
+      });
+    }
+
+    const boundAccount = await store.findAccountByStripeSubscriptionId({ environment: input.environment, stripeSubscriptionId: subscriptionId });
+    if (!boundAccount || boundAccount.id !== account.id || boundAccount.contaId !== contaId ||
+      boundAccount.stripeCustomerId !== customerId || boundAccount.checkoutClaimKey) return contaId;
+
+    const canonicalSubscription = await getCanonicalActiveBoundSubscription({
+      subscriptionId,
+      customerId,
+      account: boundAccount,
+      expectedPriceId: localCheckout.stripePriceId,
+      environment: input.environment,
+      gateway,
+    });
+    if (canonicalSubscription) {
+      const invoice = await (gateway.retrieveLatestSubscriptionInvoice ?? defaultGateway.retrieveLatestSubscriptionInvoice)(subscriptionId);
+      if (invoice && isVerifiedPaidCheckoutInvoice({
+        invoice,
+        account: boundAccount,
+        subscriptionId,
+        customerId,
+        priceId: localCheckout.stripePriceId,
+        environment: input.environment,
+      })) {
+        await processInvoiceEvent(invoice, input, store, { verifiedCanonicalPaidInvoice: true });
+      }
+    }
   }
 
   await store.createAuditLog({
@@ -233,6 +315,15 @@ async function processCheckoutCompleted(
   });
 
   return contaId;
+}
+
+function readCheckoutCancelRequestKey(cancelUrl: string): string | null {
+  try {
+    const key = new URL(cancelUrl).searchParams.get('checkoutRequestKey');
+    return key && key.length <= 128 && key.trim() === key ? key : null;
+  } catch {
+    return null;
+  }
 }
 
 async function processCheckoutExpired(
@@ -260,7 +351,6 @@ async function processSubscriptionEvent(
 ): Promise<string | null> {
   const subscriptionId = readString(subscription.id);
   const customerId = readStripeId(subscription.customer);
-  const priceId = readSubscriptionPriceId(subscription);
   const metadata = readMetadata(subscription);
 
   if (!subscriptionId || !customerId) return metadata.contaId ?? null;
@@ -310,8 +400,30 @@ async function processSubscriptionEvent(
     return account.contaId;
   }
 
-  const planCode = priceId ? resolvePlanCodeSafely(priceId, input) : account.planCode;
-  const status = mapSubscriptionStatus(readString(subscription.status));
+  let subscriptionState = subscription;
+  const eventCreatedAt = readUnixDate(input.event.created);
+  if (
+    eventCreatedAt && account.lastProviderEventCreatedAt?.getTime() === eventCreatedAt.getTime()
+  ) {
+    // Stripe event timestamps are second-precision. On a tie, use the current
+    // provider object so delivery order cannot choose an older event snapshot.
+    const canonical = await (input.stripeGateway ?? createDefaultPlatformBillingStripeGateway(input.envSource))
+      .retrieveSubscription(subscriptionId);
+    subscriptionState = {
+      ...subscription,
+      status: canonical.status,
+      cancel_at_period_end: canonical.cancelAtPeriodEnd,
+      current_period_end: canonical.currentPeriodEnd ? Math.floor(canonical.currentPeriodEnd.getTime() / 1000) : null,
+      trial_end: canonical.trialEndsAt ? Math.floor(canonical.trialEndsAt.getTime() / 1000) : null,
+      canceled_at: canonical.canceledAt ? Math.floor(canonical.canceledAt.getTime() / 1000) : null,
+      pending_update: canonical.pendingUpdateId ? {} : null,
+      items: { data: [{ price: { id: canonical.priceId } }] },
+    };
+  }
+
+  const statePriceId = readSubscriptionPriceId(subscriptionState);
+  const planCode = statePriceId ? resolvePlanCodeSafely(statePriceId, input) : account.planCode;
+  const status = mapSubscriptionStatus(readString(subscriptionState.status));
   const pendingPlanCode = account.pendingPlanCode;
   const pendingPlanChangeId = account.pendingChangeOperationId;
   const pendingChangeType = account.pendingChangeType === 'UPGRADE' || account.pendingChangeType === 'DOWNGRADE'
@@ -321,10 +433,10 @@ async function processSubscriptionEvent(
   const shouldCommitPlan = shouldCommitPlanFromSubscriptionStatus(status);
   const accountPlanCode = shouldCommitPlan ? planCode : account.planCode;
   const pendingUpdateExpired = input.event.type === 'customer.subscription.pending_update_expired';
-  const hasCanonicalPendingUpdate = Boolean(subscription.pending_update);
+  const hasCanonicalPendingUpdate = Boolean(subscriptionState.pending_update);
   const confirmsPendingPlanApplied = Boolean(
     pendingPlanCode && shouldCommitPlan
-    && planCode === pendingPlanCode && priceId === resolveStripePriceId({
+    && planCode === pendingPlanCode && statePriceId === resolveStripePriceId({
       planCode: pendingPlanCode,
       environment: input.environment,
       source: input.envSource,
@@ -336,7 +448,7 @@ async function processSubscriptionEvent(
     && account.pendingChangeOperationId
     && readMetadata(subscription).planChangeId === account.pendingChangeOperationId
     && !hasCanonicalPendingUpdate
-    && priceId && priceId === account.stripePriceId,
+    && statePriceId && statePriceId === account.stripePriceId,
   );
   const shouldClearPendingPlan = Boolean(
     pendingPlanCode && (
@@ -378,11 +490,11 @@ async function processSubscriptionEvent(
     planCode: accountPlanCode,
     stripeSubscriptionId: subscriptionId,
     webhookLease: input.workerId && input.inboxId ? { id: input.inboxId, workerId: input.workerId } : undefined,
-    stripePriceId: shouldCommitPlan ? priceId : account.stripePriceId,
-    currentPeriodEnd: readSubscriptionCurrentPeriodEnd(subscription),
-    cancelAtPeriodEnd: isTerminalCancellation ? false : subscription.cancel_at_period_end === true,
-    trialEndsAt: readUnixDate(subscription.trial_end),
-    canceledAt: readUnixDate(subscription.canceled_at),
+    stripePriceId: shouldCommitPlan ? statePriceId : account.stripePriceId,
+    currentPeriodEnd: readSubscriptionCurrentPeriodEnd(subscriptionState),
+    cancelAtPeriodEnd: isTerminalCancellation ? false : subscriptionState.cancel_at_period_end === true,
+    trialEndsAt: readUnixDate(subscriptionState.trial_end),
+    canceledAt: readUnixDate(subscriptionState.canceled_at),
     restrictedAt: status === 'PAUSED' ? new Date() : null,
     trialWillEndNotifiedAt: input.event.type === 'customer.subscription.trial_will_end' ? new Date() : undefined,
     paymentMethodStatus: paymentMethod.status,
@@ -428,6 +540,7 @@ async function processInvoiceEvent(
   invoice: StripeObject,
   input: ProcessPlatformBillingWebhookInput,
   store: PlatformBillingStore,
+  options: { verifiedCanonicalPaidInvoice?: boolean } = {},
 ): Promise<string | null> {
   const invoiceId = readString(invoice.id);
   const customerId = readStripeId(invoice.customer);
@@ -466,7 +579,8 @@ async function processInvoiceEvent(
   const priceId = invoicePrice.priceId ?? account.stripePriceId;
   const planCode = priceId ? resolvePlanCodeSafely(priceId, input) : account.planCode;
   const isPaymentFailedEvent = input.event.type === 'invoice.payment_failed' || input.event.type === 'invoice.payment_action_required';
-  const isPaymentPaidEvent = input.event.type === 'invoice.paid' || input.event.type === 'invoice.payment_succeeded';
+  const isPaymentPaidEvent = input.event.type === 'invoice.paid' || input.event.type === 'invoice.payment_succeeded' ||
+    options.verifiedCanonicalPaidInvoice === true;
   const invoiceFailure = readInvoicePaymentFailure(invoice);
   const nextPaymentAttempt = readUnixDate(invoice.next_payment_attempt);
   const invoiceStatus = mapInvoiceStatus(readString(invoice.status));
@@ -502,7 +616,7 @@ async function processInvoiceEvent(
     periodEnd: readUnixDate(invoice.period_end) ?? undefined,
     dueDate: readUnixDate(invoice.due_date) ?? undefined,
     paidAt: readUnixDate(invoice.status_transitions && (invoice.status_transitions as StripeObject).paid_at)
-      ?? (paidConversion ? readUnixDate(input.event.created) ?? new Date() : undefined),
+      ?? (paidConversion && !options.verifiedCanonicalPaidInvoice ? readUnixDate(input.event.created) ?? new Date() : undefined),
     failedAt,
     attempted: readBoolean(invoice.attempted) ?? false,
     attemptCount,
@@ -516,7 +630,9 @@ async function processInvoiceEvent(
   await store.createAuditLog({
     contaId: account.contaId,
     billingAccountId: account.id,
-    action: resolveInvoiceAuditAction(input.event.type),
+    action: options.verifiedCanonicalPaidInvoice
+      ? 'PLATFORM_BILLING_CHECKOUT_PAYMENT_RECONCILED'
+      : resolveInvoiceAuditAction(input.event.type),
     webhookEnvironment: input.environment,
     webhookEventId: input.event.id,
     entityType: 'StripeInvoice',
@@ -535,13 +651,27 @@ async function processInvoiceEvent(
   });
 
   if (subscriptionToPersist && (effectiveFailure || paidConversion)) {
-    const paymentStateChangedAt = failedAt ?? readUnixDate(input.event.created) ?? new Date();
+    const paymentStateChangedAt = failedAt ??
+      readUnixDate(invoice.status_transitions && (invoice.status_transitions as StripeObject).paid_at) ??
+      readUnixDate(input.event.created) ?? new Date();
     const graceEligible = isPaymentPaidSubscriptionEligible(account);
+    const canonicalReactivation = paidConversion && account.status === 'CANCELED'
+      ? await getCanonicalActiveBoundSubscription({
+          subscriptionId,
+          customerId,
+          account,
+          expectedPriceId: priceId,
+          environment: input.environment,
+          gateway: input.stripeGateway ?? createDefaultPlatformBillingStripeGateway(input.envSource),
+        })
+      : null;
+    const confirmsReactivation = Boolean(canonicalReactivation && account.pendingChangeType === 'REACTIVATE');
     const nextStatus = resolveInvoicePaymentAccountStatus({
       accountStatus: account.status,
       trialEndsAt: account.trialEndsAt,
       isPaymentFailed: effectiveFailure,
       graceEligible,
+      isPaidBoundSubscriptionActive: Boolean(canonicalReactivation),
     });
     const nextAccessStatus = effectiveFailure && !graceEligible
       ? 'RESTRICTED'
@@ -563,11 +693,13 @@ async function processInvoiceEvent(
       stripeSubscriptionId: subscriptionToPersist,
       webhookLease: input.workerId && input.inboxId ? { id: input.inboxId, workerId: input.workerId } : undefined,
       stripePriceId: priceId,
-      currentPeriodEnd: account.currentPeriodEnd,
-      cancelAtPeriodEnd: account.cancelAtPeriodEnd,
-      trialEndsAt: account.trialEndsAt,
+      currentPeriodEnd: canonicalReactivation?.currentPeriodEnd ?? account.currentPeriodEnd,
+      cancelAtPeriodEnd: canonicalReactivation?.cancelAtPeriodEnd ?? account.cancelAtPeriodEnd,
+      trialEndsAt: canonicalReactivation?.trialEndsAt ?? account.trialEndsAt,
       gracePeriodEndsAt: effectiveFailure && graceEligible
-        ? account.gracePeriodEndsAt ?? computeGracePeriodEnd({ failedAt: paymentStateChangedAt })
+        ? account.gracePeriodEndsAt ?? computeGracePeriodEnd({
+          failedAt: account.gracePeriodStartedAt ?? paymentStateChangedAt,
+        })
         : null,
       restrictedAt: effectiveFailure && !graceEligible ? paymentStateChangedAt : null,
       lastPaymentFailedAt: effectiveFailure ? paymentStateChangedAt : null,
@@ -583,17 +715,20 @@ async function processInvoiceEvent(
       gracePeriodStartedAt: effectiveFailure && graceEligible
         ? account.gracePeriodStartedAt ?? paymentStateChangedAt
         : null,
+      canceledAt: canonicalReactivation ? null : account.canceledAt,
       lastProviderEventCreatedAt: readUnixDate(input.event.created),
+      pendingPlanCode: confirmsReactivation ? null : undefined,
       pendingChangeType: effectiveFailure && graceEligible
         ? 'PAYMENT_RECOVERY'
-        : paidConversion && account.pendingChangeType === 'PAYMENT_RECOVERY'
+        : paidConversion && (account.pendingChangeType === 'PAYMENT_RECOVERY' || confirmsReactivation)
           ? null
           : undefined,
       pendingChangeEffectiveAt: effectiveFailure && graceEligible
         ? nextPaymentAttempt
-        : paidConversion && account.pendingChangeType === 'PAYMENT_RECOVERY'
+        : paidConversion && (account.pendingChangeType === 'PAYMENT_RECOVERY' || confirmsReactivation)
           ? null
           : undefined,
+      pendingChangeOperationId: confirmsReactivation ? null : undefined,
       lastStripeEventId: input.event.id,
     });
 
@@ -615,27 +750,77 @@ function resolveInvoicePaymentAccountStatus(input: {
   trialEndsAt: Date | null;
   isPaymentFailed: boolean;
   graceEligible: boolean;
+  isPaidBoundSubscriptionActive: boolean;
 }): PlatformBillingAccountStatus {
   if (input.isPaymentFailed && input.graceEligible) return 'PAST_DUE';
   if (input.isPaymentFailed) return input.accountStatus;
+  if (input.isPaidBoundSubscriptionActive) return 'ACTIVE';
   if (input.accountStatus === 'CANCELED') return 'CANCELED';
   if (input.trialEndsAt && input.trialEndsAt.getTime() > Date.now()) return 'TRIALING';
   return 'ACTIVE';
+}
+
+async function getCanonicalActiveBoundSubscription(input: {
+  subscriptionId: string | null;
+  customerId: string;
+  account: PlatformBillingAccountRecord;
+  expectedPriceId: string | null;
+  environment: PlatformBillingEnvironment;
+  gateway: Pick<PlatformBillingStripeGateway, 'retrieveSubscriptionSnapshot'>;
+}): Promise<Awaited<ReturnType<PlatformBillingStripeGateway['retrieveSubscriptionSnapshot']>> | null> {
+  if (!input.subscriptionId || !input.expectedPriceId || !input.account.stripeCustomerId ||
+    input.account.stripeCustomerId !== input.customerId) return null;
+  const snapshot = await input.gateway.retrieveSubscriptionSnapshot(input.subscriptionId);
+  const expectedPlanCode = input.account.pendingPlanCode ?? input.account.planCode;
+  if (snapshot.id === input.subscriptionId &&
+    snapshot.customerId === input.customerId &&
+    snapshot.status === 'active' &&
+    snapshot.livemode === (input.environment === 'LIVE') &&
+    snapshot.metadata.contaId === input.account.contaId &&
+    snapshot.metadata.billingContext === 'platform' &&
+    snapshot.metadata.planCode === expectedPlanCode &&
+    snapshot.priceIds.length === 1 &&
+    snapshot.priceIds[0] === input.expectedPriceId) return snapshot;
+  return null;
+}
+
+function isVerifiedPaidCheckoutInvoice(input: {
+  invoice: StripeObject;
+  account: PlatformBillingAccountRecord;
+  subscriptionId: string;
+  customerId: string;
+  priceId: string;
+  environment: PlatformBillingEnvironment;
+}): boolean {
+  const { invoice, account } = input;
+  const price = readInvoicePriceId(invoice);
+  const metadata = readMetadata(invoice);
+  const paidAt = readUnixDate(invoice.status_transitions && (invoice.status_transitions as StripeObject).paid_at);
+  const livemode = readBoolean(invoice.livemode);
+  return readString(invoice.status) === 'paid' &&
+    (readNumber(invoice.amount_paid) ?? 0) > 0 &&
+    Boolean(paidAt) &&
+    readString(invoice.currency)?.toLowerCase() === 'brl' &&
+    (readStripeId(invoice.customer) === input.customerId) &&
+    (readStripeId(invoice.subscription) ?? readNestedString(invoice, ['parent', 'subscription_details', 'subscription'])) === input.subscriptionId &&
+    !price.ambiguous && price.priceId === input.priceId &&
+    (!metadata.contaId || metadata.contaId === account.contaId) &&
+    livemode === (input.environment === 'LIVE') &&
+    account.stripeSubscriptionId === input.subscriptionId &&
+    account.stripeCustomerId === input.customerId;
 }
 
 function isPaymentPaidSubscriptionEligible(account: {
   status: PlatformBillingAccountStatus;
   firstPaidAt: Date | null;
   lastSuccessfulPaymentAt: Date | null;
-  paymentMethodStatus: 'MISSING' | 'PRESENT' | 'UNKNOWN';
 }): boolean {
   // Trial accounts never receive the commercial grace period. A failed invoice
   // during/at the end of a trial must be regularized before operational access
   // is restored. ACTIVE/PAST_DUE are states of an already paid subscription.
   return Boolean(
     (account.status === 'ACTIVE' || account.status === 'PAST_DUE') &&
-    (account.firstPaidAt || account.lastSuccessfulPaymentAt) &&
-    account.paymentMethodStatus === 'PRESENT',
+    (account.firstPaidAt || account.lastSuccessfulPaymentAt),
   );
 }
 

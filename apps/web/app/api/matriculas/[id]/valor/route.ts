@@ -6,6 +6,7 @@ import type { BillingAgreementChangeInput } from '@alusa/finance';
 import { runWithTenant } from '@/lib/prisma-tenant';
 import { updateMatriculaValueInputDTOSchema } from '@/features/enrollments/dtos';
 import { mapMatriculaSubscriptionValueUpdateResultToDTO } from '@/features/enrollments/mappers';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -43,6 +44,8 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
         'Usuário sem permissão para alterar condições financeiras.',
       );
     }
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId, capability: 'ENROLLMENT_WRITE' });
+    if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
     const json = await req.json().catch(() => null);
     const parsedBody = updateMatriculaValueInputDTOSchema.safeParse(json);
     if (!parsedBody.success) {

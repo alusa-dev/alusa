@@ -7,6 +7,7 @@ import {
   updateRenewalCampaignFromHttp,
 } from '@/src/server/enrollments/renewal-http-commands.service';
 import { hasRenewalPermission } from '@/src/server/enrollments/renewal-permissions.service';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 const updateSchema = z.object({
   nome: z.string().trim().min(2).optional(),
@@ -38,6 +39,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   if (!hasRenewalPermission(user.role, 'renewal.campaign.manage')) {
     return jsonError(403, 'PERMISSAO_NEGADA', 'Usuário não tem permissão para editar campanhas.');
   }
+  const billingBlocked = await platformBillingAccessResponseForConta({ contaId: user.contaId, capability: 'ENROLLMENT_WRITE' });
+  if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
   try {
     const { id } = await context.params;
@@ -82,6 +85,8 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
   if (!hasRenewalPermission(user.role, 'renewal.campaign.manage')) {
     return jsonError(403, 'PERMISSAO_NEGADA', 'UsuÃ¡rio nÃ£o tem permissÃ£o para excluir campanhas.');
   }
+  const billingBlocked = await platformBillingAccessResponseForConta({ contaId: user.contaId, capability: 'ENROLLMENT_WRITE' });
+  if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
   try {
     const { id } = await context.params;

@@ -32,9 +32,9 @@ export function SiteLanding() {
         <div className="site-container">
           <div className="site-hero-copy">
             <h1>
-              Sua escola pode ser mais
+              Sua escola de dança pode ser
               <br className="site-hero-title-break" />
-              {' '}simples de administrar.
+              {' '}mais simples de administrar.
             </h1>
             <div className="site-hero-actions">
               <PillLink href="#modulos" variant="primary">Conhecer a Alusa</PillLink>

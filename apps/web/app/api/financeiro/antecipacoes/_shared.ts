@@ -3,6 +3,8 @@ import { NextResponse } from 'next/server';
 import { safeGetServerSession } from '@/lib/safe-server-session';
 import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
+import type { PlatformBillingCapability } from '@alusa/platform-billing';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import type { AnticipationError } from '@alusa/finance';
 
 type SessUser = { id?: string; contaId?: string; role?: string; financeIntegrationMode?: string | null };
@@ -34,7 +36,7 @@ export function anticipationErrorResponse(error: AnticipationError) {
 }
 
 export async function requireFinanceUser(
-  opts: { checkAccountGate?: boolean } = {},
+  opts: { checkAccountGate?: boolean; billingCapability?: PlatformBillingCapability } = {},
 ): Promise<
   | { ok: true; user: FinanceUser }
   | { ok: false; response: NextResponse }
@@ -48,6 +50,11 @@ export async function requireFinanceUser(
 
   if (!user.role || !allowedRoles.has(user.role.toUpperCase())) {
     return { ok: false as const, response: json(403, { error: 'SEM_PERMISSAO' }) };
+  }
+
+  if (opts.billingCapability) {
+    const blocked = await platformBillingAccessResponseForConta({ contaId: user.contaId, capability: opts.billingCapability });
+    if (blocked) return { ok: false as const, response: json(blocked.status, blocked.body) };
   }
 
   const capabilityBlock = blockUnavailableFinanceCapability(user.financeIntegrationMode, 'anticipations');

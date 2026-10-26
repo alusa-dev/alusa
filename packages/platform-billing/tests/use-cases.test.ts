@@ -3,6 +3,7 @@ import {
   PlatformBillingError,
   createPrismaPlatformBillingStore,
   createPlatformBillingCheckoutSession,
+  cancelPlatformBillingCheckoutReturn,
   createPlatformBillingPortalSession,
   createPlatformBillingTrialWithoutPaymentMethod,
   schedulePlatformBillingDowngrade,
@@ -23,9 +24,479 @@ const envSource = {
   STRIPE_PRICE_STARTER_MONTHLY: 'price_starter_test',
   STRIPE_PRICE_PREMIUM_MONTHLY: 'price_premium_test',
   STRIPE_PRICE_PRO_MONTHLY: 'price_pro_test',
+  STRIPE_PRICE_BAND_001_025_MONTHLY: 'price_starter_test',
+  STRIPE_PRICE_BAND_026_050_MONTHLY: 'price_premium_test',
+  STRIPE_PRICE_BAND_151_200_MONTHLY: 'price_band_151_200_test',
 };
 
+function buildCheckoutReturnAccount(contaId = 'conta_a', billingAccountId = 'billing_a', claimKey = 'request-a') {
+  return {
+    id: billingAccountId,
+    contaId,
+    environment: 'TEST' as const,
+    stripeCustomerId: `cus_${contaId}`,
+    stripeSubscriptionId: null,
+    status: 'CHECKOUT_PENDING' as const,
+    planCode: null,
+    accessStatus: 'PENDING' as const,
+    pendingPlanCode: 'BAND_001_025' as const,
+    pendingChangeType: null,
+    pendingChangeEffectiveAt: null,
+    checkoutClaimKey: claimKey,
+    checkoutClaimPhase: 'REQUESTING',
+  };
+}
+
+function buildCheckoutReturnSession(
+  contaId = 'conta_a',
+  billingAccountId = 'billing_a',
+  idempotencyKey = 'request-a',
+): PlatformBillingCheckoutSessionRecord {
+  return {
+    id: `session_${contaId}`,
+    contaId,
+    billingAccountId,
+    environment: 'TEST',
+    planCode: 'BAND_001_025',
+    stripeCheckoutSessionId: `cs_${contaId}`,
+    stripeCustomerId: `cus_${contaId}`,
+    stripePriceId: 'price_starter_test',
+    status: 'CREATED',
+    url: `https://checkout.stripe.test/${contaId}`,
+    cancelUrl: `https://app.alusa.test/cancel?studentCount=1&checkoutRequestKey=${idempotencyKey}`,
+    idempotencyKey,
+  };
+}
+
 describe('@alusa/platform-billing use cases', () => {
+  it.each([
+    ['open', 'CANCELED', true],
+    ['expired', 'CANCELED', false],
+    ['complete', 'PENDING', false],
+    ['unknown', 'PENDING', false],
+  ] as const)('handles canceled Checkout return for remote %s session', async (remoteStatus, expected, expire) => {
+    const account = buildCheckoutReturnAccount();
+    const checkout = buildCheckoutReturnSession();
+    let status = remoteStatus;
+    const clearCheckoutClaim = vi.fn(async () => true);
+    const markCheckoutSessionExpired = vi.fn(async () => undefined);
+    const createAuditLog = vi.fn();
+    const retrieveCheckoutSession = vi.fn(async () => checkoutRemote(checkout, checkout.stripeCheckoutSessionId, status));
+    const expireCheckoutSession = vi.fn(async () => { status = 'expired'; });
+    const result = await cancelPlatformBillingCheckoutReturn({ contaId: 'conta_a', environment: 'TEST', actorUserId: 'user_a', idempotencyKey: 'request-a', envSource }, {
+      store: {
+        findAccount: vi.fn(async () => account),
+        findCheckoutSessionByIdempotencyKey: vi.fn(async () => checkout),
+        clearCheckoutClaim,
+        markCheckoutSessionExpired,
+        createAuditLog,
+      } as unknown as PlatformBillingStore,
+      stripeGateway: { retrieveCheckoutSession, expireCheckoutSession } as unknown as PlatformBillingStripeGateway,
+    });
+    expect(result).toBe(expected);
+    expect(expireCheckoutSession).toHaveBeenCalledTimes(expire ? 1 : 0);
+    expect(clearCheckoutClaim).toHaveBeenCalledTimes(expected === 'CANCELED' ? 1 : 0);
+    expect(markCheckoutSessionExpired).toHaveBeenCalledTimes(expected === 'CANCELED' ? 1 : 0);
+    expect(createAuditLog).toHaveBeenCalledTimes(expected === 'CANCELED' ? 1 : 0);
+  });
+
+  it('maps a persisted requesting claim, expires and clears it tenant-scoped, then permits a retry for a canceled legacy subscription', async () => {
+    const account: Record<string, unknown> = {
+      id: 'billing_legacy', contaId: 'conta_a', environment: 'TEST', status: 'CANCELED',
+      planCode: 'PREMIUM', stripeCustomerId: 'cus_a', stripeSubscriptionId: 'sub_old', stripePriceId: null,
+      currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: null, trialWillEndNotifiedAt: null,
+      accessStatus: 'RESTRICTED', gracePeriodEndsAt: null, restrictedAt: null, canceledAt: null,
+      lastPaymentFailedAt: null, firstPaidAt: null, lastSuccessfulPaymentAt: null,
+      paymentMethodStatus: 'UNKNOWN', paymentMethodType: null, paymentMethodBrand: null,
+      paymentMethodLast4: null, paymentMethodExpMonth: null, paymentMethodExpYear: null,
+      restrictionReason: null, gracePeriodStartedAt: null, accessStateVersion: 0,
+      lastProviderEventCreatedAt: null, lastStripeEventId: null, lastReconciledAt: null,
+      pendingPlanCode: 'BAND_001_025', pendingChangeType: null, pendingChangeEffectiveAt: null,
+      pendingChangeOperationId: null, pendingChangeClaimToken: null,
+      trialSubscriptionClaimKey: null, trialSubscriptionClaimPhase: null,
+      trialSubscriptionClaimedAt: null, trialSubscriptionRequestExpiresAt: null,
+      checkoutClaimKey: 'request_a', checkoutClaimPhase: 'REQUESTING',
+      checkoutClaimedAt: new Date('2026-10-25T10:00:00Z'),
+      checkoutRequestExpiresAt: new Date('2026-10-26T06:00:00Z'),
+    };
+    const checkout = {
+      id: 'session_a', contaId: 'conta_a', billingAccountId: 'billing_legacy', environment: 'TEST',
+      planCode: 'BAND_001_025', stripeCheckoutSessionId: 'cs_a', stripeCustomerId: 'cus_a',
+      stripePriceId: 'price_starter_test', status: 'CREATED', url: null,
+      cancelUrl: 'https://app.alusa.test/cancel?studentCount=1', idempotencyKey: 'request_a',
+    };
+    const updateMany = vi.fn(async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      if (where.checkoutClaimKey !== undefined && where.checkoutClaimKey !== account.checkoutClaimKey) return { count: 0 };
+      if (where.status === 'CHECKOUT_PENDING' && account.status !== 'CHECKOUT_PENDING') return { count: 0 };
+      if (where.status?.notIn && (where.status.notIn as string[]).includes(String(account.status))) return { count: 0 };
+      if (where.AND && account.checkoutClaimKey !== null && account.checkoutClaimPhase !== 'CLAIMED') return { count: 0 };
+      Object.assign(account, data);
+      return { count: 1 };
+    });
+    const store = createPrismaPlatformBillingStore({
+      platformBillingAccount: {
+        findUnique: vi.fn(async () => account),
+        findUniqueOrThrow: vi.fn(async () => account),
+        updateMany,
+      },
+      platformBillingCheckoutSession: {
+        findUnique: vi.fn(async () => checkout),
+        updateMany: vi.fn(async () => ({ count: 1 })),
+      },
+      platformBillingAuditLog: { createMany: vi.fn(async () => ({ count: 1 })) },
+    } as never);
+    let stripeStatus = 'open';
+    const persistedCheckout = buildCheckoutReturnSession('conta_a', 'billing_legacy', 'request_a');
+    Object.assign(persistedCheckout, { id: 'session_a', stripeCheckoutSessionId: 'cs_a', stripeCustomerId: 'cus_a' });
+    const stripeGateway = {
+      retrieveCheckoutSession: vi.fn(async () => checkoutRemote(persistedCheckout, 'cs_a', stripeStatus)),
+      expireCheckoutSession: vi.fn(async () => { stripeStatus = 'expired'; }),
+    } as unknown as PlatformBillingStripeGateway;
+
+    const mapped = await store.findAccount({ contaId: 'conta_a', environment: 'TEST' });
+    expect(mapped).toMatchObject({
+      checkoutClaimKey: 'request_a', checkoutClaimPhase: 'REQUESTING',
+      checkoutClaimedAt: account.checkoutClaimedAt, checkoutRequestExpiresAt: account.checkoutRequestExpiresAt,
+    });
+    checkout.planCode = 'BAND_001_025';
+    checkout.stripePriceId = 'price_starter_test';
+    checkout.cancelUrl = 'https://app.alusa.test/cancel?studentCount=1&checkoutRequestKey=request_a';
+    account.pendingPlanCode = 'BAND_001_025';
+    await expect(cancelPlatformBillingCheckoutReturn({ contaId: 'conta_a', environment: 'TEST', actorUserId: 'user_a', idempotencyKey: 'request_a', envSource }, {
+      store, stripeGateway,
+    })).resolves.toBe('CANCELED');
+    expect(stripeGateway.expireCheckoutSession).toHaveBeenCalledWith('cs_a');
+    expect(account).toMatchObject({ checkoutClaimKey: null, checkoutClaimPhase: null });
+    expect(updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ contaId: 'conta_a', environment: 'TEST', checkoutClaimKey: 'request_a' }),
+    }));
+    await expect(store.markCheckoutPending({
+      accountId: 'billing_legacy', contaId: 'conta_a', environment: 'TEST', planCode: 'PREMIUM',
+      idempotencyKey: 'request_b', pendingChangeType: null,
+    })).resolves.toMatchObject({ checkoutClaimKey: 'request_b', checkoutClaimPhase: 'CLAIMED' });
+  });
+
+  it('classifies a still active Stripe subscription as a duplicate checkout blocker', async () => {
+    const account = {
+      id: 'billing_active', contaId: 'conta_a', environment: 'TEST', status: 'ACTIVE',
+      stripeSubscriptionId: 'sub_active', checkoutClaimKey: null, checkoutClaimPhase: null,
+    };
+    const store = createPrismaPlatformBillingStore({
+      platformBillingAccount: {
+        updateMany: vi.fn(async () => ({ count: 0 })),
+        findUniqueOrThrow: vi.fn(async () => account),
+      },
+    } as never);
+
+    await expect(store.markCheckoutPending({
+      accountId: 'billing_active', contaId: 'conta_a', environment: 'TEST', planCode: 'PREMIUM',
+      idempotencyKey: 'request_new', pendingChangeType: null,
+    })).rejects.toMatchObject({ code: 'PLATFORM_BILLING_SUBSCRIPTION_ALREADY_EXISTS' });
+  });
+
+  it('keeps the tenant claim when Stripe cannot confirm or expire the session, and duplicate returns converge', async () => {
+    const accountRecord = buildCheckoutReturnAccount();
+    const sessionRecord = buildCheckoutReturnSession();
+    const clearCheckoutClaim = vi.fn(async () => true);
+    const findAccount = vi.fn(async ({ contaId }: { contaId: string }) => contaId === 'conta_a'
+      ? accountRecord
+      : null);
+    const store = {
+      findAccount,
+      findCheckoutSessionByIdempotencyKey: vi.fn(async ({ contaId }: { contaId: string }) => contaId === 'conta_a'
+        ? sessionRecord
+        : null),
+      clearCheckoutClaim,
+      markCheckoutSessionExpired: vi.fn(async () => undefined),
+      createAuditLog: vi.fn(),
+    } as unknown as PlatformBillingStore;
+    const gateway = {
+      retrieveCheckoutSession: vi.fn(async () => { throw new Error('Stripe unavailable'); }),
+      expireCheckoutSession: vi.fn(),
+    } as unknown as PlatformBillingStripeGateway;
+    await expect(cancelPlatformBillingCheckoutReturn({ contaId: 'conta_a', environment: 'TEST', actorUserId: 'user_a', idempotencyKey: 'request-a', envSource }, { store, stripeGateway: gateway })).rejects.toThrow('Stripe unavailable');
+    expect(clearCheckoutClaim).not.toHaveBeenCalled();
+    expect(await cancelPlatformBillingCheckoutReturn({ contaId: 'conta_b', environment: 'TEST', actorUserId: 'user_b', idempotencyKey: 'request-b' }, { store, stripeGateway: gateway })).toBe('ALREADY_CANCELED');
+    expect(findAccount).toHaveBeenLastCalledWith({ contaId: 'conta_b', environment: 'TEST' });
+  });
+
+  it('cancels only the selected Conta claim and session when two tenants have open Checkouts', async () => {
+    const accounts = {
+      conta_a: buildCheckoutReturnAccount('conta_a', 'billing_a', 'request-a'),
+      conta_b: buildCheckoutReturnAccount('conta_b', 'billing_b', 'request-b'),
+    };
+    const sessions = {
+      'conta_a:request-a': buildCheckoutReturnSession('conta_a', 'billing_a', 'request-a'),
+      'conta_b:request-b': buildCheckoutReturnSession('conta_b', 'billing_b', 'request-b'),
+    };
+    const clearCheckoutClaim = vi.fn(async ({ contaId, idempotencyKey }: { contaId: keyof typeof accounts; idempotencyKey: string }) => {
+      const account = accounts[contaId];
+      if (account.checkoutClaimKey !== idempotencyKey) return false;
+      account.checkoutClaimKey = null;
+      return true;
+    });
+    const createAuditLog = vi.fn();
+    const store = {
+      findAccount: vi.fn(async ({ contaId }: { contaId: keyof typeof accounts }) => accounts[contaId]),
+      findCheckoutSessionByIdempotencyKey: vi.fn(async ({ contaId, idempotencyKey }: { contaId: keyof typeof accounts; idempotencyKey: string }) => sessions[`${contaId}:${idempotencyKey}` as keyof typeof sessions]),
+      clearCheckoutClaim,
+      markCheckoutSessionExpired: vi.fn(async () => undefined),
+      createAuditLog,
+    } as unknown as PlatformBillingStore;
+    let remoteStatus = 'open';
+    const retrieveCheckoutSession = vi.fn(async (id: string) => checkoutRemote(sessions[`conta_a:request-a`], id, remoteStatus));
+    const expireCheckoutSession = vi.fn(async (_id: string) => { remoteStatus = 'expired'; });
+    const result = await cancelPlatformBillingCheckoutReturn({ contaId: 'conta_a', environment: 'TEST', actorUserId: 'user_a', idempotencyKey: 'request-a', envSource }, {
+      store,
+      stripeGateway: { retrieveCheckoutSession, expireCheckoutSession } as unknown as PlatformBillingStripeGateway,
+    });
+
+    expect(result).toBe('CANCELED');
+    expect(retrieveCheckoutSession).toHaveBeenCalledTimes(3);
+    expect(retrieveCheckoutSession).toHaveBeenCalledWith('cs_conta_a');
+    expect(expireCheckoutSession).toHaveBeenCalledTimes(1);
+    expect(expireCheckoutSession).toHaveBeenCalledWith('cs_conta_a');
+    expect(clearCheckoutClaim).toHaveBeenCalledTimes(1);
+    expect(clearCheckoutClaim).toHaveBeenCalledWith({ contaId: 'conta_a', environment: 'TEST', idempotencyKey: 'request-a' });
+    expect(accounts.conta_a.checkoutClaimKey).toBeNull();
+    expect(accounts.conta_b.checkoutClaimKey).toBe('request-b');
+    expect(createAuditLog).toHaveBeenCalledTimes(1);
+    expect(createAuditLog).toHaveBeenCalledWith(expect.objectContaining({ contaId: 'conta_a', billingAccountId: 'billing_a' }));
+  });
+
+  it('keeps the claim and skips audit for an unexpected Stripe Checkout status', async () => {
+    const clearCheckoutClaim = vi.fn(async () => true);
+    const createAuditLog = vi.fn();
+    const account = buildCheckoutReturnAccount();
+    const checkout = buildCheckoutReturnSession();
+    const result = await cancelPlatformBillingCheckoutReturn({ contaId: 'conta_a', environment: 'TEST', actorUserId: 'user_a', idempotencyKey: 'request-a', envSource }, {
+      store: {
+        findAccount: vi.fn(async () => account),
+        findCheckoutSessionByIdempotencyKey: vi.fn(async () => checkout),
+        clearCheckoutClaim,
+        markCheckoutSessionExpired: vi.fn(async () => undefined),
+        createAuditLog,
+      } as unknown as PlatformBillingStore,
+      stripeGateway: {
+        retrieveCheckoutSession: vi.fn(async () => checkoutRemote(checkout, checkout.stripeCheckoutSessionId, 'processing')),
+        expireCheckoutSession: vi.fn(),
+      } as unknown as PlatformBillingStripeGateway,
+    });
+    expect(result).toBe('PENDING');
+    expect(clearCheckoutClaim).not.toHaveBeenCalled();
+    expect(createAuditLog).not.toHaveBeenCalled();
+  });
+
+  it('ignores delayed cancel return for replaced request A while request B remains payable', async () => {
+    const account = buildCheckoutReturnAccount('conta_a', 'billing_a', 'request-b');
+    const checkout = buildCheckoutReturnSession('conta_a', 'billing_a', 'request-b');
+    const retrieveCheckoutSession = vi.fn(async () => checkoutRemote(checkout));
+    const expireCheckoutSession = vi.fn();
+    const clearCheckoutClaim = vi.fn();
+    const markCheckoutSessionExpired = vi.fn();
+    const result = await cancelPlatformBillingCheckoutReturn({
+      contaId: 'conta_a', environment: 'TEST', actorUserId: 'user_a', idempotencyKey: 'request-a', envSource,
+    }, {
+      store: {
+        findAccount: vi.fn(async () => account),
+        findCheckoutSessionByIdempotencyKey: vi.fn(async () => checkout),
+        clearCheckoutClaim,
+        markCheckoutSessionExpired,
+        createAuditLog: vi.fn(),
+      } as unknown as PlatformBillingStore,
+      stripeGateway: { retrieveCheckoutSession, expireCheckoutSession } as unknown as PlatformBillingStripeGateway,
+    });
+
+    expect(result).toBe('STALE');
+    expect(account.checkoutClaimKey).toBe('request-b');
+    expect(checkout.status).toBe('CREATED');
+    expect(retrieveCheckoutSession).not.toHaveBeenCalled();
+    expect(expireCheckoutSession).not.toHaveBeenCalled();
+    expect(markCheckoutSessionExpired).not.toHaveBeenCalled();
+    expect(clearCheckoutClaim).not.toHaveBeenCalled();
+  });
+
+  it('does not process a key when the persisted session cancel URL has no matching request identity', async () => {
+    const account = buildCheckoutReturnAccount();
+    const checkout = buildCheckoutReturnSession();
+    checkout.cancelUrl = 'https://app.alusa.test/cancel?studentCount=1';
+    const retrieveCheckoutSession = vi.fn();
+    const expireCheckoutSession = vi.fn();
+    const clearCheckoutClaim = vi.fn();
+    const markCheckoutSessionExpired = vi.fn();
+
+    const result = await cancelPlatformBillingCheckoutReturn({
+      contaId: 'conta_a', environment: 'TEST', actorUserId: 'user_a', idempotencyKey: 'request-a', envSource,
+    }, {
+      store: {
+        findAccount: vi.fn(async () => account),
+        findCheckoutSessionByIdempotencyKey: vi.fn(async () => checkout),
+        clearCheckoutClaim,
+        markCheckoutSessionExpired,
+        createAuditLog: vi.fn(),
+      } as unknown as PlatformBillingStore,
+      stripeGateway: { retrieveCheckoutSession, expireCheckoutSession } as unknown as PlatformBillingStripeGateway,
+    });
+
+    expect(result).toBe('STALE');
+    expect(retrieveCheckoutSession).not.toHaveBeenCalled();
+    expect(expireCheckoutSession).not.toHaveBeenCalled();
+    expect(markCheckoutSessionExpired).not.toHaveBeenCalled();
+    expect(clearCheckoutClaim).not.toHaveBeenCalled();
+  });
+
+  it('does not release the claim when the final pre-clear Stripe read is not expired', async () => {
+    const account = buildCheckoutReturnAccount();
+    const checkout = buildCheckoutReturnSession();
+    const statuses = ['open', 'expired', 'open'];
+    const retrieveCheckoutSession = vi.fn(async () => checkoutRemote(checkout, checkout.stripeCheckoutSessionId, statuses.shift() ?? 'open'));
+    const expireCheckoutSession = vi.fn(async () => undefined);
+    const clearCheckoutClaim = vi.fn();
+    const markCheckoutSessionExpired = vi.fn();
+    const result = await cancelPlatformBillingCheckoutReturn({
+      contaId: 'conta_a', environment: 'TEST', actorUserId: 'user_a', idempotencyKey: 'request-a', envSource,
+    }, {
+      store: {
+        findAccount: vi.fn(async () => account),
+        findCheckoutSessionByIdempotencyKey: vi.fn(async () => checkout),
+        clearCheckoutClaim,
+        markCheckoutSessionExpired,
+        createAuditLog: vi.fn(),
+      } as unknown as PlatformBillingStore,
+      stripeGateway: { retrieveCheckoutSession, expireCheckoutSession } as unknown as PlatformBillingStripeGateway,
+    });
+
+    expect(result).toBe('PENDING');
+    expect(retrieveCheckoutSession).toHaveBeenCalledTimes(3);
+    expect(markCheckoutSessionExpired).not.toHaveBeenCalled();
+    expect(clearCheckoutClaim).not.toHaveBeenCalled();
+  });
+
+  it.each(['tenant', 'customer', 'environment', 'price'] as const)(
+    'does not expire or release a cancel-return claim when the remote %s binding mismatches', async (mismatch) => {
+      const account = buildCheckoutReturnAccount();
+      const checkout = buildCheckoutReturnSession();
+      const remote = checkoutRemote(checkout);
+      if (mismatch === 'tenant') remote.metadata.contaId = 'another-tenant';
+      if (mismatch === 'customer') remote.customerId = 'cus_another';
+      if (mismatch === 'environment') remote.livemode = true;
+      if (mismatch === 'price') remote.priceIds = ['price_premium_test'];
+      const expireCheckoutSession = vi.fn();
+      const clearCheckoutClaim = vi.fn();
+      const result = await cancelPlatformBillingCheckoutReturn({
+        contaId: 'conta_a', environment: 'TEST', actorUserId: 'user_a', idempotencyKey: 'request-a', envSource,
+      }, {
+        store: {
+          findAccount: vi.fn(async () => account),
+          findCheckoutSessionByIdempotencyKey: vi.fn(async () => checkout),
+          clearCheckoutClaim,
+          markCheckoutSessionExpired: vi.fn(),
+          createAuditLog: vi.fn(),
+        } as unknown as PlatformBillingStore,
+        stripeGateway: {
+          retrieveCheckoutSession: vi.fn(async () => remote),
+          expireCheckoutSession,
+        } as unknown as PlatformBillingStripeGateway,
+      });
+
+      expect(result).toBe('PENDING');
+      expect(expireCheckoutSession).not.toHaveBeenCalled();
+      expect(clearCheckoutClaim).not.toHaveBeenCalled();
+    },
+  );
+
+  it('retries after an ambiguous expire timeout and clears only after Stripe reports expired', async () => {
+    const accountRecord = buildCheckoutReturnAccount();
+    const sessionRecord = buildCheckoutReturnSession();
+    sessionRecord.stripeCheckoutSessionId = 'cs_a';
+    let remoteStatus = 'open';
+    let claimActive = true;
+    let confirmationReadFailed = false;
+    const clearCheckoutClaim = vi.fn(async () => {
+      if (!claimActive) return false;
+      claimActive = false;
+      return true;
+    });
+    const store = {
+      findAccount: vi.fn(async () => claimActive
+        ? accountRecord
+        : { ...accountRecord, checkoutClaimKey: null, checkoutClaimPhase: null }),
+      findCheckoutSessionByIdempotencyKey: vi.fn(async () => sessionRecord),
+      clearCheckoutClaim,
+      markCheckoutSessionExpired: vi.fn(async () => undefined),
+      createAuditLog: vi.fn(),
+    } as unknown as PlatformBillingStore;
+    const stripeGateway = {
+      retrieveCheckoutSession: vi.fn(async () => {
+        if (remoteStatus === 'expired' && !confirmationReadFailed) {
+          confirmationReadFailed = true;
+          throw new Error('Stripe confirmation temporarily unavailable');
+        }
+        return checkoutRemote(sessionRecord, 'cs_a', remoteStatus);
+      }),
+      expireCheckoutSession: vi.fn(async () => {
+        remoteStatus = 'expired';
+        throw new Error('timeout after Stripe may have expired the session');
+      }),
+    } as unknown as PlatformBillingStripeGateway;
+    const input = { contaId: 'conta_a', environment: 'TEST' as const, actorUserId: 'user_a', idempotencyKey: 'request-a', envSource };
+    await expect(cancelPlatformBillingCheckoutReturn(input, { store, stripeGateway })).rejects.toThrow('confirmation temporarily unavailable');
+    expect(clearCheckoutClaim).not.toHaveBeenCalled();
+    expect(await cancelPlatformBillingCheckoutReturn(input, { store, stripeGateway })).toBe('CANCELED');
+    expect(clearCheckoutClaim).toHaveBeenCalledTimes(1);
+  });
+
+  it('converges concurrent same-tenant returns with one claim clear and one audit', async () => {
+    const accountRecord = buildCheckoutReturnAccount();
+    const sessionRecord = buildCheckoutReturnSession();
+    sessionRecord.stripeCheckoutSessionId = 'cs_a';
+    let claimActive = true;
+    let initialReads = 0;
+    let releaseInitialReads!: () => void;
+    const initialReadsReady = new Promise<void>((resolve) => { releaseInitialReads = resolve; });
+    let expired = false;
+    let expireCalls = 0;
+    const audit = vi.fn();
+    const clearCheckoutClaim = vi.fn(async () => {
+      if (!claimActive) return false;
+      claimActive = false;
+      return true;
+    });
+    const store = {
+      findAccount: vi.fn(async () => accountRecord),
+      findCheckoutSessionByIdempotencyKey: vi.fn(async () => sessionRecord),
+      clearCheckoutClaim,
+      markCheckoutSessionExpired: vi.fn(async () => undefined),
+      createAuditLog: audit,
+    } as unknown as PlatformBillingStore;
+    const stripeGateway = {
+      retrieveCheckoutSession: vi.fn(async () => {
+        initialReads += 1;
+        if (initialReads <= 2) {
+          if (initialReads === 2) releaseInitialReads();
+          await initialReadsReady;
+          return checkoutRemote(sessionRecord, 'cs_a', 'open');
+        }
+        return checkoutRemote(sessionRecord, 'cs_a', expired ? 'expired' : 'open');
+      }),
+      expireCheckoutSession: vi.fn(async () => {
+        expireCalls += 1;
+        if (expired) throw new Error('Checkout Session is no longer open');
+        expired = true;
+        if (expireCalls > 1) throw new Error('Checkout Session is no longer open');
+      }),
+    } as unknown as PlatformBillingStripeGateway;
+    const input = { contaId: 'conta_a', environment: 'TEST' as const, actorUserId: 'user_a', idempotencyKey: 'request-a', envSource };
+    await expect(Promise.all([
+      cancelPlatformBillingCheckoutReturn(input, { store, stripeGateway }),
+      cancelPlatformBillingCheckoutReturn(input, { store, stripeGateway }),
+    ])).resolves.toEqual(['CANCELED', 'CANCELED']);
+    expect(clearCheckoutClaim).toHaveBeenCalledTimes(2);
+    expect(audit).toHaveBeenCalledTimes(1);
+    expect(stripeGateway.expireCheckoutSession).toHaveBeenCalledTimes(2);
+    expect(stripeGateway.retrieveCheckoutSession).toHaveBeenCalledTimes(6);
+  });
+
   it('binds the Checkout subscription only to the matching Conta, customer and request claim', async () => {
     const updateMany = vi.fn(async () => ({ count: 1 }));
     const store = createPrismaPlatformBillingStore({
@@ -107,7 +578,7 @@ describe('@alusa/platform-billing use cases', () => {
 
   it('simulated PrismaStore contention lets only one distinct checkout key reach Stripe', async () => {
     const account: Record<string, unknown> = {
-      id: 'pba_prisma', contaId: 'conta_prisma', environment: 'TEST', status: 'NOT_STARTED',
+      id: 'pba_prisma', contaId: 'conta_1', environment: 'TEST', status: 'NOT_STARTED',
       planCode: null, stripeCustomerId: 'cus_prisma', stripeSubscriptionId: null, stripePriceId: null,
       currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: null, trialWillEndNotifiedAt: null,
       accessStatus: 'PENDING', gracePeriodEndsAt: null, restrictedAt: null, canceledAt: null,
@@ -146,8 +617,8 @@ describe('@alusa/platform-billing use cases', () => {
     const stripeGateway = createStripeGatewayMock();
     const input = buildCheckoutInput();
     const results = await Promise.allSettled([
-      createPlatformBillingCheckoutSession({ ...input, idempotencyKey: 'prisma-key-a' }, { store, stripeGateway }),
-      createPlatformBillingCheckoutSession({ ...input, idempotencyKey: 'prisma-key-b', planCode: 'PREMIUM' }, { store, stripeGateway }),
+      createPlatformBillingCheckoutSession(checkoutInputWithKey('prisma-key-a'), { store, stripeGateway }),
+      createPlatformBillingCheckoutSession(checkoutInputWithKey('prisma-key-b', { planCode: 'PREMIUM' }), { store, stripeGateway }),
     ]);
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
@@ -445,9 +916,9 @@ describe('@alusa/platform-billing use cases', () => {
         contaId: 'conta_1',
         contaName: 'Escola Alusa',
         billingEmail: 'financeiro@escola.test',
-        planCode: 'STARTER',
+        planCode: 'BAND_001_025',
         successUrl: 'https://app.alusa.test/billing/success',
-        cancelUrl: 'https://app.alusa.test/billing/cancel',
+        cancelUrl: 'https://app.alusa.test/billing/cancel?checkoutRequestKey=idem_1',
         actorUserId: 'user_1',
         idempotencyKey: 'idem_1',
         envSource,
@@ -462,14 +933,14 @@ describe('@alusa/platform-billing use cases', () => {
       expect.objectContaining({
         customerId: 'cus_test_1',
         priceId: 'price_starter_test',
-        trialDays: 14,
+        trialDays: null,
         idempotencyKey: 'alusa:TEST:conta_1:checkout:idem_1',
       }),
     );
     expect(store.auditLogs).toHaveLength(1);
     expect(store.accounts[0]?.status).toBe('CHECKOUT_PENDING');
     expect(store.accounts[0]?.planCode).toBeNull();
-    expect(store.accounts[0]?.pendingPlanCode).toBe('STARTER');
+    expect(store.accounts[0]?.pendingPlanCode).toBe('BAND_001_025');
   });
 
   it('nao reaplica trial quando conta ja teve assinatura Stripe', async () => {
@@ -499,6 +970,11 @@ describe('@alusa/platform-billing use cases', () => {
       },
     ]);
     const stripeGateway = createStripeGatewayMock();
+    stripeGateway.retrieveSubscription = vi.fn(async () => ({
+      id: 'sub_old_1', customerId: 'cus_test_1', status: 'canceled', priceId: 'price_starter_test',
+      currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: null, pendingUpdateId: null,
+    }));
+    stripeGateway.retrieveCustomer = vi.fn(async () => ({ id: 'cus_test_1', deleted: false }));
 
     await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
 
@@ -516,6 +992,368 @@ describe('@alusa/platform-billing use cases', () => {
     expect(store.auditLogs[0]?.action).toBe('PLATFORM_BILLING_REACTIVATION_CHECKOUT_SESSION_CREATED');
   });
 
+  it('blocks reactivation when the linked Stripe subscription is still active despite local CANCELED status', async () => {
+    const store = createMemoryStore([{
+      id: 'pba_legacy', contaId: 'conta_1', environment: 'TEST', status: 'CANCELED',
+      planCode: 'BAND_026_050', stripeCustomerId: 'cus_test_1', stripeSubscriptionId: 'sub_active',
+      stripePriceId: 'price_premium_test', currentPeriodEnd: null, cancelAtPeriodEnd: false,
+      trialEndsAt: null, trialWillEndNotifiedAt: null, accessStatus: 'CANCELED',
+      gracePeriodEndsAt: null, restrictedAt: null, canceledAt: null, lastPaymentFailedAt: null,
+      lastReconciledAt: null, pendingPlanCode: null, pendingChangeType: null, pendingChangeEffectiveAt: null,
+    }]);
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.listCustomerSubscriptions = vi.fn(async () => ({
+      complete: true,
+      subscriptions: [{
+        id: 'sub_active', customerId: 'cus_test_1', status: 'active', livemode: false,
+        metadata: { contaId: 'conta_1', billingContext: 'platform', planCode: 'BAND_026_050' },
+        priceIds: ['price_premium_test'],
+      }],
+    }));
+
+    await expect(createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway }))
+      .rejects.toMatchObject({ code: 'PLATFORM_BILLING_SUBSCRIPTION_ALREADY_EXISTS' });
+    expect(stripeGateway.createCheckoutSession).not.toHaveBeenCalled();
+    expect(store.checkoutSessions).toHaveLength(0);
+  });
+
+  it('fails closed when the customer has multiple validated nonterminal subscriptions', async () => {
+    const store = createMemoryStore([{
+      id: 'pba_legacy', contaId: 'conta_1', environment: 'TEST', status: 'CANCELED',
+      planCode: 'BAND_026_050', stripeCustomerId: 'cus_test_1', stripeSubscriptionId: null,
+      stripePriceId: null, currentPeriodEnd: null, cancelAtPeriodEnd: false,
+      trialEndsAt: null, trialWillEndNotifiedAt: null, accessStatus: 'CANCELED',
+      gracePeriodEndsAt: null, restrictedAt: null, canceledAt: null, lastPaymentFailedAt: null,
+      lastReconciledAt: null, pendingPlanCode: null, pendingChangeType: null, pendingChangeEffectiveAt: null,
+    }]);
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.listCustomerSubscriptions = vi.fn(async () => ({
+      complete: true,
+      subscriptions: ['sub_a', 'sub_b'].map((id) => ({
+        id, customerId: 'cus_test_1', status: 'active', livemode: false,
+        metadata: { contaId: 'conta_1', billingContext: 'platform', planCode: 'BAND_026_050' },
+        priceIds: ['price_premium_test'],
+      })),
+    }));
+
+    await expect(createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway }))
+      .rejects.toMatchObject({ code: 'PLATFORM_BILLING_CHECKOUT_RECONCILIATION_REQUIRED' });
+    expect(stripeGateway.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it('recupera customer Stripe legado verificado para reativar sem criar duplicata', async () => {
+    const store = createMemoryStore([{
+      id: 'pba_legacy', contaId: 'conta_1', environment: 'TEST', status: 'CANCELED',
+      planCode: 'PREMIUM', stripeCustomerId: null, stripeSubscriptionId: 'sub_legacy',
+      stripePriceId: 'price_premium_test', currentPeriodEnd: null, cancelAtPeriodEnd: false,
+      trialEndsAt: null, trialWillEndNotifiedAt: null, accessStatus: 'CANCELED',
+      gracePeriodEndsAt: null, restrictedAt: null, canceledAt: null, lastPaymentFailedAt: null,
+      pendingPlanCode: null, pendingChangeType: null, pendingChangeEffectiveAt: null,
+    }]);
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.retrieveSubscription = vi.fn(async () => ({
+      id: 'sub_legacy', customerId: 'cus_legacy', status: 'canceled', priceId: 'price_premium_test',
+      currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: null, pendingUpdateId: null,
+    }));
+    stripeGateway.retrieveCustomer = vi.fn(async () => ({ id: 'cus_legacy', deleted: false }));
+
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+
+    expect(stripeGateway.retrieveSubscription).toHaveBeenCalledWith('sub_legacy');
+    expect(stripeGateway.retrieveCustomer).toHaveBeenCalledWith('cus_legacy');
+    expect(stripeGateway.createCustomer).not.toHaveBeenCalled();
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({ customerId: 'cus_legacy' }));
+    expect(store.accounts[0]?.stripeCustomerId).toBe('cus_legacy');
+  });
+
+  it('recupera customer legado para qualquer estado elegivel de reativacao', async () => {
+    const store = createMemoryStore([{
+      id: 'pba_legacy', contaId: 'conta_1', environment: 'TEST', status: 'INCOMPLETE',
+      planCode: 'PREMIUM', stripeCustomerId: null, stripeSubscriptionId: 'sub_legacy',
+      stripePriceId: 'price_premium_test', currentPeriodEnd: null, cancelAtPeriodEnd: false,
+      trialEndsAt: null, trialWillEndNotifiedAt: null, accessStatus: 'CANCELED',
+      gracePeriodEndsAt: null, restrictedAt: null, canceledAt: null, lastPaymentFailedAt: null,
+      pendingPlanCode: null, pendingChangeType: null, pendingChangeEffectiveAt: null,
+    }]);
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.retrieveSubscription = vi.fn(async () => ({
+      id: 'sub_legacy', customerId: 'cus_legacy', status: 'canceled', priceId: 'price_premium_test',
+      currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: null, pendingUpdateId: null,
+    }));
+    stripeGateway.retrieveCustomer = vi.fn(async () => ({ id: 'cus_legacy', deleted: false }));
+
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+
+    expect(stripeGateway.retrieveSubscription).toHaveBeenCalledWith('sub_legacy');
+    expect(stripeGateway.createCustomer).not.toHaveBeenCalled();
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({ customerId: 'cus_legacy' }));
+    expect(store.accounts[0]?.stripeCustomerId).toBe('cus_legacy');
+  });
+
+  it.each(['subscription', 'customer'] as const)(
+    'mantem retry seguro quando a leitura Stripe do %s falha transitoriamente',
+    async (failedRead) => {
+      const store = createMemoryStore([{
+        id: 'pba_legacy', contaId: 'conta_1', environment: 'TEST', status: 'CANCELED',
+        planCode: 'PREMIUM', stripeCustomerId: null, stripeSubscriptionId: 'sub_legacy',
+        stripePriceId: 'price_premium_test', currentPeriodEnd: null, cancelAtPeriodEnd: false,
+        trialEndsAt: null, trialWillEndNotifiedAt: null, accessStatus: 'CANCELED',
+        gracePeriodEndsAt: null, restrictedAt: null, canceledAt: null, lastPaymentFailedAt: null,
+        pendingPlanCode: null, pendingChangeType: null, pendingChangeEffectiveAt: null,
+      }]);
+      const stripeGateway = createStripeGatewayMock();
+      stripeGateway.retrieveSubscription = vi.fn(async () => ({
+        id: 'sub_legacy', customerId: 'cus_legacy', status: 'canceled', priceId: 'price_premium_test',
+        currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: null, pendingUpdateId: null,
+      }));
+      stripeGateway.retrieveCustomer = vi.fn(async () => ({ id: 'cus_legacy', deleted: false }));
+      const transientRead = failedRead === 'subscription'
+        ? stripeGateway.retrieveSubscription
+        : stripeGateway.retrieveCustomer;
+      transientRead.mockRejectedValueOnce(new Error('temporary Stripe read failure'));
+
+      await expect(createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway }))
+        .rejects.toThrow('temporary Stripe read failure');
+      expect(store.accounts[0]?.stripeCustomerId).toBeNull();
+      expect(stripeGateway.createCustomer).not.toHaveBeenCalled();
+      expect(stripeGateway.createCheckoutSession).not.toHaveBeenCalled();
+
+      await expect(createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway }))
+        .resolves.toMatchObject({ reused: false });
+      expect(store.accounts[0]?.stripeCustomerId).toBe('cus_legacy');
+      expect(stripeGateway.createCustomer).not.toHaveBeenCalled();
+      expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('bloqueia recuperacao quando a assinatura legada ainda nao esta cancelada', async () => {
+    const store = createMemoryStore([{
+      id: 'pba_legacy', contaId: 'conta_1', environment: 'TEST', status: 'CANCELED',
+      planCode: 'PREMIUM', stripeCustomerId: null, stripeSubscriptionId: 'sub_legacy',
+      stripePriceId: 'price_premium_test', currentPeriodEnd: null, cancelAtPeriodEnd: false,
+      trialEndsAt: null, trialWillEndNotifiedAt: null, accessStatus: 'CANCELED',
+      gracePeriodEndsAt: null, restrictedAt: null, canceledAt: null, lastPaymentFailedAt: null,
+      pendingPlanCode: null, pendingChangeType: null, pendingChangeEffectiveAt: null,
+    }]);
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.retrieveSubscription = vi.fn(async () => ({
+      id: 'sub_legacy', customerId: 'cus_legacy', status: 'active', priceId: 'price_premium_test',
+      currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: null, pendingUpdateId: null,
+    }));
+
+    await expect(createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway }))
+      .rejects.toMatchObject({ code: 'PLATFORM_BILLING_CUSTOMER_RECOVERY_UNSAFE' });
+
+    expect(stripeGateway.retrieveCustomer).not.toHaveBeenCalled();
+    expect(stripeGateway.createCustomer).not.toHaveBeenCalled();
+    expect(stripeGateway.createCheckoutSession).not.toHaveBeenCalled();
+    expect(store.accounts[0]?.stripeCustomerId).toBeNull();
+  });
+
+  it('bloqueia trial expirado com assinatura ainda em trial quando falta customer local', async () => {
+    const store = createMemoryStore([{
+      id: 'pba_trial', contaId: 'conta_1', environment: 'TEST', status: 'TRIALING',
+      planCode: 'BAND_001_025', stripeCustomerId: null, stripeSubscriptionId: 'sub_trial',
+      stripePriceId: 'price_starter_test', currentPeriodEnd: null, cancelAtPeriodEnd: false,
+      trialEndsAt: new Date(Date.now() - 60_000), trialWillEndNotifiedAt: null,
+      accessStatus: 'RESTRICTED', gracePeriodEndsAt: null, restrictedAt: new Date(), canceledAt: null,
+      lastPaymentFailedAt: null, firstPaidAt: null, lastSuccessfulPaymentAt: null,
+      pendingPlanCode: null, pendingChangeType: null, pendingChangeEffectiveAt: null,
+    }]);
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.retrieveSubscription = vi.fn(async () => ({
+      id: 'sub_trial', customerId: 'cus_trial', status: 'trialing', priceId: 'price_starter_test',
+      currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: new Date(Date.now() + 60_000),
+      pendingUpdateId: null,
+    }));
+
+    await expect(createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway }))
+      .rejects.toMatchObject({ code: 'PLATFORM_BILLING_CUSTOMER_RECOVERY_UNSAFE' });
+
+    expect(stripeGateway.retrieveCustomer).not.toHaveBeenCalled();
+    expect(stripeGateway.createCustomer).not.toHaveBeenCalled();
+    expect(stripeGateway.createCheckoutSession).not.toHaveBeenCalled();
+    expect(store.accounts[0]?.stripeCustomerId).toBeNull();
+  });
+
+  it('recupera customer para trial expirado pausado confirmado pela Stripe', async () => {
+    const expiredAt = new Date(Date.now() - 60_000);
+    const store = createMemoryStore([{
+      id: 'pba_trial', contaId: 'conta_1', environment: 'TEST', status: 'PAUSED',
+      planCode: 'BAND_001_025', stripeCustomerId: null, stripeSubscriptionId: 'sub_trial',
+      stripePriceId: 'price_starter_test', currentPeriodEnd: null, cancelAtPeriodEnd: false,
+      trialEndsAt: expiredAt, trialWillEndNotifiedAt: null, accessStatus: 'RESTRICTED',
+      gracePeriodEndsAt: null, restrictedAt: expiredAt, canceledAt: null, lastPaymentFailedAt: null,
+      firstPaidAt: null, lastSuccessfulPaymentAt: null,
+      pendingPlanCode: null, pendingChangeType: null, pendingChangeEffectiveAt: null,
+    }]);
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.retrieveSubscription = vi.fn(async () => ({
+      id: 'sub_trial', customerId: 'cus_trial', status: 'paused', priceId: 'price_starter_test',
+      currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: expiredAt, pendingUpdateId: null,
+    }));
+    stripeGateway.retrieveCustomer = vi.fn(async () => ({ id: 'cus_trial', deleted: false }));
+
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+
+    expect(stripeGateway.createCustomer).not.toHaveBeenCalled();
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({ customerId: 'cus_trial' }));
+    expect(store.accounts[0]?.stripeCustomerId).toBe('cus_trial');
+  });
+
+  it('bloqueia customer recuperado com id diferente da assinatura', async () => {
+    const store = createMemoryStore([{
+      id: 'pba_legacy', contaId: 'conta_1', environment: 'TEST', status: 'CANCELED',
+      planCode: 'PREMIUM', stripeCustomerId: null, stripeSubscriptionId: 'sub_legacy',
+      stripePriceId: 'price_premium_test', currentPeriodEnd: null, cancelAtPeriodEnd: false,
+      trialEndsAt: null, trialWillEndNotifiedAt: null, accessStatus: 'CANCELED',
+      gracePeriodEndsAt: null, restrictedAt: null, canceledAt: null, lastPaymentFailedAt: null,
+      pendingPlanCode: null, pendingChangeType: null, pendingChangeEffectiveAt: null,
+    }]);
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.retrieveSubscription = vi.fn(async () => ({
+      id: 'sub_legacy', customerId: 'cus_expected', status: 'canceled', priceId: 'price_premium_test',
+      currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: null, pendingUpdateId: null,
+    }));
+    stripeGateway.retrieveCustomer = vi.fn(async () => ({ id: 'cus_other', deleted: false }));
+
+    await expect(createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway }))
+      .rejects.toMatchObject({ code: 'PLATFORM_BILLING_CUSTOMER_RECOVERY_UNSAFE' });
+
+    expect(stripeGateway.createCustomer).not.toHaveBeenCalled();
+    expect(stripeGateway.createCheckoutSession).not.toHaveBeenCalled();
+    expect(store.accounts[0]?.stripeCustomerId).toBeNull();
+  });
+
+  it('associa customer legado concorrente a no maximo uma conta', async () => {
+    const buildLegacyAccount = (id: string, contaId: string, subscriptionId: string): PlatformBillingAccountRecord => ({
+      id, contaId, environment: 'TEST', status: 'CANCELED', planCode: 'PREMIUM',
+      stripeCustomerId: null, stripeSubscriptionId: subscriptionId, stripePriceId: 'price_premium_test',
+      currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: null, trialWillEndNotifiedAt: null,
+      accessStatus: 'CANCELED', gracePeriodEndsAt: null, restrictedAt: null, canceledAt: null,
+      lastPaymentFailedAt: null, lastReconciledAt: null, pendingPlanCode: null, pendingChangeType: null,
+      pendingChangeEffectiveAt: null,
+    });
+    const store = createMemoryStore([
+      buildLegacyAccount('pba_a', 'conta_a', 'sub_a'),
+      buildLegacyAccount('pba_b', 'conta_b', 'sub_b'),
+    ]);
+    store.attachCustomer = vi.fn(async ({ accountId, stripeCustomerId }) => {
+      const alreadyLinked = store.accounts.find((account) =>
+        account.id !== accountId && account.environment === 'TEST' && account.stripeCustomerId === stripeCustomerId,
+      );
+      if (alreadyLinked) throw new Error('unique Stripe customer association conflict');
+      const account = store.accounts.find((item) => item.id === accountId);
+      if (!account) throw new Error('account not found');
+      account.stripeCustomerId = stripeCustomerId;
+      return account;
+    });
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.retrieveSubscription = vi.fn(async (subscriptionId: string) => ({
+      id: subscriptionId, customerId: 'cus_shared_legacy', status: 'canceled', priceId: 'price_premium_test',
+      currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: null, pendingUpdateId: null,
+    }));
+    stripeGateway.retrieveCustomer = vi.fn(async () => ({ id: 'cus_shared_legacy', deleted: false }));
+
+    const results = await Promise.allSettled([
+      createPlatformBillingCheckoutSession({ ...buildCheckoutInput(), contaId: 'conta_a' }, { store, stripeGateway }),
+      createPlatformBillingCheckoutSession({ ...buildCheckoutInput(), contaId: 'conta_b' }, { store, stripeGateway }),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect(store.accounts.filter((account) => account.stripeCustomerId === 'cus_shared_legacy')).toHaveLength(1);
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
+    expect(stripeGateway.createCustomer).not.toHaveBeenCalled();
+  });
+
+  it('cria customer idempotente somente quando o customer legado foi confirmado como removido', async () => {
+    const store = createMemoryStore([{
+      id: 'pba_legacy', contaId: 'conta_1', environment: 'TEST', status: 'CANCELED',
+      planCode: 'PREMIUM', stripeCustomerId: null, stripeSubscriptionId: 'sub_legacy',
+      stripePriceId: 'price_premium_test', currentPeriodEnd: null, cancelAtPeriodEnd: false,
+      trialEndsAt: null, trialWillEndNotifiedAt: null, accessStatus: 'CANCELED',
+      gracePeriodEndsAt: null, restrictedAt: null, canceledAt: null, lastPaymentFailedAt: null,
+      pendingPlanCode: null, pendingChangeType: null, pendingChangeEffectiveAt: null,
+    }]);
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.retrieveSubscription = vi.fn(async () => ({
+      id: 'sub_legacy', customerId: 'cus_deleted', status: 'canceled', priceId: 'price_premium_test',
+      currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: null, pendingUpdateId: null,
+    }));
+    stripeGateway.retrieveCustomer = vi.fn(async () => ({ id: 'cus_deleted', deleted: true }));
+
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+
+    expect(stripeGateway.createCustomer).toHaveBeenCalledTimes(1);
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({ customerId: 'cus_test_1' }));
+    expect(store.accounts[0]?.stripeCustomerId).toBe('cus_test_1');
+  });
+
+  it('bloqueia recuperacao do customer legado associado a outra conta', async () => {
+    const target = {
+      id: 'pba_target', contaId: 'conta_1', environment: 'TEST' as const, status: 'CANCELED' as const,
+      planCode: 'PREMIUM' as const, stripeCustomerId: null, stripeSubscriptionId: 'sub_legacy',
+      stripePriceId: 'price_premium_test', currentPeriodEnd: null, cancelAtPeriodEnd: false,
+      trialEndsAt: null, trialWillEndNotifiedAt: null, accessStatus: 'CANCELED' as const,
+      gracePeriodEndsAt: null, restrictedAt: null, canceledAt: null, lastPaymentFailedAt: null,
+      pendingPlanCode: null, pendingChangeType: null, pendingChangeEffectiveAt: null,
+    };
+    const other = { ...target, id: 'pba_other', contaId: 'conta_2', stripeCustomerId: 'cus_legacy', stripeSubscriptionId: null };
+    const store = createMemoryStore([target, other]);
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.retrieveSubscription = vi.fn(async () => ({
+      id: 'sub_legacy', customerId: 'cus_legacy', status: 'canceled', priceId: 'price_premium_test',
+      currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: null, pendingUpdateId: null,
+    }));
+    stripeGateway.retrieveCustomer = vi.fn(async () => ({ id: 'cus_legacy', deleted: false }));
+
+    await expect(createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway }))
+      .rejects.toMatchObject({ code: 'PLATFORM_BILLING_CUSTOMER_RECOVERY_UNSAFE' });
+
+    expect(stripeGateway.createCustomer).not.toHaveBeenCalled();
+    expect(stripeGateway.createCheckoutSession).not.toHaveBeenCalled();
+    expect(store.accounts.find((account) => account.id === 'pba_target')?.stripeCustomerId).toBeNull();
+    expect(store.accounts.find((account) => account.id === 'pba_other')?.stripeCustomerId).toBe('cus_legacy');
+  });
+
+  it('permite checkout explicito após trial vencido mesmo antes do webhook PAUSED', async () => {
+    const store = createMemoryStore([{
+      id: 'pba_trial',
+      contaId: 'conta_1',
+      environment: 'TEST',
+      status: 'TRIALING',
+      planCode: 'BAND_151_200',
+      stripeCustomerId: 'cus_test_1',
+      stripeSubscriptionId: 'sub_trial_1',
+      stripePriceId: 'price_band_151_200_test',
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: false,
+      trialEndsAt: new Date(Date.now() - 60_000),
+      trialWillEndNotifiedAt: null,
+      firstPaidAt: null,
+      lastSuccessfulPaymentAt: null,
+      accessStatus: 'RESTRICTED',
+      gracePeriodEndsAt: null,
+      restrictedAt: new Date(),
+      canceledAt: null,
+      lastPaymentFailedAt: null,
+      lastReconciledAt: null,
+      pendingPlanCode: null,
+      pendingChangeType: null,
+      pendingChangeEffectiveAt: null,
+    }]);
+    const stripeGateway = createStripeGatewayMock();
+
+    await createPlatformBillingCheckoutSession({ ...buildCheckoutInput(), planCode: 'BAND_151_200' }, { store, stripeGateway });
+
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+      priceId: 'price_band_151_200_test',
+      metadata: expect.objectContaining({ flow: 'reactivation' }),
+      trialDays: null,
+    }));
+  });
+
   it('reusa sessão local quando idempotency key já existe', async () => {
     const store = createMemoryStore();
     const stripeGateway = createStripeGatewayMock();
@@ -526,6 +1364,337 @@ describe('@alusa/platform-billing use cases', () => {
     expect(reused.reused).toBe(true);
     expect(reused.checkoutSessionId).toBe('cs_test_1');
     expect(stripeGateway.createCustomer).toHaveBeenCalledTimes(1);
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks exact-key replay when the account now has an active subscription and no claim', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+    const account = store.accounts[0]!;
+    account.checkoutClaimKey = null;
+    account.checkoutClaimPhase = null;
+    account.status = 'ACTIVE';
+    account.planCode = 'BAND_001_025';
+    account.stripeSubscriptionId = 'sub_active_now';
+    stripeGateway.retrieveCheckoutSession = vi.fn(async (id) => checkoutRemote(store.checkoutSessions[0]!, id, 'open'));
+
+    await expect(createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway }))
+      .rejects.toMatchObject({ code: 'PLATFORM_BILLING_SUBSCRIPTION_ALREADY_EXISTS' });
+    expect(stripeGateway.retrieveCheckoutSession).not.toHaveBeenCalled();
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
+    expect(store.checkoutSessions).toHaveLength(1);
+  });
+
+  it('reuses the validated open session for a new key when the selected band and price match', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    const original = await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+    const account = store.accounts[0]!;
+    account.checkoutClaimKey = 'idem_1';
+    account.checkoutClaimPhase = 'REQUESTING';
+    account.pendingPlanCode = 'BAND_001_025';
+    stripeGateway.retrieveCheckoutSession = vi.fn(async (id) => checkoutRemote(store.checkoutSessions[0]!, id, 'open'));
+
+    const recovered = await createPlatformBillingCheckoutSession(checkoutInputWithKey('idem_retry_same_band'), { store, stripeGateway });
+
+    expect(recovered).toMatchObject({ checkoutSessionId: original.checkoutSessionId, reused: true });
+    expect(stripeGateway.retrieveCheckoutSession).toHaveBeenCalledTimes(1);
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed when the matching open pending session has no persisted URL', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+    const account = store.accounts[0]!;
+    account.checkoutClaimKey = 'idem_1';
+    account.checkoutClaimPhase = 'REQUESTING';
+    account.pendingPlanCode = 'BAND_001_025';
+    store.checkoutSessions[0]!.url = null;
+    stripeGateway.retrieveCheckoutSession = vi.fn(async (id) => checkoutRemote(store.checkoutSessions[0]!, id, 'open'));
+
+    await expect(createPlatformBillingCheckoutSession(checkoutInputWithKey('idem_retry_missing_url'), { store, stripeGateway }))
+      .rejects.toMatchObject({ code: 'PLATFORM_BILLING_CHECKOUT_RECONCILIATION_REQUIRED' });
+    expect(account.checkoutClaimKey).toBe('idem_1');
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
+    expect(store.checkoutSessions).toHaveLength(1);
+  });
+
+  it('concurrent same-band retries converge on the single validated open session', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    const original = await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+    const account = store.accounts[0]!;
+    account.checkoutClaimKey = 'idem_1';
+    account.checkoutClaimPhase = 'REQUESTING';
+    account.pendingPlanCode = 'BAND_001_025';
+    stripeGateway.retrieveCheckoutSession = vi.fn(async (id) => checkoutRemote(store.checkoutSessions[0]!, id, 'open'));
+
+    const results = await Promise.all(['idem_retry_a', 'idem_retry_b'].map((idempotencyKey) =>
+      createPlatformBillingCheckoutSession(checkoutInputWithKey(idempotencyKey), { store, stripeGateway }),
+    ));
+
+    expect(results.map((result) => result.checkoutSessionId)).toEqual([original.checkoutSessionId, original.checkoutSessionId]);
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a dedicated fresh-key signal when the exact-key session is confirmed expired', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+    stripeGateway.retrieveCheckoutSession = vi.fn(async (id) => checkoutRemote(store.checkoutSessions[0]!, id, 'expired'));
+
+    await expect(createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway }))
+      .rejects.toMatchObject({ code: 'PLATFORM_BILLING_CHECKOUT_EXPIRED_RETRY_REQUIRED' });
+    expect(store.checkoutSessions[0]?.status).toBe('EXPIRED');
+    await expect(createPlatformBillingCheckoutSession(checkoutInputWithKey('idem_fresh_after_expiry'), { store, stripeGateway }))
+      .resolves.toMatchObject({ reused: false });
+  });
+
+  it('expires a validated open session before creating the newly selected band', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+    const account = store.accounts[0]!;
+    account.checkoutClaimKey = 'idem_1';
+    account.checkoutClaimPhase = 'REQUESTING';
+    account.pendingPlanCode = 'BAND_001_025';
+    stripeGateway.retrieveCheckoutSession = vi.fn()
+      .mockResolvedValueOnce(checkoutRemote(store.checkoutSessions[0]!, 'cs_test_1', 'open'))
+      .mockResolvedValueOnce(checkoutRemote(store.checkoutSessions[0]!, 'cs_test_1', 'expired'));
+    stripeGateway.expireCheckoutSession = vi.fn(async () => undefined);
+    stripeGateway.createCheckoutSession = vi.fn(async () => ({
+      id: 'cs_test_new_band', url: 'https://checkout.stripe.test/new-band', expiresAt: new Date(Date.now() + 60_000),
+    }));
+
+    const result = await createPlatformBillingCheckoutSession(checkoutInputWithKey('idem_new_band', { planCode: 'BAND_026_050' }), { store, stripeGateway });
+
+    expect(stripeGateway.expireCheckoutSession).toHaveBeenCalledWith('cs_test_1');
+    expect(store.checkoutSessions[0]?.status).toBe('EXPIRED');
+    expect(result).toMatchObject({ checkoutSessionId: 'cs_test_new_band', reused: false });
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
+    expect(stripeGateway.createCheckoutSession).toHaveBeenLastCalledWith(expect.objectContaining({ priceId: 'price_premium_test' }));
+  });
+
+  it('replaces same-band open Checkout when a newly confirmed student count differs', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    await createPlatformBillingCheckoutSession(checkoutInputWithKey('idem_1', { cancelUrl: 'https://app.alusa.test/cancel?studentCount=1' }), { store, stripeGateway });
+    const account = store.accounts[0]!;
+    account.checkoutClaimKey = 'idem_1';
+    account.checkoutClaimPhase = 'REQUESTING';
+    account.pendingPlanCode = 'BAND_001_025';
+    stripeGateway.retrieveCheckoutSession = vi.fn()
+      .mockResolvedValueOnce(checkoutRemote(store.checkoutSessions[0]!, 'cs_test_1', 'open'))
+      .mockResolvedValueOnce(checkoutRemote(store.checkoutSessions[0]!, 'cs_test_1', 'expired'));
+    stripeGateway.expireCheckoutSession = vi.fn(async () => undefined);
+    stripeGateway.createCheckoutSession = vi.fn(async () => ({
+      id: 'cs_test_new_count', url: 'https://checkout.stripe.test/new-count', expiresAt: new Date(Date.now() + 60_000),
+    }));
+
+    const result = await createPlatformBillingCheckoutSession(checkoutInputWithKey('idem_new_count', {
+      cancelUrl: 'https://app.alusa.test/cancel?studentCount=20',
+    }), { store, stripeGateway });
+
+    expect(stripeGateway.expireCheckoutSession).toHaveBeenCalledWith('cs_test_1');
+    expect(result.checkoutSessionId).toBe('cs_test_new_count');
+    expect(store.checkoutSessions.at(-1)?.cancelUrl).toContain('studentCount=20');
+  });
+
+  it('replaces a same-band session whose cancel URL lacks its own request identity', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+    store.checkoutSessions[0]!.cancelUrl = 'https://app.alusa.test/cancel?studentCount=1';
+    const account = store.accounts[0]!;
+    account.checkoutClaimKey = 'idem_1';
+    account.checkoutClaimPhase = 'REQUESTING';
+    account.pendingPlanCode = 'BAND_001_025';
+    stripeGateway.retrieveCheckoutSession = vi.fn()
+      .mockResolvedValueOnce(checkoutRemote(store.checkoutSessions[0]!, 'cs_test_1', 'open'))
+      .mockResolvedValueOnce(checkoutRemote(store.checkoutSessions[0]!, 'cs_test_1', 'expired'));
+    stripeGateway.expireCheckoutSession = vi.fn(async () => undefined);
+    stripeGateway.createCheckoutSession = vi.fn(async () => ({
+      id: 'cs_test_correlated', url: 'https://checkout.stripe.test/correlated', expiresAt: new Date(Date.now() + 60_000),
+    }));
+
+    const result = await createPlatformBillingCheckoutSession(checkoutInputWithKey('idem_correlated'), { store, stripeGateway });
+
+    expect(stripeGateway.expireCheckoutSession).toHaveBeenCalledWith('cs_test_1');
+    expect(result.checkoutSessionId).toBe('cs_test_correlated');
+    expect(new URL(store.checkoutSessions.at(-1)!.cancelUrl).searchParams.get('checkoutRequestKey')).toBe('idem_correlated');
+  });
+
+  it('requests the bounded fresh-key retry when the expiry webhook already cleared the old claim', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+    store.checkoutSessions[0]!.cancelUrl = 'https://app.alusa.test/cancel?studentCount=1';
+    const account = store.accounts[0]!;
+    account.checkoutClaimKey = 'idem_1';
+    account.checkoutClaimPhase = 'REQUESTING';
+    account.pendingPlanCode = 'BAND_001_025';
+    const clear = store.clearCheckoutClaim.bind(store);
+    store.clearCheckoutClaim = async (input) => {
+      await clear(input);
+      return false;
+    };
+    let remoteStatus = 'open';
+    stripeGateway.retrieveCheckoutSession = vi.fn(async (id) => checkoutRemote(store.checkoutSessions[0]!, id, remoteStatus));
+    stripeGateway.expireCheckoutSession = vi.fn(async () => { remoteStatus = 'expired'; });
+    stripeGateway.createCheckoutSession = vi.fn(async () => ({
+      id: 'cs_test_after_webhook_clear', url: 'https://checkout.stripe.test/after-webhook-clear', expiresAt: new Date(Date.now() + 60_000),
+    }));
+
+    await expect(createPlatformBillingCheckoutSession(checkoutInputWithKey('idem_after_webhook_clear'), { store, stripeGateway }))
+      .rejects.toMatchObject({ code: 'PLATFORM_BILLING_CHECKOUT_EXPIRED_RETRY_REQUIRED' });
+    expect(account.checkoutClaimKey).toBeNull();
+    expect(store.checkoutSessions[0]?.status).toBe('EXPIRED');
+    expect(stripeGateway.retrieveCheckoutSession).toHaveBeenCalledTimes(3);
+    expect(stripeGateway.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it('keeps a newer claim when the old expiry claim-clear CAS loses a race', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+    store.checkoutSessions[0]!.cancelUrl = 'https://app.alusa.test/cancel?studentCount=1';
+    const account = store.accounts[0]!;
+    account.checkoutClaimKey = 'idem_1';
+    account.checkoutClaimPhase = 'REQUESTING';
+    account.pendingPlanCode = 'BAND_001_025';
+    const clear = store.clearCheckoutClaim.bind(store);
+    store.clearCheckoutClaim = async (input) => {
+      await clear(input);
+      account.checkoutClaimKey = 'newer_request';
+      account.checkoutClaimPhase = 'REQUESTING';
+      account.pendingPlanCode = 'BAND_001_025';
+      return false;
+    };
+    let remoteStatus = 'open';
+    stripeGateway.retrieveCheckoutSession = vi.fn(async (id) => checkoutRemote(store.checkoutSessions[0]!, id, remoteStatus));
+    stripeGateway.expireCheckoutSession = vi.fn(async () => { remoteStatus = 'expired'; });
+
+    await expect(createPlatformBillingCheckoutSession(checkoutInputWithKey('idem_after_race'), { store, stripeGateway }))
+      .rejects.toMatchObject({ code: 'PLATFORM_BILLING_CHECKOUT_RECONCILIATION_REQUIRED' });
+    expect(account.checkoutClaimKey).toBe('newer_request');
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks recovery if an active subscription appears while the expiry claim is cleared', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+    store.checkoutSessions[0]!.cancelUrl = 'https://app.alusa.test/cancel?studentCount=1';
+    const account = store.accounts[0]!;
+    account.checkoutClaimKey = 'idem_1';
+    account.checkoutClaimPhase = 'REQUESTING';
+    account.pendingPlanCode = 'BAND_001_025';
+    const clear = store.clearCheckoutClaim.bind(store);
+    store.clearCheckoutClaim = async (input) => {
+      await clear(input);
+      account.status = 'ACTIVE';
+      account.planCode = 'BAND_001_025';
+      account.stripeSubscriptionId = 'sub_activated_during_expiry';
+      account.accessStatus = 'ACTIVE';
+      return false;
+    };
+    let remoteStatus = 'open';
+    stripeGateway.retrieveCheckoutSession = vi.fn(async (id) => checkoutRemote(store.checkoutSessions[0]!, id, remoteStatus));
+    stripeGateway.expireCheckoutSession = vi.fn(async () => { remoteStatus = 'expired'; });
+
+    await expect(createPlatformBillingCheckoutSession(checkoutInputWithKey('idem_after_active_race'), { store, stripeGateway }))
+      .rejects.toMatchObject({ code: 'PLATFORM_BILLING_SUBSCRIPTION_ALREADY_EXISTS' });
+    expect(account.stripeSubscriptionId).toBe('sub_activated_during_expiry');
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the claim and persisted session for reconciliation when new Stripe Checkout has no URL', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    const clearCheckoutClaim = vi.fn(store.clearCheckoutClaim.bind(store));
+    store.clearCheckoutClaim = clearCheckoutClaim;
+    stripeGateway.createCheckoutSession = vi.fn(async () => ({
+      id: 'cs_test_no_url', url: null, expiresAt: new Date(Date.now() + 60_000),
+    }));
+
+    await expect(createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway }))
+      .rejects.toMatchObject({ code: 'PLATFORM_BILLING_CHECKOUT_RECONCILIATION_REQUIRED' });
+
+    expect(store.checkoutSessions).toHaveLength(1);
+    expect(store.checkoutSessions[0]).toMatchObject({ stripeCheckoutSessionId: 'cs_test_no_url', status: 'CREATED', url: null });
+    expect(store.accounts[0]).toMatchObject({ status: 'CHECKOUT_PENDING', pendingPlanCode: 'BAND_001_025' });
+    expect(clearCheckoutClaim).not.toHaveBeenCalled();
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows only one concurrent changed-band retry to replace the old payable session', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+    const account = store.accounts[0]!;
+    account.checkoutClaimKey = 'idem_1';
+    account.checkoutClaimPhase = 'REQUESTING';
+    account.pendingPlanCode = 'BAND_001_025';
+    let retrieveCount = 0;
+    stripeGateway.retrieveCheckoutSession = vi.fn(async (id) => {
+      retrieveCount += 1;
+      return checkoutRemote(store.checkoutSessions[0]!, id, retrieveCount <= 2 ? 'open' : 'expired');
+    });
+    stripeGateway.expireCheckoutSession = vi.fn(async () => undefined);
+    stripeGateway.createCheckoutSession = vi.fn(async () => ({
+      id: 'cs_test_replacement', url: 'https://checkout.stripe.test/replacement', expiresAt: new Date(Date.now() + 60_000),
+    }));
+
+    const results = await Promise.allSettled(['idem_replacement_a', 'idem_replacement_b'].map((idempotencyKey) =>
+      createPlatformBillingCheckoutSession(checkoutInputWithKey(idempotencyKey, { planCode: 'BAND_026_050' }), { store, stripeGateway }),
+    ));
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['complete', { idMatches: true, bindingMatches: true }],
+    ['open', { idMatches: false, bindingMatches: true }],
+    ['open', { idMatches: true, bindingMatches: false }],
+  ] as const)('keeps the claim and blocks replacement for remote %s or mismatched binding', async (status, options) => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+    const account = store.accounts[0]!;
+    account.checkoutClaimKey = 'idem_1';
+    account.checkoutClaimPhase = 'REQUESTING';
+    account.pendingPlanCode = 'BAND_001_025';
+    stripeGateway.retrieveCheckoutSession = vi.fn(async () => ({
+      ...checkoutRemote(store.checkoutSessions[0]!, 'cs_test_1', status),
+      id: options.idMatches ? 'cs_test_1' : 'cs_other',
+      priceIds: options.bindingMatches ? ['price_starter_test'] : ['price_premium_test'],
+    }));
+
+    await expect(createPlatformBillingCheckoutSession(checkoutInputWithKey('idem_replacement', { planCode: 'BAND_026_050' }), { store, stripeGateway }))
+      .rejects.toMatchObject({ code: 'PLATFORM_BILLING_CHECKOUT_RECONCILIATION_REQUIRED' });
+    expect(account.checkoutClaimKey).toBe('idem_1');
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
+    expect(stripeGateway.expireCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it('fails closed without expiring or clearing the claim when retrieving the pending session fails', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+    const account = store.accounts[0]!;
+    account.checkoutClaimKey = 'idem_1';
+    account.checkoutClaimPhase = 'REQUESTING';
+    account.pendingPlanCode = 'BAND_001_025';
+    stripeGateway.retrieveCheckoutSession = vi.fn(async () => { throw new Error('Stripe unavailable'); });
+
+    await expect(createPlatformBillingCheckoutSession(checkoutInputWithKey('idem_replacement', { planCode: 'BAND_026_050' }), { store, stripeGateway }))
+      .rejects.toThrow('Stripe unavailable');
+    expect(account.checkoutClaimKey).toBe('idem_1');
+    expect(stripeGateway.expireCheckoutSession).not.toHaveBeenCalled();
     expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
   });
 
@@ -563,7 +1732,7 @@ describe('@alusa/platform-billing use cases', () => {
       .rejects.toThrow('invalid checkout request');
     expect(store.accounts[0]).toMatchObject({ status: 'NOT_STARTED', pendingPlanCode: null });
     await expect(createPlatformBillingCheckoutSession(
-      { ...buildCheckoutInput(), idempotencyKey: 'idem_retry' }, { store, stripeGateway },
+      checkoutInputWithKey('idem_retry'), { store, stripeGateway },
     )).resolves.toMatchObject({ checkoutSessionId: 'cs_test_retry' });
     expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(2);
   });
@@ -595,7 +1764,7 @@ describe('@alusa/platform-billing use cases', () => {
     await expect(createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway }))
       .rejects.toThrow('local persistence unavailable');
     await expect(createPlatformBillingCheckoutSession(
-      { ...buildCheckoutInput(), idempotencyKey: 'different-key' }, { store, stripeGateway },
+      checkoutInputWithKey('different-key'), { store, stripeGateway },
     )).rejects.toMatchObject({ code: 'PLATFORM_BILLING_CHECKOUT_IN_PROGRESS' });
     expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
 
@@ -616,7 +1785,7 @@ describe('@alusa/platform-billing use cases', () => {
 
     await expect(
       createPlatformBillingCheckoutSession(
-        { ...buildCheckoutInput(), planCode: 'PREMIUM' },
+        { ...buildCheckoutInput(), planCode: 'BAND_026_050' },
         { store, stripeGateway },
       ),
     ).rejects.toMatchObject({ code: 'PLATFORM_BILLING_IDEMPOTENCY_CONFLICT' });
@@ -664,7 +1833,7 @@ describe('@alusa/platform-billing use cases', () => {
         contaId: 'conta_1',
         contaName: 'Escola Alusa',
         billingEmail: 'financeiro@escola.test',
-        planCode: 'PREMIUM',
+        planCode: 'BAND_026_050',
         actorUserId: 'user_1',
         idempotencyKey: 'idem_trial_1',
         envSource,
@@ -688,7 +1857,7 @@ describe('@alusa/platform-billing use cases', () => {
     expect(store.accounts[0]).toMatchObject({
       status: 'TRIALING',
       accessStatus: 'ACTIVE',
-      planCode: 'PREMIUM',
+      planCode: 'BAND_026_050',
       stripeSubscriptionId: 'sub_test_trial_1',
       stripePriceId: 'price_premium_test',
     });
@@ -706,7 +1875,7 @@ describe('@alusa/platform-billing use cases', () => {
         trialEndsAt: new Date('2026-07-15T00:00:00.000Z'), pendingUpdateId: null,
       });
     const request = (idempotencyKey: string) => createPlatformBillingTrialWithoutPaymentMethod({
-      contaId: 'conta_1', contaName: 'Escola Alusa', planCode: 'PREMIUM', idempotencyKey, envSource,
+      contaId: 'conta_1', contaName: 'Escola Alusa', planCode: 'BAND_026_050', idempotencyKey, envSource,
     }, { store, stripeGateway });
 
     await expect(request('idem_trial_ambiguous')).rejects.toThrow('connection reset after request');
@@ -732,7 +1901,7 @@ describe('@alusa/platform-billing use cases', () => {
         type: 'StripeInvalidRequestError', statusCode: 400,
       }));
     const request = (idempotencyKey: string) => createPlatformBillingTrialWithoutPaymentMethod({
-      contaId: 'conta_1', contaName: 'Escola Alusa', planCode: 'PREMIUM', idempotencyKey, envSource,
+      contaId: 'conta_1', contaName: 'Escola Alusa', planCode: 'BAND_026_050', idempotencyKey, envSource,
     }, { store, stripeGateway });
 
     await expect(request('idem_trial_rejected')).rejects.toThrow('invalid Stripe request');
@@ -760,7 +1929,7 @@ describe('@alusa/platform-billing use cases', () => {
     };
 
     const result = await createPlatformBillingTrialWithoutPaymentMethod({
-      contaId: 'conta_1', contaName: 'Escola Alusa', planCode: 'PREMIUM', idempotencyKey: 'idem_trial_webhook_race', envSource,
+      contaId: 'conta_1', contaName: 'Escola Alusa', planCode: 'BAND_026_050', idempotencyKey: 'idem_trial_webhook_race', envSource,
     }, { store, stripeGateway });
 
     expect(result).toMatchObject({ reused: true, stripeSubscriptionId: 'sub_test_trial_1' });
@@ -800,7 +1969,7 @@ describe('@alusa/platform-billing use cases', () => {
       {
         contaId: 'conta_1',
         contaName: 'Escola Alusa',
-        planCode: 'PREMIUM',
+        planCode: 'BAND_026_050',
         idempotencyKey: 'idem_trial_1',
         envSource,
       },
@@ -809,6 +1978,47 @@ describe('@alusa/platform-billing use cases', () => {
 
     expect(result.reused).toBe(true);
     expect(result.stripeSubscriptionId).toBe('sub_existing_1');
+    expect(stripeGateway.createTrialSubscriptionWithoutPaymentMethod).not.toHaveBeenCalled();
+  });
+
+  it('does not restart a used trial when its end date exists but the subscription link is missing', async () => {
+    const store = createMemoryStore([{
+      id: 'pba_trial_orphan', contaId: 'conta_1', environment: 'TEST', status: 'RESTRICTED',
+      planCode: 'BAND_001_025', stripeCustomerId: 'cus_test_1', stripeSubscriptionId: null,
+      stripePriceId: 'price_starter_test', currentPeriodEnd: null, cancelAtPeriodEnd: false,
+      trialEndsAt: new Date('2026-10-01T00:00:00Z'), trialWillEndNotifiedAt: null,
+      accessStatus: 'RESTRICTED', gracePeriodEndsAt: null, restrictedAt: new Date('2026-10-01T00:00:00Z'),
+      canceledAt: null, lastPaymentFailedAt: null, firstPaidAt: null, lastSuccessfulPaymentAt: null,
+      paymentMethodStatus: 'MISSING', paymentMethodType: null, paymentMethodBrand: null,
+      paymentMethodLast4: null, paymentMethodExpMonth: null, paymentMethodExpYear: null,
+      restrictionReason: 'TRIAL_EXPIRED', gracePeriodStartedAt: null, accessStateVersion: 1,
+      lastProviderEventCreatedAt: null, lastStripeEventId: null, lastReconciledAt: null,
+      pendingPlanCode: null, pendingChangeType: null, pendingChangeEffectiveAt: null,
+      pendingChangeOperationId: null, pendingChangeClaimToken: null, pendingChangeClaimedAt: null,
+      trialSubscriptionClaimKey: null, trialSubscriptionClaimPhase: null,
+      trialSubscriptionClaimedAt: null, trialSubscriptionRequestExpiresAt: null,
+    }]);
+    const stripeGateway = createStripeGatewayMock();
+
+    await expect(createPlatformBillingTrialWithoutPaymentMethod({
+      contaId: 'conta_1', contaName: 'Escola Alusa', planCode: 'BAND_001_025',
+      idempotencyKey: 'idem_trial_orphan_link', envSource,
+    }, { store, stripeGateway })).rejects.toMatchObject({ code: 'PLATFORM_BILLING_TRIAL_ALREADY_USED' });
+    expect(stripeGateway.createTrialSubscriptionWithoutPaymentMethod).not.toHaveBeenCalled();
+    expect(stripeGateway.createCustomer).not.toHaveBeenCalled();
+  });
+
+  it.each(['STARTER', 'PREMIUM', 'PRO'] as const)('keeps legacy plan %s out of new checkout and trial flows', async (planCode) => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+
+    await expect(createPlatformBillingCheckoutSession({ ...buildCheckoutInput(), planCode }, { store, stripeGateway }))
+      .rejects.toMatchObject({ code: 'PLATFORM_PLAN_INVALID' });
+    await expect(createPlatformBillingTrialWithoutPaymentMethod({
+      contaId: 'conta_1', contaName: 'Escola Alusa', planCode, idempotencyKey: `legacy_trial_${planCode}`, envSource,
+    }, { store, stripeGateway })).rejects.toMatchObject({ code: 'PLATFORM_PLAN_INVALID' });
+    expect(stripeGateway.createCustomer).not.toHaveBeenCalled();
+    expect(stripeGateway.createCheckoutSession).not.toHaveBeenCalled();
     expect(stripeGateway.createTrialSubscriptionWithoutPaymentMethod).not.toHaveBeenCalled();
   });
 
@@ -840,7 +2050,7 @@ describe('@alusa/platform-billing use cases', () => {
       ...buildCheckoutInput(), idempotencyKey: oversizedKey,
     }, { store, stripeGateway })).rejects.toMatchObject({ code: 'PLATFORM_BILLING_INPUT_INVALID' });
     await expect(createPlatformBillingTrialWithoutPaymentMethod({
-      contaId: 'conta_1', contaName: 'Escola Alusa', planCode: 'PREMIUM',
+      contaId: 'conta_1', contaName: 'Escola Alusa', planCode: 'BAND_026_050',
       idempotencyKey: oversizedKey, envSource,
     }, { store, stripeGateway })).rejects.toMatchObject({ code: 'PLATFORM_BILLING_INPUT_INVALID' });
     await expect(createPlatformBillingPortalSession({
@@ -944,16 +2154,51 @@ function buildCheckoutInput() {
   return {
     contaId: 'conta_1',
     contaName: 'Escola Alusa',
-    planCode: 'STARTER',
+    planCode: 'BAND_001_025',
     successUrl: 'https://app.alusa.test/billing/success',
-    cancelUrl: 'https://app.alusa.test/billing/cancel',
+    cancelUrl: 'https://app.alusa.test/billing/cancel?checkoutRequestKey=idem_1',
     idempotencyKey: 'idem_1',
     envSource,
   };
 }
 
+function checkoutInputWithKey(idempotencyKey: string, overrides: Partial<ReturnType<typeof buildCheckoutInput>> = {}) {
+  const input = { ...buildCheckoutInput(), ...overrides, idempotencyKey };
+  const cancelUrl = new URL(input.cancelUrl);
+  cancelUrl.searchParams.set('checkoutRequestKey', idempotencyKey);
+  return { ...input, cancelUrl: cancelUrl.toString() };
+}
+
+function checkoutRemote(
+  session: PlatformBillingCheckoutSessionRecord,
+  id = session.stripeCheckoutSessionId,
+  status: string | null = 'open',
+) {
+  return {
+    id,
+    status,
+    livemode: session.environment === 'LIVE',
+    customerId: session.stripeCustomerId,
+    clientReferenceId: session.contaId,
+    metadata: {
+      contaId: session.contaId,
+      planCode: session.planCode,
+      billingContext: 'platform',
+      checkoutRequestKey: session.idempotencyKey,
+    },
+    priceIds: [session.stripePriceId],
+  };
+}
+
 function createStripeGatewayMock(): PlatformBillingStripeGateway {
   return {
+    listCustomerSubscriptions: vi.fn(async () => ({ subscriptions: [], complete: true })),
+    retrieveCheckoutSession: vi.fn(async (id: string) => ({
+      id, status: 'open', livemode: false, customerId: 'cus_test_1', clientReferenceId: 'conta_1',
+      metadata: { contaId: 'conta_1', planCode: 'BAND_001_025', billingContext: 'platform', checkoutRequestKey: 'idem_1' },
+      priceIds: ['price_starter_test'],
+    })),
+    expireCheckoutSession: vi.fn(async () => undefined),
     createCustomer: vi.fn(async () => ({ id: 'cus_test_1', livemode: false })),
     createCheckoutSession: vi.fn(async () => ({
       id: 'cs_test_1',
@@ -974,6 +2219,22 @@ function createStripeGatewayMock(): PlatformBillingStripeGateway {
       id: 'bps_test_1',
       url: 'https://billing.stripe.test/session',
     })),
+    retrieveSubscription: vi.fn(async () => ({
+      id: 'sub_test_1', customerId: 'cus_test_1', status: 'canceled', priceId: 'price_starter_test',
+      currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: null, pendingUpdateId: null,
+    })),
+    retrieveSubscriptionSnapshot: vi.fn(async () => ({
+      id: 'sub_test_1', customerId: 'cus_test_1', status: 'canceled', livemode: false,
+      metadata: { contaId: 'conta_1', billingContext: 'platform', planCode: 'BAND_001_025' },
+      priceIds: ['price_starter_test'],
+      currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: null,
+    })),
+    retrieveCustomer: vi.fn(async (customerId: string) => ({ id: customerId, deleted: false })),
+    previewSubscriptionPlanChange: vi.fn(),
+    updateSubscriptionPlan: vi.fn(),
+    scheduleSubscriptionPlanChange: vi.fn(),
+    releaseSubscriptionSchedule: vi.fn(),
+    updateSubscriptionCancelAtPeriodEnd: vi.fn(),
   };
 }
 
@@ -1155,14 +2416,24 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
     },
     async clearCheckoutClaim(input) {
       const account = accounts.find((item) => item.contaId === input.contaId && item.environment === input.environment);
-      if (!account || checkoutClaims.get(account.id)?.key !== input.idempotencyKey) return;
+      if (!account || checkoutClaims.get(account.id)?.key !== input.idempotencyKey) return false;
       checkoutClaims.delete(account.id);
+      account.checkoutClaimKey = null;
+      account.checkoutClaimPhase = null;
+      account.checkoutClaimedAt = null;
+      account.checkoutRequestExpiresAt = null;
       if (account.status === 'CHECKOUT_PENDING') {
         account.status = 'NOT_STARTED';
         account.accessStatus = 'PENDING';
       }
       account.pendingPlanCode = null;
       account.pendingChangeType = null;
+      return true;
+    },
+    async markCheckoutSessionExpired(input) {
+      const session = checkoutSessions.find((item) => item.contaId === input.contaId
+        && item.environment === input.environment && item.idempotencyKey === input.idempotencyKey);
+      if (session?.status === 'CREATED') session.status = 'EXPIRED';
     },
     async updateAccountFromStripeSubscription(input) {
       const account = accounts.find((item) => item.id === input.accountId);
@@ -1213,6 +2484,7 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
         stripePriceId: input.stripePriceId,
         status: 'CREATED',
         url: input.url,
+        cancelUrl: input.cancelUrl,
         idempotencyKey: input.idempotencyKey,
       };
       checkoutSessions.push(session);

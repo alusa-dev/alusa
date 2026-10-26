@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   reconcile: vi.fn(),
   drainWebhooks: vi.fn(),
   applyPlanChanges: vi.fn(),
+  captureMonthlySnapshots: vi.fn(),
   startJobRun: vi.fn(() => ({ startedAt: Date.now(), correlationId: 'test-run-id' })),
   logJobResult: vi.fn(),
   logJobFailure: vi.fn(),
@@ -19,6 +20,7 @@ vi.mock('@/src/server/platform-billing/trial-jobs', () => ({ expirePlatformBilli
 vi.mock('@/src/server/platform-billing/reconciliation', () => ({ reconcilePlatformBilling: mocks.reconcile }));
 vi.mock('@/src/server/platform-billing/webhook-worker', () => ({ drainStripeWebhookWorker: mocks.drainWebhooks }));
 vi.mock('@/src/server/platform-billing/plan-change-actions', () => ({ applyDuePlatformPlanChanges: mocks.applyPlanChanges }));
+vi.mock('@/src/server/platform-billing/monthly-snapshots', () => ({ capturePlatformBillingMonthlySnapshots: mocks.captureMonthlySnapshots }));
 vi.mock('@/src/server/jobs/job-observability', () => ({ startJobRun: mocks.startJobRun, logJobResult: mocks.logJobResult, logJobFailure: mocks.logJobFailure, recordJobRequestRejected: mocks.recordJobRequestRejected }));
 
 import { GET } from '../route';
@@ -30,9 +32,10 @@ describe('GET /api/jobs/platform-billing-maintenance telemetry', () => {
     vi.stubEnv('CRON_SECRET_TOKEN', 'cron-secret');
     mocks.drainWebhooks.mockResolvedValue({ processed: 0, failed: 0, exhausted: 0, notifications: { claimed: 0, delivered: 0, failed: 0, exhausted: 0 } });
     mocks.applyPlanChanges.mockResolvedValue({ checked: 0, submitted: 0, failed: 0 });
-    mocks.expireTrials.mockResolvedValue({ checked: 0, restricted: 0, notified: 0 });
+    mocks.expireTrials.mockResolvedValue({ checked: 0, detected: 0, notificationQueued: 0 });
     mocks.expireGracePeriods.mockResolvedValue({ checked: 0, restricted: 0, notified: 0 });
     mocks.reconcile.mockResolvedValue({ checkedAccounts: 0, issues: 0 });
+    mocks.captureMonthlySnapshots.mockResolvedValue({ checked: 0, captured: 0, readyForSpecialist: 0, transitionsScheduled: 0, specialistNoticesCreated: 0 });
   });
 
   it('counts reconciled billing issues as useful work', async () => {
@@ -47,6 +50,28 @@ describe('GET /api/jobs/platform-billing-maintenance telemetry', () => {
       'platform-billing-maintenance',
       expect.objectContaining({ startedAt: expect.any(Number), correlationId: expect.any(String) }),
       expect.objectContaining({ billingIssues: 1 }),
+      expect.objectContaining({ workStatus: 'worked' }),
+    );
+  });
+
+  it('counts monthly snapshot capture as useful work when it is the only work performed', async () => {
+    mocks.captureMonthlySnapshots.mockResolvedValue({
+      checked: 1,
+      captured: 1,
+      readyForSpecialist: 0,
+      transitionsScheduled: 0,
+      specialistNoticesCreated: 0,
+    });
+
+    const response = await GET(new Request('http://localhost/api/jobs/platform-billing-maintenance', {
+      headers: { 'x-cron-token': 'cron-secret' },
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.logJobResult).toHaveBeenCalledWith(
+      'platform-billing-maintenance',
+      expect.objectContaining({ startedAt: expect.any(Number), correlationId: expect.any(String) }),
+      expect.objectContaining({ pricingSnapshotsCaptured: 1 }),
       expect.objectContaining({ workStatus: 'worked' }),
     );
   });

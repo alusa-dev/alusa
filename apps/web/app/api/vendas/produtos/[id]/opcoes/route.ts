@@ -5,6 +5,7 @@ import {
 } from '@alusa/lib/services/product-option.service';
 import { productOptionCreateInputDTOSchema } from '@/features/sales/dtos';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { storeWriteBillingBlock } from '../../../_helpers';
 
 function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -33,6 +34,8 @@ export async function POST(req: Request, context: RouteContext) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     const { contaId } = auth;
+    const billingBlocked = await storeWriteBillingBlock(auth.contaId);
+    if (billingBlocked) return billingBlocked;
 
     const { id: productId } = await Promise.resolve(context.params);
     const parsed = productOptionCreateInputDTOSchema.safeParse(await req.json());

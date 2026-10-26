@@ -33,8 +33,9 @@ export function evaluateStudentCapacity(input: StudentCapacityInput): StudentCap
   const additionalActiveStudents = Math.max(0, Math.floor(input.additionalActiveStudents));
   const activeStudents = Math.max(0, Math.floor(input.activeStudents));
   const projectedActiveStudents = activeStudents + additionalActiveStudents;
-  const maxActiveStudents = input.planCode ? PLATFORM_PLANS[input.planCode].maxActiveStudents : null;
-  const allowed = maxActiveStudents === null || projectedActiveStudents <= maxActiveStudents;
+  // Student count determines the commercial price band, never enrollment eligibility.
+  const maxActiveStudents = null;
+  const allowed = true;
 
   return {
     allowed,
@@ -43,7 +44,7 @@ export function evaluateStudentCapacity(input: StudentCapacityInput): StudentCap
     activeStudents,
     additionalActiveStudents,
     projectedActiveStudents,
-    recommendedPlanCode: allowed ? null : recommendPlatformPlanForActiveStudents(projectedActiveStudents),
+    recommendedPlanCode: null,
   };
 }
 

@@ -3,6 +3,7 @@ import { ZodError } from 'zod';
 
 import { blockUnavailableFinanceCapability } from '@/lib/finance/finance-capability-gate';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { deleteTransferRecipient, listTransferRecipients } from '@alusa/finance';
 import { financeTransferRecipientDeleteInputDTOSchema } from '@/features/finance/dtos';
@@ -41,6 +42,8 @@ export async function DELETE(request: Request) {
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO' });
     }
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'FINANCIAL_CONFIG_WRITE' });
+    if (billingBlocked) return json(billingBlocked.status, billingBlocked.body);
 
     const capabilityBlock = blockUnavailableFinanceCapability(auth.financeIntegrationMode, 'transfers');
     if (capabilityBlock) return capabilityBlock;

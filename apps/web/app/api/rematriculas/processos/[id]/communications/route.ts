@@ -11,6 +11,7 @@ import {
   RenewalPermissionError,
   requireRenewalPermission,
 } from '@/src/server/enrollments/renewal-permissions.service';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -30,6 +31,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const auth = await resolveTenantSession();
   if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
   if (!auth.role) return jsonError(403, 'SEM_PERMISSAO', 'Usuário não tem permissão para comunicação de rematrícula.');
+  const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'ENROLLMENT_WRITE' });
+  if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
   try {
     requireRenewalPermission({ role: auth.role, permission: 'renewal.campaign.manage' });

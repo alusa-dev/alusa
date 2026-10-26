@@ -34,10 +34,9 @@ function PrimaryNavItem({
     );
   }
 
-  const fallbackItem = item as any;
   return (
-    <Link href={fallbackItem.href} onClick={onNavigate} className={className}>
-      {fallbackItem.label}
+    <Link href={item.href} onClick={onNavigate} className={className}>
+      {item.label}
     </Link>
   );
 }

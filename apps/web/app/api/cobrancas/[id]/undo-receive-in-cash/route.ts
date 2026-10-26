@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import { cobrancaRouteParamsDTOSchema } from '@/features/finance/operations/charges/dtos';
 import { executeUndoCashPayment } from '@/src/server/finance/undo-cash-payment.service';
 
@@ -13,6 +14,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return NextResponse.json({ error: 'Acesso negado' }, { status: 403 });
     }
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'CHARGE_CREATE' });
+    if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
     const { id } = cobrancaRouteParamsDTOSchema.parse(await params);
     const response = await executeUndoCashPayment({

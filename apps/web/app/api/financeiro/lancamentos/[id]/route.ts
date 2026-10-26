@@ -7,6 +7,7 @@ import {
 } from '@/features/finance/operations/dtos';
 import { mapFinanceiroLancamentoRecordToDTO } from '@/features/finance/operations/mappers';
 import { financeInternalError } from '@/lib/api/finance-api-response';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import { logMethodNotAllowed } from '@/lib/security/http-method-observability';
 import {
   getFinancialTransaction,
@@ -71,7 +72,7 @@ function serializeLancamento(value: unknown) {
   };
 }
 
-async function ensureAuth() {
+async function ensureAuth(billingCapability?: 'MONEY_TRANSFER') {
   const auth = await resolveTenantSession();
   if (!auth.ok) {
     return {
@@ -84,6 +85,10 @@ async function ensureAuth() {
   }
   if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
     return { error: err(403, 'SEM_PERMISSAO', 'Acesso negado') };
+  }
+  if (billingCapability) {
+    const blocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: billingCapability });
+    if (blocked) return { error: err(blocked.status, blocked.body.error, blocked.body.message) };
   }
   return { user: { id: auth.userId, contaId: auth.contaId } };
 }
@@ -111,7 +116,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ id: st
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const auth = await ensureAuth();
+    const auth = await ensureAuth('MONEY_TRANSFER');
     if ('error' in auth) return auth.error;
     const { id } = financeiroRouteIdParamsDTOSchema.parse(await params);
     const parsed = financeiroLancamentoInputDTOSchema.safeParse(await req.json());

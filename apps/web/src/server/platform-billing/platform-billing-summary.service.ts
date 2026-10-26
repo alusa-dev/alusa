@@ -6,6 +6,8 @@ import {
   derivePlatformAccessStatus,
   derivePlatformBillingCommunication,
   derivePlatformRestrictionReason,
+  resolveStableSchoolPriceBand,
+  isPublicPlatformPlanCode,
   type PlatformBillingAccountRecord,
   type PlatformBillingInvoiceRecord,
 } from '@alusa/platform-billing';
@@ -50,6 +52,7 @@ export async function getPlatformBillingSummary(params: {
     latestWebhook,
     webhookStats,
     latestReconciliation,
+    recentSnapshots,
   ] = await Promise.all([
     store.findAccount({ contaId: params.contaId, environment: params.environment }),
     store.listInvoices({ contaId: params.contaId, environment: params.environment, limit: 24 }),
@@ -120,7 +123,18 @@ export async function getPlatformBillingSummary(params: {
       orderBy: { createdAt: 'desc' },
       select: { createdAt: true, correlationId: true },
     }),
+    params.tx.platformBillingMonthlySnapshot.findMany({
+      where: { contaId: params.contaId, environment: params.environment },
+      orderBy: { periodStart: 'desc' },
+      take: 3,
+      select: { periodStart: true, candidateBand: true },
+    }),
   ]);
+
+  const stableCandidate = resolveStableSchoolPriceBand({
+    currentBand: isPublicPlatformPlanCode(account?.planCode) ? account.planCode : null,
+    snapshots: recentSnapshots,
+  });
 
   const now = new Date();
   const summaryPayload = {
@@ -131,6 +145,8 @@ export async function getPlatformBillingSummary(params: {
       email: actor.user?.email ?? null,
     },
     activeStudents,
+    eligiblePriceBand: stableCandidate === 'SPECIALIST' ? null : stableCandidate,
+    specialistNegotiationReady: stableCandidate === 'SPECIALIST',
     account: account ? serializeAccount(account) : null,
     access: serializeAccessSnapshot(account, now),
     paymentMethod: resolvePaymentMethodSummary(account),

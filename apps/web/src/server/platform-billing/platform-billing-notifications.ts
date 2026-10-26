@@ -10,6 +10,9 @@ import { buildAppUrl } from '@/lib/app-url';
 import { sendTransactionalEmail } from '@/lib/email/transactional-email';
 import prisma from '@/lib/prisma';
 import { logApiOperationalEvent } from '@/lib/observability/api-logger';
+import { PLATFORM_PLANS, type PlatformBillingEnvironment } from '@alusa/platform-billing';
+import { resolvePlatformBillingEnvironment } from './platform-billing-server';
+import { runWithTenant } from '@/lib/prisma-tenant';
 
 type PlatformBillingNotification = {
   severity: NotificationSeverity;
@@ -27,10 +30,78 @@ export async function notifyPlatformBillingEvent(input: {
   eventId: string;
   eventType: string;
   sourceId?: string | null;
+  environment?: PlatformBillingEnvironment;
 }): Promise<void> {
   if (!input.contaId) return;
 
-  const notification = mapPlatformBillingEventToNotification(input.eventType);
+  if (input.eventType === 'platform.billing_trial_expired') {
+    const contaId = input.contaId;
+    if (!contaId) return;
+    const billingAccountId = input.eventId.startsWith('trial-expired:')
+      ? input.eventId.slice('trial-expired:'.length)
+      : '';
+    if (!billingAccountId) return;
+    const environment = input.environment ?? resolvePlatformBillingEnvironment();
+    const now = new Date();
+
+    // Hold the same billing-account row lock used by the expiry detector while
+    // the notification side effect runs. A payment webhook either commits
+    // before this check and suppresses delivery, or waits until delivery ends.
+    await runWithTenant(contaId, async (tx) => {
+      const lockedRows = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "PlatformBillingAccount"
+        WHERE "id" = ${billingAccountId}
+          AND "contaId" = ${contaId}
+          AND "environment" = ${environment}::"PlatformBillingEnvironment"
+        FOR UPDATE
+      `;
+      if (lockedRows.length === 0) return;
+      const account = await tx.platformBillingAccount.findFirst({
+        where: {
+          id: billingAccountId,
+          contaId,
+          environment,
+          status: { in: ['TRIALING', 'PAUSED', 'UNPAID', 'ACTIVE'] },
+          trialEndsAt: { lte: now },
+          firstPaidAt: null,
+          lastSuccessfulPaymentAt: null,
+        },
+        select: { id: true, planCode: true, trialEndsAt: true, stripeSubscriptionId: true },
+      });
+      if (!account) return;
+
+      await createNotification({
+        contaId,
+        type: NotificationType.SYSTEM_ATTENTION,
+        category: NotificationCategory.SYSTEM,
+        severity: NotificationSeverity.CRITICAL,
+        title: 'Seu período gratuito terminou',
+        message: 'Seu período de teste acabou. Contrate e confirme o pagamento para liberar as operações de escrita.',
+        dedupeKey: `platform-billing:trial-expired:${account.id}`,
+        relatedPath: '/account/billing-plan',
+        entityType: 'PlatformBillingAccount',
+        entityId: account.id,
+        sourceType: 'Stripe',
+        sourceId: account.stripeSubscriptionId ?? account.id,
+        metadata: { environment, planCode: account.planCode, trialEndsAt: account.trialEndsAt?.toISOString() ?? null },
+        actor: { type: 'SYSTEM' },
+        recipientRoles: [Role.ADMIN, Role.FINANCEIRO],
+      });
+    });
+    return;
+  }
+
+  let trialTerms: { trialEndsAt: Date | null; planName: string; amountCents: number | null } | undefined;
+  if (input.eventType === 'customer.subscription.trial_will_end') {
+    const account = await prisma.platformBillingAccount.findFirst({
+      where: { contaId: input.contaId, environment: input.environment ?? resolvePlatformBillingEnvironment() },
+      select: { planCode: true, trialEndsAt: true },
+    });
+    const plan = account?.planCode ? PLATFORM_PLANS[account.planCode as keyof typeof PLATFORM_PLANS] : null;
+    if (plan) trialTerms = { trialEndsAt: account?.trialEndsAt ?? null, planName: plan.name, amountCents: plan.amountCents };
+  }
+
+  const notification = mapPlatformBillingEventToNotification(input.eventType, trialTerms);
   if (!notification) return;
 
   await createNotification({
@@ -174,7 +245,21 @@ function escapeHtml(value: string): string {
 
 function mapPlatformBillingEventToNotification(
   eventType: string,
+  trialTerms?: { trialEndsAt: Date | null; planName: string; amountCents: number | null },
 ): PlatformBillingNotification | null {
+  if (eventType === 'platform.specialist_negotiation_ready') {
+    return {
+      severity: NotificationSeverity.WARNING,
+      title: 'Mais de 500 alunos: converse com a Alusa',
+      message: 'Sua escola ultrapassou 500 alunos em três fechamentos mensais consecutivos. O contrato e a operação atuais permanecem durante 30 dias para a negociação. Nenhum preço personalizado será aplicado automaticamente.',
+      email: {
+        subject: 'Vamos conversar sobre o crescimento da sua escola',
+        preview: 'Sua escola ultrapassou o limite de contratação self-service.',
+        actionLabel: 'Falar com um especialista',
+      },
+    };
+  }
+
   if (eventType === 'checkout.session.completed') {
     return {
       severity: NotificationSeverity.INFO,
@@ -224,15 +309,21 @@ function mapPlatformBillingEventToNotification(
   }
 
   if (eventType === 'customer.subscription.trial_will_end') {
+    const trialEndDate = trialTerms?.trialEndsAt
+      ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long' }).format(trialTerms.trialEndsAt)
+      : null;
+    const terms = trialTerms?.amountCents !== null && trialTerms?.amountCents !== undefined
+      ? `${trialTerms.planName}, ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(trialTerms.amountCents / 100)}/mês`
+      : 'a faixa atual de alunos';
     return {
       severity: NotificationSeverity.WARNING,
       title: 'Teste gratuito terminando',
       message:
-        'O teste gratuito está perto do fim. Cadastre um cartão para evitar pausa no acesso.',
+        `Seu teste gratuito termina ${trialEndDate ? `em ${trialEndDate}` : 'em breve'}. A condição atual é ${terms}. Ao final, você escolhe se quer contratar e confirma o pagamento; sem confirmação, não haverá cobrança.`,
       email: {
         subject: 'Seu teste gratuito está terminando',
-        preview: 'Cadastre um cartão para evitar pausa no acesso.',
-        actionLabel: 'Cadastrar pagamento',
+        preview: trialEndDate ? `Termina em ${trialEndDate} · ${terms}.` : `Em breve · ${terms}.`,
+        actionLabel: 'Ver condição e contratar',
       },
     };
   }

@@ -6,6 +6,7 @@ import {
 import { productOptionValueCreateInputDTOSchema } from '@/features/sales/dtos';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
+import { storeWriteBillingBlock } from '../../../../_helpers';
 
 function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -32,6 +33,8 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     const { contaId } = auth;
+    const billingBlocked = await storeWriteBillingBlock(auth.contaId);
+    if (billingBlocked) return billingBlocked;
 
     const { id: productId, optionId } = await Promise.resolve(context.params);
     await deleteProductOption(optionId, productId, contaId);
@@ -47,6 +50,8 @@ export async function POST(req: Request, context: RouteContext) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     const { contaId } = auth;
+    const billingBlocked = await storeWriteBillingBlock(auth.contaId);
+    if (billingBlocked) return billingBlocked;
 
     const { id: productId, optionId } = await Promise.resolve(context.params);
     const parsed = productOptionValueCreateInputDTOSchema.safeParse(await req.json());

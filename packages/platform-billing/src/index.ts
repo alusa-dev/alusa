@@ -1,4 +1,20 @@
 export { PlatformBillingError } from './errors';
+export { resolvePlatformBillingCheckoutPlan } from './checkout-commercial-resolution';
+export type {
+  PlatformBillingCheckoutCommercialContext,
+  ResolvePlatformBillingCheckoutPlanResult,
+} from './checkout-commercial-resolution';
+export {
+  SCHOOL_PRICE_BANDS,
+  SCHOOL_PRICE_BAND_RANKS,
+  getSchoolPriceBandRank,
+  hasBillableMonthlyEnrollment,
+  isSchoolPriceBandCode,
+  resolveStableSchoolPriceBand,
+  resolveSchoolCommercialTarget,
+  shouldApplySchoolPriceBand,
+} from './commercial-model';
+export type { SchoolCommercialTarget, SchoolPriceBandCode } from './commercial-model';
 export type { PlatformBillingErrorCode } from './errors';
 export {
   DEFAULT_PLATFORM_BILLING_GRACE_PERIOD_DAYS,
@@ -25,10 +41,12 @@ export {
   getMaxActiveStudents,
   getPlatformPlan,
   isPlatformPlanCode,
+  isPublicPlatformPlanCode,
 } from './plans';
 export type { PlatformPlan, PlatformPlanCode, PublicPlatformPlan, PublicPlatformPlanCode } from './plans';
 export {
   PRICE_ENV_BY_PLAN,
+  LEGACY_PRICE_ENV_BY_PLAN,
   isStripePriceId,
   parsePublicCheckoutPlanCode,
   resolvePlanCodeFromStripePriceId,
@@ -44,6 +62,7 @@ export {
 } from './student-capacity';
 export type { StudentCapacityInput, StudentCapacityResult } from './student-capacity';
 export {
+  cancelPlatformBillingCheckoutReturn,
   createPlatformBillingCheckoutSession,
   createPlatformBillingPortalSession,
   createPlatformBillingTrialWithoutPaymentMethod,

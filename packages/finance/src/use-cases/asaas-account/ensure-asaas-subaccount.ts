@@ -245,6 +245,7 @@ function buildWizardStateFromProfile(profile: {
   mobilePhone: string | null;
   landlinePhone: string | null;
   incomeValue: unknown;
+  onboardingStudentCount: number | null;
   address: string | null;
   addressNumber: string | null;
   province: string | null;
@@ -269,6 +270,7 @@ function buildWizardStateFromProfile(profile: {
     mobilePhone: profile.mobilePhone,
     landlinePhone: profile.landlinePhone,
     incomeValue: toNumber(profile.incomeValue),
+    onboardingStudentCount: profile.onboardingStudentCount,
     address: profile.address,
     addressNumber: profile.addressNumber,
     province: profile.province,
@@ -373,6 +375,7 @@ export async function ensureAsaasSubaccount(params: {
       mobilePhone: true,
       landlinePhone: true,
       incomeValue: true,
+      onboardingStudentCount: true,
       address: true,
       addressNumber: true,
       province: true,
@@ -583,6 +586,7 @@ export async function canCreateSubaccount(contaId: string): Promise<CanCreateSub
       mobilePhone: true,
       landlinePhone: true,
       incomeValue: true,
+      onboardingStudentCount: true,
       address: true,
       addressNumber: true,
       province: true,

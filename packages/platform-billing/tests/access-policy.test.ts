@@ -16,12 +16,12 @@ describe('@alusa/platform-billing access policy', () => {
       .toThrowError(/restricted/i);
   });
 
-  it('mantem saldo, historico e transferencias disponiveis em RESTRICTED', () => {
+  it('mantem consultas financeiras em RESTRICTED e bloqueia transferencias e saques', () => {
     const account = buildAccount({ accessStatus: 'RESTRICTED', status: 'UNPAID' });
 
     expect(assertPlatformAccess({ contaId: 'conta_1', account, capability: 'MONEY_READ' })).toBe('RESTRICTED');
-    expect(assertPlatformAccess({ contaId: 'conta_1', account, capability: 'MONEY_TRANSFER' })).toBe('RESTRICTED');
-    expect(assertPlatformAccess({ contaId: 'conta_1', account, capability: 'MONEY_WITHDRAW' })).toBe('RESTRICTED');
+    expect(() => assertPlatformAccess({ contaId: 'conta_1', account, capability: 'MONEY_TRANSFER' })).toThrow();
+    expect(() => assertPlatformAccess({ contaId: 'conta_1', account, capability: 'MONEY_WITHDRAW' })).toThrow();
   });
 
   it('mantem leitura e Meu Dinheiro, mas bloqueia todos os módulos de escrita', () => {
@@ -45,6 +45,16 @@ describe('@alusa/platform-billing access policy', () => {
       'FINANCIAL_CONFIG_WRITE',
     ] as const) {
       expect(() => assertPlatformAccess({ contaId: 'conta_1', account, capability })).toThrowError(/restricted/i);
+    }
+  });
+
+  it('preserva leituras e exportação essencial após cancelamento, bloqueando mutações', () => {
+    const account = buildAccount({ status: 'CANCELED', accessStatus: 'CANCELED' });
+    for (const capability of ['BILLING_READ', 'BILLING_MANAGE', 'ESSENTIAL_EXPORT', 'ACCOUNT_READ', 'REPORT_READ', 'MONEY_READ'] as const) {
+      expect(assertPlatformAccess({ contaId: 'conta_1', account, capability })).toBe('CANCELED');
+    }
+    for (const capability of ['STUDENT_WRITE', 'CHARGE_CREATE', 'MONEY_TRANSFER', 'MONEY_WITHDRAW', 'FINANCIAL_CONFIG_WRITE'] as const) {
+      expect(() => assertPlatformAccess({ contaId: 'conta_1', account, capability })).toThrow();
     }
   });
 
@@ -83,7 +93,6 @@ describe('@alusa/platform-billing access policy', () => {
 
     expect(derivePlatformAccessStatus({
       account,
-      hasUsablePaymentMethod: false,
       now: new Date('2026-07-16T00:00:00.000Z'),
     })).toBe('RESTRICTED');
   });
@@ -99,7 +108,6 @@ describe('@alusa/platform-billing access policy', () => {
 
     expect(derivePlatformAccessStatus({
       account,
-      hasUsablePaymentMethod: true,
       now: new Date('2026-07-16T00:00:00.000Z'),
     })).toBe('ACTIVE');
   });
@@ -133,7 +141,7 @@ describe('@alusa/platform-billing access policy', () => {
     })).toEqual({ level: 'TRIAL_WARNING', noticeKey: 'trial-7' });
   });
 
-  it('abre grace somente para assinatura paga com forma de pagamento presente', () => {
+  it('abre grace para assinatura paga mesmo sem forma de pagamento confirmada', () => {
     const account = buildAccount({
       status: 'PAST_DUE',
       accessStatus: 'ACTIVE',
@@ -148,23 +156,23 @@ describe('@alusa/platform-billing access policy', () => {
     })).toBe('GRACE_PERIOD');
   });
 
-  it('restringe PAST_DUE sem histórico pago ou sem forma de pagamento confirmada', () => {
+  it('restringe PAST_DUE sem histórico pago, mesmo quando há prazo de grace', () => {
     const trialAccount = buildAccount({
       status: 'PAST_DUE',
       accessStatus: 'GRACE_PERIOD',
       gracePeriodEndsAt: new Date('2026-08-20T00:00:00.000Z'),
       paymentMethodStatus: 'PRESENT',
     });
-    const unknownCardAccount = buildAccount({
+    const missingCardAccount = buildAccount({
       status: 'PAST_DUE',
-      accessStatus: 'GRACE_PERIOD',
+      accessStatus: 'RESTRICTED',
       firstPaidAt: new Date('2026-06-01T00:00:00.000Z'),
       gracePeriodEndsAt: new Date('2026-08-20T00:00:00.000Z'),
-      paymentMethodStatus: 'UNKNOWN',
+      paymentMethodStatus: 'MISSING',
     });
 
     expect(derivePlatformAccessStatus({ account: trialAccount, now: new Date('2026-08-16T00:00:00.000Z') })).toBe('RESTRICTED');
-    expect(derivePlatformAccessStatus({ account: unknownCardAccount, now: new Date('2026-08-16T00:00:00.000Z') })).toBe('RESTRICTED');
+    expect(derivePlatformAccessStatus({ account: missingCardAccount, now: new Date('2026-08-16T00:00:00.000Z') })).toBe('GRACE_PERIOD');
   });
 
   it('mantem acesso até o fim quando a assinatura foi cancelada para o fim do ciclo', () => {

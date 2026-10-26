@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { deleteProductImage, setPrimaryProductImage } from '@alusa/lib/server';
+import { storeWriteBillingBlock } from '../../../../_helpers';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
@@ -16,6 +17,8 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     const { contaId } = auth;
+    const billingBlocked = await storeWriteBillingBlock(auth.contaId);
+    if (billingBlocked) return billingBlocked;
 
     const { id: productId, imageId } = await Promise.resolve(context.params);
     await deleteProductImage(imageId, productId, contaId);
@@ -30,6 +33,8 @@ export async function PATCH(_req: Request, context: RouteContext) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     const { contaId } = auth;
+    const billingBlocked = await storeWriteBillingBlock(auth.contaId);
+    if (billingBlocked) return billingBlocked;
 
     const { id: productId, imageId } = await Promise.resolve(context.params);
     const image = await setPrimaryProductImage(imageId, productId, contaId);

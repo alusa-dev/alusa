@@ -1,5 +1,4 @@
 import localFont from 'next/font/local';
-import { Space_Mono } from 'next/font/google';
 
 export const inter = localFont({
   src: './fonts/InterVariable.woff2',
@@ -8,9 +7,10 @@ export const inter = localFont({
   weight: '100 900',
 });
 
-export const spaceMono = Space_Mono({
-  subsets: ['latin'],
+export const spaceMono = localFont({
+  src: './fonts/SpaceMono-Regular.ttf',
   weight: '400',
   display: 'swap',
   variable: '--font-space-mono',
+  preload: false,
 });

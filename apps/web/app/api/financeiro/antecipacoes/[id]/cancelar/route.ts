@@ -10,7 +10,7 @@ export const revalidate = 0;
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const rawParams = await params;
   try {
-    const auth = await requireFinanceUser();
+    const auth = await requireFinanceUser({ billingCapability: 'MONEY_WITHDRAW' });
     if (!auth.ok) return auth.response;
 
     if (!rawParams.id) return json(400, { error: 'ID_OBRIGATORIO' });

@@ -4,6 +4,7 @@ import { randomUUID, createHash } from 'crypto';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { getSessionUser } from '@/lib/auth/session';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import { uploadContratoArquivoResultDTOSchema } from '@/features/contracts/dtos';
 import { jsonNoStore } from '@/lib/http-security';
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
@@ -61,6 +62,8 @@ export async function POST(req: NextRequest) {
     if (!user) {
       return jsonNoStore({ error: { message: 'Não autorizado' } }, { status: 401 });
     }
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: user.contaId, capability: 'CONTRACT_WRITE' });
+    if (billingBlocked) return jsonNoStore(billingBlocked.body, { status: billingBlocked.status });
 
     const ip = ipFromRequest(req);
     const limiter = await rateLimitAsync(

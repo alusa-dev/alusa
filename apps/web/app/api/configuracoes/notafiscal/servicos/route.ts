@@ -2,6 +2,7 @@ import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-lo
 import { NextResponse } from 'next/server';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
 import { fiscalServiceInputSchema } from '@/features/settings/tax-invoices/dtos';
 import { createFiscalService, listFiscalServices } from '@alusa/finance';
@@ -87,6 +88,8 @@ export async function POST(request: Request) {
       });
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
       return json(403, { error: 'SEM_PERMISSAO' });
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'FINANCIAL_CONFIG_WRITE' });
+    if (billingBlocked) return json(billingBlocked.status, billingBlocked.body);
 
     const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;

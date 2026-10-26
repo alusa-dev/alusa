@@ -4,12 +4,58 @@ import {
   createStripeBillingPortalSession,
   createStripeSubscriptionCheckoutSession,
   createStripeTrialSubscriptionWithoutPaymentMethod,
+  getStripeMissingCustomerId,
   releaseStripeSubscriptionSchedule,
+  retrieveStripeCustomer,
+  retrieveStripeCheckoutSession,
   retrieveStripeDefaultPaymentMethod,
   scheduleStripeSubscriptionPlanChange,
 } from '../src';
 
 describe('@alusa/stripe billing operations', () => {
+  it('retrieves Checkout status and bindings including the actual line-item price', async () => {
+    const retrieve = vi.fn(async () => ({
+      id: 'cs_test_1', status: 'open', livemode: false, customer: 'cus_1',
+      client_reference_id: 'conta_1', metadata: { contaId: 'conta_1', planCode: 'BAND_001_025' },
+    }));
+    const listLineItems = vi.fn(async () => ({ data: [{ price: { id: 'price_band_1' } }] }));
+    const client = { checkout: { sessions: { retrieve, listLineItems } } };
+
+    await expect(retrieveStripeCheckoutSession(client as never, 'cs_test_1')).resolves.toEqual({
+      id: 'cs_test_1', status: 'open', livemode: false, customerId: 'cus_1',
+      clientReferenceId: 'conta_1', metadata: { contaId: 'conta_1', planCode: 'BAND_001_025' },
+      priceIds: ['price_band_1'],
+      subscriptionId: null,
+    });
+    expect(retrieve).toHaveBeenCalledWith('cs_test_1');
+    expect(listLineItems).toHaveBeenCalledWith('cs_test_1', { limit: 10 });
+  });
+
+  it('retrieves a customer and reports deleted state without mutating Stripe', async () => {
+    const retrieve = vi.fn(async () => ({ id: 'cus_1', deleted: true }));
+    const client = { customers: { retrieve } };
+
+    await expect(retrieveStripeCustomer(client as never, 'cus_1')).resolves.toEqual({
+      id: 'cus_1', deleted: true,
+    });
+    expect(retrieve).toHaveBeenCalledWith('cus_1');
+  });
+
+  it('extracts only exact missing customer IDs from Stripe resource-missing errors', () => {
+    const stripeError = Object.assign(new Error("No such customer: 'cus_123abc'"), {
+      type: 'StripeInvalidRequestError', code: 'resource_missing',
+    });
+
+    expect(getStripeMissingCustomerId(stripeError)).toBe('cus_123abc');
+    expect(getStripeMissingCustomerId(new Error("No such customer: 'cus_123abc'"))).toBeNull();
+    expect(getStripeMissingCustomerId(Object.assign(new Error("No such subscription: 'sub_1'"), {
+      type: 'StripeInvalidRequestError', code: 'resource_missing',
+    }))).toBeNull();
+    expect(getStripeMissingCustomerId(Object.assign(new Error("No such customer: 'cus_123abc'"), {
+      type: 'StripeInvalidRequestError', code: 'api_error',
+    }))).toBeNull();
+  });
+
   it('releases a subscription schedule with a stable idempotency key', async () => {
     const release = vi.fn(async () => ({}));
     const client = { subscriptionSchedules: { release } };
@@ -39,10 +85,43 @@ describe('@alusa/stripe billing operations', () => {
     expect(client.subscriptionSchedules.update).toHaveBeenCalledWith('sched_1', expect.objectContaining({
       end_behavior: 'release',
       phases: expect.arrayContaining([
-        expect.objectContaining({ end_date: 1_800_000_000, items: [{ price: 'price_current', quantity: 2 }] }),
-        expect.objectContaining({ start_date: 1_800_000_000, items: [{ price: 'price_target', quantity: 2 }] }),
+        expect.objectContaining({ end_date: 1_800_000_000, items: [{ price: 'price_current', quantity: 2 }], proration_behavior: 'none' }),
+        expect.objectContaining({ start_date: 1_800_000_000, items: [{ price: 'price_target', quantity: 2 }], proration_behavior: 'none' }),
       ]),
     }), { idempotencyKey: 'idem_downgrade:update' });
+  });
+
+  it('reuses the owned scheduled band transition on retry without another Stripe update', async () => {
+    const effectiveAt = new Date(1_800_000_000 * 1000);
+    const scheduled = {
+      id: 'sched_band', metadata: { alusaPlanChangeKey: 'idem_band' },
+      current_phase: { start_date: 1_700_000_000 },
+      phases: [
+        { start_date: 1_700_000_000, end_date: 1_800_000_000, items: [{ price: 'price_current' }] },
+        { start_date: 1_800_000_000, items: [{ price: 'price_band_026_050' }] },
+      ],
+    };
+    const client = {
+      subscriptions: { retrieve: vi.fn()
+        .mockResolvedValueOnce({ id: 'sub_1', schedule: null })
+        .mockResolvedValueOnce({ id: 'sub_1', schedule: scheduled }) },
+      subscriptionSchedules: {
+        create: vi.fn(async () => ({ ...scheduled, phases: [scheduled.phases[0]] })),
+        update: vi.fn(async () => ({})),
+        retrieve: vi.fn(async () => scheduled),
+      },
+    };
+    const input = {
+      subscriptionId: 'sub_1', priceId: 'price_band_026_050', effectiveAt,
+      metadata: { contaId: 'conta_1', planCode: 'BAND_026_050' }, idempotencyKey: 'idem_band',
+    };
+
+    await expect(scheduleStripeSubscriptionPlanChange(client as never, input)).resolves.toMatchObject({ scheduleId: 'sched_band' });
+    await expect(scheduleStripeSubscriptionPlanChange(client as never, input)).resolves.toMatchObject({ scheduleId: 'sched_band' });
+
+    expect(client.subscriptionSchedules.create).toHaveBeenCalledTimes(1);
+    expect(client.subscriptionSchedules.update).toHaveBeenCalledTimes(1);
+    expect(client.subscriptionSchedules.update.mock.calls[0]?.[1].phases?.every((phase) => phase.proration_behavior === 'none')).toBe(true);
   });
 
   it('refuses to replace a schedule owned by another operation', async () => {

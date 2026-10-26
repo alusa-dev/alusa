@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { Check, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 import { BrandWordmark } from '@/components/brand/BrandWordmark';
+import { SlidingNumber } from '@/components/core/sliding-number';
 import { AlusaLogoLoader } from '@/components/feedback/AlusaLogoLoader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,6 +20,7 @@ import {
 } from '@/components/ui/select';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
+import { getSchoolPricingTier } from '@/lib/school-pricing-ui';
 import { maskCep, maskCpfCnpj, maskPhone } from '@alusa/lib/client';
 
 import type { WizardCompanyType, WizardState } from '@alusa/finance/wizard-client';
@@ -33,9 +36,7 @@ import {
 } from './wizard-service';
 
 type PersonType = 'PF' | 'PJ';
-type BillingCycle = 'monthly' | 'yearly';
-type PlanCode = 'STARTER' | 'PREMIUM' | 'PRO';
-type UiStep = 1 | 2 | 3 | 4 | 5 | 6;
+type UiStep = 1 | 2 | 3 | 4 | 5;
 
 type Draft = {
   schoolName: string;
@@ -58,35 +59,7 @@ type Draft = {
   addressState: string;
 };
 
-type CheckoutResponse = {
-  checkoutUrl?: string;
-  message?: string;
-};
-
-type TrialResponse = {
-  stripeSubscriptionId?: string;
-  trialEndsAt?: string | null;
-  message?: string;
-};
-
-type PortalResponse = {
-  portalUrl?: string;
-  error?: string;
-  message?: string;
-};
-
-type StripeCheckoutButtonState = 'idle' | 'opening' | 'waiting' | 'confirmed' | 'failed';
-
-type PlatformBillingSummary = {
-  account: {
-    status?: string | null;
-    planCode?: string | null;
-    stripeSubscriptionId?: string | null;
-    trialEndsAt?: string | null;
-  } | null;
-};
-
-const TOTAL_STEPS = 6;
+const TOTAL_STEPS = 5;
 const FIELD_CLASS =
   'h-11 rounded-md border border-[#d8d3de] bg-white px-4 text-sm text-[#1f1b24] shadow-none outline-none transition placeholder:text-[#b9b2c2] hover:border-[#b8afc4] focus-visible:border-[#55298a] focus-visible:ring-2 focus-visible:ring-[#55298a]/15';
 
@@ -95,54 +68,6 @@ const COMPANY_TYPES: Array<{ value: WizardCompanyType; label: string }> = [
   { value: 'LIMITED', label: 'LTDA - Sociedade Limitada' },
   { value: 'INDIVIDUAL', label: 'EI - Empresario Individual' },
   { value: 'ASSOCIATION', label: 'Associacao' },
-];
-
-const PLANS: Array<{
-  code: PlanCode;
-  name: string;
-  students: string;
-  price: string;
-  features: string[];
-}> = [
-  {
-    code: 'STARTER',
-    name: 'Premium',
-    students: 'ate 60 alunos ativos',
-    price: 'R$ 149/mes',
-    features: [
-      'Plataforma completa',
-      'Usuarios internos ilimitados',
-      'Professores ilimitados',
-      'Cadastros historicos ilimitados',
-      'Todos os modulos inclusos',
-    ],
-  },
-  {
-    code: 'PREMIUM',
-    name: 'Premium+',
-    students: 'ate 150 alunos ativos',
-    price: 'R$ 279/mes',
-    features: [
-      'Plataforma completa',
-      'Usuarios internos ilimitados',
-      'Professores ilimitados',
-      'Cadastros historicos ilimitados',
-      'Todos os modulos inclusos',
-    ],
-  },
-  {
-    code: 'PRO',
-    name: 'Pro',
-    students: 'ate 300 alunos ativos',
-    price: 'R$ 499/mes',
-    features: [
-      'Plataforma completa',
-      'Usuarios internos ilimitados',
-      'Professores ilimitados',
-      'Cadastros historicos ilimitados',
-      'Todos os modulos inclusos',
-    ],
-  },
 ];
 
 function formatMoneyInput(value: string) {
@@ -215,7 +140,7 @@ function makeDraft(wizard?: WizardState | null): Draft {
 }
 
 function resolveInitialStep(wizard: WizardState): UiStep {
-  if (wizard.completedAt || wizard.step === 6) return 6;
+  if (wizard.completedAt || wizard.step === 6) return 5;
   if (wizard.address && wizard.incomeValue) return 4;
   if (wizard.cpfCnpj && wizard.mobilePhone && wizard.incomeValue) return 3;
   if (wizard.personType) return 2;
@@ -226,13 +151,6 @@ function extractError(error: unknown, fallback: string) {
   return error instanceof WizardApiError ? error.message : fallback;
 }
 
-function createWizardIdempotencyKey(prefix: string, planCode: PlanCode) {
-  if (typeof globalThis.crypto?.randomUUID === 'function') {
-    return `${prefix}:${planCode}:${globalThis.crypto.randomUUID()}`;
-  }
-  throw new Error('Este navegador não consegue criar uma chave segura para a operação.');
-}
-
 function formatPersonType(type: Draft['personType']) {
   if (type === 'PF') return 'Pessoa fisica';
   if (type === 'PJ') return 'Pessoa juridica';
@@ -241,10 +159,6 @@ function formatPersonType(type: Draft['personType']) {
 
 function formatCompanyType(type: Draft['companyType']) {
   return COMPANY_TYPES.find((item) => item.value === type)?.label ?? '';
-}
-
-function formatBillingCycle(cycle: BillingCycle) {
-  return cycle === 'monthly' ? 'Mensal' : 'Anual';
 }
 
 function SummaryItem({ label, value }: { label: string; value: React.ReactNode }) {
@@ -284,14 +198,28 @@ function Field({
 
 function FinanceWizardShell({
   currentStep,
+  direction,
   children,
   footer,
 }: {
   currentStep: UiStep;
+  direction: 1 | -1;
   children: React.ReactNode;
   footer: React.ReactNode;
 }) {
   const progress = Math.max(8, Math.round((currentStep / TOTAL_STEPS) * 100));
+  const prefersReducedMotion = useReducedMotion();
+  const stepVariants = {
+    enter: (stepDirection: number) => ({
+      opacity: prefersReducedMotion ? 1 : 0,
+      x: prefersReducedMotion ? 0 : stepDirection * 20,
+    }),
+    center: { opacity: 1, x: 0 },
+    exit: (stepDirection: number) => ({
+      opacity: prefersReducedMotion ? 1 : 0,
+      x: prefersReducedMotion ? 0 : stepDirection * -20,
+    }),
+  };
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-white text-[#17121c]">
@@ -301,12 +229,36 @@ function FinanceWizardShell({
           className="mt-1 h-2.5 w-[159px] overflow-hidden rounded-full bg-[#eeeaf2]"
           aria-label={`${progress}% concluido`}
         >
-          <div className="h-full rounded-full bg-[#7a1ed2]" style={{ width: `${progress}%` }} />
+          <motion.div
+            className="h-full rounded-full bg-[#7a1ed2]"
+            initial={false}
+            animate={{ width: `${progress}%` }}
+            transition={{
+              duration: prefersReducedMotion ? 0 : 0.45,
+              ease: [0.22, 1, 0.36, 1],
+            }}
+          />
         </div>
       </header>
 
       <section className="flex min-h-screen items-center justify-center px-6 py-32 sm:px-10">
-        {children}
+        <AnimatePresence initial={false} mode="wait" custom={direction}>
+          <motion.div
+            key={currentStep}
+            custom={direction}
+            variants={stepVariants}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            transition={{
+              duration: prefersReducedMotion ? 0 : 0.24,
+              ease: [0.22, 1, 0.36, 1],
+            }}
+            className="flex w-full justify-center"
+          >
+            {children}
+          </motion.div>
+        </AnimatePresence>
       </section>
 
       <footer className="fixed bottom-0 left-0 z-20 flex w-full items-center justify-end gap-3 px-6 pb-8 sm:px-[50px] sm:pb-[50px]">
@@ -322,77 +274,28 @@ export function FinanceWizard() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [completing, setCompleting] = useState(false);
-  const [checkoutLoading, setCheckoutLoading] = useState(false);
-  const [registerLaterLoading, setRegisterLaterLoading] = useState(false);
-  const [checkoutPolling, setCheckoutPolling] = useState(false);
-  const [checkoutFailed, setCheckoutFailed] = useState(false);
-  const [cardConfirmed, setCardConfirmed] = useState(false);
-  const [trialDeferred, setTrialDeferred] = useState(false);
   const [cepLoading, setCepLoading] = useState(false);
   const [wizardState, setWizardState] = useState<WizardState | null>(null);
   const [currentStep, setCurrentStep] = useState<UiStep>(1);
+  const [transitionDirection, setTransitionDirection] = useState<1 | -1>(1);
   const [draft, setDraft] = useState<Draft>(() => makeDraft(null));
-  const [planCode, setPlanCode] = useState<PlanCode>('PREMIUM');
-  const [billingCycle, setBillingCycle] = useState<BillingCycle>('monthly');
+  const [studentCount, setStudentCount] = useState(165);
   const lastCepLookupRef = useRef('');
-  const checkoutIdempotencyKeyRef = useRef<{ planCode: PlanCode; key: string } | null>(null);
-  const portalIdempotencyKeyRef = useRef<{ planCode: PlanCode; key: string } | null>(null);
-  const trialIdempotencyKeyRef = useRef<{ planCode: PlanCode; key: string } | null>(null);
-
-  const getWizardIdempotencyKey = useCallback(
-    (
-      keyRef: React.MutableRefObject<{ planCode: PlanCode; key: string } | null>,
-      prefix: string,
-    ) => {
-      if (!keyRef.current || keyRef.current.planCode !== planCode) {
-        keyRef.current = {
-          planCode,
-          key: createWizardIdempotencyKey(prefix, planCode),
-        };
-      }
-      return keyRef.current.key;
-    },
-    [planCode],
-  );
 
   const financeIntegrationMode =
     (session?.user as { financeIntegrationMode?: string | null } | undefined)
       ?.financeIntegrationMode ?? 'WHITELABEL_BAAS';
   const isExternalAsaasMode = financeIntegrationMode === 'EXTERNAL_ASAAS_ACCOUNT';
 
-  const selectedPlan = useMemo(
-    () => PLANS.find((plan) => plan.code === planCode) ?? PLANS[1],
-    [planCode],
-  );
-  const billingConfirmed = cardConfirmed || trialDeferred;
-  const stripeButtonState: StripeCheckoutButtonState = cardConfirmed
-    ? 'confirmed'
-    : checkoutLoading
-      ? 'opening'
-      : checkoutPolling
-        ? 'waiting'
-        : checkoutFailed
-          ? 'failed'
-          : 'idle';
-
-  const checkBillingConfirmation = useCallback(async () => {
-    const response = await fetch('/api/platform-billing/summary', {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-      cache: 'no-store',
-    });
-
-    if (!response.ok) return false;
-
-    const summary = (await response.json().catch(() => null)) as PlatformBillingSummary | null;
-    const account = summary?.account;
-    const status = account?.status ?? null;
-    const hasSubscription = Boolean(account?.stripeSubscriptionId);
-    const isConfirmedStatus = status === 'TRIALING' || status === 'ACTIVE';
-    const isSamePlan = !account?.planCode || account.planCode === planCode;
-
-    return hasSubscription && isConfirmedStatus && isSamePlan;
-  }, [planCode]);
+  // The declared student count is persisted with step 5 and the server derives its price band.
+  const selectedTier = getSchoolPricingTier(studentCount);
+  const monthlyPrice = selectedTier ? new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(selectedTier.price) : 'Condição personalizada';
+  const needsSpecialist = studentCount > 500;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -403,6 +306,7 @@ export function FinanceWizard() {
         const result = await getWizardState(controller.signal);
         setWizardState(result.wizard);
         setDraft(makeDraft(result.wizard));
+        setStudentCount(result.wizard.onboardingStudentCount ?? 165);
         setCurrentStep(resolveInitialStep(result.wizard));
       } catch (error) {
         if ((error as Error).name !== 'AbortError') {
@@ -416,13 +320,6 @@ export function FinanceWizard() {
     void load();
     return () => controller.abort();
   }, []);
-
-  useEffect(() => {
-    if (trialDeferred) return;
-    void checkBillingConfirmation()
-      .then(setCardConfirmed)
-      .catch(() => undefined);
-  }, [checkBillingConfirmation, trialDeferred]);
 
   useEffect(() => {
     const cepDigits = draft.postalCode.replace(/\D/g, '');
@@ -453,53 +350,18 @@ export function FinanceWizard() {
     };
   }, [draft.postalCode]);
 
-  useEffect(() => {
-    if (!checkoutPolling || cardConfirmed || trialDeferred) return;
-
-    let cancelled = false;
-    let attempts = 0;
-
-    const intervalId = window.setInterval(() => {
-      attempts += 1;
-      void checkBillingConfirmation()
-        .then((confirmed) => {
-          if (cancelled) return;
-          if (confirmed) {
-            setCardConfirmed(true);
-            setCheckoutFailed(false);
-            setCheckoutPolling(false);
-            toast.success('Cartao confirmado. O periodo de teste esta ativo.');
-          } else if (attempts >= 45) {
-            setCheckoutPolling(false);
-            setCheckoutFailed(true);
-          }
-        })
-        .catch(() => undefined);
-    }, 4000);
-
-    void checkBillingConfirmation()
-      .then((confirmed) => {
-        if (!cancelled && confirmed) {
-          setCardConfirmed(true);
-          setCheckoutFailed(false);
-          setCheckoutPolling(false);
-        }
-      })
-      .catch(() => undefined);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [cardConfirmed, checkBillingConfirmation, checkoutPolling, trialDeferred]);
-
   const updateDraft = useCallback(<K extends keyof Draft>(key: K, value: Draft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
   }, []);
 
+  const goToStep = useCallback((nextStep: UiStep) => {
+    setTransitionDirection(nextStep >= currentStep ? 1 : -1);
+    setCurrentStep(nextStep);
+  }, [currentStep]);
+
   const handleBack = useCallback(() => {
-    setCurrentStep((step) => (step > 1 ? ((step - 1) as UiStep) : step));
-  }, []);
+    if (currentStep > 1) goToStep((currentStep - 1) as UiStep);
+  }, [currentStep, goToStep]);
 
   const handleStart = useCallback(async () => {
     if (!draft.schoolName.trim()) {
@@ -516,19 +378,19 @@ export function FinanceWizard() {
       setSaving(true);
       const result = await saveWizardStep1({ personType: draft.personType });
       setWizardState(result.wizard);
-      setCurrentStep(2);
+      goToStep(2);
     } catch (error) {
       toast.error(extractError(error, 'Nao foi possivel salvar o tipo de conta.'));
     } finally {
       setSaving(false);
     }
-  }, [draft.personType, draft.schoolName]);
+  }, [draft.personType, draft.schoolName, goToStep]);
 
   const handleOfficialData = useCallback(async () => {
     const personType = draft.personType || wizardState?.personType;
     if (!personType) {
       toast.error('Selecione o tipo de conta para continuar.');
-      setCurrentStep(1);
+      goToStep(1);
       return;
     }
 
@@ -556,16 +418,19 @@ export function FinanceWizard() {
         landlinePhone: draft.landlinePhone,
         subaccountEmail: draft.subaccountEmail,
       });
-      const step5 = await saveWizardStep5({ incomeValue: parseMoneyToNumber(draft.incomeValue) });
+      const step5 = await saveWizardStep5({
+        incomeValue: parseMoneyToNumber(draft.incomeValue),
+        onboardingStudentCount: studentCount,
+      });
 
       setWizardState({ ...step2.wizard, ...step5.wizard });
-      setCurrentStep(3);
+      goToStep(3);
     } catch (error) {
       toast.error(extractError(error, 'Revise os dados oficiais antes de continuar.'));
     } finally {
       setSaving(false);
     }
-  }, [draft, wizardState?.personType]);
+  }, [draft, goToStep, studentCount, wizardState?.personType]);
 
   const handleAddress = useCallback(async () => {
     try {
@@ -580,141 +445,66 @@ export function FinanceWizard() {
         complement: draft.complement,
       });
       setWizardState(result.wizard);
-      setCurrentStep(4);
+      goToStep(4);
     } catch (error) {
       toast.error(extractError(error, 'Revise o endereco oficial antes de continuar.'));
     } finally {
       setSaving(false);
     }
-  }, [draft]);
-
-  const handleCheckout = useCallback(async () => {
-    try {
-      setCheckoutLoading(true);
-      setCheckoutFailed(false);
-      if (trialDeferred) {
-        const idempotencyKey = getWizardIdempotencyKey(
-          portalIdempotencyKeyRef,
-          'finance-wizard-portal',
-        );
-        const response = await fetch('/api/platform-billing/portal', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Idempotency-Key': idempotencyKey,
-          },
-          body: JSON.stringify({ returnPath: '/finance/wizard' }),
-        });
-
-        const json = (await response.json().catch(() => null)) as PortalResponse | null;
-        if (!response.ok || !json?.portalUrl) {
-          throw new Error(json?.message ?? json?.error ?? 'Nao foi possivel abrir a area de pagamento.');
-        }
-
-        const portalWindow = window.open(json.portalUrl, '_blank');
-        if (!portalWindow) {
-          window.location.assign(json.portalUrl);
-          return;
-        }
-        portalWindow.opener = null;
-        return;
-      }
-
-      const idempotencyKey = getWizardIdempotencyKey(
-        checkoutIdempotencyKeyRef,
-        'finance-wizard',
-      );
-      const response = await fetch('/api/platform-billing/checkout', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': idempotencyKey,
-        },
-        body: JSON.stringify({ planCode }),
-      });
-
-      const json = (await response.json().catch(() => null)) as CheckoutResponse | null;
-      if (!response.ok || !json?.checkoutUrl) {
-        throw new Error(json?.message ?? 'Nao foi possivel abrir o checkout.');
-      }
-
-      const checkoutWindow = window.open(json.checkoutUrl, '_blank');
-      if (!checkoutWindow) {
-        window.location.assign(json.checkoutUrl);
-        return;
-      }
-      checkoutWindow.opener = null;
-
-      setCheckoutPolling(true);
-      toast.info('Finalize o cadastro do cartao na aba da Stripe. Vamos aguardar a confirmacao aqui.');
-    } catch (error) {
-      setCheckoutFailed(true);
-      toast.error(error instanceof Error ? error.message : 'Nao foi possivel abrir o checkout.');
-    } finally {
-      setCheckoutLoading(false);
-    }
-  }, [getWizardIdempotencyKey, planCode, trialDeferred]);
-
-  const handleRegisterLater = useCallback(async () => {
-    try {
-      setRegisterLaterLoading(true);
-      const idempotencyKey = getWizardIdempotencyKey(
-        trialIdempotencyKeyRef,
-        'finance-wizard-register-later',
-      );
-      const response = await fetch('/api/platform-billing/trial', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': idempotencyKey,
-        },
-        body: JSON.stringify({ planCode, idempotencyKey }),
-      });
-
-      const json = (await response.json().catch(() => null)) as TrialResponse | null;
-      if (!response.ok || !json?.stripeSubscriptionId) {
-        throw new Error(json?.message ?? 'Nao foi possivel iniciar o teste.');
-      }
-
-      setCheckoutPolling(false);
-      setCheckoutFailed(false);
-      setTrialDeferred(true);
-      setCardConfirmed(false);
-      setCurrentStep(6);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Nao foi possivel iniciar o teste.');
-    } finally {
-      setRegisterLaterLoading(false);
-    }
-  }, [getWizardIdempotencyKey, planCode]);
+  }, [draft, goToStep]);
 
   const handleCompleteWizard = useCallback(async () => {
     setCompleting(true);
 
     try {
       setSaving(true);
+      await saveWizardStep5({
+        incomeValue: parseMoneyToNumber(draft.incomeValue),
+        onboardingStudentCount: studentCount,
+      });
       const result = await completeWizard();
 
       if (!result.success) {
         setCompleting(false);
-        if (result.error?.code === 'ASAAS_EMAIL_IN_USE') setCurrentStep(2);
+        if (result.error?.code === 'ASAAS_EMAIL_IN_USE') goToStep(2);
         toast.error(result.error?.message || 'Nao foi possivel confirmar a criacao da conta.');
         return;
+      }
+
+      if (!needsSpecialist) {
+        const idempotencyKey = 'onboarding-trial:initial';
+        const trialResponse = await fetch('/api/platform-billing/trial', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey },
+          body: JSON.stringify({}),
+        });
+        const trialPayload = await trialResponse.json().catch(() => null) as { error?: string; message?: string } | null;
+        if (!trialResponse.ok) {
+          setCompleting(false);
+          toast.error(trialPayload?.message ?? 'A configuração terminou, mas não foi possível iniciar o teste. Tente confirmar novamente.');
+          return;
+        }
       }
 
       setWizardState(result.wizard);
       await updateSession().catch(() => undefined);
 
       if (isExternalAsaasMode) {
-        toast.success('Perfil confirmado. Conecte sua conta de pagamentos pelo dashboard.');
+        toast.success(needsSpecialist
+          ? 'Perfil confirmado. Fale com um especialista para definir a condição comercial e conecte sua conta de pagamentos pelo dashboard.'
+          : 'Perfil confirmado. Seu teste grátis de 14 dias começou sem cartão e sem cobrança automática.');
         router.replace('/dashboard');
         return;
       }
 
       if (result.provisioningStatus === 'QUEUED') {
-        toast.info('Estamos criando sua conta de pagamentos. Em geral leva poucos minutos.');
+        toast.info(needsSpecialist
+          ? 'Estamos criando sua conta de pagamentos. Fale com um especialista para definir a condição comercial.'
+          : 'Estamos criando sua conta de pagamentos. Seu teste grátis de 14 dias já começou sem cartão e sem cobrança automática.');
       } else {
-        toast.success('Conta financeira confirmada com sucesso.');
+        toast.success(needsSpecialist
+          ? 'Conta financeira confirmada. Fale com um especialista para definir a condição comercial.'
+          : 'Conta financeira confirmada. Seu teste grátis de 14 dias começou sem cartão e sem cobrança automática.');
       }
 
       router.replace('/dashboard');
@@ -724,7 +514,7 @@ export function FinanceWizard() {
     } finally {
       setSaving(false);
     }
-  }, [isExternalAsaasMode, router, updateSession]);
+  }, [draft.incomeValue, goToStep, isExternalAsaasMode, needsSpecialist, router, studentCount, updateSession]);
 
   if (completing) {
     return <AlusaLogoLoader fullScreen />;
@@ -732,7 +522,7 @@ export function FinanceWizard() {
 
   if (loading) {
     return (
-      <FinanceWizardShell currentStep={1} footer={null}>
+      <FinanceWizardShell currentStep={1} direction={transitionDirection} footer={null}>
         <Loader2 className="h-8 w-8 animate-spin text-[#5b2d90]" />
       </FinanceWizardShell>
     );
@@ -745,37 +535,46 @@ export function FinanceWizard() {
           type="button"
           variant="ghost"
           onClick={handleBack}
-          disabled={saving || checkoutLoading || registerLaterLoading}
+          disabled={saving}
           className="h-11 rounded-md px-5 text-sm font-semibold text-[#6f6878] shadow-none hover:bg-[#f5f2f8] hover:text-[#211b27]"
         >
           Voltar
         </Button>
       ) : null}
-      <Button
-        type="button"
-        onClick={
-          currentStep === 1
-            ? handleStart
-            : currentStep === 2
-              ? handleOfficialData
-              : currentStep === 3
-                ? handleAddress
-                : currentStep === 4
-                  ? () => setCurrentStep(5)
-                  : currentStep === 5
-                    ? () => setCurrentStep(6)
+      {currentStep === 4 && needsSpecialist ? (
+        <Button
+          asChild
+          className="h-11 min-w-[220px] rounded-md bg-[#55298a] text-sm font-semibold text-white shadow-none transition hover:bg-[#4a2379]"
+        >
+          <a href="mailto:contato@alusa.app?subject=Plano%20para%20escola%20com%20mais%20de%20500%20alunos">
+            Fale com um especialista
+          </a>
+        </Button>
+      ) : (
+        <Button
+          type="button"
+          onClick={
+            currentStep === 1
+              ? handleStart
+              : currentStep === 2
+                ? handleOfficialData
+                : currentStep === 3
+                  ? handleAddress
+                  : currentStep === 4
+                    ? () => goToStep(5)
                     : handleCompleteWizard
-        }
-        disabled={saving || checkoutLoading || registerLaterLoading || (currentStep === 5 && !billingConfirmed)}
-        className="h-11 w-[151px] rounded-md bg-[#55298a] text-sm font-semibold text-white shadow-none transition hover:bg-[#4a2379] disabled:bg-[#d7d0df] disabled:text-white"
-      >
-        {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : currentStep === 6 ? 'Confirmar' : 'Continuar'}
-      </Button>
+          }
+          disabled={saving}
+          className="h-11 w-[151px] rounded-md bg-[#55298a] text-sm font-semibold text-white shadow-none transition hover:bg-[#4a2379] disabled:bg-[#d7d0df] disabled:text-white"
+        >
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : currentStep === 5 ? 'Confirmar' : 'Continuar'}
+        </Button>
+      )}
     </>
   );
 
   return (
-    <FinanceWizardShell currentStep={currentStep} footer={footer}>
+    <FinanceWizardShell currentStep={currentStep} direction={transitionDirection} footer={footer}>
       {currentStep === 1 ? (
         <div className="w-full max-w-[448px]">
           <h1 className="max-w-[416px] text-xl leading-6 text-[#17121c]">
@@ -1018,177 +817,105 @@ export function FinanceWizard() {
       ) : null}
 
       {currentStep === 4 ? (
-        <div className="w-full max-w-[493px]">
-          <h1 className="max-w-[443px] text-xl leading-6 text-[#17121c]">
-            <span className="font-semibold">Escolha o plano da sua escola.</span> Comece com 14
-            dias grátis e cadastre um cartão para ativar o período de teste.
+        <div className="w-full max-w-[920px] pb-8">
+          <h1 className="max-w-[560px] text-xl leading-6 text-[#17121c]">
+            <span className="font-semibold">Quantos alunos sua escola tem hoje?</span>
           </h1>
+          <p className="mt-3 max-w-[600px] text-sm leading-6 text-[#6f6878]">
+            Todos os recursos da Alusa em um único plano, com mensalidade definida pela quantidade de alunos.
+          </p>
 
-          <div className="mt-7 rounded-md border border-[#e3ddea] bg-white px-[30px] py-7">
-            <div className="flex items-center justify-between gap-4">
-              <h2 className="text-xl font-semibold text-[#17121c]">Selecione um plano</h2>
-              <div className="flex h-[39px] rounded-md bg-[#eeeaf2] p-1 text-sm font-semibold text-[#3d3446]">
-                <button
-                  type="button"
-                  onClick={() => setBillingCycle('monthly')}
-                  className={cn(
-                    'h-[31px] w-[90px] rounded-md bg-transparent transition',
-                    billingCycle === 'monthly' && 'bg-white',
-                  )}
-                >
-                  Mensal
-                </button>
-                <button
-                  type="button"
-                  disabled
-                  title="Ciclo anual em breve"
-                  className={cn(
-                    'h-[31px] w-[78px] rounded-md bg-transparent text-[#9a92a5] transition disabled:cursor-not-allowed',
-                    billingCycle === 'yearly' && 'bg-white',
-                  )}
-                >
-                  Anual
-                </button>
+          <section
+            className="mt-6 grid overflow-hidden rounded-lg border border-[#e3ddea] bg-white md:grid-cols-2"
+            aria-label="Simulador de mensalidade"
+          >
+            <div className="grid content-center gap-4 p-5 sm:p-7">
+              <div>
+                <label htmlFor="finance-student-count" className="text-base font-semibold text-[#17121c]">
+                  Alunos pagantes
+                </label>
+                <p id="finance-student-count-help" className="mt-1 text-sm leading-5 text-[#6f6878]">
+                  Conte cada aluno uma vez, mesmo que tenha várias matrículas. Inclua bolsas parciais
+                  e mensalidades em atraso. Não inclua alunos que tenham apenas bolsa integral.
+                </p>
+              </div>
+              <div className="flex items-baseline gap-2">
+                <output htmlFor="finance-student-count" className="text-4xl font-semibold tracking-tight text-[#17121c]">
+                  {studentCount}
+                </output>
+                <span className="text-sm text-[#6f6878]">alunos</span>
+              </div>
+              <input
+                id="finance-student-count"
+                type="range"
+                min={1}
+                max={501}
+                step={1}
+                value={studentCount}
+                onChange={(event) => setStudentCount(Number(event.target.value))}
+                aria-describedby="finance-student-count-help"
+                aria-valuetext={`${studentCount} alunos`}
+                style={{
+                  '--pricing-range-progress': `${((Math.min(studentCount, 500) - 1) / 499) * 100}%`,
+                  height: 8,
+                  margin: 0,
+                } as React.CSSProperties}
+                className="pricing-range focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#55298a]"
+              />
+              <div className="flex justify-between text-xs text-[#7b7484]" aria-hidden="true">
+                <span>1 aluno</span>
+                <span>500+ alunos</span>
               </div>
             </div>
 
-            <div className="mt-7 grid gap-2">
-              {PLANS.map((plan) => {
-                const selected = plan.code === planCode;
-                return (
-                  <button
-                    key={plan.code}
-                    type="button"
-                    onClick={() => setPlanCode(plan.code)}
-                    className={cn(
-                      'rounded-md border border-[#eeeaf3] bg-white p-4 text-left transition hover:border-[#cfc4dd]',
-                      selected && 'border-[#e5d7f5] bg-[#f3ebfb]',
-                    )}
-                  >
-                    <div className="flex items-start gap-4">
-                      <span
-                        className={cn(
-                          'mt-1 h-[23px] w-[23px] rounded-full border border-[#c8c0d1] bg-white',
-                          selected && 'border-[3px] border-[#55298a]',
-                        )}
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-base font-semibold text-[#17121c]">{plan.name}</span>
-                        <span className="block text-sm text-[#6f6878]">{plan.students}</span>
-                      </span>
-                      <span className="text-xl font-semibold text-[#17121c]">{plan.price}</span>
-                    </div>
-
-                    {selected ? (
-                      <div className="ml-[57px] mt-5 grid gap-3 text-sm text-[#4d4557]">
-                        {plan.features.map((feature) => (
-                          <span key={feature} className="flex items-center gap-2">
-                            <Check className="h-4 w-4 text-[#55298a]" />
-                            {feature}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </button>
-                );
-              })}
+            <div className="grid content-center gap-4 border-t border-[#e3ddea] bg-[#fbfafd] p-5 sm:p-7 md:border-l md:border-t-0">
+              <div>
+                <p className="text-sm font-semibold text-[#6f6878]">{needsSpecialist ? 'Mais de 500 alunos' : selectedTier?.label}</p>
+                <p className="mt-1 text-3xl font-semibold tracking-tight text-[#17121c]" aria-hidden="true">
+                  <span className="inline-flex items-baseline tabular-nums">
+                    <span className="mr-[0.12em]">R$</span>
+                    {selectedTier ? <span><SlidingNumber value={selectedTier.price} />,00</span> : <span>Condição personalizada</span>}
+                    <span className="ml-1 text-sm font-medium text-[#6f6878]">/mês</span>
+                  </span>
+                </p>
+                <span className="sr-only" aria-live="polite" aria-atomic="true">
+                  {needsSpecialist ? 'Mais de 500 alunos, condição personalizada.' : `${selectedTier?.label}, ${monthlyPrice} por mês.`}
+                </span>
+              </div>
+              <div>
+                <p className="font-semibold text-[#211b27]">Todos os módulos essenciais incluídos.</p>
+                <p className="mt-1 text-sm leading-5 text-[#6f6878]">
+                  O valor só muda após 3 meses consecutivos em outra faixa.
+                </p>
+              </div>
+              <div className="rounded-md bg-[#f0e7fa] p-3 text-sm leading-5 text-[#4d4557]">
+                <p><strong>14 dias grátis, sem cartão.</strong> Sem cobrança automática. Ao final do período, você decide se quer contratar.</p>
+              </div>
             </div>
-          </div>
+          </section>
         </div>
       ) : null}
 
       {currentStep === 5 ? (
-        <div className="w-full max-w-[493px]">
-          <h1 className="text-xl leading-6 text-[#17121c]">
-            <span className="font-semibold">Cadastre seu cartão para ativar os 14 dias grátis.</span>{' '}
-            Você será direcionado para o ambiente seguro da Stripe e retornará à Alusa após a
-            confirmação.
-          </h1>
-
-          <div className="mt-8 rounded-md border border-[#e3ddea] bg-white p-6 shadow-[0_0_0_4px_#f5f2f8]">
-            <div className="flex items-center gap-4">
-              <span className="h-[23px] w-[23px] rounded-full border-[3px] border-[#55298a]" />
-              <div className="min-w-0 flex-1">
-                <p className="text-base font-semibold text-[#17121c]">{selectedPlan.name}</p>
-                <p className="text-sm text-[#6f6878]">{selectedPlan.students}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-xs font-semibold text-[#6f6878]">Após o período teste</p>
-                <p className="text-xl font-semibold text-[#17121c]">{selectedPlan.price}</p>
-              </div>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={handleCheckout}
-            disabled={stripeButtonState === 'opening' || stripeButtonState === 'waiting' || cardConfirmed}
-            className="mt-9 flex h-[50px] w-full items-center justify-center gap-2 rounded-md bg-[#635bff] text-xl font-semibold text-white transition hover:bg-[#5851e6] disabled:cursor-not-allowed disabled:bg-[#a49ff8]"
-          >
-            {stripeButtonState === 'opening' ? (
-              <>
-                <Loader2 className="h-5 w-5 animate-spin" />
-                Abrindo Stripe...
-              </>
-            ) : stripeButtonState === 'waiting' ? (
-              <>
-                <Loader2 className="h-5 w-5 animate-spin" />
-                Aguardando confirmação da Stripe...
-              </>
-            ) : stripeButtonState === 'confirmed' ? (
-              <>
-                <Check className="h-5 w-5" />
-                Cartão confirmado
-              </>
-            ) : stripeButtonState === 'failed' ? (
-              'Tentar novamente'
-            ) : (
-              <>
-                Cadastrar cartão com a
-                <img
-                  src="/integrations/stripe-logo.svg"
-                  alt="Stripe"
-                  className="pointer-events-none h-[29px] w-auto select-none brightness-0 invert"
-                  draggable={false}
-                />
-              </>
-            )}
-          </button>
-
-          {!cardConfirmed ? (
-            <button
-              type="button"
-              onClick={handleRegisterLater}
-              disabled={registerLaterLoading || checkoutLoading || checkoutPolling}
-              className="mx-auto mt-3 block px-1 py-2 text-sm font-semibold text-[#55298a] underline-offset-4 transition hover:underline disabled:cursor-not-allowed disabled:text-[#a79caf] disabled:no-underline"
-            >
-              {registerLaterLoading ? (
-                <span className="inline-flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Cadastrar depois
-                </span>
-              ) : (
-                'Cadastrar depois'
-              )}
-            </button>
-          ) : null}
-
-        </div>
-      ) : null}
-
-      {currentStep === 6 ? (
-        <div className="w-full max-w-[760px]">
+        <div className="w-full max-w-[760px] pb-8">
           <h1 className="max-w-[560px] text-xl leading-6 text-[#17121c]">
             <span className="font-semibold">Revise os dados antes de confirmar.</span> Depois disso,
-            vamos preparar a conta financeira da escola com segurança.
+            vamos continuar a configuração financeira da escola.
           </h1>
           <p className="mt-3 max-w-[600px] text-sm leading-6 text-[#6f6878]">
             {isExternalAsaasMode
               ? 'Como você já usa uma conta de pagamentos, a Alusa vai confirmar o perfil e seguir para a conexão segura dessa conta.'
-              : 'No modo padrão, a Alusa cria a conta de pagamentos vinculada à escola e acompanha a ativação automaticamente.'}
+              : 'A equipe continuará a configuração da conta de pagamentos vinculada à escola após a confirmação dos dados.'}
           </p>
 
-          <div className="mt-8 grid gap-4">
+          <div className="mt-6 grid gap-4">
+            <ReviewSection title="Resumo do plano">
+              <SummaryItem label="Alunos na simulação" value={<span className="financial-data">{studentCount}</span>} />
+              <SummaryItem label="Faixa escolhida" value={needsSpecialist ? 'Mais de 500 alunos' : selectedTier?.label ?? 'Sem alunos informados'} />
+              <SummaryItem label="Mensalidade" value={<span className="financial-data">{monthlyPrice}</span>} />
+              <SummaryItem label="Período de teste" value="14 dias grátis, sem cartão e sem cobrança automática" />
+            </ReviewSection>
+
             <ReviewSection title="Dados da escola">
               <SummaryItem label="Nome da escola" value={draft.schoolName} />
               <SummaryItem label="Tipo de conta" value={formatPersonType(draft.personType)} />
@@ -1224,18 +951,6 @@ export function FinanceWizard() {
               <SummaryItem label="Complemento" value={draft.complement} />
               <SummaryItem label="Cidade" value={draft.addressCity} />
               <SummaryItem label="Estado" value={draft.addressState} />
-            </ReviewSection>
-
-            <ReviewSection title="Plano e ativação">
-              <SummaryItem label="Plano" value={selectedPlan.name} />
-              <SummaryItem label="Valor" value={<span className="financial-data">{selectedPlan.price}</span>} />
-              <SummaryItem label="Ciclo" value={formatBillingCycle(billingCycle)} />
-              <SummaryItem label="Capacidade" value={<span className="financial-data">{selectedPlan.students}</span>} />
-              <SummaryItem label="Cartão" value={cardConfirmed ? 'Confirmado' : trialDeferred ? 'Cadastrar depois' : 'Pendente'} />
-              <SummaryItem
-                label="Modo da conta"
-                value={isExternalAsaasMode ? 'Conectar conta existente' : 'Criar conta padrão'}
-              />
             </ReviewSection>
           </div>
         </div>

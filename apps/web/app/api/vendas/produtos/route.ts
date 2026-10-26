@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { productSchema } from '@alusa/lib/schemas/product.schema';
 import { createProduct, listProducts } from '@alusa/lib/services/product.service';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { storeWriteBillingBlock } from '../_helpers';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json({ error: { code, message, details } }, { status });
@@ -42,6 +43,8 @@ export async function POST(req: Request) {
   try {
     const auth = await resolveTenantSession();
     if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
+    const billingBlocked = await storeWriteBillingBlock(auth.contaId);
+    if (billingBlocked) return billingBlocked;
     const { contaId } = auth;
 
     const body = await req.json();

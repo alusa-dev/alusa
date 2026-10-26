@@ -13,6 +13,7 @@ import { classifyAsaasSubscriptionMutationError } from '@/src/server/finance/asa
 import { deriveLocalAssinaturaSnapshot } from '@/src/server/enrollments/subscription-snapshot';
 import { mapBillingTypeToFormaPagamento } from '@/src/server/enrollments/recurring-billing';
 import { alignLocalPendingEnrollmentCharges } from '@/src/server/enrollments/enrollment-finance-consistency.service';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import {
   isFinancialContextEditable,
   resolveMatriculaFinancialContext,
@@ -41,6 +42,8 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
       return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
     }
     const contaId = auth.contaId;
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId, capability: 'ENROLLMENT_WRITE' });
+    if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
     const actorId = auth.userId;
     if (!allowedRoles.has(String(auth.role ?? '').toUpperCase())) {
       return jsonError(

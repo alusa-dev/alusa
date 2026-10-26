@@ -75,6 +75,82 @@ export interface CreatePlatformBillingCheckoutSessionResult {
   record: PlatformBillingCheckoutSessionRecord;
 }
 
+export async function cancelPlatformBillingCheckoutReturn(input: {
+  contaId: string;
+  environment: 'TEST' | 'LIVE';
+  actorUserId: string;
+  idempotencyKey: string;
+  correlationId?: string;
+  envSource?: StripeEnvSource;
+}, deps: { store: PlatformBillingStore; stripeGateway?: PlatformBillingStripeGateway }): Promise<'CANCELED' | 'ALREADY_CANCELED' | 'PENDING' | 'STALE'> {
+  const account = await deps.store.findAccount({ contaId: input.contaId, environment: input.environment });
+  const claimKey = account?.checkoutClaimKey;
+  if (!account || !claimKey || account.checkoutClaimPhase !== 'REQUESTING') return 'ALREADY_CANCELED';
+  if (claimKey !== input.idempotencyKey) return 'STALE';
+  const checkout = await deps.store.findCheckoutSessionByIdempotencyKey({ contaId: input.contaId, environment: input.environment, idempotencyKey: claimKey });
+  if (!checkout || checkout.idempotencyKey !== input.idempotencyKey ||
+    checkoutCancelRequestKey(checkout.cancelUrl) !== checkout.idempotencyKey ||
+    account.pendingPlanCode !== checkout.planCode) return 'STALE';
+  const stripe = deps.stripeGateway ?? createDefaultPlatformBillingStripeGateway(input.envSource);
+  const remote = await stripe.retrieveCheckoutSession(checkout.stripeCheckoutSessionId);
+  const matches = (candidate: Awaited<ReturnType<PlatformBillingStripeGateway['retrieveCheckoutSession']>>) =>
+    checkoutSessionBindingMatches({
+      session: checkout,
+      account,
+      contaId: input.contaId,
+      environment: input.environment,
+      source: input.envSource,
+      remote: candidate,
+    });
+  if (!matches(remote)) return 'PENDING';
+  if (remote.status === 'complete') return 'PENDING';
+  if (remote.status === 'open') {
+    const latestBeforeExpire = await deps.store.findAccount({ contaId: input.contaId, environment: input.environment });
+    if (!latestBeforeExpire || latestBeforeExpire.checkoutClaimKey !== claimKey ||
+      latestBeforeExpire.checkoutClaimPhase !== 'REQUESTING' ||
+      latestBeforeExpire.pendingPlanCode !== checkout.planCode ||
+      !checkoutSessionBindingMatches({
+        session: checkout,
+        account: latestBeforeExpire,
+        contaId: input.contaId,
+        environment: input.environment,
+        source: input.envSource,
+        remote,
+      })) return 'PENDING';
+    try {
+      await stripe.expireCheckoutSession(remote.id);
+    } catch {
+      // Another return/worker may have expired it concurrently. The following
+      // read is authoritative before the local claim can be released.
+    }
+    const confirmed = await stripe.retrieveCheckoutSession(remote.id);
+    if (!matches(confirmed) || confirmed.status !== 'expired') return 'PENDING';
+  } else if (remote.status !== 'expired') return 'PENDING';
+  const latestBeforeClear = await deps.store.findAccount({ contaId: input.contaId, environment: input.environment });
+  const finalRemote = await stripe.retrieveCheckoutSession(checkout.stripeCheckoutSessionId);
+  if (!latestBeforeClear || latestBeforeClear.checkoutClaimKey !== claimKey ||
+    latestBeforeClear.checkoutClaimPhase !== 'REQUESTING' ||
+    latestBeforeClear.pendingPlanCode !== checkout.planCode ||
+    finalRemote.status !== 'expired' ||
+    !checkoutSessionBindingMatches({
+      session: checkout,
+      account: latestBeforeClear,
+      contaId: input.contaId,
+      environment: input.environment,
+      source: input.envSource,
+      remote: finalRemote,
+    })) return 'PENDING';
+  await deps.store.markCheckoutSessionExpired({ contaId: input.contaId, environment: input.environment, idempotencyKey: claimKey });
+  const cleared = await deps.store.clearCheckoutClaim({ contaId: input.contaId, environment: input.environment, idempotencyKey: claimKey });
+  if (cleared) await deps.store.createAuditLog({
+    contaId: input.contaId, billingAccountId: account.id, actorUserId: input.actorUserId,
+    action: 'PLATFORM_BILLING_CHECKOUT_CANCELED', entityType: 'PlatformBillingCheckoutSession',
+    entityId: checkout.id, correlationId: input.correlationId,
+    metadata: { environment: input.environment, stripeCheckoutSessionId: checkout.stripeCheckoutSessionId },
+  });
+  return 'CANCELED';
+}
+
 export interface CreatePlatformBillingPortalSessionInput {
   contaId: string;
   returnUrl: string;
@@ -122,9 +198,11 @@ export interface CreatePlatformBillingPortalSessionResult {
 export interface SchedulePlatformBillingDowngradeInput {
   contaId: string;
   billingAccountId: string;
-  actorUserId: string;
+  actorUserId: string | null;
   environment: 'TEST' | 'LIVE';
   idempotencyKey: string;
+  changeType?: 'UPGRADE' | 'DOWNGRADE';
+  idempotencySuffix?: string;
   planChange: {
     id: string;
     fromPlanCode: PlatformPlanCode;
@@ -155,6 +233,7 @@ export interface SchedulePlatformBillingDowngradeDeps {
       toPlanCode: PublicPlatformPlanCode;
       effectiveAt: Date;
       operationId: string;
+      changeType: 'UPGRADE' | 'DOWNGRADE';
       claimToken: string;
       claimAt: Date;
       claimExpiresBefore: Date;
@@ -182,6 +261,7 @@ export async function schedulePlatformBillingDowngrade(
   input: SchedulePlatformBillingDowngradeInput,
   deps: SchedulePlatformBillingDowngradeDeps,
 ): Promise<{ scheduleId: string; effectiveAt: Date }> {
+  const changeType = input.changeType ?? 'DOWNGRADE';
   if (
     input.account.stripeSubscriptionId !== input.planChange.stripeSubscriptionId
     || input.account.planCode !== input.planChange.fromPlanCode
@@ -190,7 +270,7 @@ export async function schedulePlatformBillingDowngrade(
       && input.account.pendingChangeOperationId !== input.planChange.id)
   ) {
     throw new PlatformBillingError(
-      'Account plan changed before downgrade scheduling or recovery.',
+      'Account plan changed before price-band scheduling or recovery.',
       'PLATFORM_BILLING_REPLAY_INVALID',
       { contaId: input.contaId, planChangeId: input.planChange.id },
     );
@@ -207,13 +287,14 @@ export async function schedulePlatformBillingDowngrade(
     toPlanCode: input.planChange.toPlanCode,
     effectiveAt: input.planChange.effectiveAt,
     operationId: input.planChange.id,
+    changeType,
     claimToken,
     claimAt: now,
     claimExpiresBefore: new Date(now.getTime() - 5 * 60_000),
   });
   if (!reserved) {
     throw new PlatformBillingError(
-      'Another downgrade operation currently owns the account reservation.',
+      'Another plan-change operation currently owns the account reservation.',
       'PLATFORM_BILLING_PLAN_CHANGE_IN_PROGRESS',
       { contaId: input.contaId, planChangeId: input.planChange.id },
     );
@@ -235,7 +316,7 @@ export async function schedulePlatformBillingDowngrade(
         input.environment,
         input.contaId,
         `plan-change:${input.planChange.id}`,
-        'stripe-downgrade',
+        input.idempotencySuffix ?? (changeType === 'DOWNGRADE' ? 'stripe-downgrade' : 'stripe-band-transition'),
       ),
     });
   } catch (error) {
@@ -278,8 +359,10 @@ export async function schedulePlatformBillingDowngrade(
   await deps.store.createAuditLog({
     contaId: input.contaId,
     billingAccountId: input.billingAccountId,
-    actorUserId: input.actorUserId,
-    action: 'PLATFORM_BILLING_DOWNGRADE_SCHEDULED',
+      actorUserId: input.actorUserId ?? undefined,
+      action: changeType === 'DOWNGRADE'
+        ? 'PLATFORM_BILLING_DOWNGRADE_SCHEDULED'
+        : 'PLATFORM_BILLING_BAND_TRANSITION_SCHEDULED',
     entityType: 'PlatformBillingPlanChange',
     entityId: input.planChange.id,
     correlationId: input.idempotencyKey,
@@ -295,6 +378,64 @@ function isDefinitiveStripeNoEffect(error: unknown): boolean {
   return candidate.type === 'StripeInvalidRequestError' && candidate.statusCode === 400;
 }
 
+function checkoutReconciliationRequired(contaId: string, environment: 'TEST' | 'LIVE'): PlatformBillingError {
+  return new PlatformBillingError(
+    'The existing Stripe Checkout session must be reconciled before another checkout can be created.',
+    'PLATFORM_BILLING_CHECKOUT_RECONCILIATION_REQUIRED',
+    { contaId, environment },
+  );
+}
+
+function checkoutCancelStudentCount(cancelUrl: string): string | null {
+  return new URL(cancelUrl).searchParams.get('studentCount');
+}
+
+function checkoutCancelRequestKey(cancelUrl: string): string | null {
+  const key = new URL(cancelUrl).searchParams.get('checkoutRequestKey');
+  return key && key.length <= 128 && key.trim() === key ? key : null;
+}
+
+function checkoutSessionBindingMatches(input: {
+  session: PlatformBillingCheckoutSessionRecord;
+  account: PlatformBillingAccountRecord;
+  contaId: string;
+  environment: 'TEST' | 'LIVE';
+  source?: StripeEnvSource;
+  remote: Awaited<ReturnType<PlatformBillingStripeGateway['retrieveCheckoutSession']>> | null;
+}): boolean {
+  const { session, account, remote } = input;
+  if (!remote || !account.stripeCustomerId ||
+    account.contaId !== input.contaId ||
+    account.environment !== input.environment ||
+    session.contaId !== input.contaId ||
+    session.environment !== input.environment ||
+    session.billingAccountId !== account.id ||
+    session.stripeCustomerId !== account.stripeCustomerId ||
+    session.idempotencyKey.length === 0 ||
+    remote.id !== session.stripeCheckoutSessionId ||
+    remote.livemode !== (input.environment === 'LIVE') ||
+    remote.customerId !== account.stripeCustomerId ||
+    remote.clientReferenceId !== input.contaId ||
+    remote.metadata.contaId !== input.contaId ||
+    remote.metadata.planCode !== session.planCode ||
+    remote.metadata.checkoutRequestKey !== session.idempotencyKey ||
+    remote.metadata.billingContext !== 'platform' ||
+    remote.priceIds.length !== 1 ||
+    remote.priceIds[0] !== session.stripePriceId) {
+    return false;
+  }
+
+  try {
+    return resolveStripePriceId({
+      planCode: session.planCode,
+      environment: input.environment,
+      source: input.source,
+    }) === session.stripePriceId;
+  } catch {
+    return false;
+  }
+}
+
 export async function createPlatformBillingCheckoutSession(
   input: CreatePlatformBillingCheckoutSessionInput,
   deps: CreatePlatformBillingCheckoutSessionDeps,
@@ -302,6 +443,12 @@ export async function createPlatformBillingCheckoutSession(
   const parsed = parseCheckoutInput(input);
   const config = parseStripeRuntimeConfig(input.envSource);
   const planCode = parsePublicCheckoutPlanCode(parsed.planCode);
+  if (checkoutCancelRequestKey(parsed.cancelUrl) !== parsed.idempotencyKey) {
+    throw new PlatformBillingError(
+      'Checkout cancel URL must be bound to its request key.',
+      'PLATFORM_BILLING_INPUT_INVALID',
+    );
+  }
   const stripePriceId = resolveStripePriceId({
     planCode,
     environment: config.environment,
@@ -328,6 +475,78 @@ export async function createPlatformBillingCheckoutSession(
         },
       );
     }
+    const existingAccount = await deps.store.findAccount({ contaId: parsed.contaId, environment: config.environment });
+    const existingStripeGateway = deps.stripeGateway ?? createDefaultPlatformBillingStripeGateway(input.envSource);
+    if (existingAccount) {
+      await assertNoRemoteNonterminalSubscription({
+        gateway: existingStripeGateway,
+        account: existingAccount,
+        contaId: parsed.contaId,
+        environment: config.environment,
+        source: input.envSource,
+      });
+    }
+    if (existingAccount?.stripeSubscriptionId && !isReactivationCheckoutAccount(existingAccount)) {
+      throw new PlatformBillingError(
+        'An active or pending Stripe subscription already exists for this account.',
+        'PLATFORM_BILLING_SUBSCRIPTION_ALREADY_EXISTS',
+        { contaId: parsed.contaId, environment: config.environment },
+      );
+    }
+    if (existingSession.idempotencyKey !== parsed.idempotencyKey ||
+      (existingAccount?.checkoutClaimKey && existingAccount.checkoutClaimKey !== existingSession.idempotencyKey)) {
+      throw checkoutReconciliationRequired(parsed.contaId, config.environment);
+    }
+    if (checkoutCancelStudentCount(existingSession.cancelUrl) !== checkoutCancelStudentCount(parsed.cancelUrl)) {
+      throw new PlatformBillingError(
+        'Checkout idempotency key was already used with a different student count.',
+        'PLATFORM_BILLING_IDEMPOTENCY_CONFLICT',
+        { contaId: parsed.contaId, environment: config.environment, idempotencyKey: parsed.idempotencyKey },
+      );
+    }
+    if (checkoutCancelRequestKey(existingSession.cancelUrl) !== existingSession.idempotencyKey) {
+      throw checkoutReconciliationRequired(parsed.contaId, config.environment);
+    }
+    const remote = existingAccount
+      ? await existingStripeGateway.retrieveCheckoutSession(existingSession.stripeCheckoutSessionId)
+      : null;
+    if (!existingAccount || !remote || !checkoutSessionBindingMatches({
+      session: existingSession,
+      account: existingAccount,
+      contaId: parsed.contaId,
+      environment: config.environment,
+      source: input.envSource,
+      remote,
+    })) {
+      throw checkoutReconciliationRequired(parsed.contaId, config.environment);
+    }
+    if (remote.status === 'expired') {
+      if (existingAccount.checkoutClaimKey && existingAccount.checkoutClaimKey !== existingSession.idempotencyKey) {
+        throw checkoutReconciliationRequired(parsed.contaId, config.environment);
+      }
+      await deps.store.markCheckoutSessionExpired({
+        contaId: parsed.contaId,
+        environment: config.environment,
+        idempotencyKey: existingSession.idempotencyKey,
+      });
+      const cleared = await deps.store.clearCheckoutClaim({
+        contaId: parsed.contaId,
+        environment: config.environment,
+        idempotencyKey: existingSession.idempotencyKey,
+      });
+      const latestAccount = await deps.store.findAccount({ contaId: parsed.contaId, environment: config.environment });
+      if (!cleared && latestAccount?.checkoutClaimKey) {
+        throw checkoutReconciliationRequired(parsed.contaId, config.environment);
+      }
+      throw new PlatformBillingError(
+        'The prior Checkout session is confirmed expired. Retry with a fresh request key.',
+        'PLATFORM_BILLING_CHECKOUT_EXPIRED_RETRY_REQUIRED',
+        { contaId: parsed.contaId, environment: config.environment },
+      );
+    }
+    if (remote.status !== 'open' || existingSession.status !== 'CREATED' || !existingSession.url) {
+      throw checkoutReconciliationRequired(parsed.contaId, config.environment);
+    }
     return {
       billingAccountId: existingSession.billingAccountId,
       checkoutSessionId: existingSession.stripeCheckoutSessionId,
@@ -347,7 +566,16 @@ export async function createPlatformBillingCheckoutSession(
     environment: config.environment,
     idempotencyKey: accountCustomerStripeIdempotencyKey(config.environment, parsed.contaId),
   });
-  const trialDays = resolveTrialDaysForCheckout(account, planCode);
+  await assertNoRemoteNonterminalSubscription({
+    gateway: stripeGateway,
+    account,
+    contaId: parsed.contaId,
+    environment: config.environment,
+    source: input.envSource,
+  });
+  // Trials are started only through the no-card trial endpoint. Checkout is
+  // always an explicit paid subscription confirmation.
+  const trialDays = null;
   const isReactivation = isReactivationCheckoutAccount(account);
 
   if (account.stripeSubscriptionId && !isReactivation) {
@@ -356,6 +584,128 @@ export async function createPlatformBillingCheckoutSession(
       'PLATFORM_BILLING_SUBSCRIPTION_ALREADY_EXISTS',
       { contaId: parsed.contaId, environment: config.environment },
     );
+  }
+
+  if (account.checkoutClaimPhase === 'REQUESTING' && account.checkoutClaimKey) {
+    const claimKey = account.checkoutClaimKey;
+    const pendingSession = await deps.store.findCheckoutSessionByIdempotencyKey({
+      contaId: parsed.contaId,
+      environment: config.environment,
+      idempotencyKey: claimKey,
+    });
+    const remote = pendingSession
+      ? await stripeGateway.retrieveCheckoutSession(pendingSession.stripeCheckoutSessionId)
+      : null;
+    if (!pendingSession || !remote || !checkoutSessionBindingMatches({
+      session: pendingSession,
+      account,
+      contaId: parsed.contaId,
+      environment: config.environment,
+      source: input.envSource,
+      remote,
+    }) || account.checkoutClaimKey !== pendingSession.idempotencyKey || account.pendingPlanCode !== pendingSession.planCode) {
+      throw checkoutReconciliationRequired(parsed.contaId, config.environment);
+    }
+
+    if (remote.status === 'open') {
+      if (pendingSession.status !== 'CREATED') {
+        throw checkoutReconciliationRequired(parsed.contaId, config.environment);
+      }
+      const sameSelection = pendingSession.planCode === planCode &&
+        pendingSession.stripePriceId === stripePriceId &&
+        checkoutCancelStudentCount(pendingSession.cancelUrl) === checkoutCancelStudentCount(parsed.cancelUrl) &&
+        checkoutCancelRequestKey(pendingSession.cancelUrl) === pendingSession.idempotencyKey;
+      if (sameSelection) {
+        if (!pendingSession.url) {
+          throw checkoutReconciliationRequired(parsed.contaId, config.environment);
+        }
+        return {
+          billingAccountId: pendingSession.billingAccountId,
+          checkoutSessionId: pendingSession.stripeCheckoutSessionId,
+          checkoutUrl: pendingSession.url,
+          reused: true,
+          record: pendingSession,
+        };
+      }
+
+      // A changed selection may replace the open session only after Stripe
+      // confirms it is no longer payable. Never expire a session with a broken
+      // or mismatched persisted binding.
+      try {
+        await stripeGateway.expireCheckoutSession(remote.id);
+      } catch {
+        // A concurrent cancel/expiry can win the race; the read below is the
+        // authority for whether the old session can safely be replaced.
+      }
+      const afterExpire = await stripeGateway.retrieveCheckoutSession(remote.id);
+      if (afterExpire.id !== remote.id || !checkoutSessionBindingMatches({
+        session: pendingSession,
+        account,
+        contaId: parsed.contaId,
+        environment: config.environment,
+        source: input.envSource,
+        remote: afterExpire,
+      }) || afterExpire.status !== 'expired') {
+        throw checkoutReconciliationRequired(parsed.contaId, config.environment);
+      }
+    } else if (remote.status !== 'expired') {
+      throw checkoutReconciliationRequired(parsed.contaId, config.environment);
+    }
+
+    await deps.store.markCheckoutSessionExpired({
+      contaId: parsed.contaId,
+      environment: config.environment,
+      idempotencyKey: claimKey,
+    });
+    const cleared = await deps.store.clearCheckoutClaim({
+      contaId: parsed.contaId,
+      environment: config.environment,
+      idempotencyKey: claimKey,
+    });
+    if (!cleared) {
+      // Stripe can deliver checkout.session.expired while this request is
+      // clearing the same claim. Ask the bounded client retry to use a fresh
+      // request key only after the old session and account are revalidated.
+      const latestAccount = await deps.store.findAccount({ contaId: parsed.contaId, environment: config.environment });
+      const latestRemote = await stripeGateway.retrieveCheckoutSession(pendingSession.stripeCheckoutSessionId);
+      if (!latestAccount || latestAccount.checkoutClaimKey || latestAccount.checkoutClaimPhase ||
+        latestRemote.status !== 'expired' || !checkoutSessionBindingMatches({
+          session: pendingSession,
+          account: latestAccount,
+          contaId: parsed.contaId,
+          environment: config.environment,
+          source: input.envSource,
+          remote: latestRemote,
+        })) {
+        throw checkoutReconciliationRequired(parsed.contaId, config.environment);
+      }
+      if (latestAccount.stripeSubscriptionId && !isReactivationCheckoutAccount(latestAccount)) {
+        throw new PlatformBillingError(
+          'An active or pending Stripe subscription already exists for this account.',
+          'PLATFORM_BILLING_SUBSCRIPTION_ALREADY_EXISTS',
+          { contaId: parsed.contaId, environment: config.environment },
+        );
+      }
+      throw new PlatformBillingError(
+        'The prior Checkout session is confirmed expired. Retry with a fresh request key.',
+        'PLATFORM_BILLING_CHECKOUT_EXPIRED_RETRY_REQUIRED',
+        { contaId: parsed.contaId, environment: config.environment },
+      );
+    }
+    await deps.store.createAuditLog({
+      contaId: parsed.contaId,
+      billingAccountId: account.id,
+      actorUserId: parsed.actorUserId,
+      action: 'PLATFORM_BILLING_CHECKOUT_CANCELED',
+      entityType: 'PlatformBillingCheckoutSession',
+      entityId: pendingSession.id,
+      correlationId: parsed.correlationId ?? parsed.idempotencyKey,
+      metadata: {
+        environment: config.environment,
+        stripeCheckoutSessionId: pendingSession.stripeCheckoutSessionId,
+        replacedByPlanCode: planCode,
+      },
+    });
   }
 
   // Claim the account before calling Stripe so two different requests cannot
@@ -437,6 +787,10 @@ export async function createPlatformBillingCheckoutSession(
     },
   });
 
+  if (!checkoutSession.url) {
+    throw checkoutReconciliationRequired(parsed.contaId, config.environment);
+  }
+
   return {
     billingAccountId: account.id,
     checkoutSessionId: checkoutSession.id,
@@ -444,6 +798,61 @@ export async function createPlatformBillingCheckoutSession(
     reused: false,
     record,
   };
+}
+
+const NONTERMINAL_STRIPE_SUBSCRIPTION_STATUSES = new Set([
+  'incomplete', 'trialing', 'active', 'past_due', 'unpaid', 'paused',
+]);
+
+async function assertNoRemoteNonterminalSubscription(input: {
+  gateway: PlatformBillingStripeGateway;
+  account: PlatformBillingAccountRecord;
+  contaId: string;
+  environment: 'TEST' | 'LIVE';
+  source?: StripeEnvSource;
+}): Promise<void> {
+  const customerId = input.account.stripeCustomerId;
+  if (!customerId || input.account.contaId !== input.contaId || input.account.environment !== input.environment) {
+    throw checkoutReconciliationRequired(input.contaId, input.environment);
+  }
+  const result = await input.gateway.listCustomerSubscriptions(customerId);
+  if (!result.complete) throw checkoutReconciliationRequired(input.contaId, input.environment);
+
+  const candidates = result.subscriptions.filter((subscription) =>
+    NONTERMINAL_STRIPE_SUBSCRIPTION_STATUSES.has(subscription.status),
+  );
+  if (candidates.length === 0) return;
+
+  for (const subscription of candidates) {
+    const metadataPlan = subscription.metadata.planCode;
+    let expectedPriceId: string | null = null;
+    try {
+      if (metadataPlan) {
+        expectedPriceId = resolveStripePriceId({
+          planCode: metadataPlan as PlatformPlanCode,
+          environment: input.environment,
+          source: input.source,
+        });
+      }
+    } catch {
+      // An unrecognized remote subscription is ambiguous and blocks Checkout.
+    }
+    if (subscription.customerId !== customerId ||
+      subscription.livemode !== (input.environment === 'LIVE') ||
+      subscription.metadata.contaId !== input.contaId ||
+      subscription.metadata.billingContext !== 'platform' ||
+      !expectedPriceId || subscription.priceIds.length !== 1 ||
+      subscription.priceIds[0] !== expectedPriceId) {
+      throw checkoutReconciliationRequired(input.contaId, input.environment);
+    }
+  }
+
+  if (candidates.length !== 1) throw checkoutReconciliationRequired(input.contaId, input.environment);
+  throw new PlatformBillingError(
+    'An active or pending Stripe subscription already exists for this account.',
+    'PLATFORM_BILLING_SUBSCRIPTION_ALREADY_EXISTS',
+    { contaId: input.contaId, environment: input.environment },
+  );
 }
 
 export async function createPlatformBillingTrialWithoutPaymentMethod(
@@ -599,23 +1008,27 @@ export async function createPlatformBillingTrialWithoutPaymentMethod(
   };
 }
 
-function resolveTrialDaysForCheckout(
-  account: PlatformBillingAccountRecord,
-  planCode: ReturnType<typeof parsePublicCheckoutPlanCode>,
-): number | null {
-  if (account.stripeSubscriptionId || account.trialEndsAt) return null;
-
-  const trialDays = getPlatformPlan(planCode).trialDays;
-  return typeof trialDays === 'number' && trialDays > 0 ? trialDays : null;
-}
-
 function isReactivationCheckoutAccount(account: PlatformBillingAccountRecord): boolean {
   return Boolean(
     account.stripeSubscriptionId &&
     account.planCode &&
     (account.status === 'CANCELED' ||
       account.accessStatus === 'CANCELED' ||
-      account.pendingChangeType === 'REACTIVATE'),
+      account.pendingChangeType === 'REACTIVATE' ||
+      (account.status === 'PAUSED' &&
+        account.trialEndsAt && account.trialEndsAt.getTime() <= Date.now() &&
+        !account.firstPaidAt && !account.lastSuccessfulPaymentAt) ||
+      (account.status === 'TRIALING' &&
+        account.trialEndsAt && account.trialEndsAt.getTime() <= Date.now() &&
+        !account.firstPaidAt && !account.lastSuccessfulPaymentAt)),
+  );
+}
+
+function isExpiredUnpaidTrialReactivation(account: PlatformBillingAccountRecord): boolean {
+  return Boolean(
+    (account.status === 'PAUSED' || account.status === 'TRIALING') &&
+    account.trialEndsAt && account.trialEndsAt.getTime() <= Date.now() &&
+    !account.firstPaidAt && !account.lastSuccessfulPaymentAt,
   );
 }
 
@@ -691,6 +1104,54 @@ async function ensureBillingAccount(input: {
 
   if (existingAccount?.stripeCustomerId) {
     return existingAccount as PlatformBillingAccountRecord & { stripeCustomerId: string };
+  }
+
+  // A legacy canceled subscription can still be the authoritative link to the
+  // account's Stripe customer. Recover that association only after fresh reads
+  // confirm both the subscription link and that the customer still exists.
+  if (existingAccount?.stripeSubscriptionId && isReactivationCheckoutAccount(existingAccount)) {
+    const subscription = await input.stripeGateway.retrieveSubscription(existingAccount.stripeSubscriptionId);
+    const pausedExpiredTrial = subscription.status === 'paused' &&
+      isExpiredUnpaidTrialReactivation(existingAccount) &&
+      subscription.trialEndsAt !== null &&
+      subscription.trialEndsAt.getTime() <= Date.now();
+    if (
+      subscription.id !== existingAccount.stripeSubscriptionId ||
+      (subscription.status !== 'canceled' && !pausedExpiredTrial) ||
+      !subscription.customerId
+    ) {
+      throw new PlatformBillingError(
+        'The legacy Stripe customer could not be safely recovered for reactivation.',
+        'PLATFORM_BILLING_CUSTOMER_RECOVERY_UNSAFE',
+        { contaId: input.contaId, environment: input.environment },
+      );
+    }
+
+    const legacyCustomer = await input.stripeGateway.retrieveCustomer(subscription.customerId);
+    if (legacyCustomer.id !== subscription.customerId) {
+      throw new PlatformBillingError(
+        'The Stripe customer returned for the legacy subscription did not match its customer reference.',
+        'PLATFORM_BILLING_CUSTOMER_RECOVERY_UNSAFE',
+        { contaId: input.contaId, environment: input.environment },
+      );
+    }
+    if (!legacyCustomer.deleted) {
+      const customerOwner = await input.store.findAccountByStripeCustomerId({
+        environment: input.environment,
+        stripeCustomerId: legacyCustomer.id,
+      });
+      if (customerOwner && customerOwner.id !== existingAccount.id) {
+        throw new PlatformBillingError(
+          'The legacy Stripe customer is already associated with another billing account.',
+          'PLATFORM_BILLING_CUSTOMER_RECOVERY_UNSAFE',
+          { contaId: input.contaId, environment: input.environment },
+        );
+      }
+      return input.store.attachCustomer({
+        accountId: existingAccount.id,
+        stripeCustomerId: legacyCustomer.id,
+      }) as Promise<PlatformBillingAccountRecord & { stripeCustomerId: string }>;
+    }
   }
 
   const customer = await input.stripeGateway.createCustomer({

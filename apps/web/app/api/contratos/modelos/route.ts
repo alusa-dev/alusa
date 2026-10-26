@@ -7,6 +7,7 @@ import {
   listContratoModelosResultDTOSchema,
 } from '@/features/contracts/dtos';
 import { mapContratoModeloRecordToDTO } from '@/features/contracts/mappers';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import {
   createContractModelForTenant,
   listContractModelsForTenant,
@@ -43,6 +44,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 401 });
+  const billingBlocked = await platformBillingAccessResponseForConta({ contaId: user.contaId, capability: 'CONTRACT_WRITE' });
+  if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
   try {
     const body = createContratoModeloInputDTOSchema.parse(await request.json());
     const result = await createContractModelForTenant({ contaId: user.contaId, body });

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { matriculaTaxaUpdateInputDTOSchema } from '@/features/enrollments/dtos';
 import { updateMatriculaEnrollmentFee } from '@/src/server/enrollments/enrollment-fee.service';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 function error(status: number, code: string, message: string) { return NextResponse.json({ error: { code, message } }, { status }); }
@@ -10,6 +11,8 @@ export async function PUT(req: Request, context: { params: Promise<{ id: string 
   const auth = await resolveTenantSession();
   if (!auth.ok) return error(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida.' : 'Usuário não autenticado.');
   if (!allowedRoles.has(String(auth.role).toUpperCase())) return error(403, 'PERMISSAO_NEGADA', 'Usuário sem permissão para alterar taxas.');
+  const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'ENROLLMENT_WRITE' });
+  if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
   const parsed = matriculaTaxaUpdateInputDTOSchema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return error(400, 'PAYLOAD_INVALIDO', parsed.error.issues[0]?.message ?? 'Valor inválido.');
   const { id } = await context.params;

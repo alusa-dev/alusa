@@ -6,6 +6,7 @@ import {
   parseResendEnrollmentChargeResponse,
   resendEnrollmentCharge,
 } from '@/src/server/enrollments/resend-enrollment-charge.service';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,6 +14,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   try {
     const auth = await resolveTenantSession();
     if (!auth.ok) return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'CHARGE_CREATE' });
+    if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
     const { id: matriculaId } = matriculaRouteParamsDTOSchema.parse(await params);
     const result = await resendEnrollmentCharge({

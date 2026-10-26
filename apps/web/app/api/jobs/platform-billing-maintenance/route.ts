@@ -7,6 +7,7 @@ import { reconcilePlatformBilling } from '@/src/server/platform-billing/reconcil
 import { drainStripeWebhookWorker } from '@/src/server/platform-billing/webhook-worker';
 import { applyDuePlatformPlanChanges } from '@/src/server/platform-billing/plan-change-actions';
 import { hasCronSecret } from '@/lib/security/route-protection-registry';
+import { capturePlatformBillingMonthlySnapshots } from '@/src/server/platform-billing/monthly-snapshots';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -38,6 +39,7 @@ async function run(req: Request) {
     const trials = await expirePlatformBillingTrials({ limit: safeLimit });
     const gracePeriods = await expirePlatformBillingGracePeriods({ limit: safeLimit });
     const reconciliation = await reconcilePlatformBilling({ limit: safeLimit });
+    const monthlySnapshots = await capturePlatformBillingMonthlySnapshots({ prisma, limit: safeLimit });
 
     const failed = webhooks.failed + webhooks.notifications.failed + planChanges.failed;
     logJobResult('platform-billing-maintenance', startedAt, {
@@ -52,17 +54,23 @@ async function run(req: Request) {
       planChangesSubmitted: planChanges.submitted,
       planChangesFailed: planChanges.failed,
       trialsChecked: trials.checked,
-      trialsRestricted: trials.restricted,
-      trialsNotified: trials.notified,
+      trialsDetected: trials.detected,
+      trialsNotificationQueued: trials.notificationQueued,
       gracePeriodsChecked: gracePeriods.checked,
       gracePeriodsRestricted: gracePeriods.restricted,
       gracePeriodsNotified: gracePeriods.notified,
       billingAccountsChecked: reconciliation.checkedAccounts,
       billingIssues: reconciliation.issues,
+      pricingSnapshotsChecked: monthlySnapshots.checked,
+      pricingSnapshotsCaptured: monthlySnapshots.captured,
+      pricingSpecialistCandidates: monthlySnapshots.readyForSpecialist,
+      pricingSpecialistNoticesCreated: monthlySnapshots.specialistNoticesCreated,
+      pricingBandTransitionsScheduled: monthlySnapshots.transitionsScheduled,
     }, {
       partialFailure: failed > 0,
       workStatus: webhooks.processed + webhooks.notifications.claimed + planChanges.checked +
-        trials.checked + gracePeriods.checked + reconciliation.issues > 0 ? 'worked' : 'unknown',
+        trials.checked + gracePeriods.checked + reconciliation.issues + monthlySnapshots.captured +
+        monthlySnapshots.specialistNoticesCreated + monthlySnapshots.transitionsScheduled > 0 ? 'worked' : 'unknown',
     });
 
     return NextResponse.json({
@@ -72,6 +80,7 @@ async function run(req: Request) {
       trials,
       gracePeriods,
       reconciliation,
+      monthlySnapshots,
     });
   } catch (error) {
     logJobFailure('platform-billing-maintenance', startedAt, error);

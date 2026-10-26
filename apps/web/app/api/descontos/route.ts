@@ -6,6 +6,7 @@ import {
   createDiscount,
   listActiveDiscounts,
 } from '@/src/server/finance/discount.service';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -67,6 +68,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 401 });
     }
     const { contaId } = auth;
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId, capability: 'FINANCIAL_CONFIG_WRITE' });
+    if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
     const raw = await request.json().catch(() => null);
     const parsed = createDiscountInputDTOSchema.safeParse(raw);

@@ -13,6 +13,7 @@ import {
 } from '@alusa/finance';
 
 import { logFinanceApiError } from '@/lib/api/finance-api-response';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 const requestSchema = requestWithdrawDTOSchema.extend({
   currentPassword: z.string().min(1, 'Senha atual obrigatória'),
@@ -42,6 +43,8 @@ export async function POST(req: NextRequest) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'MONEY_WITHDRAW' });
+    if (billingBlocked) return json(billingBlocked.status, billingBlocked.body);
 
     const capabilityBlock = blockUnavailableFinanceCapability(auth.financeIntegrationMode, 'transfers');
     if (capabilityBlock) return capabilityBlock;

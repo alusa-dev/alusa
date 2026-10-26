@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { guardFinancialAccountOr412 } from '@/lib/finance/financial-account-gate';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import {
   fiscalSettingsResponseSchema,
   saveFiscalSettingsInputSchema,
@@ -43,6 +44,8 @@ export async function PUT(request: Request) {
       });
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
       return json(403, { error: 'SEM_PERMISSAO' });
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'FINANCIAL_CONFIG_WRITE' });
+    if (billingBlocked) return json(billingBlocked.status, billingBlocked.body);
 
     const gate = await guardFinancialAccountOr412(auth.contaId);
     if (!gate.ok) return gate.response;

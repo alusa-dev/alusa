@@ -6,7 +6,7 @@ import {
   StoreInventoryError,
 } from '@alusa/finance';
 
-import { getStoreRequestContext, jsonError } from '../../_helpers';
+import { getStoreWriteRequestContext, jsonError } from '../../_helpers';
 
 const requestSchema = z.object({
   requestId: z.string().trim().optional(),
@@ -20,7 +20,7 @@ const requestSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const { contaId, operatorId } = await getStoreRequestContext();
+    const { contaId, operatorId } = await getStoreWriteRequestContext();
     const body = await request.json();
     const parsed = requestSchema.safeParse(body);
 

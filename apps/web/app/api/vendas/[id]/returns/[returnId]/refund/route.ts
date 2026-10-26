@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { getStoreSaleById, StoreSaleRefundError } from '@alusa/finance';
 import { canRequestFinancialRefund } from '@/features/finance/shared/refund-permission';
 
-import { getStoreRequestContext, jsonError } from '../../../../_helpers';
+import { getStoreWriteRequestContext, jsonError } from '../../../../_helpers';
 import { requestStoreSaleRefundFromApp } from '@/src/server/sales/store-sale-refund.service';
 
 const inputSchema = z.object({ mode: z.enum(['REQUEST', 'RETRY_DENIED']).default('REQUEST') });
@@ -14,7 +14,7 @@ export async function POST(
   context: { params: Promise<{ id: string; returnId: string }> },
 ) {
   try {
-    const { contaId, operatorId, role } = await getStoreRequestContext();
+    const { contaId, operatorId, role } = await getStoreWriteRequestContext();
     if (!role || !canRequestFinancialRefund(role)) {
       return jsonError(403, 'ACESSO_NEGADO', 'Somente ADMIN ou FINANCEIRO pode solicitar estornos.');
     }

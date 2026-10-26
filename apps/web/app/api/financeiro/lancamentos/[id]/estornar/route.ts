@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import {
   financeiroLancamentoEstornoInputDTOSchema,
   financeiroLancamentoMutationResultDTOSchema,
@@ -34,6 +35,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return err(403, 'SEM_PERMISSAO', 'Acesso negado');
     }
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'MONEY_TRANSFER' });
+    if (billingBlocked) return err(billingBlocked.status, billingBlocked.body.error, billingBlocked.body.message);
 
     const { id } = financeiroRouteIdParamsDTOSchema.parse(await params);
     const parsed = financeiroLancamentoEstornoInputDTOSchema.safeParse(await req.json());

@@ -2,6 +2,7 @@ import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import { centroCustoCreateSchema } from '../route';
 import {
   centroCustoDeleteResultDTOSchema,
@@ -32,11 +33,15 @@ function err(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status, headers: { 'cache-control': 'no-store' } });
 }
 
-async function ensureAuth() {
+async function ensureAuth(billingCapability = false) {
   const auth = await resolveTenantSession();
   if (!auth.ok) return { error: err(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida' : 'Usuario nao autenticado') };
   if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
     return { error: err(403, 'SEM_PERMISSAO', 'Acesso negado') };
+  if (billingCapability) {
+    const blocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'FINANCIAL_CONFIG_WRITE' });
+    if (blocked) return { error: err(blocked.status, blocked.body.error, blocked.body.message) };
+  }
   return { user: { id: auth.userId, contaId: auth.contaId, role: auth.role } };
 }
 
@@ -60,7 +65,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const auth = await ensureAuth();
+    const auth = await ensureAuth(true);
     if ('error' in auth) return auth.error;
     const user = auth.user!;
     const { id } = centroCustoRouteParamsDTOSchema.parse(await params);
@@ -100,7 +105,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const auth = await ensureAuth();
+    const auth = await ensureAuth(true);
     if ('error' in auth) return auth.error;
     const user = auth.user!;
     const { id } = centroCustoRouteParamsDTOSchema.parse(await params);

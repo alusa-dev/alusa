@@ -10,6 +10,7 @@ import {
   withBillingAgreementRequest,
 } from '@/src/server/billing-agreements/http';
 import { commitBillingAgreementWeb } from '@/src/server/billing-agreements/service';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +20,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function POST(request: Request) {
   return withBillingAgreementRequest(async ({ contaId, actorId }) => {
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId, capability: 'ENROLLMENT_WRITE' });
+    if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
     const rate = await rateLimitAsync(
       `billing-agreement:commit:${contaId}:${actorId}:${ipFromRequest(request)}`,
       20,

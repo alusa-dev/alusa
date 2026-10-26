@@ -56,7 +56,7 @@ async function parseTargetAndDocument(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const auth = await requireFinanceUser();
+    const auth = await requireFinanceUser({ billingCapability: 'MONEY_WITHDRAW' });
     if (!auth.ok) return auth.response;
     const rate = await rateLimitAsync(`anticipation-document:${auth.user.contaId}:${auth.user.id}`, 10, 10 * 60_000);
     if (!rate.ok) return json(429, { error: 'MUITAS_TENTATIVAS' });

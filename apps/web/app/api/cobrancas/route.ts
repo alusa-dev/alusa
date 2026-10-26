@@ -25,6 +25,7 @@ import {
 import { ZodError } from 'zod';
 
 import { logFinanceApiError } from '@/lib/api/finance-api-response';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 /**
  * GET /api/cobrancas
  *
@@ -102,6 +103,8 @@ export async function POST(req: NextRequest) {
     if (!auth.role || !['ADMIN', 'FINANCEIRO'].includes(auth.role)) {
       return NextResponse.json({ error: 'Sem permissão para criar cobranças' }, { status: 403 });
     }
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'CHARGE_CREATE' });
+    if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
     const body = createLegacyCobrancaInputDTOSchema.parse(await req.json());
 

@@ -8,6 +8,7 @@ import {
 } from '@/features/enrollments/dtos';
 import { mapMatriculaGerarPixResultToDTO } from '@/features/enrollments/mappers';
 import { generateMatriculaPix } from '@/src/server/enrollments/enrollment-pix.service';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 export async function POST(
   _request: NextRequest,
@@ -18,6 +19,8 @@ export async function POST(
     if (!auth.ok) {
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'CHARGE_CREATE' });
+    if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
     const { id: matriculaId } = matriculaRouteParamsDTOSchema.parse(await params);
     const { contaId } = auth;

@@ -4,6 +4,7 @@ import {
   PlatformBillingError,
   createPlatformBillingTrialWithoutPaymentMethod,
   createPrismaPlatformBillingStore,
+  resolveSchoolCommercialTarget,
 } from '@alusa/platform-billing';
 import { z } from 'zod';
 import { platformBillingIdempotencyKeyDTOSchema } from '@/features/platform-billing/dtos';
@@ -12,13 +13,11 @@ import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-lo
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import {
   assertCanManagePlatformBilling,
-  assertPlanCapacity,
   countActivePlatformBillingStudents,
   resolvePlatformBillingActor,
 } from '@/src/server/platform-billing/platform-billing-server';
 
 const trialSchema = z.object({
-  planCode: z.enum(['STARTER', 'PREMIUM', 'PRO']),
   idempotencyKey: z.string().trim().min(1).max(128).optional(),
 });
 
@@ -71,12 +70,40 @@ export async function POST(req: NextRequest) {
     const forbidden = assertCanManagePlatformBilling(actor.canManagePlatformBilling);
     if (forbidden) return forbidden;
 
-    const activeStudents = await countActivePlatformBillingStudents({ tx, contaId });
-    const capacityError = assertPlanCapacity({
-      planCode: parsed.data.planCode,
-      activeStudents,
+    // The SaaS trial is independent of Asaas finance onboarding/KYC. Account
+    // creation already captures the school/admin setup and this route requires
+    // an active tenant plus an authorized administrator.
+    const conta = await tx.conta.findFirst({
+      where: { id: contaId, status: 'ATIVO', deletedAt: null },
+      select: { id: true },
     });
-    if (capacityError) return capacityError;
+    if (!conta) {
+      return NextResponse.json({
+        error: 'INITIAL_SETUP_REQUIRED',
+        message: 'A conta precisa estar ativa antes de iniciar o período de teste.',
+      }, { status: 409 });
+    }
+
+    const [activeStudents, onboardingPricing] = await Promise.all([
+      countActivePlatformBillingStudents({ tx, contaId }),
+      tx.financeProfile.findUnique({
+        where: { contaId },
+        select: { wizardCompletedAt: true, onboardingStudentCount: true },
+      }),
+    ]);
+    // On first onboarding, the validated and persisted declaration sets the
+    // initial trial band. Later self-service flows use live billable enrollments.
+    const pricingStudentCount = onboardingPricing?.wizardCompletedAt && onboardingPricing.onboardingStudentCount
+      ? onboardingPricing.onboardingStudentCount
+      : activeStudents;
+    const commercialTarget = resolveSchoolCommercialTarget(pricingStudentCount);
+    if (!commercialTarget || commercialTarget.kind === 'SPECIALIST') {
+      return NextResponse.json({
+        error: 'SPECIALIST_REQUIRED',
+        message: 'Escolas com mais de 500 alunos precisam conversar com um especialista.',
+        activeStudents: pricingStudentCount,
+      }, { status: 422 });
+    }
 
     let result: Awaited<ReturnType<typeof createPlatformBillingTrialWithoutPaymentMethod>>;
     try {
@@ -85,7 +112,7 @@ export async function POST(req: NextRequest) {
           contaId,
           contaName: actor.conta?.nome ?? 'Conta Alusa',
           billingEmail: actor.user?.email ?? undefined,
-          planCode: parsed.data.planCode,
+          planCode: commercialTarget.band.code,
           actorUserId: userId,
           idempotencyKey,
           correlationId: idempotencyKey,

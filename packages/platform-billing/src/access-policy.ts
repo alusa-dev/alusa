@@ -75,8 +75,16 @@ const RESTRICTED_ALLOWED_CAPABILITIES = new Set<PlatformBillingCapability>([
   'ACCOUNT_READ',
   'REPORT_READ',
   'MONEY_READ',
-  'MONEY_TRANSFER',
-  'MONEY_WITHDRAW',
+]);
+
+const CANCELED_ALLOWED_CAPABILITIES = new Set<PlatformBillingCapability>([
+  'BILLING_READ',
+  'BILLING_MANAGE',
+  'SUPPORT',
+  'ESSENTIAL_EXPORT',
+  'ACCOUNT_READ',
+  'REPORT_READ',
+  'MONEY_READ',
 ]);
 
 export function computeGracePeriodEnd(input: { failedAt: Date; gracePeriodDays?: number }): Date {
@@ -95,14 +103,7 @@ export function derivePlatformAccessStatus(input: {
     | 'trialEndsAt'
     | 'firstPaidAt'
     | 'lastSuccessfulPaymentAt'
-    | 'paymentMethodStatus'
   > | null;
-  /**
-   * Required to distinguish an expired trial that was never converted into a
-   * paid subscription from an already paid subscription that retains Stripe's
-   * historical trial_end value.
-   */
-  hasUsablePaymentMethod?: boolean;
   now?: Date;
 }): PlatformBillingAccessStatus {
   const account = input.account;
@@ -111,12 +112,6 @@ export function derivePlatformAccessStatus(input: {
   const now = input.now ?? new Date();
   const trialExpired = Boolean(account.trialEndsAt && account.trialEndsAt.getTime() <= now.getTime());
   const hasPaidHistory = Boolean(account.firstPaidAt || account.lastSuccessfulPaymentAt);
-  const paymentMethodStatus = input.hasUsablePaymentMethod === undefined
-    ? account.paymentMethodStatus
-    : input.hasUsablePaymentMethod
-      ? 'PRESENT'
-      : 'MISSING';
-
   if (account.status === 'CANCELED' || account.status === 'INCOMPLETE_EXPIRED') {
     return account.cancelAtPeriodEnd && account.currentPeriodEnd && account.currentPeriodEnd > now ? 'ACTIVE' : 'CANCELED';
   }
@@ -127,7 +122,6 @@ export function derivePlatformAccessStatus(input: {
   if (account.status === 'PAST_DUE') {
     const graceActive = Boolean(
       hasPaidHistory &&
-      paymentMethodStatus === 'PRESENT' &&
       account.gracePeriodEndsAt &&
       account.gracePeriodEndsAt.getTime() > now.getTime(),
     );
@@ -256,7 +250,7 @@ export function canUsePlatformCapability(input: {
   }
   if (input.accessStatus === 'RESTRICTED') return RESTRICTED_ALLOWED_CAPABILITIES.has(input.capability);
 
-  return input.capability === 'BILLING_READ' || input.capability === 'BILLING_MANAGE' || input.capability === 'SUPPORT';
+  return CANCELED_ALLOWED_CAPABILITIES.has(input.capability);
 }
 
 export function assertPlatformAccess(input: {

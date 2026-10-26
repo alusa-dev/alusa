@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import { apiErrorResponse } from '@/lib/api/report-api-error';
 import {
   financeiroLancamentoCategoriaInputDTOSchema,
@@ -63,6 +64,8 @@ export async function POST(req: NextRequest) {
   try {
     const auth = await resolveTenantSession();
     if (!auth.ok) return err(401, 'NAO_AUTENTICADO', 'Usuario nao autenticado');
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'FINANCIAL_CONFIG_WRITE' });
+    if (billingBlocked) return err(billingBlocked.status, billingBlocked.body.error, billingBlocked.body.message);
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return err(403, 'SEM_PERMISSAO', 'Acesso negado');
 
     const parsed = financeiroLancamentoCategoriaInputDTOSchema.safeParse(await req.json());

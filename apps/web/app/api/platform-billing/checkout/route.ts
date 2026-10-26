@@ -12,14 +12,14 @@ import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-lo
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import {
   assertCanManagePlatformBilling,
-  assertPlanCapacity,
-  countActivePlatformBillingStudents,
+  resolvePlatformBillingEnvironment,
   resolvePlatformBillingActor,
 } from '@/src/server/platform-billing/platform-billing-server';
+import { resolveTenantPlatformBillingCheckoutPlan } from '@/src/server/platform-billing/checkout-commercial-resolution';
 
 const checkoutSchema = z.object({
-  planCode: z.enum(['STARTER', 'PREMIUM', 'PRO']),
   idempotencyKey: z.string().trim().min(1).max(128).optional(),
+  studentCount: z.number().int().min(1).max(500).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -51,7 +51,8 @@ export async function POST(req: NextRequest) {
   }
   const idempotencyKey = parsedIdempotencyKey.data;
 
-  return withTenantSession(async ({ contaId, userId, tx }) => {
+  try {
+    return await withTenantSession(async ({ contaId, userId, tx }) => {
     const rate = await rateLimitAsync(
       `platform-billing:checkout:${contaId}:${userId}:${requestIp}`,
       20,
@@ -71,14 +72,40 @@ export async function POST(req: NextRequest) {
     const forbidden = assertCanManagePlatformBilling(actor.canManagePlatformBilling);
     if (forbidden) return forbidden;
 
-    const activeStudents = await countActivePlatformBillingStudents({ tx, contaId });
-    const capacityError = assertPlanCapacity({
-      planCode: parsed.data.planCode,
-      activeStudents,
+    const environment = resolvePlatformBillingEnvironment();
+    const commercialPlan = await resolveTenantPlatformBillingCheckoutPlan({
+      tx,
+      contaId,
+      environment,
+      requestedStudentCount: parsed.data.studentCount,
     });
-    if (capacityError) return capacityError;
+    if (commercialPlan.kind === 'SPECIALIST' && commercialPlan.reason === 'CONFIRMED_SPECIALIST') {
+      return NextResponse.json({
+        error: 'SPECIALIST_REQUIRED',
+        message: 'A faixa especial foi confirmada em três fechamentos. Entre em contato com um especialista para contratar.',
+      }, { status: 422 });
+    }
+    if (commercialPlan.kind === 'UNSTABLE') {
+      return NextResponse.json({
+        error: 'PLATFORM_BILLING_PLAN_CHANGE_NOT_STABLE',
+        message: 'A condição atual ainda está sendo conciliada. Não é possível iniciar uma nova cobrança automática agora.',
+      }, { status: 409 });
+    }
+    if (commercialPlan.kind === 'SPECIALIST') {
+        return NextResponse.json({
+          error: 'SPECIALIST_REQUIRED',
+          message: 'Escolas com mais de 500 alunos precisam conversar com um especialista.',
+          activeStudents: commercialPlan.studentCount,
+        }, { status: 422 });
+    }
+    const { planCode, currentBand } = commercialPlan;
 
     const origin = new URL(req.url).origin;
+    const cancelUrl = new URL('/conta/plano-faturamento?checkout=cancel', origin);
+    cancelUrl.searchParams.set('checkoutRequestKey', idempotencyKey);
+    if (!currentBand && parsed.data.studentCount !== undefined) {
+      cancelUrl.searchParams.set('studentCount', String(parsed.data.studentCount));
+    }
     let result: Awaited<ReturnType<typeof createPlatformBillingCheckoutSession>>;
     try {
       result = await createPlatformBillingCheckoutSession(
@@ -86,9 +113,9 @@ export async function POST(req: NextRequest) {
           contaId,
           contaName: actor.conta?.nome ?? 'Conta Alusa',
           billingEmail: actor.user?.email ?? undefined,
-          planCode: parsed.data.planCode,
+          planCode,
           successUrl: `${origin}/conta/plano-faturamento?checkout=success`,
-          cancelUrl: `${origin}/conta/plano-faturamento?checkout=cancel`,
+          cancelUrl: cancelUrl.toString(),
           actorUserId: userId,
           idempotencyKey,
           correlationId: idempotencyKey,
@@ -97,7 +124,25 @@ export async function POST(req: NextRequest) {
         { store: createPrismaPlatformBillingStore(tx) },
       );
     } catch (error) {
-      return billingActionErrorResponse(error);
+      const knownResponse = billingActionErrorResponse(error);
+      if (knownResponse) return knownResponse;
+
+      logApiOperationalEvent({
+        severity: 'error',
+        eventName: isStripeSdkError(error)
+          ? 'api.platform_billing.checkout.stripe_failed'
+          : 'api.platform_billing.checkout.failed',
+        route: '/api/platform-billing/checkout',
+        method: 'POST',
+        requestId: getRequestId(req),
+        error,
+      });
+      return NextResponse.json({
+        error: isStripeSdkError(error)
+          ? 'PLATFORM_BILLING_PROVIDER_ERROR'
+          : 'PLATFORM_BILLING_UNEXPECTED_ERROR',
+        message: 'Não foi possível iniciar a contratação. Tente novamente.',
+      }, { status: isStripeSdkError(error) ? 503 : 500 });
     }
 
     logApiOperationalEvent({
@@ -113,20 +158,55 @@ export async function POST(req: NextRequest) {
       checkoutUrl: result.checkoutUrl,
       reused: result.reused,
     });
-  });
+    });
+  } catch (error) {
+    const requestId = getRequestId(req);
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'api.platform_billing.checkout.failed',
+      route: '/api/platform-billing/checkout',
+      method: 'POST',
+      requestId,
+      error,
+    });
+    return NextResponse.json({
+      error: 'PLATFORM_BILLING_UNEXPECTED_ERROR',
+      message: 'Não foi possível iniciar a contratação. Tente novamente.',
+      requestId,
+    }, { status: 500 });
+  }
 }
 
-function billingActionErrorResponse(error: unknown): NextResponse {
+function billingActionErrorResponse(error: unknown): NextResponse | null {
   if (error instanceof PlatformBillingError) {
+    const conflictCodes = new Set([
+      'PLATFORM_BILLING_IDEMPOTENCY_CONFLICT',
+      'PLATFORM_BILLING_SUBSCRIPTION_ALREADY_EXISTS',
+      'PLATFORM_BILLING_CHECKOUT_IN_PROGRESS',
+      'PLATFORM_BILLING_CHECKOUT_RECONCILIATION_REQUIRED',
+      'PLATFORM_BILLING_CHECKOUT_EXPIRED_RETRY_REQUIRED',
+      'PLATFORM_BILLING_PLAN_CHANGE_NOT_STABLE',
+      'PLATFORM_BILLING_PLAN_CHANGE_IN_PROGRESS',
+      'PLATFORM_BILLING_RECONCILIATION_FAILED',
+      'PLATFORM_BILLING_TRIAL_ALREADY_USED',
+      'PLATFORM_BILLING_CUSTOMER_RECOVERY_UNSAFE',
+    ]);
+    const status = error.code === 'PLATFORM_PRICE_MISSING'
+      ? 503
+      : conflictCodes.has(error.code)
+        ? 409
+        : 400;
     return NextResponse.json(
       {
         error: error.code,
         message:
           error.code === 'PLATFORM_PRICE_MISSING'
             ? 'Este plano ainda não está disponível para contratação.'
+            : error.code === 'PLATFORM_BILLING_CHECKOUT_EXPIRED_RETRY_REQUIRED'
+              ? 'A sessão anterior expirou. Vamos atualizar a confirmação para abrir um novo pagamento.'
             : 'Não foi possível abrir o pagamento.',
       },
-      { status: error.code === 'PLATFORM_PRICE_MISSING' ? 503 : 400 },
+      { status },
     );
   }
 
@@ -137,7 +217,14 @@ function billingActionErrorResponse(error: unknown): NextResponse {
     );
   }
 
-  throw error;
+  return null;
+}
+
+function isStripeSdkError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const candidate = error as { type?: unknown; name?: unknown };
+  return (typeof candidate.type === 'string' && candidate.type.startsWith('Stripe'))
+    || (typeof candidate.name === 'string' && candidate.name.startsWith('Stripe'));
 }
 
 async function readBody(

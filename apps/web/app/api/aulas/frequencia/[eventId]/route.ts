@@ -6,7 +6,7 @@ import {
   saveAttendanceForEvent,
 } from '@/src/server/lessons/attendance/attendance.service';
 import { handleAulasRouteError, json } from '@/src/server/lessons/route-utils';
-import { canAccessAulas, getAulasSessionUser } from '@/src/server/lessons/session';
+import { assertAulasWriteAccess, canAccessAulas, getAulasSessionUser } from '@/src/server/lessons/session';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -19,7 +19,6 @@ export async function GET(
     const user = await getAulasSessionUser();
     if (!user) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!canAccessAulas(user)) return json(403, { error: 'SEM_PERMISSAO' });
-
     const { eventId } = await context.params;
     return json(200, await getAttendanceEventDetails(user.contaId, eventId));
   } catch (error) {
@@ -35,6 +34,7 @@ export async function PUT(
     const user = await getAulasSessionUser();
     if (!user) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!canAccessAulas(user)) return json(403, { error: 'SEM_PERMISSAO' });
+    await assertAulasWriteAccess(user);
 
     const { eventId } = await context.params;
     const body = saveAttendanceInputSchema.parse(await request.json());

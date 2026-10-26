@@ -23,11 +23,19 @@ const { prismaMock } = vi.hoisted(() => ({
 
 vi.mock('@alusa/database', () => ({ prisma: prismaMock }));
 vi.mock('@alusa/platform-billing', () => ({
-  PlatformBillingError: class PlatformBillingError extends Error {},
+  PlatformBillingError: class PlatformBillingError extends Error {
+    code: string;
+    details?: Record<string, unknown>;
+    constructor(message: string, code: string, details?: Record<string, unknown>) {
+      super(message);
+      this.code = code;
+      this.details = details;
+    }
+  },
   classifyPlatformBillingWebhookError: vi.fn(),
   computePlatformBillingWebhookNextAttemptAt: vi.fn(),
+  hasExhaustedPlatformBillingWebhookAttempts: vi.fn(() => false),
   createPrismaPlatformBillingStore: vi.fn(),
-  hasExhaustedPlatformBillingWebhookAttempts: vi.fn(),
   processPersistedPlatformBillingWebhookEvent: vi.fn(),
 }));
 vi.mock('./platform-billing-server', () => ({
@@ -186,6 +194,9 @@ describe('platform billing webhook worker persistence boundary', () => {
     }));
     expect(vi.mocked(notifyPlatformBillingEvent).mock.calls.map(([input]) => [input.contaId, input.eventId, input.eventType]))
       .toEqual([['conta-a', 'evt_retry', 'invoice.payment_failed'], ['conta-a', 'evt_retry', 'invoice.payment_failed']]);
+    expect(prismaMock.$queryRaw.mock.calls[1]?.[0]?.join('')).toContain(
+      '"nextAttemptAt" <= (CURRENT_TIMESTAMP AT TIME ZONE \'UTC\')',
+    );
   });
 
   it('does not let an expired worker lease confirm delivery after another claimant takes over', async () => {
@@ -238,6 +249,32 @@ describe('platform billing webhook worker persistence boundary', () => {
     }));
   });
 
+  it('stores a safe stable code for a nested account snapshot contention cause', async () => {
+    const event = {
+      id: 'inbox-cas', eventId: 'evt_cas', eventType: 'customer.subscription.created',
+      contaId: 'conta-a', attempts: 1, payload: { id: 'evt_cas', type: 'customer.subscription.created', data: { object: {} } },
+    };
+    prismaMock.$queryRaw.mockResolvedValueOnce([event]).mockResolvedValueOnce([]);
+    const failure = new PlatformBillingError('Platform billing webhook processing failed.', 'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED', {
+      cause: 'Stripe account snapshot changed before subscription state could be applied.',
+    });
+    vi.mocked(processPersistedPlatformBillingWebhookEvent).mockRejectedValueOnce(failure);
+    vi.mocked(classifyPlatformBillingWebhookError).mockReturnValueOnce('TEMPORARY');
+    const markFailed = vi.fn().mockResolvedValue(undefined);
+    vi.mocked(createPrismaPlatformBillingStore).mockReturnValue({
+      markWebhookEventFailed: markFailed,
+      markWebhookEventProcessed: vi.fn(),
+    } as never);
+
+    await drainStripeWebhookWorker({ prisma: prismaMock as never, environment: 'TEST', workerId: 'worker-cas' });
+
+    expect(markFailed).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'inbox-cas', errorCode: 'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED',
+      error: 'Platform billing webhook processing failed. [cause=ACCOUNT_SNAPSHOT_CAS_CONFLICT]',
+      exhausted: false,
+    }));
+  });
+
   it('generates a distinct lease owner for every drain invocation by default', async () => {
     const first = await drainStripeWebhookWorker({ prisma: prismaMock as never, environment: 'TEST' });
     const second = await drainStripeWebhookWorker({ prisma: prismaMock as never, environment: 'TEST' });
@@ -245,5 +282,12 @@ describe('platform billing webhook worker persistence boundary', () => {
     expect(first.workerId).toBeTruthy();
     expect(second.workerId).toBeTruthy();
     expect(second.workerId).not.toBe(first.workerId);
+  });
+
+  it('compares webhook retry timestamps in UTC with the database timestamp column', async () => {
+    await drainStripeWebhookWorker({ prisma: prismaMock as never, environment: 'TEST', workerId: 'worker-utc' });
+
+    const claimSql = prismaMock.$queryRaw.mock.calls[0]?.[0]?.join('');
+    expect(claimSql).toContain('"nextAttemptAt" <= (CURRENT_TIMESTAMP AT TIME ZONE \'UTC\')');
   });
 });

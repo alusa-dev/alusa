@@ -4,6 +4,7 @@ import { getSessionUser } from '@/lib/auth/session';
 import { cancelRenewalProcessFromHttp } from '@/src/server/enrollments/renewal-http-commands.service';
 import { hasRenewalPermission } from '@/src/server/enrollments/renewal-permissions.service';
 import { cancelRenewalInputDTOSchema } from '@/features/renewals/dtos';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -21,6 +22,8 @@ export async function POST(
   if (!hasRenewalPermission(user.role, 'renewal.process.cancel')) {
     return jsonError(403, 'PERMISSAO_NEGADA', 'Usuário não tem permissão para cancelar rematrícula.');
   }
+  const billingBlocked = await platformBillingAccessResponseForConta({ contaId: user.contaId, capability: 'ENROLLMENT_WRITE' });
+  if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
   const params = await context.params;
   const parsed = cancelRenewalInputDTOSchema.safeParse(await request.json().catch(() => null));

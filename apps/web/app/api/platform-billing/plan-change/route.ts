@@ -12,7 +12,10 @@ import {
 import { requestPlatformPlanChangeFromHttp } from '@/src/server/platform-billing/http-commands';
 
 const planChangeSchema = z.object({
-  targetPlanCode: z.enum(['STARTER', 'PREMIUM', 'PRO']),
+  targetPlanCode: z.enum([
+    'BAND_001_025', 'BAND_026_050', 'BAND_051_100', 'BAND_101_150',
+    'BAND_151_200', 'BAND_201_300', 'BAND_301_400', 'BAND_401_500',
+  ]),
   idempotencyKey: z.string().trim().min(1).max(128).optional(),
 });
 
@@ -83,10 +86,12 @@ export async function POST(req: NextRequest) {
             message:
               error.code === 'PLATFORM_BILLING_PLAN_CHANGE_INCOMPATIBLE'
                 ? 'Este plano não atende ao uso atual da conta.'
-                : 'Não foi possível alterar o plano agora.',
+                : error.code === 'PLATFORM_BILLING_PLAN_CHANGE_NOT_STABLE'
+                  ? 'A mudança de faixa só pode ser aplicada após três fechamentos mensais consecutivos na mesma faixa.'
+                  : 'Não foi possível alterar o plano agora.',
             details: error.details ?? null,
           },
-          { status: error.code === 'PLATFORM_BILLING_PLAN_CHANGE_INCOMPATIBLE' ? 422 : 400 },
+          { status: error.code === 'PLATFORM_BILLING_PLAN_CHANGE_INCOMPATIBLE' || error.code === 'PLATFORM_BILLING_PLAN_CHANGE_NOT_STABLE' ? 422 : 400 },
         );
       }
       throw error;

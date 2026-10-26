@@ -251,13 +251,23 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
             { OR: [
               { stripeSubscriptionId: null },
               { status: { in: ['CANCELED', 'INCOMPLETE_EXPIRED'] } },
+              ...(input.pendingChangeType === 'REACTIVATE'
+                ? [
+                    { status: 'PAUSED' as const, trialEndsAt: { lte: now }, firstPaidAt: null, lastSuccessfulPaymentAt: null },
+                    { status: 'TRIALING' as const, trialEndsAt: { lte: now }, firstPaidAt: null, lastSuccessfulPaymentAt: null },
+                  ]
+                : []),
             ] },
             { OR: [
               { checkoutClaimKey: null },
               { checkoutClaimPhase: 'CLAIMED', checkoutClaimedAt: { lt: new Date(now.getTime() - 5 * 60_000) } },
             ] },
           ],
-          status: { notIn: ['ACTIVE', 'TRIALING', 'PAST_DUE', 'UNPAID', 'PAUSED'] },
+          status: {
+            notIn: input.pendingChangeType === 'REACTIVATE'
+              ? ['ACTIVE', 'PAST_DUE', 'UNPAID']
+              : ['ACTIVE', 'TRIALING', 'PAST_DUE', 'UNPAID', 'PAUSED'],
+          },
         },
         data: {
           status: input.pendingChangeType === 'REACTIVATE' ? 'CANCELED' : 'CHECKOUT_PENDING',
@@ -278,11 +288,16 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
           && current.checkoutRequestExpiresAt > now) {
           return toAccountRecord(current);
         }
+        const hasBlockingSubscription = current.stripeSubscriptionId !== null && (
+          input.pendingChangeType === 'REACTIVATE'
+            ? ['ACTIVE', 'PAST_DUE', 'UNPAID'].includes(current.status)
+            : ['ACTIVE', 'TRIALING', 'PAST_DUE', 'UNPAID', 'PAUSED'].includes(current.status)
+        );
         throw new PlatformBillingError(
-          current.stripeSubscriptionId ? 'An active platform billing subscription already exists.' : current.checkoutClaimPhase === 'REQUESTING'
+          hasBlockingSubscription ? 'An active platform billing subscription already exists.' : current.checkoutClaimPhase === 'REQUESTING'
             ? 'Checkout claim expired after the Stripe request may have started; reconcile Stripe before retrying with a new key.'
             : 'A Checkout session is already being created for this account.',
-          current.stripeSubscriptionId ? 'PLATFORM_BILLING_SUBSCRIPTION_ALREADY_EXISTS' : current.checkoutClaimPhase === 'REQUESTING'
+          hasBlockingSubscription ? 'PLATFORM_BILLING_SUBSCRIPTION_ALREADY_EXISTS' : current.checkoutClaimPhase === 'REQUESTING'
             ? 'PLATFORM_BILLING_CHECKOUT_RECONCILIATION_REQUIRED' : 'PLATFORM_BILLING_CHECKOUT_IN_PROGRESS',
         );
       }
@@ -339,7 +354,7 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
         where: { contaId, environment, checkoutClaimKey: idempotencyKey, status: 'CHECKOUT_PENDING' },
         data: { status: 'NOT_STARTED', accessStatus: 'PENDING' },
       });
-      await db.platformBillingAccount.updateMany({
+      const cleared = await db.platformBillingAccount.updateMany({
         where: { contaId, environment, checkoutClaimKey: idempotencyKey },
         data: {
           checkoutClaimKey: null,
@@ -350,6 +365,14 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
           pendingChangeType: null,
           pendingChangeEffectiveAt: null,
         },
+      });
+      return cleared.count > 0;
+    },
+
+    markCheckoutSessionExpired: async ({ contaId, environment, idempotencyKey }) => {
+      await db.platformBillingCheckoutSession.updateMany({
+        where: { contaId, environment, idempotencyKey, status: 'CREATED' },
+        data: { status: 'EXPIRED' },
       });
     },
 
@@ -371,9 +394,9 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
           where: { id: input.accountId },
         });
         if (
-          input.lastProviderEventCreatedAt &&
-          current.lastProviderEventCreatedAt &&
-          current.lastProviderEventCreatedAt.getTime() > input.lastProviderEventCreatedAt.getTime()
+          input.lastProviderEventCreatedAt
+          && current.lastProviderEventCreatedAt
+          && current.lastProviderEventCreatedAt.getTime() > input.lastProviderEventCreatedAt.getTime()
         ) {
           return current;
         }
@@ -472,7 +495,9 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
               stripePriceId: finalization.stripePriceId,
               toPlanCode: finalization.toPlanCode,
               type: finalization.type,
-              status: finalization.type === 'UPGRADE' ? 'PENDING_PAYMENT' : 'PENDING_EFFECTIVE_DATE',
+              status: finalization.type === 'UPGRADE'
+                ? { in: ['PENDING_PAYMENT', 'PENDING_EFFECTIVE_DATE'] }
+                : 'PENDING_EFFECTIVE_DATE',
             },
             data: finalization.applied
               ? { status: 'APPLIED', appliedAt: now, lastError: null, stripePriceId: finalization.stripePriceId }
@@ -854,6 +879,7 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
   };
 }
 
+
 function toAccountRecord(account: {
   id: string;
   contaId: string;
@@ -895,6 +921,10 @@ function toAccountRecord(account: {
   trialSubscriptionClaimPhase?: string | null;
   trialSubscriptionClaimedAt?: Date | null;
   trialSubscriptionRequestExpiresAt?: Date | null;
+  checkoutClaimKey?: string | null;
+  checkoutClaimPhase?: string | null;
+  checkoutClaimedAt?: Date | null;
+  checkoutRequestExpiresAt?: Date | null;
 }): PlatformBillingAccountRecord {
   return {
     id: account.id,
@@ -928,6 +958,10 @@ function toAccountRecord(account: {
     lastProviderEventCreatedAt: account.lastProviderEventCreatedAt,
     lastStripeEventId: account.lastStripeEventId ?? null,
     lastReconciledAt: account.lastReconciledAt,
+    checkoutClaimKey: account.checkoutClaimKey ?? null,
+    checkoutClaimPhase: account.checkoutClaimPhase ?? null,
+    checkoutClaimedAt: account.checkoutClaimedAt ?? null,
+    checkoutRequestExpiresAt: account.checkoutRequestExpiresAt ?? null,
     pendingPlanCode: account.pendingPlanCode as PlatformBillingAccountRecord['pendingPlanCode'],
     pendingChangeType: account.pendingChangeType as PlatformBillingAccountRecord['pendingChangeType'],
     pendingChangeEffectiveAt: account.pendingChangeEffectiveAt,
@@ -951,6 +985,7 @@ function toCheckoutSessionRecord(session: {
   stripePriceId: string;
   status: string;
   url: string | null;
+  cancelUrl: string;
   idempotencyKey: string;
 }): PlatformBillingCheckoutSessionRecord {
   return {
@@ -964,6 +999,7 @@ function toCheckoutSessionRecord(session: {
     stripePriceId: session.stripePriceId,
     status: session.status as PlatformBillingCheckoutSessionRecord['status'],
     url: session.url,
+    cancelUrl: session.cancelUrl,
     idempotencyKey: session.idempotencyKey,
   };
 }

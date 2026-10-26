@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { deleteCategory } from '@alusa/lib/services/category.service';
+import { storeWriteBillingBlock } from '../../_helpers';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
@@ -15,6 +16,8 @@ export async function DELETE(
     const auth = await resolveTenantSession();
     if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     const { contaId } = auth;
+    const billingBlocked = await storeWriteBillingBlock(auth.contaId);
+    if (billingBlocked) return billingBlocked;
 
     const { id } = await params;
     if (!id) return jsonError(400, 'ID_INVALIDO', 'ID da categoria é obrigatório');

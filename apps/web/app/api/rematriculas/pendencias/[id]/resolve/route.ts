@@ -7,6 +7,7 @@ import {
   requireRenewalPermission,
 } from '@/src/server/enrollments/renewal-permissions.service';
 import { resolveRenewalPendingFromHttp } from '@/src/server/enrollments/renewal-http-commands.service';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 const bodySchema = z.object({
   resolution: z.string().trim().min(5),
@@ -26,6 +27,8 @@ export async function POST(
 ) {
   const user = await getSessionUser();
   if (!user) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
+  const billingBlocked = await platformBillingAccessResponseForConta({ contaId: user.contaId, capability: 'ENROLLMENT_WRITE' });
+  if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
   try {
     requireRenewalPermission({ role: user.role, permission: 'renewal.pending.resolve' });

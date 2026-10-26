@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { deleteOptionValue } from '@alusa/lib/services/product-option.service';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { storeWriteBillingBlock } from '../../../../../../_helpers';
 
 function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -15,6 +16,8 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     const { contaId } = auth;
+    const billingBlocked = await storeWriteBillingBlock(auth.contaId);
+    if (billingBlocked) return billingBlocked;
 
     const { id: productId, optionId, valueId } = await Promise.resolve(context.params);
     await deleteOptionValue(valueId, optionId, productId, contaId);

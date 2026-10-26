@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import {
   cobrancaRefundInputDTOSchema,
   cobrancaRouteParamsDTOSchema,
@@ -14,6 +15,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!auth.role || !['ADMIN', 'FINANCEIRO'].includes(auth.role.toUpperCase())) {
       return NextResponse.json({ error: 'Acesso negado' }, { status: 403 });
     }
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'CHARGE_CREATE' });
+    if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
     const { id } = cobrancaRouteParamsDTOSchema.parse(await params);
     const body = cobrancaRefundInputDTOSchema.parse(await req.json().catch(() => ({})));

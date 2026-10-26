@@ -152,6 +152,7 @@ describe('wizardStep5Schema', () => {
   it('valida faturamento positivo', () => {
     const result = wizardStep5Schema.safeParse({
       incomeValue: 1000,
+      onboardingStudentCount: 165,
     });
     expect(result.success).toBe(true);
   });
@@ -159,8 +160,18 @@ describe('wizardStep5Schema', () => {
   it('rejeita faturamento inválido', () => {
     const result = wizardStep5Schema.safeParse({
       incomeValue: 0,
+      onboardingStudentCount: 165,
     });
     expect(result.success).toBe(false);
+  });
+
+  it('exige quantidade inicial inteira positiva e segura', () => {
+    expect(wizardStep5Schema.safeParse({ incomeValue: 1000, onboardingStudentCount: 0 }).success).toBe(false);
+    expect(wizardStep5Schema.safeParse({ incomeValue: 1000, onboardingStudentCount: 1.5 }).success).toBe(false);
+    expect(wizardStep5Schema.safeParse({ incomeValue: 1000, onboardingStudentCount: 165 }).success).toBe(true);
+    expect(wizardStep5Schema.safeParse({ incomeValue: 1000, onboardingStudentCount: 501 }).success).toBe(true);
+    expect(wizardStep5Schema.safeParse({ incomeValue: 1000, onboardingStudentCount: 2_147_483_647 }).success).toBe(true);
+    expect(wizardStep5Schema.safeParse({ incomeValue: 1000, onboardingStudentCount: 2_147_483_648 }).success).toBe(false);
   });
 });
 
@@ -178,6 +189,7 @@ describe('getMissingFieldsForSubaccount', () => {
     mobilePhone: '11999999999',
     landlinePhone: null,
     incomeValue: 5000,
+    onboardingStudentCount: 165,
     address: 'Rua das Flores',
     addressNumber: '123',
     province: 'Centro',
@@ -202,6 +214,7 @@ describe('getMissingFieldsForSubaccount', () => {
     mobilePhone: '11999999999',
     landlinePhone: null,
     incomeValue: 10000,
+    onboardingStudentCount: 165,
     address: 'Av. Paulista',
     addressNumber: '1000',
     province: 'Bela Vista',

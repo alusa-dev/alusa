@@ -6,7 +6,7 @@ import {
   StoreInventoryError,
 } from '@alusa/finance';
 
-import { getStoreRequestContext, jsonError } from '../_helpers';
+import { getStoreRequestContext, getStoreWriteRequestContext, jsonError } from '../_helpers';
 import {
   createRestockOrderInputDTOSchema,
   listRestockOrdersQueryDTOSchema,
@@ -45,7 +45,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const { contaId, operatorId } = await getStoreRequestContext();
+    const { contaId, operatorId } = await getStoreWriteRequestContext();
     const body = await request.json();
     const parsed = createRestockOrderInputDTOSchema.safeParse(body);
 

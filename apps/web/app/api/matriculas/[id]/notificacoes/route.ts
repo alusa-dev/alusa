@@ -9,6 +9,7 @@ import { runWithTenant } from '@/lib/prisma-tenant';
 import { updateMatriculaNotificationChannelsInputDTOSchema } from '@/features/enrollments/dtos';
 import { mapMatriculaNotificationChannelsResultToDTO } from '@/features/enrollments/mappers';
 import { resolveMatriculaFinancialContext } from '@/src/server/enrollments/financial-context.service';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, code: string, message: string, details?: unknown) {
   return NextResponse.json(
@@ -119,6 +120,8 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
   try {
     const auth = await authorizeNotifications();
     if (auth.response) return auth.response;
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'ENROLLMENT_WRITE' });
+    if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
     const { contaId, actorId } = auth;
     const body = await req.json().catch(() => null);
     const parsed = updateMatriculaNotificationChannelsInputDTOSchema.safeParse(body);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import { apiErrorResponse } from '@/lib/api/report-api-error';
 import { financeiroCobrancaCancelResultDTOSchema } from '@/features/finance/operations/charges/dtos';
 import { mapFinanceiroCobrancaCancelResultToDTO } from '@/features/finance/operations/charges/mappers';
@@ -27,6 +28,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     if (!auth.ok) return err(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida' : 'Usuário não autenticado');
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
       return err(403, 'SEM_PERMISSAO', 'Acesso negado');
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'CHARGE_CREATE' });
+    if (billingBlocked) return err(billingBlocked.status, billingBlocked.body.error, billingBlocked.body.message);
 
     const { id } = await params;
 

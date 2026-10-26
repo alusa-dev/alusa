@@ -11,6 +11,7 @@ import {
   listProfessores,
   syncProfessoresFromColaboradores,
 } from '@/src/server/teachers/teacher.service';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -116,6 +117,8 @@ export async function POST(req: Request) {
       );
     }
     const contaId = tenant.contaId;
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId, capability: 'STAFF_WRITE' });
+    if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
     // Sanitização mínima
     const toCreate = {
       nome: data.nome.trim(),

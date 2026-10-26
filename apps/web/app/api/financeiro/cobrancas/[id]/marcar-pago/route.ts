@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import { getRequestId, logApiError, logApiResponse } from '@/lib/observability/api-logger';
 import {
   AsaasEnvError,
@@ -81,6 +82,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!auth.ok) return complete(err(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida' : 'Usuário não autenticado'), auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO');
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
       return complete(err(403, 'SEM_PERMISSAO', 'Acesso negado'), 'SEM_PERMISSAO');
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'CHARGE_CREATE' });
+    if (billingBlocked) return complete(err(billingBlocked.status, billingBlocked.body.error, billingBlocked.body.message), billingBlocked.body.error);
 
     const { id } = await params;
     chargeId = id;

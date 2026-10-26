@@ -7,6 +7,7 @@ import { mapProfessorRecordToDTO } from '@/features/teachers/mappers';
 import { logMethodNotAllowed } from '@/lib/security/http-method-observability';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getProfessor, updateProfessor } from '@/src/server/teachers/teacher.service';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -55,6 +56,8 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
     const auth = await resolveTenantSession();
     if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'É necessário estar autenticado.');
     const { contaId } = auth;
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId, capability: 'STAFF_WRITE' });
+    if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
     const existing = await getProfessor(contaId, ctxParams.id);
     if (!existing) return jsonError(404, 'NAO_ENCONTRADO', 'Professor não encontrado');

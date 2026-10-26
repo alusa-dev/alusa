@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge, type BadgeVariant } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -17,14 +17,19 @@ import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
 import { cn } from '@/lib/cn';
-import { Check, ChevronRight, Download, ExternalLink } from '@/components/icons/icons';
+import { SlidingNumber } from '@/components/core/sliding-number';
+import { getSchoolPriceBandRank, isSchoolPriceBandCode, resolveSchoolCommercialTarget, SCHOOL_PRICE_BANDS } from '@alusa/platform-billing/commercial-model';
+import { Download, ExternalLink } from '@/components/icons/icons';
 import {
   type PlatformBillingSummaryDTO,
-  type PublicPlatformPlanDTO,
 } from './dtos/platform-billing-summary';
 import { usePlatformBilling } from './PlatformBillingContext';
+import { CheckoutResumePopup } from './components/CheckoutResumePopup';
+import { CardBrandMark, formatCardBrand } from './components/CardBrandMark';
 
-type PlanCode = 'STARTER' | 'PREMIUM' | 'PRO' | 'CUSTOM';
+void React;
+
+type PlanCode = 'BAND_001_025' | 'BAND_026_050' | 'BAND_051_100' | 'BAND_101_150' | 'BAND_151_200' | 'BAND_201_300' | 'BAND_301_400' | 'BAND_401_500' | 'STARTER' | 'PREMIUM' | 'PRO' | 'CUSTOM';
 type BillingStatus =
   | 'NOT_STARTED'
   | 'CHECKOUT_PENDING'
@@ -37,8 +42,6 @@ type BillingStatus =
   | 'UNPAID'
   | 'PAUSED'
   | 'UNKNOWN';
-
-type PublicPlan = PublicPlatformPlanDTO;
 
 type BillingAccount = {
   id: string;
@@ -104,15 +107,12 @@ type NoticeDialogState = {
   description: string;
   tone?: 'default' | 'destructive';
   actionLabel?: string;
-  action?: 'portal' | 'plans';
+  action?: 'portal';
 } | null;
 
-type PendingPlanAction = {
-  planCode: PublicPlan['code'];
-  type: 'upgrade' | 'downgrade';
-  title: string;
-  description: string;
-} | null;
+const checkoutCancelReturnTerminalResults = new Map<string, 'CANCELED' | 'ALREADY_CANCELED' | 'STALE'>();
+const checkoutCancelReturnInFlight = new Map<string, Promise<{ state: string; ok: boolean; refreshed?: boolean }>>();
+const checkoutCancelNoticeShown = new Set<string>();
 
 function createPlatformBillingRequestKey(prefix: string): string {
   if (typeof globalThis.crypto?.randomUUID === 'function') {
@@ -122,24 +122,39 @@ function createPlatformBillingRequestKey(prefix: string): string {
 }
 
 export function PlatformBillingFeature({ checkoutState }: { checkoutState?: CheckoutState }) {
-  const { summary, loading, refresh, refreshFailed } = usePlatformBilling();
+  const { summary, loading, refresh, refreshFailed, userId } = usePlatformBilling();
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [plansOpen, setPlansOpen] = useState(false);
   const [noticeDialog, setNoticeDialog] = useState<NoticeDialogState>(null);
-  const [planChangeSuccess, setPlanChangeSuccess] = useState<string | null>(null);
-  const [pendingPlanAction, setPendingPlanAction] = useState<PendingPlanAction>(null);
+  const [billingSuccessNotice, setBillingSuccessNotice] = useState<string | null>(null);
+  const [checkoutCancelPending, setCheckoutCancelPending] = useState(checkoutState === 'cancel');
+  const [checkoutSuccessState, setCheckoutSuccessState] = useState<'checking' | 'unconfirmed' | 'confirmed' | null>(
+    checkoutState === 'success' ? 'checking' : null,
+  );
+  const [checkoutSuccessRefreshPending, setCheckoutSuccessRefreshPending] = useState(false);
+  const [checkoutSuccessRefreshAttempts, setCheckoutSuccessRefreshAttempts] = useState(0);
+  const [showCheckoutResume, setShowCheckoutResume] = useState(false);
+  const [pricingDialogOpen, setPricingDialogOpen] = useState(false);
+  const [pricingStudentCount, setPricingStudentCount] = useState(165);
+  const [resumeStudentCount, setResumeStudentCount] = useState<number | null>(null);
   const [pendingCancellationAction, setPendingCancellationAction] = useState<'cancel_at_period_end' | 'undo_cancel' | null>(null);
   const actionIdempotencyKeysRef = useRef<Record<string, string>>({});
   const lastSummaryRef = useRef(summary);
+  const checkoutCancelHandledKeyRef = useRef<string | null>(null);
+  const billingAccountId = summary?.account?.id ?? null;
 
   useEffect(() => {
-    if (summary && summary !== lastSummaryRef.current && planChangeSuccess) {
-      setPlanChangeSuccess(null);
+    if (summary && summary !== lastSummaryRef.current && billingSuccessNotice) {
+      setBillingSuccessNotice(null);
     }
     lastSummaryRef.current = summary;
-  }, [planChangeSuccess, summary]);
+  }, [billingSuccessNotice, summary]);
+
+  useEffect(() => {
+    setCheckoutSuccessRefreshAttempts(0);
+    if (checkoutState === 'success') setCheckoutSuccessState('checking');
+  }, [checkoutState, userId]);
 
   function getActionIdempotencyKey(scope: string): string {
     const existing = actionIdempotencyKeysRef.current[scope];
@@ -153,14 +168,119 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
     delete actionIdempotencyKeysRef.current[scope];
   }
 
+  const checkoutSuccessBlocksCheckout = checkoutSuccessState === 'checking' || checkoutSuccessState === 'unconfirmed';
+
+  useEffect(() => {
+    if (checkoutState !== 'success' || !userId) return;
+    if (summary?.account?.status === 'ACTIVE') {
+      setCheckoutSuccessState('confirmed');
+      setCheckoutSuccessRefreshPending(false);
+      setBillingSuccessNotice('Assinatura confirmada. Seu plano já está atualizado.');
+      consumeCheckoutSuccessQuery();
+      return;
+    }
+    if (!summary) return;
+    if (checkoutSuccessState !== 'checking' || checkoutSuccessRefreshPending) return;
+    if (checkoutSuccessRefreshAttempts >= 4) {
+      setCheckoutSuccessState('unconfirmed');
+      consumeCheckoutSuccessQuery();
+      return;
+    }
+    const delay = checkoutSuccessRefreshAttempts === 0 ? 0 : 1500;
+    const timeout = window.setTimeout(async () => {
+      setCheckoutSuccessRefreshAttempts((attempts) => attempts + 1);
+      setCheckoutSuccessRefreshPending(true);
+      await refresh(true);
+      setCheckoutSuccessRefreshPending(false);
+    }, delay);
+    return () => window.clearTimeout(timeout);
+  }, [checkoutState, checkoutSuccessRefreshAttempts, checkoutSuccessRefreshPending, checkoutSuccessState, refresh, summary, userId]);
+
   useEffect(() => {
     if (checkoutState === 'cancel') {
-      setNoticeDialog({
-        title: 'Pagamento cancelado',
-        description: 'Nenhuma alteração foi aplicada ao plano da conta.',
+      const returnedStudentCount = readCheckoutStudentCount();
+      const returnedCheckoutRequestKey = readCheckoutRequestKey();
+      if (returnedStudentCount !== null) setResumeStudentCount(returnedStudentCount);
+      if (!billingAccountId || !userId) {
+        setCheckoutCancelPending(true);
+        return;
+      }
+      const key = `${window.location.pathname}:${userId}:${billingAccountId}:${returnedCheckoutRequestKey ?? 'missing'}:${returnedStudentCount ?? 'unknown'}`;
+      if (checkoutCancelHandledKeyRef.current === key) return;
+      checkoutCancelHandledKeyRef.current = key;
+      if (!returnedCheckoutRequestKey) {
+        setCheckoutCancelPending(false);
+        setShowCheckoutResume(true);
+        consumeCheckoutCancelQuery();
+        return;
+      }
+      const terminalResult = checkoutCancelReturnTerminalResults.get(key);
+      if (terminalResult) {
+        setCheckoutCancelPending(false);
+        clearActionIdempotencyKey(returnedStudentCount === null ? 'checkout' : `checkout:${returnedStudentCount}`);
+        consumeCheckoutCancelQuery();
+        if (!checkoutCancelNoticeShown.has(key)) {
+          checkoutCancelNoticeShown.add(key);
+          setShowCheckoutResume(true);
+        }
+        return;
+      }
+      const existingRequest = checkoutCancelReturnInFlight.get(key);
+      if (existingRequest) {
+        setCheckoutCancelPending(true);
+        void existingRequest.then(async (result) => {
+          if (!result.ok || !result.refreshed || !isTerminalCheckoutCancelState(result.state)) return;
+          checkoutCancelReturnTerminalResults.set(key, result.state);
+          setCheckoutCancelPending(false);
+          clearActionIdempotencyKey(returnedStudentCount === null ? 'checkout' : `checkout:${returnedStudentCount}`);
+          consumeCheckoutCancelQuery();
+          if (!checkoutCancelNoticeShown.has(key)) {
+            checkoutCancelNoticeShown.add(key);
+            setShowCheckoutResume(true);
+          }
+        });
+        return;
+      }
+      setError(null);
+      setCheckoutCancelPending(true);
+      const promise: Promise<{ state: string; ok: boolean; refreshed?: boolean }> = fetch('/api/platform-billing/checkout/cancel-return', {
+        method: 'POST',
+        headers: { accept: 'application/json', 'content-type': 'application/json' },
+        body: JSON.stringify({ idempotencyKey: returnedCheckoutRequestKey }),
+      })
+        .then(async (response) => {
+          const result = {
+            ok: response.ok,
+            state: (await response.json().catch(() => null) as { state?: string } | null)?.state ?? 'PENDING',
+          };
+          if (result.ok && isTerminalCheckoutCancelState(result.state)) {
+            return { ...result, refreshed: await refresh(true) };
+          }
+          return result;
+        })
+        .catch(() => ({ ok: false, state: 'PENDING' }));
+      checkoutCancelReturnInFlight.set(key, promise);
+      void promise.then(async (result) => {
+        if (checkoutCancelReturnInFlight.get(key) === promise) checkoutCancelReturnInFlight.delete(key);
+        const terminalState = isTerminalCheckoutCancelState(result.state) ? result.state : null;
+        if (result.ok && result.refreshed && isTerminalCheckoutCancelState(result.state)) {
+          if (terminalState) checkoutCancelReturnTerminalResults.set(key, terminalState);
+          setCheckoutCancelPending(false);
+          clearActionIdempotencyKey(returnedStudentCount === null ? 'checkout' : `checkout:${returnedStudentCount}`);
+          consumeCheckoutCancelQuery();
+          if (!checkoutCancelNoticeShown.has(key)) {
+            checkoutCancelNoticeShown.add(key);
+            setShowCheckoutResume(true);
+          }
+        }
+        else setCheckoutCancelPending(true);
       });
+    } else {
+      checkoutCancelHandledKeyRef.current = null;
+      setCheckoutCancelPending(false);
+      setResumeStudentCount(null);
     }
-  }, [checkoutState]);
+  }, [billingAccountId, checkoutState, refresh, userId]);
 
   const currentPlan = useMemo(() => {
     if (!summary?.account?.planCode) return null;
@@ -168,8 +288,9 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
   }, [summary]);
 
   const currentPlanMax = currentPlan?.maxActiveStudents ?? null;
+  const currentPlanMin = currentPlan?.minActiveStudents ?? 1;
   const activeStudentPercent = currentPlanMax
-    ? Math.min(100, Math.round((summary?.activeStudents ?? 0) / currentPlanMax * 100))
+    ? Math.max(0, Math.min(100, Math.round(((summary?.activeStudents ?? 0) - currentPlanMin + 1) / (currentPlanMax - currentPlanMin + 1) * 100)))
     : 0;
   const pendingChangeRaw = summary?.planChanges.find((change) =>
     change.status === 'PENDING_PAYMENT' || change.status === 'PENDING_EFFECTIVE_DATE'
@@ -179,23 +300,25 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
       ? null
       : pendingChangeRaw;
   const isCancellationPendingChange = pendingChange?.type === 'CANCEL_AT_PERIOD_END';
-  const planUsageLabel = currentPlanMax
-    ? `${summary?.activeStudents ?? 0} de ${currentPlanMax} alunos ativos`
-    : `${summary?.activeStudents ?? 0} alunos ativos`;
+  const planUsageLabel = `${summary?.activeStudents ?? 0} alunos com mensalidade prevista${currentPlan ? ` · faixa ${currentPlan.name}` : ''}`;
   const paymentMethod = summary?.paymentMethod ?? { status: 'missing' as const };
   const renewalLabel = getRenewalLabel(summary?.account ?? null, paymentMethod);
   const currentAccessStatus = summary?.account?.accessStatus ?? 'PENDING';
   const hasActiveSubscription = Boolean(summary?.account?.stripeSubscriptionId && summary.account.planCode);
   const isCanceledSubscription = summary?.account?.status === 'CANCELED' || summary?.account?.accessStatus === 'CANCELED';
-  const isReactivationFlow = isCanceledSubscription && Boolean(summary?.account?.id);
-  const blocksPlanActions = Boolean(pendingChange) && !(isReactivationFlow && isCancellationPendingChange);
   const hasManageableSubscription = hasActiveSubscription && !isCanceledSubscription;
   const hasScheduledCancellation = Boolean(summary?.account?.cancelAtPeriodEnd && !isCanceledSubscription);
   const isTrialing = summary?.account?.status === 'TRIALING';
   const canStartTrial = !hasActiveSubscription && !summary?.account?.trialEndsAt;
-  const availablePlanChanges = isReactivationFlow
-    ? summary?.plans ?? []
-    : summary?.plans.filter((plan) => plan.code !== summary.account?.planCode) ?? [];
+  const trialExpired = summary?.access.restrictionReason === 'TRIAL_EXPIRED';
+  const confirmedPriceBand = isSchoolPriceBandCode(summary?.account?.planCode)
+    ? SCHOOL_PRICE_BANDS.find((band) => band.code === summary.account?.planCode) ?? null
+    : null;
+  const commercialTarget = summary?.specialistNegotiationReady
+    ? { kind: 'SPECIALIST' as const, band: null }
+    : confirmedPriceBand
+      ? { kind: 'SELF_SERVICE' as const, band: confirmedPriceBand }
+      : resolveSchoolCommercialTarget(summary?.activeStudents ?? 0);
   const requiresPaymentAttention = Boolean(
     currentAccessStatus === 'GRACE_PERIOD' ||
     currentAccessStatus === 'RESTRICTED' ||
@@ -207,39 +330,35 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
   const paymentDescription = getPaymentMethodDescription(paymentMethod);
   const paymentActionLabel = paymentMethod.status === 'present' ? 'Alterar pagamento' : 'Cadastrar pagamento';
   const cancellationNotice = getCancellationNotice(summary?.account ?? null);
-  const trialEndingNotice = getTrialEndingNotice(summary?.account ?? null, paymentMethod);
-  const planActionLabel = getPlanActionLabel({
-    requiresPaymentAttention,
-    isTrialing,
-    isCanceledSubscription,
-    hasManageableSubscription,
-    canStartTrial,
-  });
+  const trialEndingNotice = getTrialEndingNotice(summary?.account ?? null, currentPlan);
+  const canStartSelfServiceFlow = (!hasManageableSubscription || trialExpired) && commercialTarget?.kind === 'SELF_SERVICE';
 
-  async function startCheckout(planCode: PublicPlan['code']) {
-    setActionLoading(`checkout:${planCode}`);
+  async function startCheckout(studentCount?: number, expiredSessionRetry = 0) {
+    if (checkoutSuccessBlocksCheckout) return;
+    setActionLoading('checkout');
     setError(null);
     try {
-      const idempotencyKey = getActionIdempotencyKey(`checkout:${planCode}`);
+      const idempotencyScope = studentCount === undefined ? 'checkout' : `checkout:${studentCount}`;
+      const idempotencyKey = getActionIdempotencyKey(idempotencyScope);
       const response = await fetch('/api/platform-billing/checkout', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           'idempotency-key': idempotencyKey,
         },
-        body: JSON.stringify({ planCode, idempotencyKey }),
+        body: JSON.stringify({ idempotencyKey, ...(studentCount === undefined ? {} : { studentCount }) }),
       });
-      const payload = (await response.json()) as {
+      const payload = await response.json().catch(() => null) as {
         checkoutUrl?: string;
         message?: string;
         error?: string;
-        activeStudents?: number;
-        maxActiveStudents?: number;
-      };
-      if (!response.ok || !payload.checkoutUrl) {
-        const message = payload.error === 'PLANO_INSUFICIENTE'
-          ? buildIncompatiblePlanMessage(payload)
-          : payload.message ?? payload.error ?? 'Não foi possível abrir o pagamento.';
+      } | null;
+      if (!response.ok || !payload?.checkoutUrl) {
+        if (payload?.error === 'PLATFORM_BILLING_CHECKOUT_EXPIRED_RETRY_REQUIRED') {
+          clearActionIdempotencyKey(idempotencyScope);
+          if (expiredSessionRetry === 0) return await startCheckout(studentCount, 1);
+        }
+        const message = payload?.message ?? 'Não foi possível iniciar a contratação. Tente novamente.';
         throw new Error(message);
       }
       window.location.assign(payload.checkoutUrl);
@@ -255,6 +374,30 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
     }
   }
 
+  async function startTrial() {
+    setActionLoading('trial');
+    setError(null);
+    try {
+      const idempotencyKey = getActionIdempotencyKey('trial');
+      const response = await fetch('/api/platform-billing/trial', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey },
+        body: JSON.stringify({ idempotencyKey }),
+      });
+      const payload = await response.json().catch(() => null) as { message?: string; error?: string } | null;
+      if (!response.ok) throw new Error(payload?.message ?? 'Não foi possível iniciar o teste.');
+      clearActionIdempotencyKey('trial');
+      await refresh(true);
+      setBillingSuccessNotice('Seu período de teste começou. Nenhum cartão foi solicitado e não haverá cobrança automática ao final.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Não foi possível iniciar o teste.';
+      setError(message);
+      setNoticeDialog({ title: 'Teste não iniciado', description: message, tone: 'destructive' });
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   async function openPortal(options?: { newTab?: boolean }) {
     setActionLoading('portal');
     setError(null);
@@ -265,9 +408,9 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         method: 'POST',
         headers: { 'idempotency-key': idempotencyKey },
       });
-      const payload = (await response.json()) as { portalUrl?: string; error?: string };
-      if (!response.ok || !payload.portalUrl) {
-        throw new Error(payload.error === 'PLATFORM_BILLING_ACCOUNT_NOT_FOUND'
+      const payload = await response.json().catch(() => null) as { portalUrl?: string; error?: string } | null;
+      if (!response.ok || !payload?.portalUrl) {
+        throw new Error(payload?.error === 'PLATFORM_BILLING_ACCOUNT_NOT_FOUND'
           ? 'Nenhuma assinatura encontrada para esta conta.'
           : 'Não foi possível abrir a área de pagamento.');
       }
@@ -286,103 +429,6 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         description: message,
         tone: 'destructive',
       });
-      setActionLoading(null);
-    }
-  }
-
-  function selectPlan(planCode: PublicPlan['code']) {
-    setPlanChangeSuccess(null);
-    if (!hasActiveSubscription || summary?.account?.status === 'NOT_STARTED' || summary?.account?.status === 'CANCELED') {
-      void startCheckout(planCode);
-      return;
-    }
-
-    const currentCode = summary?.account?.planCode;
-    if (!currentCode || currentCode === 'CUSTOM' || currentCode === planCode) return;
-
-    const type = getPlanRank(planCode) > getPlanRank(currentCode) ? 'upgrade' : 'downgrade';
-    const targetPlan = summary.plans.find((plan) => plan.code === planCode);
-    const targetName = targetPlan ? getPlanMarketingName(targetPlan.code) : planName(planCode);
-
-    setPendingPlanAction({
-      planCode,
-      type,
-      title: isTrialing ? `Trocar para ${targetName}?` : `Alterar para ${targetName}?`,
-      description: isTrialing
-        ? `Seu teste gratuito continua até ${formatDate(summary.account?.trialEndsAt ?? null)}.`
-        : type === 'upgrade'
-          ? 'A alteração será concluída após a confirmação do pagamento.'
-          : `A mudança entra em vigor no próximo ciclo, se a conta continuar dentro do limite de ${targetPlan?.maxActiveStudents ?? 'alunos'} alunos ativos.`,
-    });
-  }
-
-  async function requestPlanChange(planCode: PublicPlan['code']) {
-    if (!hasActiveSubscription || summary?.account?.status === 'NOT_STARTED' || summary?.account?.status === 'CANCELED') {
-      await startCheckout(planCode);
-      return;
-    }
-
-    setActionLoading(`plan-change:${planCode}`);
-    setError(null);
-    try {
-      const scope = `plan-change:${planCode}`;
-      const idempotencyKey = getActionIdempotencyKey(scope);
-      const response = await fetch('/api/platform-billing/plan-change', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'idempotency-key': idempotencyKey,
-        },
-        body: JSON.stringify({ targetPlanCode: planCode, idempotencyKey }),
-      });
-      const payload = (await response.json()) as {
-        message?: string;
-        detail?: string | null;
-        error?: string;
-        details?: {
-          activeStudents?: number;
-          maxActiveStudents?: number;
-          recommendedPlanCode?: string;
-        };
-      };
-      if (!response.ok) {
-        const message = payload.error === 'PLATFORM_BILLING_PLAN_CHANGE_INCOMPATIBLE'
-          ? buildIncompatiblePlanMessage(payload.details)
-          : payload.message ?? 'Falha ao solicitar mudança de plano.';
-        throw new Error(message);
-      }
-      setPlansOpen(false);
-      setPendingPlanAction(null);
-      const currentCode = summary?.account?.planCode;
-      const isDowngrade = Boolean(currentCode && getPlanRank(planCode) < getPlanRank(currentCode));
-      if (isDowngrade) {
-        const currentName = currentCode ? planName(currentCode) : 'plano atual';
-        const targetName = planName(planCode);
-        const effectiveAt = summary?.account?.currentPeriodEnd ?? null;
-        setPlanChangeSuccess(
-          effectiveAt
-            ? `Seu plano ${currentName} continua ativo até ${formatDate(effectiveAt)} e, a partir dessa data, sua conta passa para o plano ${targetName}.`
-            : `Seu plano ${currentName} continua ativo até a renovação e, a partir dela, sua conta passa para o plano ${targetName}.`,
-        );
-        setNoticeDialog(null);
-      } else {
-        setNoticeDialog({
-          title: payload.message ?? 'Plano alterado com sucesso',
-          description: payload.detail ?? 'A alteração foi registrada.',
-        });
-      }
-      const summaryRefreshed = await refresh(true);
-      if (isDowngrade && summaryRefreshed) setPlanChangeSuccess(null);
-      clearActionIdempotencyKey(scope);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Falha ao solicitar mudança de plano.';
-      setError(message);
-      setNoticeDialog({
-        title: 'Mudança não concluída',
-        description: message,
-        tone: 'destructive',
-      });
-    } finally {
       setActionLoading(null);
     }
   }
@@ -456,12 +502,6 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         </div>
       </header>
 
-      {checkoutState === 'cancel' ? (
-        <InfoCallout variant="info" size="sm" showIcon>
-          Pagamento cancelado. Nenhuma alteração foi aplicada.
-        </InfoCallout>
-      ) : null}
-
       {error ? (
         <InfoCallout variant="warning" size="sm" showIcon>
           Ação não concluída. Tente novamente ou atualize o pagamento quando aplicável.
@@ -471,6 +511,27 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
       {refreshFailed ? (
         <InfoCallout variant="info" size="sm" showIcon>
           Não foi possível atualizar agora. Os dados exibidos podem estar desatualizados.
+        </InfoCallout>
+      ) : null}
+
+      {checkoutSuccessState === 'checking' ? (
+        <InfoCallout variant="info" size="sm" showIcon>
+          Recebemos seu retorno do Stripe e estamos confirmando a assinatura. Aguarde alguns instantes antes de iniciar outra contratação.
+        </InfoCallout>
+      ) : checkoutSuccessState === 'unconfirmed' ? (
+        <InfoCallout variant="warning" size="sm" showIcon>
+          Ainda não recebemos a confirmação da assinatura. Outra contratação está bloqueada para evitar uma nova cobrança.
+          <button
+            type="button"
+            className="ml-2 font-semibold underline underline-offset-2 disabled:opacity-60"
+            disabled={checkoutSuccessRefreshPending}
+            onClick={() => {
+              setCheckoutSuccessRefreshAttempts(0);
+              setCheckoutSuccessState('checking');
+            }}
+          >
+            {checkoutSuccessRefreshPending ? 'Atualizando...' : 'Atualizar status'}
+          </button>
         </InfoCallout>
       ) : null}
 
@@ -492,9 +553,9 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         </InfoCallout>
       ) : null}
 
-      {planChangeSuccess ? (
+      {billingSuccessNotice ? (
         <InfoCallout variant="brand" size="sm" showIcon>
-          {planChangeSuccess}
+          {billingSuccessNotice}
         </InfoCallout>
       ) : pendingChange && !isCancellationPendingChange ? (
         <InfoCallout variant="brand" size="sm" showIcon>
@@ -514,7 +575,7 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         </InfoCallout>
       ) : summary.account?.status === 'TRIALING' && summary.account.trialEndsAt && !hasScheduledCancellation ? (
         <InfoCallout variant="brand" size="sm" showIcon>
-          Teste gratuito ativo até {formatDate(summary.account.trialEndsAt)}. A cobrança começa automaticamente após esse período.
+          Teste gratuito ativo até {formatDate(summary.account.trialEndsAt)}. Ao final, você decide se quer contratar e confirma o pagamento.
         </InfoCallout>
       ) : null}
 
@@ -535,12 +596,9 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
               <h3 className="text-xl font-medium text-black alusa-dark:text-[color:var(--color-text-primary)]">
                 Plano
               </h3>
-              <span className="rounded-full bg-[#f9f4fe] px-3 py-0.5 text-[11px] text-black alusa-dark:bg-[color:rgba(169,77,255,0.18)] alusa-dark:text-[color:var(--color-text-brand)]">
-                {currentPlan?.name ?? 'Sem plano'}
-              </span>
             </div>
             <p className="mt-1 text-sm font-medium text-black alusa-dark:text-[color:var(--color-text-primary)]">
-              Consumo do plano
+              Faixa de cobrança
             </p>
             <div className="mt-3 space-y-2">
               <Progress
@@ -559,14 +617,39 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row md:justify-end">
-            <Button
-              type="button"
-              onClick={() => requiresPaymentAttention ? void openPortal() : setPlansOpen(true)}
-              disabled={!summary.canManage || actionLoading !== null || (!requiresPaymentAttention && (blocksPlanActions || availablePlanChanges.length === 0))}
-              className="h-[34px] rounded-[5px] bg-[#512a82] px-5 text-sm font-medium text-[#f9f4fe] shadow-none hover:bg-[#43236c]"
-            >
-              {planActionLabel}
-            </Button>
+            {requiresPaymentAttention && hasActiveSubscription && !trialExpired ? (
+
+              <Button
+                type="button"
+                onClick={() => void openPortal()}
+                disabled={!summary.canManage || actionLoading !== null || !summary.account?.stripeCustomerId}
+                className="h-[34px] rounded-[5px] bg-[#512a82] px-5 text-sm font-medium text-[#f9f4fe] shadow-none hover:bg-[#43236c]"
+              >
+                {actionLoading === 'portal' ? 'Abrindo...' : 'Regularizar pagamento'}
+              </Button>
+            ) : canStartSelfServiceFlow ? (
+              <Button
+                type="button"
+              onClick={() => {
+                if (canStartTrial) void startTrial();
+                else if (!confirmedPriceBand) {
+                  setPricingStudentCount(Math.max(1, Math.min(500, summary.activeStudents || 165)));
+                  setPricingDialogOpen(true);
+                } else void startCheckout();
+              }}
+                disabled={!summary.canManage || checkoutCancelPending || checkoutSuccessBlocksCheckout || actionLoading !== null}
+                className="h-[34px] rounded-[5px] bg-[#512a82] px-5 text-sm font-medium text-[#f9f4fe] shadow-none hover:bg-[#43236c]"
+              >
+                {actionLoading ? 'Processando...' : canStartTrial ? 'Começar teste grátis' : 'Contratar plano'}
+              </Button>
+            ) : (!hasActiveSubscription || trialExpired) && commercialTarget?.kind === 'SPECIALIST' ? (
+              <a
+                href="mailto:contato@alusa.app?subject=Negociacao%20plataforma%20Alusa"
+                className="inline-flex h-[34px] items-center rounded-[5px] bg-[#512a82] px-5 text-sm font-medium text-[#f9f4fe] hover:bg-[#43236c]"
+              >
+                Falar com um especialista
+              </a>
+            ) : null}
             {hasScheduledCancellation ? (
               <Button
                 type="button"
@@ -597,28 +680,34 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
           <h3 className="text-xl font-medium text-black alusa-dark:text-[color:var(--color-text-primary)]">
             Pagamento
           </h3>
-          <div className="mt-8 space-y-1 text-sm">
-            <p className="font-medium text-[#26222d] alusa-dark:text-[color:var(--color-text-primary)]">
-              {paymentTitle}
-            </p>
-            {paymentDescription ? (
-              <p className="text-xs text-[#747474] alusa-dark:text-[color:var(--color-text-secondary)]">
-                {paymentDescription}
+          <div className="mt-8 flex items-center gap-2 text-sm">
+            {paymentMethod.status === 'present' ? <CardBrandMark brand={paymentMethod.brand} /> : null}
+            <div className="space-y-0.5">
+              <p className="font-medium text-[#26222d] alusa-dark:text-[color:var(--color-text-primary)]">
+                {paymentTitle}
               </p>
-            ) : null}
+              {paymentDescription ? (
+                <p className="text-xs text-[#747474] alusa-dark:text-[color:var(--color-text-secondary)]">
+                  {paymentDescription}
+                </p>
+              ) : null}
+            </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button
-            type="button"
-            onClick={() => void openPortal({ newTab: true })}
-            disabled={!summary.canManage || actionLoading !== null || !summary.account?.stripeCustomerId}
-            className="h-[34px] rounded-[5px] bg-[#512a82] px-4 text-sm font-medium text-[#f9f4fe] shadow-none hover:bg-[#43236c]"
-          >
-            {actionLoading === 'portal' ? 'Abrindo...' : paymentActionLabel}
-          </Button>
-        </div>
+        {(!isTrialing || Boolean(summary.account?.stripeCustomerId)) && !trialExpired ? (
+
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              onClick={() => void openPortal({ newTab: true })}
+              disabled={!summary.canManage || actionLoading !== null || !summary.account?.stripeCustomerId}
+              className="h-[34px] rounded-[5px] bg-[#512a82] px-4 text-sm font-medium text-[#f9f4fe] shadow-none hover:bg-[#43236c]"
+            >
+              {actionLoading === 'portal' ? 'Abrindo...' : paymentActionLabel}
+            </Button>
+          </div>
+        ) : null}
       </section>
 
       <section className="grid gap-6 rounded-[10px] border border-[#e2e0e6] bg-white px-5 py-5 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)] md:grid-cols-[1fr_auto] md:items-start md:px-6">
@@ -647,38 +736,73 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         </div>
       </section>
 
-      <PlanChangeDialog
-        open={plansOpen}
-        onOpenChange={setPlansOpen}
-        summary={summary}
-        canStartTrial={canStartTrial}
-        actionLoading={actionLoading}
-        pendingChange={blocksPlanActions}
-        isReactivationFlow={isReactivationFlow}
-        onPlanChange={selectPlan}
-        onOpenPortal={() => void openPortal()}
-      />
-
       <BillingHistoryDialog
         open={historyOpen}
         onOpenChange={setHistoryOpen}
         invoices={summary.invoices}
       />
 
-      <ConfirmDialog
-        open={pendingPlanAction !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingPlanAction(null);
-        }}
-        title={pendingPlanAction?.title ?? 'Confirmar mudança de plano'}
-        description={pendingPlanAction?.description ?? 'Confirme para continuar.'}
-        confirmText={isTrialing ? 'Trocar plano' : 'Alterar plano'}
-        cancelText="Voltar"
-        onConfirm={() => {
-          if (pendingPlanAction) void requestPlanChange(pendingPlanAction.planCode);
-        }}
-        loading={actionLoading?.startsWith('plan-change:') ?? false}
-      />
+      <Dialog open={pricingDialogOpen} onOpenChange={setPricingDialogOpen}>
+        <DialogContent className="max-w-[920px] gap-0 overflow-hidden border-[#e3ddea] p-5 sm:p-7">
+          <DialogHeader>
+            <DialogTitle className="max-w-[560px] text-left text-xl font-semibold leading-6 text-[#17121c]">Quantos alunos pagantes sua escola tem hoje?</DialogTitle>
+            <DialogDescription className="mt-3 max-w-[600px] text-left text-sm leading-6 text-[#6f6878]">Confira a faixa e a mensalidade da contratação antes de continuar para o pagamento.</DialogDescription>
+          </DialogHeader>
+          {(() => {
+            const target = resolveSchoolCommercialTarget(pricingStudentCount);
+            const band = target?.kind === 'SELF_SERVICE' ? target.band : null;
+            return (
+              <section className="mt-6 grid overflow-hidden rounded-lg border border-[#e3ddea] bg-white md:grid-cols-2" aria-label="Simulador de mensalidade">
+                <div className="grid content-center gap-4 p-5 sm:p-7">
+                  <div>
+                    <label htmlFor="platform-pricing-count" className="text-base font-semibold text-[#17121c]">Alunos pagantes</label>
+                    <p id="platform-pricing-count-help" className="mt-1 text-sm leading-5 text-[#6f6878]">Conte cada aluno uma vez, mesmo que tenha várias matrículas. Inclua bolsas parciais e mensalidades em atraso. Não inclua alunos que tenham apenas bolsa integral.</p>
+                  </div>
+                  <div className="flex items-baseline gap-2">
+                    <output htmlFor="platform-pricing-count" className="text-4xl font-semibold tracking-tight text-[#17121c]">{pricingStudentCount > 500 ? 'Mais de 500' : pricingStudentCount}</output>
+                    <span className="text-sm text-[#6f6878]">alunos</span>
+                  </div>
+                  <input id="platform-pricing-count" type="range" min={1} max={501} step={1}
+                    value={Math.min(pricingStudentCount, 501)}
+                    onChange={(event) => setPricingStudentCount(Number(event.currentTarget.value))}
+                    aria-describedby="platform-pricing-count-help" aria-valuetext={pricingStudentCount > 500 ? 'Mais de 500 alunos' : `${pricingStudentCount} alunos`}
+                    style={{ '--pricing-range-progress': `${((Math.min(pricingStudentCount, 501) - 1) / 500) * 100}%`, height: 8, margin: 0 } as React.CSSProperties}
+                    className="pricing-range focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#55298a]" />
+                  <div className="flex justify-between text-xs text-[#7b7484]" aria-hidden="true"><span>1 aluno</span><span>Mais de 500 alunos</span></div>
+                </div>
+                <div className="grid content-center gap-4 border-t border-[#e3ddea] bg-[#fbfafd] p-5 sm:p-7 md:border-l md:border-t-0">
+                  <div>
+                    <p className="text-sm font-semibold text-[#6f6878]">{band?.label ?? 'Mais de 500 alunos'}</p>
+                    <p className="mt-1 text-3xl font-semibold tracking-tight text-[#17121c]" aria-hidden="true">
+                      <span className="inline-flex items-baseline tabular-nums">
+                        {band ? <><span className="mr-[0.12em]">R$</span><span><SlidingNumber value={band.amountCents / 100} />,00</span></> : <span>Condição personalizada</span>}
+                        <span className="ml-1 text-sm font-medium text-[#6f6878]">/mês</span>
+                      </span>
+                    </p>
+                    <span className="sr-only" aria-live="polite" aria-atomic="true">{band ? `${band.label}, ${(band.amountCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} por mês.` : 'Mais de 500 alunos, condição personalizada.'}</span>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-[#211b27]">Todos os módulos essenciais incluídos.</p>
+                    <p className="mt-1 text-sm leading-5 text-[#6f6878]">O valor só muda após 3 meses consecutivos em outra faixa.</p>
+                  </div>
+                  <div className="rounded-md bg-[#f0e7fa] p-3 text-sm leading-5 text-[#4d4557]">
+                    <p>Ao confirmar, você seguirá para o pagamento da contratação. Nenhuma cobrança é iniciada sem sua confirmação no Stripe.</p>
+                  </div>
+                </div>
+              </section>
+            );
+          })()}
+          <DialogFooter className="mt-5">
+            {pricingStudentCount > 500 ? (
+              <a href="mailto:contato@alusa.app?subject=Negociacao%20plataforma%20Alusa" className="inline-flex h-10 items-center rounded-md bg-[#512a82] px-4 text-sm font-medium text-white">Falar com um especialista</a>
+            ) : (
+              <Button type="button" disabled={actionLoading !== null || checkoutSuccessBlocksCheckout} onClick={() => { setPricingDialogOpen(false); void startCheckout(pricingStudentCount); }}>
+                {actionLoading === 'checkout' ? 'Abrindo pagamento...' : 'Confirmar e continuar'}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ConfirmDialog
         open={pendingCancellationAction !== null}
@@ -706,11 +830,63 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         onAction={(action) => {
           setNoticeDialog(null);
           if (action === 'portal') void openPortal();
-          if (action === 'plans') setPlansOpen(true);
         }}
       />
+      {showCheckoutResume && !checkoutCancelPending && summary.canManage && (canStartSelfServiceFlow || resumeStudentCount !== null) ? (
+        <CheckoutResumePopup
+          loading={actionLoading === 'checkout'}
+          onDismiss={dismissCheckoutResume}
+          onResume={() => {
+            setShowCheckoutResume(false);
+            if (summary.canManage && !checkoutCancelPending && actionLoading === null) {
+              if (!confirmedPriceBand) {
+                setPricingStudentCount(resumeStudentCount ?? Math.max(1, Math.min(500, summary.activeStudents || 165)));
+                setPricingDialogOpen(true);
+              } else void startCheckout();
+            }
+          }}
+        />
+      ) : null}
     </div>
   );
+
+  function dismissCheckoutResume() {
+    setShowCheckoutResume(false);
+  }
+}
+
+function consumeCheckoutCancelQuery(): void {
+  const url = new URL(window.location.href);
+  if (url.searchParams.get('checkout') !== 'cancel') return;
+  url.searchParams.delete('checkout');
+  url.searchParams.delete('studentCount');
+  url.searchParams.delete('checkoutRequestKey');
+  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
+function consumeCheckoutSuccessQuery(): void {
+  const url = new URL(window.location.href);
+  if (url.searchParams.get('checkout') !== 'success') return;
+  url.searchParams.delete('checkout');
+  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
+function readCheckoutStudentCount(): number | null {
+  const value = new URL(window.location.href).searchParams.get('studentCount');
+  if (!value || !/^\d+$/.test(value)) return null;
+  const count = Number(value);
+  return Number.isSafeInteger(count) && count >= 1 && count <= 500 ? count : null;
+}
+
+function readCheckoutRequestKey(): string | null {
+  const value = new URL(window.location.href).searchParams.get('checkoutRequestKey');
+  return value && value.length <= 128 && value.trim() === value && /^[A-Za-z0-9:_-]+$/.test(value)
+    ? value
+    : null;
+}
+
+function isTerminalCheckoutCancelState(state: string): state is 'CANCELED' | 'ALREADY_CANCELED' | 'STALE' {
+  return state === 'CANCELED' || state === 'ALREADY_CANCELED' || state === 'STALE';
 }
 
 function BillingHistoryDialog({
@@ -878,199 +1054,17 @@ function BillingNoticeDialog({
   );
 }
 
-function PlanChangeDialog({
-  open,
-  onOpenChange,
-  summary,
-  canStartTrial,
-  actionLoading,
-  pendingChange,
-  isReactivationFlow,
-  onPlanChange,
-  onOpenPortal,
-}: {
-  open: boolean;
-  onOpenChange: (_open: boolean) => void;
-  summary: BillingSummary;
-  canStartTrial: boolean;
-  actionLoading: string | null;
-  pendingChange: boolean;
-  isReactivationFlow: boolean;
-  onPlanChange: (_planCode: PublicPlan['code']) => void;
-  onOpenPortal: () => void;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="h-[calc(100dvh-32px)] max-h-[calc(100dvh-32px)] w-[calc(100vw-32px)] max-w-[1120px] grid-rows-[minmax(0,1fr)] gap-0 overflow-hidden rounded-[24px] border-0 bg-[#26113f] p-0 text-white shadow-2xl will-change-[transform,opacity] data-[state=open]:animate-modal-expand-in data-[state=closed]:animate-modal-shrink-out motion-reduce:animate-none md:h-[calc(100dvh-48px)] md:max-h-[calc(100dvh-48px)] md:w-[calc(100vw-48px)]">
-        <div
-          className="h-full min-h-0 overflow-y-scroll px-5 py-8 [scrollbar-gutter:stable] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[#9b6bc8] [&::-webkit-scrollbar-thumb:hover]:bg-[#b184dc] [&::-webkit-scrollbar-track]:bg-[#32164e] sm:px-8 md:px-12 md:py-10 lg:px-16"
-          style={{ scrollbarWidth: 'thin', scrollbarColor: '#9b6bc8 #32164e' }}
-        >
-          <DialogHeader className="max-w-[620px] space-y-3 text-left">
-            <DialogTitle className="text-[36px] font-normal leading-none tracking-[-0.03em] text-white md:text-[44px]">
-              Escolha seu plano
-            </DialogTitle>
-            <DialogDescription className="text-sm leading-6 text-[#ded0ec]">
-              Selecione a capacidade ideal para sua escola. Você pode mudar de plano conforme sua base de alunos cresce.
-            </DialogDescription>
-          </DialogHeader>
+const LEGACY_PLAN_RANK: Record<'STARTER' | 'PREMIUM' | 'PRO' | 'CUSTOM', number> = {
+  STARTER: 0,
+  PREMIUM: 2,
+  PRO: 6,
+  CUSTOM: 0,
+};
 
-          <div className="mt-10 space-y-5">
-            {summary.plans.map((plan) => {
-              const current = summary.account?.planCode === plan.code;
-              const exceeds = summary.activeStudents > plan.maxActiveStudents;
-              const currentBlocked = current && !isReactivationFlow;
-              const disabled = !summary.canManage || currentBlocked || exceeds || actionLoading !== null || pendingChange;
-              const displayName = getPlanMarketingName(plan.code);
-              const benefits = plan.includedFeatures.length > 0
-                ? plan.includedFeatures
-                : [
-                  'Plataforma completa',
-                  'Usuários internos ilimitados',
-                  'Professores ilimitados',
-                  'Cadastros históricos ilimitados',
-                  'Todos os módulos inclusos',
-                ];
-
-              return (
-                <section
-                  key={plan.code}
-                  className={cn(
-                    'grid gap-8 rounded-[18px] bg-[#fbf9fd] px-6 py-6 text-[#2d2038] md:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)] md:px-8 md:py-7',
-                    current && 'bg-[#dcbcff]',
-                  )}
-                >
-                  <div className="flex min-w-0 flex-col items-start">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h4 className="text-base font-medium">{displayName}</h4>
-                      {current ? (
-                        <Badge variant={isReactivationFlow ? 'neutral' : 'success'}>
-                          {isReactivationFlow ? 'Anterior' : 'Atual'}
-                        </Badge>
-                      ) : null}
-                    </div>
-                    <p className="mt-5 flex flex-wrap items-end gap-x-3 gap-y-1">
-                      <span className="text-[42px] font-normal leading-none tracking-[-0.04em] md:text-[48px]">
-                        {formatMoney(plan.amountCents, plan.currency)}
-                      </span>
-                      <span className="pb-1 text-sm text-[#66576f]">por mês</span>
-                    </p>
-                    <p className="mt-5 max-w-[390px] text-sm leading-5 text-[#43364c]">
-                      Até {plan.maxActiveStudents} alunos. {getPlanDescription(plan.code)}
-                    </p>
-
-                    {exceeds ? (
-                      <p className="mt-4 text-xs font-medium text-[#8f1f52]">
-                        A conta possui {summary.activeStudents} alunos ativos.
-                      </p>
-                    ) : null}
-
-                    <Button
-                      type="button"
-                      disabled={disabled}
-                      onClick={() => onPlanChange(plan.code)}
-                      className={cn(
-                        'mt-6 h-11 w-auto rounded-full border px-5 text-sm font-medium shadow-none disabled:opacity-100',
-                        current
-                          ? 'border-[#2d1744] bg-[#2d1744] text-white hover:bg-[#3b1f58]'
-                          : 'border-[#3d2b4f] bg-transparent text-[#2d2038] hover:bg-[#eee7f4]',
-                      )}
-                    >
-                      <span>
-                        {exceeds
-                          ? 'Plano incompatível'
-                          : currentBlocked
-                            ? 'Plano atual'
-                            : actionLoading?.endsWith(`:${plan.code}`)
-                              ? 'Processando...'
-                              : isReactivationFlow
-                                ? 'Reativar assinatura'
-                                : canStartTrial
-                                  ? getTrialCtaLabel(displayName, plan.trialDays)
-                                  : summary.account?.status === 'TRIALING'
-                                    ? 'Trocar plano'
-                                    : 'Alterar plano'}
-                      </span>
-                      {!disabled ? <ChevronRight className="ml-2 size-4" aria-hidden="true" /> : null}
-                    </Button>
-                  </div>
-
-                  <div>
-                    <h5 className="text-base font-medium">O que está incluído</h5>
-                    <ul className="mt-5 space-y-3">
-                      {benefits.slice(0, 5).map((benefit) => (
-                        <li key={benefit} className="flex items-start gap-3 text-sm leading-5 text-[#43364c]">
-                          <span className="mt-0.5 flex size-[18px] shrink-0 items-center justify-center rounded-full bg-[#512a82] text-white">
-                            <Check className="size-3" aria-hidden="true" strokeWidth={2.5} />
-                          </span>
-                          <span>{benefit}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </section>
-              );
-            })}
-
-            <div className="flex flex-col items-start gap-4 pt-2 text-left">
-              <p className="text-sm text-[#ded0ec]">
-                <span>Sua escola precisa de mais capacidade?</span>{' '}
-                <button type="button" className="font-medium text-white underline underline-offset-4" onClick={onOpenPortal}>
-                Solicite um plano personalizado.
-                </button>
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={onOpenPortal}
-                disabled={!summary.account?.id || actionLoading !== null || !summary.canManage}
-                className="border-white/35 bg-transparent text-white shadow-none hover:bg-white/10 hover:text-white disabled:border-white/15 disabled:text-white/45"
-              >
-                Gerenciar pagamento
-              </Button>
-            </div>
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function getPlanMarketingName(code: PublicPlan['code']) {
-  if (code === 'STARTER') return 'Premium';
-  if (code === 'PREMIUM') return 'Premium+';
-  return 'Pro';
-}
-
-function getPlanRank(code: Exclude<PlanCode, 'CUSTOM'> | PlanCode) {
-  if (code === 'STARTER') return 1;
-  if (code === 'PREMIUM') return 2;
-  if (code === 'PRO') return 3;
-  return 4;
-}
-
-function buildIncompatiblePlanMessage(details?: {
-  activeStudents?: number;
-  maxActiveStudents?: number;
-  recommendedPlanCode?: string;
-}) {
-  const usage = typeof details?.activeStudents === 'number'
-    ? `A conta possui ${details.activeStudents} alunos ativos`
-    : 'A conta possui alunos ativos acima do limite';
-  const limit = typeof details?.maxActiveStudents === 'number'
-    ? ` e o plano escolhido permite até ${details.maxActiveStudents}`
-    : '';
-  const recommended = details?.recommendedPlanCode
-    ? ` Plano recomendado: ${planName(details.recommendedPlanCode as PlanCode)}.`
-    : '';
-
-  return `${usage}${limit}.${recommended}`;
-}
-
-function getPlanDescription(code: PublicPlan['code']) {
-  if (code === 'STARTER') return 'Ideal para escolas em fase inicial ou com menor volume de alunos.';
-  if (code === 'PREMIUM') return 'Para escolas em crescimento que precisam de mais capacidade.';
-  return 'Para escolas com maior volume de alunos e uma rotina mais completa.';
+export function getPlanRank(code: PlanCode) {
+  return isSchoolPriceBandCode(code)
+    ? getSchoolPriceBandRank(code)
+    : LEGACY_PLAN_RANK[code];
 }
 
 function formatMoney(amountCents: number, currency: string) {
@@ -1086,48 +1080,15 @@ function getPaymentMethodTitle(paymentMethod: PaymentMethodSummary) {
   if (paymentMethod.status === 'missing') return 'Nenhuma forma de pagamento cadastrada';
 
   const brand = formatCardBrand(paymentMethod.brand);
-  return `${brand} final ${paymentMethod.last4}`;
+  return `${brand} •••• ${paymentMethod.last4}`;
 }
 
 function getPaymentMethodDescription(paymentMethod: PaymentMethodSummary) {
   if (paymentMethod.status === 'unknown') return 'Não foi possível consultar a forma de pagamento agora.';
-  if (paymentMethod.status === 'missing') return 'Cadastre um cartão para a cobrança automática após o teste.';
+  if (paymentMethod.status === 'missing') return 'O período de teste não exige cartão. A contratação exige confirmação e pagamento.';
 
   const expiry = formatCardExpiry(paymentMethod.expMonth, paymentMethod.expYear);
-  return expiry ? `Validade ${expiry}` : null;
-}
-
-function getTrialCtaLabel(displayName: string, trialDays: number | null | undefined) {
-  if (!Number.isInteger(trialDays) || !trialDays || trialDays <= 0) {
-    return 'Começar teste grátis';
-  }
-
-  return `Testar ${displayName} por ${trialDays} dias`;
-}
-
-function getPlanActionLabel(input: {
-  requiresPaymentAttention: boolean;
-  isTrialing: boolean;
-  isCanceledSubscription: boolean;
-  hasManageableSubscription: boolean;
-  canStartTrial: boolean;
-}) {
-  if (input.requiresPaymentAttention) return 'Regularizar pagamento';
-  if (input.isCanceledSubscription) return 'Reativar assinatura';
-  if (input.isTrialing) return 'Trocar plano';
-  if (input.hasManageableSubscription) return 'Alterar plano';
-  return input.canStartTrial ? 'Começar teste grátis' : 'Escolher plano';
-}
-
-function formatCardBrand(brand: string | null) {
-  if (!brand) return 'Cartão';
-  const normalized = brand.toLowerCase();
-  if (normalized === 'visa') return 'Visa';
-  if (normalized === 'mastercard') return 'Mastercard';
-  if (normalized === 'amex') return 'American Express';
-  if (normalized === 'elo') return 'Elo';
-  if (normalized === 'hiper' || normalized === 'hipercard') return 'Hipercard';
-  return normalized.replace(/^\w/, (char) => char.toUpperCase());
+  return expiry ? `Vence em ${expiry}` : null;
 }
 
 function formatCardExpiry(month: number | null, year: number | null) {
@@ -1153,15 +1114,15 @@ function getRenewalLabel(account: BillingAccount | null, paymentMethod: PaymentM
   if (!account) return 'Assinatura ainda não iniciada.';
   if (account.status === 'CANCELED') return 'Assinatura cancelada.';
   const trialDate = formatLongDate(account.trialEndsAt);
-  if (account.status === 'TRIALING' && trialDate) {
-    return paymentMethod.status === 'present'
-      ? `Seu plano será renovado automaticamente em ${trialDate}.`
-      : 'Cadastre um cartão para ativar a renovação automática do seu plano.';
-  }
   const date = formatLongDate(account.currentPeriodEnd);
   if (account.cancelAtPeriodEnd && date) return `Sua assinatura será encerrada em ${date}.`;
-  if (date && paymentMethod.status === 'present') return `Seu plano será renovado automaticamente em ${date}.`;
-  if (date) return 'Cadastre um cartão para ativar a renovação automática do seu plano.';
+  if (account.status === 'TRIALING' && trialDate) {
+    return `O teste termina em ${trialDate}. A contratação exige uma confirmação e pagamento explícitos.`;
+  }
+  if (account.status === 'ACTIVE' && date && paymentMethod.status === 'present' && !account.cancelAtPeriodEnd) {
+    return `Próxima cobrança prevista para ${date}.`;
+  }
+  if (account.status === 'ACTIVE' && date) return 'Cadastre um cartão para ativar a renovação automática do seu plano.';
   return getBillingStatusLabel(account.status);
 }
 
@@ -1184,9 +1145,8 @@ function getCancellationNotice(account: BillingAccount | null) {
 }
 
 function planName(code: PlanCode) {
-  if (code === 'STARTER') return 'Starter';
-  if (code === 'PREMIUM') return 'Premium';
-  if (code === 'PRO') return 'Pro';
+  if (isSchoolPriceBandCode(code)) return SCHOOL_PRICE_BANDS.find((band) => band.code === code)?.name ?? 'Alusa';
+  if (code === 'STARTER' || code === 'PREMIUM' || code === 'PRO') return 'Plano anterior';
   return 'Personalizado';
 }
 
@@ -1216,7 +1176,14 @@ function getBillingStatusLabel(status: BillingStatus) {
 
 export function getPlanChangeLabel(change: BillingSummary['planChanges'][number], effectiveAt: string | null) {
   const target = change.toPlanCode ? planName(change.toPlanCode) : 'novo plano';
-  if (change.type === 'UPGRADE') return `Alteração para ${target} aguarda confirmação do pagamento.`;
+  if (change.type === 'UPGRADE') {
+    if (change.status === 'PENDING_EFFECTIVE_DATE') {
+      return effectiveAt
+        ? `A faixa do plano será atualizada para ${target} na renovação em ${formatDate(effectiveAt)}.`
+        : `A faixa do plano será atualizada para ${target} na próxima renovação.`;
+    }
+    return `Alteração para ${target} aguarda confirmação do pagamento.`;
+  }
   if (change.type === 'DOWNGRADE') {
     const current = change.fromPlanCode ? planName(change.fromPlanCode) : 'plano atual';
     return effectiveAt
@@ -1268,20 +1235,26 @@ function getInvoiceBadgeVariant(invoice: BillingInvoice): BadgeVariant {
   }
 }
 
-function getTrialEndingNotice(account: BillingAccount | null, paymentMethod: PaymentMethodSummary) {
+function getTrialEndingNotice(
+  account: BillingAccount | null,
+  plan: { name: string; amountCents: number | null } | null,
+) {
   if (!account || account.status !== 'TRIALING' || !account.trialEndsAt || account.cancelAtPeriodEnd) return null;
-  if (paymentMethod.status === 'present') return null;
 
   const trialEndsAt = new Date(account.trialEndsAt);
+  const trialEndDate = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long' }).format(trialEndsAt);
+  const commercialTerms = plan?.amountCents !== null && plan?.amountCents !== undefined
+    ? `${plan.name}, ${formatMoney(plan.amountCents, 'brl')}/mês`
+    : 'a faixa atual de alunos';
   const msUntilEnd = trialEndsAt.getTime() - Date.now();
   if (msUntilEnd <= 0) {
-    return 'O teste gratuito terminou. Cadastre um cartão para manter a assinatura ativa.';
+    return `Seu teste gratuito terminou em ${trialEndDate}. A condição atual é ${commercialTerms}. Contrate e confirme o pagamento para liberar novas operações.`;
   }
 
   const daysUntilEnd = Math.ceil(msUntilEnd / (24 * 60 * 60 * 1000));
   if (daysUntilEnd > 3) return null;
 
-  return `Seu teste gratuito termina em ${daysUntilEnd} ${daysUntilEnd === 1 ? 'dia' : 'dias'}. Cadastre um cartão para evitar pausa no acesso.`;
+  return `Seu teste gratuito termina em ${daysUntilEnd} ${daysUntilEnd === 1 ? 'dia' : 'dias'} (${trialEndDate}). A condição atual é ${commercialTerms}. Depois, você escolhe se quer contratar e confirma o pagamento.`;
 }
 
 

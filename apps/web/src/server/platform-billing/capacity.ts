@@ -1,17 +1,14 @@
 import {
   PlatformBillingError,
   assertPlatformAccess,
-  assertStudentCapacityDomain,
   derivePlatformAccessStatus,
   derivePlatformRestrictionReason,
   type PlatformBillingCapability,
 } from '@alusa/platform-billing';
-import type { PlatformPlanCode } from '@alusa/platform-billing';
 import type { TenantTransactionClient } from '@/lib/prisma-tenant';
 import { runWithTenant } from '@/lib/prisma-tenant';
 import { isAcademicDateInFuture } from '@alusa/shared/date-only';
 import {
-  countActivePlatformBillingStudents,
   resolvePlatformBillingEnvironment,
 } from './platform-billing-server';
 
@@ -42,8 +39,18 @@ export async function platformBillingAccessResponseForConta(input: {
     await assertPlatformAccessForConta(input);
     return null;
   } catch (error) {
-    return platformBillingAccessResponse(error);
+    return platformBillingAccessResponse(error) ?? platformBillingAccessUnavailableResponse();
   }
+}
+
+function platformBillingAccessUnavailableResponse() {
+  return {
+    status: 503,
+    body: {
+      error: 'PLATFORM_BILLING_ACCESS_UNAVAILABLE',
+      message: 'Não foi possível verificar o acesso da conta. Tente novamente em instantes.',
+    },
+  } as const;
 }
 
 export function isPlatformBillingAccessError(error: unknown): error is PlatformBillingError {
@@ -118,65 +125,15 @@ export async function assertStudentCapacity(input: {
   additionalActiveStudents: number;
   operation: string;
 }): Promise<void> {
-  const additionalActiveStudents = Math.max(0, Math.floor(input.additionalActiveStudents));
-  if (additionalActiveStudents <= 0) return;
-
   await assertPlatformAccessForCapability({
     tx: input.tx,
     contaId: input.contaId,
     capability: 'STUDENT_WRITE',
   });
 
-  const environment = resolvePlatformBillingEnvironment();
-  await acquirePlatformBillingContaLock(input.tx, input.contaId);
-
-  const account = await input.tx.platformBillingAccount.findUnique({
-    where: {
-      uq_platform_billing_account_conta_env: {
-        contaId: input.contaId,
-        environment,
-      },
-    },
-    select: {
-      id: true,
-      planCode: true,
-      accessStatus: true,
-    },
-  });
-
-  if (!account?.planCode) return;
-
-  const activeStudents = await countActivePlatformBillingStudents({
-    tx: input.tx,
-    contaId: input.contaId,
-  });
-
-  try {
-    assertStudentCapacityDomain({
-      contaId: input.contaId,
-      planCode: account.planCode as PlatformPlanCode,
-      activeStudents,
-      additionalActiveStudents,
-    });
-  } catch (error) {
-    if (error instanceof PlatformBillingError) {
-      await input.tx.platformBillingAuditLog.create({
-        data: {
-          contaId: input.contaId,
-          billingAccountId: account.id,
-          action: 'PLATFORM_BILLING_STUDENT_CAPACITY_BLOCKED',
-          entityType: 'Conta',
-          entityId: input.contaId,
-          correlationId: input.operation,
-          metadata: {
-            operation: input.operation,
-            ...error.details,
-          },
-        },
-      });
-    }
-    throw error;
-  }
+  // Student thresholds select a price band only; they never restrict enrollment.
+  void input.additionalActiveStudents;
+  void input.operation;
 }
 
 export async function countAdditionalActiveStudentsForEnrollment(input: {
@@ -214,11 +171,5 @@ export async function countAdditionalActiveStudentsForEnrollment(input: {
 }
 
 export function isPlatformBillingCapacityError(error: unknown): error is PlatformBillingError {
-  return error instanceof PlatformBillingError &&
-    (error.code === 'PLATFORM_BILLING_STUDENT_CAPACITY_EXCEEDED' ||
-      error.code === 'PLATFORM_BILLING_ACCESS_RESTRICTED');
-}
-
-async function acquirePlatformBillingContaLock(tx: PlatformBillingTx, contaId: string): Promise<void> {
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`platform-billing:capacity:${contaId}`}, 0))`;
+  return error instanceof PlatformBillingError && error.code === 'PLATFORM_BILLING_ACCESS_RESTRICTED';
 }

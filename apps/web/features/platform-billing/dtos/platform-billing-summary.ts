@@ -1,7 +1,14 @@
 import { z } from 'zod';
 
-const planCodeSchema = z.enum(['STARTER', 'PREMIUM', 'PRO', 'CUSTOM']);
-const publicPlanCodeSchema = z.enum(['STARTER', 'PREMIUM', 'PRO']);
+const planCodeSchema = z.enum([
+  'BAND_001_025', 'BAND_026_050', 'BAND_051_100', 'BAND_101_150',
+  'BAND_151_200', 'BAND_201_300', 'BAND_301_400', 'BAND_401_500',
+  'STARTER', 'PREMIUM', 'PRO', 'CUSTOM',
+]);
+const publicPlanCodeSchema = z.enum([
+  'BAND_001_025', 'BAND_026_050', 'BAND_051_100', 'BAND_101_150',
+  'BAND_151_200', 'BAND_201_300', 'BAND_301_400', 'BAND_401_500',
+]);
 const capabilitySchema = z.record(z.boolean());
 const accessStatusSchema = z.enum(['PENDING', 'ACTIVE', 'GRACE_PERIOD', 'RESTRICTED', 'CANCELED']);
 const billingStatusSchema = z.enum([
@@ -52,6 +59,7 @@ export const publicPlatformPlanDTOSchema = z.object({
   currency: z.literal('brl'),
   interval: z.literal('month'),
   trialDays: z.number().int().positive(),
+  minActiveStudents: z.number().int().positive(),
   maxActiveStudents: z.number().int().positive(),
   publicCheckoutEnabled: z.literal(true),
   includedFeatures: z.array(z.string().min(1)),
@@ -135,6 +143,8 @@ export const platformBillingSummaryDTOSchema = z.object({
     email: z.string().email().nullable(),
   }),
   activeStudents: z.number().int().nonnegative(),
+  eligiblePriceBand: publicPlanCodeSchema.nullable(),
+  specialistNegotiationReady: z.boolean(),
   account: billingAccountSchema.nullable(),
   access: z.object({
     accountId: z.string().min(1).nullable(),

@@ -18,6 +18,10 @@ vi.mock('@/lib/auth/session', () => ({
   getSessionUser: () => mockGetSessionUser(),
 }));
 
+vi.mock('@/src/server/platform-billing/capacity', () => ({
+  platformBillingAccessResponseForConta: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     $transaction: vi.fn(),

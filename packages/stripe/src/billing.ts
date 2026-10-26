@@ -75,6 +75,7 @@ export interface StripeSubscriptionRecord {
   currentPeriodEnd: Date | null;
   cancelAtPeriodEnd: boolean;
   trialEndsAt: Date | null;
+  canceledAt?: Date | null;
   pendingUpdateId: string | null;
 }
 
@@ -260,6 +261,63 @@ export async function retrieveStripeSubscription(
 ): Promise<StripeSubscriptionRecord> {
   const subscription = await client.subscriptions.retrieve(subscriptionId);
   return toSubscriptionRecord(subscription);
+}
+
+export async function retrieveStripeCheckoutSession(client: Stripe, sessionId: string): Promise<{
+  id: string;
+  status: string | null;
+  livemode: boolean;
+  customerId: string | null;
+  clientReferenceId: string | null;
+  metadata: Record<string, string>;
+  priceIds: string[];
+  subscriptionId: string | null;
+}> {
+  const session = await client.checkout.sessions.retrieve(sessionId);
+  const lineItems = await client.checkout.sessions.listLineItems(session.id, { limit: 10 });
+  return {
+    id: session.id,
+    status: session.status,
+    livemode: session.livemode,
+    customerId: typeof session.customer === 'string' ? session.customer : session.customer?.id ?? null,
+    clientReferenceId: session.client_reference_id,
+    metadata: session.metadata ?? {},
+    subscriptionId: readStripeId(session.subscription),
+    priceIds: lineItems.data.flatMap((item) => {
+      const priceId = typeof item.price === 'string' ? item.price : item.price?.id;
+      return priceId ? [priceId] : [];
+    }),
+  };
+}
+
+export async function expireStripeCheckoutSession(client: Stripe, sessionId: string): Promise<void> {
+  await client.checkout.sessions.expire(sessionId);
+}
+
+export async function retrieveStripeCustomer(
+  client: Stripe,
+  customerId: string,
+): Promise<{ id: string; deleted: boolean }> {
+  const customer = await client.customers.retrieve(customerId);
+  const record = readRecord(customer);
+  return {
+    id: readString(record.id) ?? customerId,
+    deleted: record.deleted === true,
+  };
+}
+
+/** Returns the exact missing customer ID only for Stripe's resource-missing response. */
+export function getStripeMissingCustomerId(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const candidate = error as { type?: unknown; code?: unknown; message?: unknown };
+  if (
+    candidate.type !== 'StripeInvalidRequestError' ||
+    candidate.code !== 'resource_missing' ||
+    typeof candidate.message !== 'string'
+  ) return null;
+
+  const match = /^No such customer:\s*['"]?([^'"\s]+)['"]?/i.exec(candidate.message);
+  return match && /^cus_[A-Za-z0-9]+$/.test(match[1]) ? match[1] : null;
 }
 
 export async function retrieveStripeSubscriptionEventObject(
@@ -535,6 +593,7 @@ function toSubscriptionRecord(subscription: Stripe.Subscription): StripeSubscrip
     currentPeriodEnd: readUnixDate(raw.current_period_end) ?? readUnixDate(readRecord(item).current_period_end),
     cancelAtPeriodEnd: subscription.cancel_at_period_end === true,
     trialEndsAt: readUnixDate(raw.trial_end),
+    canceledAt: readUnixDate(raw.canceled_at),
     pendingUpdateId: readString(pendingUpdate.id),
   };
 }

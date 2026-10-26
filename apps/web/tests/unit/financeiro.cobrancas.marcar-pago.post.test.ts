@@ -17,6 +17,10 @@ vi.mock('@/lib/auth-options', () => ({
   authOptions: {},
 }));
 
+vi.mock('@/src/server/platform-billing/capacity', () => ({
+  platformBillingAccessResponseForConta: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock('@alusa/finance', () => {
   class KycNotApprovedError extends Error {}
   class AsaasEnvError extends Error {}

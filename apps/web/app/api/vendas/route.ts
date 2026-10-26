@@ -6,6 +6,7 @@ import { createStoreSale, listStoreSales, StoreSaleError } from '@alusa/finance'
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { apiJsonError } from '@/lib/api/standard-response';
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
+import { getStoreWriteRequestContext } from './_helpers';
 
 const querySchema = z.object({
   page: z.coerce.number().int().positive().optional(),
@@ -105,7 +106,7 @@ export async function POST(request: Request) {
   const requestId = getRequestId(request);
 
   try {
-    const { contaId, operatorId } = await getRequestContext();
+    const { contaId, operatorId } = await getStoreWriteRequestContext();
     const body = await request.json();
     const parsed = createSaleSchema.safeParse(body);
 

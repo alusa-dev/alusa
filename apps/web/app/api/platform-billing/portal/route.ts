@@ -6,9 +6,11 @@ import {
   createPrismaPlatformBillingStore,
 } from '@alusa/platform-billing';
 import { withTenantSession } from '@/lib/api/with-tenant-session';
+import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import {
   assertCanManagePlatformBilling,
+  resolvePlatformBillingEnvironment,
   resolvePlatformBillingActor,
 } from '@/src/server/platform-billing/platform-billing-server';
 import {
@@ -50,6 +52,35 @@ export async function POST(req: NextRequest) {
     const forbidden = assertCanManagePlatformBilling(actor.canManagePlatformBilling);
     if (forbidden) return forbidden;
 
+    const account = await tx.platformBillingAccount.findUnique({
+      where: {
+        uq_platform_billing_account_conta_env: {
+          contaId,
+          environment: resolvePlatformBillingEnvironment(),
+        },
+      },
+      select: {
+        status: true,
+        trialEndsAt: true,
+        firstPaidAt: true,
+        lastSuccessfulPaymentAt: true,
+      },
+    });
+    const hasExpiredUnpaidTrial = Boolean(
+      account?.trialEndsAt
+      && account.trialEndsAt.getTime() <= Date.now()
+      && !account.firstPaidAt
+      && !account.lastSuccessfulPaymentAt
+      && account.status !== 'ACTIVE'
+      && account.status !== 'PAST_DUE',
+    );
+    if (hasExpiredUnpaidTrial) {
+      return NextResponse.json({
+        error: 'PLATFORM_BILLING_CHECKOUT_REQUIRED',
+        message: 'Seu período de teste terminou. Para contratar, confirme o pagamento pelo Checkout.',
+      }, { status: 409 });
+    }
+
     const origin = new URL(req.url).origin;
     let result: Awaited<ReturnType<typeof createPlatformBillingPortalSession>>;
     try {
@@ -65,7 +96,21 @@ export async function POST(req: NextRequest) {
         { store: createPrismaPlatformBillingStore(tx) },
       );
     } catch (error) {
-      return billingActionErrorResponse(error);
+      const knownResponse = billingActionErrorResponse(error);
+      if (knownResponse) return knownResponse;
+
+      logApiOperationalEvent({
+        severity: 'error',
+        eventName: 'api.platform_billing.portal.failed',
+        route: '/api/platform-billing/portal',
+        method: 'POST',
+        requestId: getRequestId(req),
+        error,
+      });
+      return NextResponse.json({
+        error: 'PLATFORM_BILLING_UNEXPECTED_ERROR',
+        message: 'Não foi possível abrir a área de pagamento. Tente novamente.',
+      }, { status: 500 });
     }
 
     return NextResponse.json({
@@ -94,7 +139,7 @@ function readSafeReturnPath(body: unknown): string {
   return trimmed;
 }
 
-function billingActionErrorResponse(error: unknown): NextResponse {
+function billingActionErrorResponse(error: unknown): NextResponse | null {
   if (error instanceof PlatformBillingError) {
     const status = error.code === 'PLATFORM_BILLING_ACCOUNT_NOT_FOUND' ? 404 : 400;
     return NextResponse.json({
@@ -109,5 +154,5 @@ function billingActionErrorResponse(error: unknown): NextResponse {
     return NextResponse.json({ error: error.code, message: 'A área de pagamento está temporariamente indisponível.' }, { status: 503 });
   }
 
-  throw error;
+  return null;
 }

@@ -35,6 +35,7 @@ export type WizardState = {
   mobilePhone: string | null;
   landlinePhone: string | null;
   incomeValue: number | null;
+  onboardingStudentCount?: number | null;
   address: string | null;
   addressNumber: string | null;
   province: string | null;
@@ -265,6 +266,9 @@ export type WizardStep4Data = z.infer<typeof wizardStep4Schema>;
 
 export const wizardStep5Schema = z.object({
   incomeValue: z.number().positive('Informe um valor maior que zero'),
+  // Prisma persists this as PostgreSQL INTEGER. The onboarding slider uses
+  // 501 to represent “more than 500”, which routes the school to sales.
+  onboardingStudentCount: z.number().int().min(1).max(2_147_483_647),
 });
 
 export type WizardStep5Data = z.infer<typeof wizardStep5Schema>;

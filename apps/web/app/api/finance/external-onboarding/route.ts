@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import {
   connectExternalAsaasAccount,
   getExternalAsaasOnboardingState,
@@ -50,6 +51,8 @@ export async function POST(request: Request) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return json(401, { success: false, summary: 'Acesso negado.' });
     if (!isAllowedRole(auth.role)) return json(403, { success: false, summary: 'Acesso negado.' });
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'FINANCIAL_CONFIG_WRITE' });
+    if (billingBlocked) return json(billingBlocked.status, billingBlocked.body);
     if (auth.financeIntegrationMode !== 'EXTERNAL_ASAAS_ACCOUNT') {
       return json(409, { success: false, summary: 'Fluxo externo indisponível para esta conta.' });
     }

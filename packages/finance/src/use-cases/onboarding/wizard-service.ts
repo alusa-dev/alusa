@@ -170,6 +170,7 @@ async function loadWizardState(contaId: string): Promise<WizardState> {
         mobilePhone: true,
         landlinePhone: true,
         incomeValue: true,
+        onboardingStudentCount: true,
         address: true,
         addressNumber: true,
         province: true,
@@ -205,6 +206,7 @@ async function loadWizardState(contaId: string): Promise<WizardState> {
       mobilePhone: null,
       landlinePhone: null,
       incomeValue: null,
+      onboardingStudentCount: null,
       address: null,
       addressNumber: null,
       province: null,
@@ -230,6 +232,7 @@ async function loadWizardState(contaId: string): Promise<WizardState> {
     mobilePhone: profile.mobilePhone,
     landlinePhone: profile.landlinePhone,
     incomeValue: toNumber(profile.incomeValue),
+    onboardingStudentCount: profile.onboardingStudentCount,
     address: profile.address,
     addressNumber: profile.addressNumber,
     province: profile.province,
@@ -446,6 +449,7 @@ export async function saveWizardStep5(params: {
     data: {
       wizardStep: 5,
       incomeValue: validated.incomeValue,
+      onboardingStudentCount: validated.onboardingStudentCount,
     },
   });
 

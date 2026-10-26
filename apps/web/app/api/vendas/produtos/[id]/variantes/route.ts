@@ -7,6 +7,7 @@ import {
 import { z } from 'zod';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
+import { storeWriteBillingBlock } from '../../../_helpers';
 
 function jsonError(status: number, code: string, message: string) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -48,6 +49,8 @@ export async function POST(req: Request, context: RouteContext) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     const { contaId } = auth;
+    const billingBlocked = await storeWriteBillingBlock(auth.contaId);
+    if (billingBlocked) return billingBlocked;
 
     const { id: productId } = await Promise.resolve(context.params);
     const body = await req.json().catch(() => ({}));
@@ -69,6 +72,8 @@ export async function PATCH(req: Request, context: RouteContext) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     const { contaId } = auth;
+    const billingBlocked = await storeWriteBillingBlock(auth.contaId);
+    if (billingBlocked) return billingBlocked;
 
     const { id: productId } = await Promise.resolve(context.params);
     const actorUserId = auth.userId;

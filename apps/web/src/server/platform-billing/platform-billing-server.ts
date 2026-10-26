@@ -2,8 +2,7 @@
 // O sufixo explícito mantém a resolução ESM válida nesses dois ambientes.
 import { NextResponse } from 'next/server.js';
 import { parseStripeEnvironment, type StripeEnvironment } from '@alusa/stripe';
-import type { PlatformPlanCode } from '@alusa/platform-billing';
-import { evaluateStudentCapacity } from '@alusa/platform-billing';
+import { hasBillableMonthlyEnrollment } from '@alusa/platform-billing';
 import type { TenantTransactionClient } from '@/lib/prisma-tenant';
 import { isAcademicDateInFuture } from '@alusa/shared/date-only';
 
@@ -71,40 +70,34 @@ export async function countActivePlatformBillingStudents(params: {
         status: 'ATIVO',
       },
     },
-    select: { alunoId: true, dataInicio: true },
+    select: {
+      alunoId: true,
+      dataInicio: true,
+      plano: { select: { valor: true, periodicidade: true } },
+      combo: { select: { valor: true, periodicidade: true } },
+      descontos: { select: { valorFinal: true } },
+    },
   });
 
   return new Set(rows
-    .filter((row) => !isAcademicDateInFuture(row.dataInicio, new Date(), account?.timezone ?? undefined))
+    .filter((row) => {
+      const effective = !isAcademicDateInFuture(row.dataInicio, new Date(), account?.timezone ?? undefined);
+      const recurring = row.combo ?? row.plano;
+      const amountCents = recurring?.periodicidade === 'MENSAL'
+        ? Math.round(Number(recurring.valor) * 100)
+        : null;
+      const discountCents = row.descontos.reduce((sum, discount) => sum + Math.round(Number(discount.valorFinal) * 100), 0);
+      return hasBillableMonthlyEnrollment({
+        active: true,
+        effective,
+        monthlyAmountCents: amountCents,
+        fullScholarship: amountCents !== null && amountCents > 0 && discountCents >= amountCents,
+      });
+    })
     .map((row) => row.alunoId)).size;
 }
 
 export function assertCanManagePlatformBilling(canManage: boolean): NextResponse | null {
   if (canManage) return null;
   return NextResponse.json({ error: 'SEM_PERMISSAO' }, { status: 403 });
-}
-
-export function assertPlanCapacity(params: {
-  planCode: PlatformPlanCode;
-  activeStudents: number;
-}): NextResponse | null {
-  const capacity = evaluateStudentCapacity({
-    contaId: 'platform-billing-checkout',
-    planCode: params.planCode,
-    activeStudents: params.activeStudents,
-    additionalActiveStudents: 0,
-  });
-  if (capacity.allowed) return null;
-  const maxStudents = capacity.maxActiveStudents;
-
-  return NextResponse.json(
-    {
-      error: 'PLANO_INSUFICIENTE',
-      message: `Este plano permite até ${maxStudents} alunos ativos.`,
-      activeStudents: capacity.activeStudents,
-      maxActiveStudents: capacity.maxActiveStudents,
-      recommendedPlanCode: capacity.recommendedPlanCode,
-    },
-    { status: 422 },
-  );
 }

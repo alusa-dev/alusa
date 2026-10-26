@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { cancelStoreSale, StoreSaleError } from '@alusa/finance';
 
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { storeWriteBillingBlock } from '../../_helpers';
 
 const bodySchema = z.object({
   reason: z.string().trim().min(3),
@@ -22,6 +23,8 @@ export async function POST(
     if (!auth.ok) {
       return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado.');
     }
+    const billingBlocked = await storeWriteBillingBlock(auth.contaId);
+    if (billingBlocked) return billingBlocked;
     const { contaId, userId: operatorId } = auth;
 
     const body = await request.json();

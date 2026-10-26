@@ -15,7 +15,9 @@ import {
 } from '@alusa/platform-billing';
 import {
   getStripeClient,
+  getStripeMissingCustomerId,
   listStripePaidInvoices,
+  retrieveStripeCustomer,
   retrieveStripeDefaultPaymentMethod,
   type StripeInvoiceRecord,
   type StripeSubscriptionRecord,
@@ -171,10 +173,57 @@ export async function reconcilePlatformBilling(input: {
 
     try {
       const subscription = await gateway.retrieveSubscription(account.stripeSubscriptionId);
-      const paymentMethod = await resolvePaymentMethod(account, subscription.customerId);
-      const paidInvoices = await listPaidInvoices(
-        subscription.customerId ?? account.stripeCustomerId,
+      if (
+        account.stripeCustomerId &&
+        subscription.customerId &&
+        account.stripeCustomerId !== subscription.customerId
+      ) {
+        await upsertIssue(db, {
+          contaId: account.contaId,
+          billingAccountId: account.id,
+          environment,
+          severity: 'CRITICAL',
+          code: 'CUSTOMER_ID_DIVERGENT',
+          title: 'Customer Stripe divergente',
+          message: 'A assinatura e a conta de billing referenciam customers diferentes.',
+          fingerprint: `${account.id}:customer-id-divergent`,
+        });
+        issues += 1;
+        continue;
+      }
+      let missingCustomerId: string | null = null;
+      const customerIdToValidate = subscription.customerId ?? account.stripeCustomerId;
+      if (subscription.status === 'canceled' && customerIdToValidate) {
+        try {
+          const customer = await retrieveStripeCustomer(getStripeClient(process.env), customerIdToValidate);
+          if (customer.deleted) missingCustomerId = customer.id;
+        } catch (error) {
+          const stripeMissingCustomerId = getStripeMissingCustomerId(error);
+          if (stripeMissingCustomerId !== customerIdToValidate) throw error;
+          missingCustomerId = stripeMissingCustomerId;
+        }
+      }
+      const clearInvalidStripeCustomer = Boolean(
+        missingCustomerId && (!account.stripeCustomerId || missingCustomerId === account.stripeCustomerId),
       );
+      const paymentMethod = clearInvalidStripeCustomer
+        ? emptyPaymentMethodSnapshot()
+        : await resolvePaymentMethod(account, subscription.customerId);
+      const invoiceCustomerId = subscription.customerId ?? account.stripeCustomerId;
+      let paidInvoices: StripeInvoiceRecord[];
+      try {
+        paidInvoices = await listPaidInvoices(invoiceCustomerId);
+      } catch (error) {
+        if (
+          subscription.status !== 'canceled' ||
+          !invoiceCustomerId ||
+          missingCustomerId !== invoiceCustomerId ||
+          getStripeMissingCustomerId(error) !== invoiceCustomerId
+        ) throw error;
+        // Customer absence was independently confirmed above. Keep invoice
+        // history already stored locally and do not query another customer.
+        paidInvoices = [];
+      }
       if (
         subscription.priceId &&
         account.stripePriceId &&
@@ -197,7 +246,7 @@ export async function reconcilePlatformBilling(input: {
         issues += 1;
       }
 
-      let resolvedPlanCode: 'STARTER' | 'PREMIUM' | 'PRO' | 'CUSTOM' | null = null;
+      let resolvedPlanCode: PlatformPlanCode | null = null;
       if (subscription.priceId) {
         try {
           const resolved = resolvePlanCodeFromStripePriceId(subscription.priceId, {
@@ -237,18 +286,28 @@ export async function reconcilePlatformBilling(input: {
         }
       }
 
-      if (resolvedPlanCode) {
+      const correctionPlanCode = resolvedPlanCode;
+      let correctionAttempted = false;
+      if (correctionPlanCode || missingCustomerId) {
+        correctionAttempted = true;
         await correctAccountFromStripeSubscription(db, {
           account,
           subscription,
-          planCode: resolvedPlanCode,
+          planCode: correctionPlanCode,
           environment,
           paymentMethod,
           paidInvoices,
+          missingStripeCustomerId: missingCustomerId,
         });
       }
 
-      if (account.accessStatus === 'ACTIVE' && subscription.status === 'canceled') {
+      const postCorrectionAccount = correctionAttempted
+        ? await db.platformBillingAccount.findFirst({
+            where: { id: account.id, contaId: account.contaId, environment },
+            select: { accessStatus: true },
+          })
+        : account;
+      if (postCorrectionAccount?.accessStatus === 'ACTIVE' && subscription.status === 'canceled') {
         await upsertIssue(db, {
           contaId: account.contaId,
           billingAccountId: account.id,
@@ -424,19 +483,21 @@ export async function correctAccountFromStripeSubscription(
   input: {
     account: ReconciliationAccount;
     subscription: StripeSubscriptionRecord;
-    planCode: PlatformPlanCode;
+    planCode: PlatformPlanCode | null;
     environment: PlatformBillingEnvironment;
     paymentMethod: Awaited<ReturnType<typeof resolvePaymentMethod>>;
     paidInvoices: StripeInvoiceRecord[];
+    missingStripeCustomerId?: string | null;
   },
 ): Promise<boolean> {
   const now = new Date();
   const paymentHistory = resolvePaymentHistory(input.paidInvoices);
   const desiredStatus = mapStripeSubscriptionStatus(input.subscription.status);
+  const planCode = input.planCode ?? input.account.planCode;
   const policyAccount = {
     ...input.account,
     status: desiredStatus,
-    planCode: input.planCode,
+    planCode,
     currentPeriodEnd: input.subscription.currentPeriodEnd,
     cancelAtPeriodEnd: input.subscription.cancelAtPeriodEnd,
     trialEndsAt: input.subscription.trialEndsAt,
@@ -452,7 +513,7 @@ export async function correctAccountFromStripeSubscription(
     (input.account.pendingChangeType === 'UPGRADE' ||
       input.account.pendingChangeType === 'DOWNGRADE') &&
     input.account.pendingPlanCode &&
-    input.account.pendingPlanCode === input.planCode &&
+    input.account.pendingPlanCode === planCode &&
     input.subscription.priceId === resolveStripePriceId({
       planCode: input.account.pendingPlanCode as PublicPlatformPlanCode,
       environment: input.environment,
@@ -472,8 +533,10 @@ export async function correctAccountFromStripeSubscription(
   if (input.account.accessStatus !== desiredAccessStatus) update.accessStatus = desiredAccessStatus;
   if (input.account.restrictionReason !== restrictionReason)
     update.restrictionReason = restrictionReason;
-  if (input.account.planCode !== input.planCode) update.planCode = input.planCode;
-  if (
+  if (planCode && input.account.planCode !== planCode) update.planCode = planCode;
+  if (input.missingStripeCustomerId && input.missingStripeCustomerId === input.account.stripeCustomerId) {
+    update.stripeCustomerId = null;
+  } else if (!input.missingStripeCustomerId &&
     input.subscription.customerId &&
     input.account.stripeCustomerId !== input.subscription.customerId
   ) {
@@ -535,7 +598,8 @@ export async function correctAccountFromStripeSubscription(
   } else if (desiredAccessStatus === 'RESTRICTED') {
     if (!input.account.restrictedAt) update.restrictedAt = now;
   } else if (desiredAccessStatus === 'CANCELED') {
-    if (!input.account.canceledAt) update.canceledAt = now;
+    const canceledAt = input.subscription.canceledAt ?? input.account.canceledAt ?? now;
+    if (!sameInstant(input.account.canceledAt, canceledAt)) update.canceledAt = canceledAt;
   }
 
   if (shouldClearPendingPlan) {
@@ -559,12 +623,27 @@ export async function correctAccountFromStripeSubscription(
     ? await prisma.platformBillingPlanChange
         .count({
           where: {
+            contaId: input.account.contaId,
             billingAccountId: input.account.id,
+            environment: input.environment,
+            stripeSubscriptionId: input.subscription.id,
             type: 'CANCEL_AT_PERIOD_END',
             status: 'PENDING_EFFECTIVE_DATE',
           },
         })
         .then((count) => count > 0)
+    : false;
+  const hasPendingPlanChangesToCancel = input.subscription.status === 'canceled'
+    ? await prisma.platformBillingPlanChange.count({
+        where: {
+          contaId: input.account.contaId,
+          billingAccountId: input.account.id,
+          environment: input.environment,
+          stripeSubscriptionId: input.subscription.id,
+          type: { in: ['UPGRADE', 'DOWNGRADE'] },
+          status: { in: ['PENDING_PAYMENT', 'PENDING_EFFECTIVE_DATE'] },
+        },
+      }).then((count) => count > 0)
     : false;
 
   const correctionFields = Object.keys(update).filter((field) => field !== 'lastReconciledAt');
@@ -572,6 +651,7 @@ export async function correctAccountFromStripeSubscription(
   if (
     correctionFields.length === 0 &&
     !hasStaleCancellationChange &&
+    !hasPendingPlanChangesToCancel &&
     input.paidInvoices.length === 0
   ) {
     await prisma.platformBillingAccount.update({
@@ -655,7 +735,7 @@ export async function correctAccountFromStripeSubscription(
           stripeCustomerId: invoice.customerId,
           stripeSubscriptionId: invoice.subscriptionId ?? input.subscription.id,
           stripePriceId: priceId,
-          planCode: input.planCode,
+          planCode,
           number: invoice.number,
           status: 'PAID',
           amountDue: invoice.amountDue,
@@ -681,7 +761,7 @@ export async function correctAccountFromStripeSubscription(
           stripeCustomerId: invoice.customerId,
           stripeSubscriptionId: invoice.subscriptionId ?? input.subscription.id,
           stripePriceId: priceId,
-          planCode: input.planCode,
+          planCode,
           number: invoice.number,
           status: 'PAID',
           amountDue: invoice.amountDue,
@@ -707,15 +787,36 @@ export async function correctAccountFromStripeSubscription(
     if (hasStaleCancellationChange) {
       await tx.platformBillingPlanChange.updateMany({
         where: {
+          contaId: input.account.contaId,
           billingAccountId: input.account.id,
+          environment: input.environment,
+          stripeSubscriptionId: input.subscription.id,
           type: 'CANCEL_AT_PERIOD_END',
           status: 'PENDING_EFFECTIVE_DATE',
         },
         data: {
           status: 'CANCELED',
-          canceledAt: now,
+          canceledAt: input.subscription.canceledAt ?? now,
         },
       });
+    }
+    let canceledPendingPlanChangeCount = 0;
+    if (hasPendingPlanChangesToCancel) {
+      const canceledPlanChanges = await tx.platformBillingPlanChange.updateMany({
+        where: {
+          contaId: input.account.contaId,
+          billingAccountId: input.account.id,
+          environment: input.environment,
+          stripeSubscriptionId: input.subscription.id,
+          type: { in: ['UPGRADE', 'DOWNGRADE'] },
+          status: { in: ['PENDING_PAYMENT', 'PENDING_EFFECTIVE_DATE'] },
+        },
+        data: {
+          status: 'CANCELED',
+          canceledAt: input.subscription.canceledAt ?? now,
+        },
+      });
+      canceledPendingPlanChangeCount = canceledPlanChanges.count;
     }
     await tx.platformBillingAuditLog.create({
       data: {
@@ -729,11 +830,12 @@ export async function correctAccountFromStripeSubscription(
         metadata: {
           environment: input.environment,
           stripeStatus: input.subscription.status,
-          planCode: input.planCode,
+          planCode,
           priceId: input.subscription.priceId,
           correctedFields: [
             ...correctionFields,
             ...(hasStaleCancellationChange ? ['staleCancellationPlanChange'] : []),
+            ...(canceledPendingPlanChangeCount > 0 ? ['pendingPlanChangesCanceled'] : []),
           ],
         },
       },
@@ -751,6 +853,7 @@ export async function correctAccountFromStripeSubscription(
             'TRIAL_EXPIRED_WITHOUT_PAYMENT',
             'SUBSCRIPTION_RETRIEVE_FAILED',
             'ACTIVE_LOCAL_WITHOUT_SUBSCRIPTION',
+            'CUSTOMER_ID_DIVERGENT',
             'SUBSCRIPTION_PRICE_DIVERGENT',
             'PLAN_DIVERGENT_FROM_STRIPE_PRICE',
             'ACTIVE_LOCAL_CANCELED_ON_STRIPE',
@@ -775,6 +878,17 @@ export async function correctAccountFromStripeSubscription(
 async function listPaidInvoices(customerId: string | null): Promise<StripeInvoiceRecord[]> {
   if (!customerId) return [];
   return listStripePaidInvoices(getStripeClient(process.env), customerId);
+}
+
+function emptyPaymentMethodSnapshot() {
+  return {
+    status: 'MISSING' as const,
+    type: null,
+    brand: null,
+    last4: null,
+    expMonth: null,
+    expYear: null,
+  };
 }
 
 function resolvePaymentHistory(invoices: StripeInvoiceRecord[]): {

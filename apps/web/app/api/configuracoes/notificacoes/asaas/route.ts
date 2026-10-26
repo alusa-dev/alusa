@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import {
   enqueueAsaasNotificationPreferenceSyncForTenant,
   getAsaasNotificationPreferences,
@@ -47,6 +48,8 @@ export async function PUT(request: Request) {
     if (!auth.ok) return json(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, { error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO' });
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
       return json(403, { error: 'SEM_PERMISSAO' });
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'FINANCIAL_CONFIG_WRITE' });
+    if (billingBlocked) return json(billingBlocked.status, billingBlocked.body);
 
     const parsed = updateAsaasNotificationPreferencesInputDTOSchema.safeParse(await request.json());
     if (!parsed.success) {
@@ -73,6 +76,8 @@ export async function POST(request: Request) {
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return json(403, { error: 'SEM_PERMISSAO' });
     }
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'FINANCIAL_CONFIG_WRITE' });
+    if (billingBlocked) return json(billingBlocked.status, billingBlocked.body);
 
     const result = await enqueueAsaasNotificationPreferenceSyncForTenant({
       contaId: auth.contaId,

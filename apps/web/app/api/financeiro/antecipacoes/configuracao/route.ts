@@ -95,7 +95,7 @@ export async function GET() {
 
 export async function PUT(req: NextRequest) {
   try {
-    const auth = await requireFinanceUser();
+    const auth = await requireFinanceUser({ billingCapability: 'FINANCIAL_CONFIG_WRITE' });
     if (!auth.ok) return auth.response;
 
     const input = updateAnticipationConfigurationInputDTOSchema.parse(await req.json());

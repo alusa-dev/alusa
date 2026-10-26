@@ -216,7 +216,7 @@ export async function drainPlatformBillingNotificationOutbox(input: {
       WHERE "environment" = ${environment}::"PlatformBillingEnvironment"
         AND (${eventIds}::text[] IS NULL OR "eventId" = ANY(${eventIds}::text[]))
         AND (("status" = 'PENDING')
-          OR ("status" = 'FAILED' AND "nextAttemptAt" <= LOCALTIMESTAMP)
+          OR ("status" = 'FAILED' AND "nextAttemptAt" <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC'))
           OR ("status" = 'PROCESSING' AND "lockedAt" < LOCALTIMESTAMP - INTERVAL '2 minutes'))
       ORDER BY "createdAt" ASC LIMIT ${limit} FOR UPDATE SKIP LOCKED
     ) RETURNING "id", "eventId", "eventType", "contaId", "attempts"
@@ -226,7 +226,12 @@ export async function drainPlatformBillingNotificationOutbox(input: {
   let exhausted = 0;
   for (const record of records) {
     try {
-      await notifyPlatformBillingEvent({ contaId: record.contaId, eventId: record.eventId, eventType: record.eventType });
+      await notifyPlatformBillingEvent({
+        contaId: record.contaId,
+        eventId: record.eventId,
+        eventType: record.eventType,
+        environment,
+      });
       const update = await db.platformBillingNotificationOutbox.updateMany({
         where: { id: record.id, status: 'PROCESSING', workerId },
         data: { status: 'DELIVERED', deliveredAt: new Date(), lockedAt: null, workerId: null, lastError: null },
@@ -500,7 +505,7 @@ async function claimStripeWebhookEvents(
         WHERE "environment" = ${input.environment}::"PlatformBillingEnvironment"
           AND (${eventIds}::text[] IS NULL OR "eventId" = ANY(${eventIds}::text[]))
           AND "status" IN ('PENDING', 'RECEIVED', 'FAILED')
-          AND "nextAttemptAt" <= LOCALTIMESTAMP
+          AND "nextAttemptAt" <= (CURRENT_TIMESTAMP AT TIME ZONE 'UTC')
         ORDER BY "receivedAt" ASC
         LIMIT ${input.limit}
         FOR UPDATE SKIP LOCKED
@@ -518,9 +523,10 @@ async function claimStripeWebhookEvents(
 
 function sanitizeWebhookWorkerError(error: unknown): { code: string; message: string } {
   if (error instanceof PlatformBillingError) {
+    const causeCode = safeWebhookFailureCauseCode(error.details?.cause);
     return {
       code: error.code,
-      message: error.message.slice(0, 1000),
+      message: `${error.message}${causeCode ? ` [cause=${causeCode}]` : ''}`.slice(0, 1000),
     };
   }
 
@@ -535,6 +541,17 @@ function sanitizeWebhookWorkerError(error: unknown): { code: string; message: st
     code: 'UNKNOWN_ERROR',
     message: String(error).slice(0, 1000),
   };
+}
+
+function safeWebhookFailureCauseCode(cause: unknown): string | null {
+  if (typeof cause !== 'string') return null;
+  if (cause.includes('Stripe account snapshot changed before subscription state could be applied')) {
+    return 'ACCOUNT_SNAPSHOT_CAS_CONFLICT';
+  }
+  if (cause.includes('Stripe webhook lease was lost')) return 'WEBHOOK_LEASE_LOST';
+  if (cause.includes('Foreign key constraint')) return 'FOREIGN_KEY_CONSTRAINT';
+  if (cause.includes('Unique constraint')) return 'UNIQUE_CONSTRAINT';
+  return 'UNCLASSIFIED';
 }
 
 type StripeWebhookWorkerLogEvent =

@@ -104,6 +104,10 @@ export interface PlatformBillingAccountRecord {
   pendingPlanCode: PlatformPlanCode | null;
   pendingChangeType: PlatformBillingPlanChangeType | null;
   pendingChangeEffectiveAt: Date | null;
+  checkoutClaimKey?: string | null;
+  checkoutClaimPhase?: string | null;
+  checkoutClaimedAt?: Date | null;
+  checkoutRequestExpiresAt?: Date | null;
   trialSubscriptionClaimKey?: string | null;
   trialSubscriptionClaimPhase?: string | null;
   trialSubscriptionClaimedAt?: Date | null;
@@ -123,6 +127,7 @@ export interface PlatformBillingCheckoutSessionRecord {
   stripePriceId: string;
   status: PlatformBillingCheckoutSessionStatus;
   url: string | null;
+  cancelUrl: string;
   idempotencyKey: string;
 }
 
@@ -358,7 +363,8 @@ export interface PlatformBillingStore {
     stripeSubscriptionId: string;
     idempotencyKey: string;
   }): Promise<void>;
-  clearCheckoutClaim(_input: { contaId: string; environment: PlatformBillingEnvironment; idempotencyKey: string }): Promise<void>;
+  clearCheckoutClaim(_input: { contaId: string; environment: PlatformBillingEnvironment; idempotencyKey: string }): Promise<boolean>;
+  markCheckoutSessionExpired(_input: { contaId: string; environment: PlatformBillingEnvironment; idempotencyKey: string }): Promise<void>;
   updateAccountFromStripeSubscription(
     _input: UpdatePlatformBillingAccountFromStripeSubscriptionInput,
   ): Promise<PlatformBillingAccountRecord>;
@@ -407,6 +413,28 @@ export interface PlatformBillingStore {
 }
 
 export interface PlatformBillingStripeGateway {
+  listCustomerSubscriptions(_customerId: string): Promise<{
+    subscriptions: Array<{
+      id: string;
+      customerId: string | null;
+      status: string;
+      livemode: boolean;
+      metadata: Record<string, string>;
+      priceIds: string[];
+    }>;
+    complete: boolean;
+  }>;
+  retrieveCheckoutSession(_sessionId: string): Promise<{
+    id: string;
+    status: string | null;
+    livemode: boolean;
+    customerId: string | null;
+    clientReferenceId: string | null;
+    metadata: Record<string, string>;
+    priceIds: string[];
+    subscriptionId?: string | null;
+  }>;
+  expireCheckoutSession(_sessionId: string): Promise<void>;
   createCustomer(_input: CreateStripeBillingCustomerInput): Promise<StripeBillingCustomerResult>;
   createCheckoutSession(
     _input: CreateStripeSubscriptionCheckoutSessionInput,
@@ -416,6 +444,19 @@ export interface PlatformBillingStripeGateway {
   ): Promise<StripeSubscriptionRecord>;
   createPortalSession(_input: CreateStripeBillingPortalSessionInput): Promise<StripeBillingPortalSessionResult>;
   retrieveSubscription(_subscriptionId: string): Promise<StripeSubscriptionRecord>;
+  retrieveSubscriptionSnapshot(_subscriptionId: string): Promise<{
+    id: string;
+    customerId: string | null;
+    status: string;
+    livemode: boolean;
+    metadata: Record<string, string>;
+    priceIds: string[];
+    currentPeriodEnd: Date | null;
+    cancelAtPeriodEnd: boolean;
+    trialEndsAt: Date | null;
+  }>;
+  retrieveLatestSubscriptionInvoice(_subscriptionId: string): Promise<Record<string, unknown> | null>;
+  retrieveCustomer(_customerId: string): Promise<{ id: string; deleted: boolean }>;
   previewSubscriptionPlanChange(
     _input: PreviewStripeSubscriptionPlanChangeInput,
   ): Promise<StripeSubscriptionPlanChangePreview>;

@@ -6,6 +6,8 @@ import { trackSiteEvent } from '@/features/site/lib/analytics';
 import { scrollToSiteSection } from '@/features/site/lib/scroll-to-section';
 import type { SiteSectionId } from '@/features/site/lib/sections';
 import { cn } from '@/features/site/lib/cn';
+import { usePathname } from 'next/navigation';
+import Link from 'next/link';
 
 type SiteSectionLinkProps = {
   readonly sectionId: SiteSectionId;
@@ -22,6 +24,25 @@ export function SiteSectionLink({
   analyticsLabel,
   onNavigate,
 }: SiteSectionLinkProps) {
+  const pathname = usePathname();
+  const label = children;
+  const href = `/#${sectionId}`;
+
+  if (pathname !== '/') {
+    return (
+      <Link
+        href={href}
+        className={cn(className)}
+        onClick={() => {
+          trackSiteEvent('nav_item_clicked', { href: sectionId, label: analyticsLabel ?? sectionId });
+          onNavigate?.();
+        }}
+      >
+        {label}
+      </Link>
+    );
+  }
+
   return (
     <button
       type="button"

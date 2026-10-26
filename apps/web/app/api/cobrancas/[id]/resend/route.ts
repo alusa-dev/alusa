@@ -12,6 +12,7 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { ManualSyncError, resendTaxaMatricula } from '@alusa/finance';
 
 import { logFinanceApiError } from '@/lib/api/finance-api-response';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 export const dynamic = 'force-dynamic';
 
 /**
@@ -28,6 +29,8 @@ export async function POST(
     if (!auth.ok) {
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'CHARGE_CREATE' });
+    if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
     const { id: cobrancaId } = cobrancaRouteParamsDTOSchema.parse(await params);
 

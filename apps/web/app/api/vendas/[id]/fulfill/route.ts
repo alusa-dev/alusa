@@ -6,14 +6,14 @@ import {
   StoreSaleError,
 } from '@alusa/finance';
 
-import { getStoreRequestContext, jsonError } from '../../_helpers';
+import { getStoreWriteRequestContext, jsonError } from '../../_helpers';
 
 export async function POST(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
   try {
-    const { contaId, operatorId } = await getStoreRequestContext();
+    const { contaId, operatorId } = await getStoreWriteRequestContext();
     const { id } = await context.params;
 
     await fulfillStoreSale({

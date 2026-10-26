@@ -7,6 +7,7 @@ import {
   reconcileMatriculaProvisioning,
   retryMatriculaProvisioning,
 } from '@/src/server/enrollments/provisioning-http.service';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 export const dynamic = 'force-dynamic';
 
@@ -49,6 +50,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   );
   if (!parsedBody.success) return jsonError(400, 'ACAO_INVALIDA', 'Ação operacional inválida.');
   const { action } = parsedBody.data;
+
+  if (action !== 'RECONCILE_LOCAL_CHARGES') {
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.user.contaId, capability: 'CHARGE_CREATE' });
+    if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
+  }
 
   const { id } = matriculaRouteParamsDTOSchema.parse(await params);
   const view = await loadMatriculaProvisioningView(id, auth.user.contaId);

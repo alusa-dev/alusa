@@ -7,6 +7,7 @@ import {
 } from '@/features/finance/operations/dtos';
 import { mapFinanceiroLancamentoRecordToDTO } from '@/features/finance/operations/mappers';
 import { financeInternalError } from '@/lib/api/finance-api-response';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import {
   createFinancialTransaction,
   listFinancialTransactions,
@@ -139,6 +140,8 @@ export async function POST(req: NextRequest) {
     const user = await resolveAuth();
     if (!user?.id || !user?.contaId) return err(401, 'NAO_AUTENTICADO', 'Usuario nao autenticado');
     if (!user.role || !allowedRoles.has(user.role.toUpperCase())) return err(403, 'SEM_PERMISSAO', 'Acesso negado');
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: user.contaId, capability: 'MONEY_TRANSFER' });
+    if (billingBlocked) return err(billingBlocked.status, billingBlocked.body.error, billingBlocked.body.message);
 
     const parsed = financeiroLancamentoInputDTOSchema.safeParse(await req.json());
     if (!parsed.success) {

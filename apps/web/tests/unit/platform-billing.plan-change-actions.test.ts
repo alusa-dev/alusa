@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
+import { resolveStableSchoolPriceBand } from '@alusa/platform-billing';
 
-const { gatewayMock } = vi.hoisted(() => ({
+const { gatewayMock, mockState } = vi.hoisted(() => ({
+  mockState: { studentCount: 0, account: null as null | Record<string, unknown>, snapshots: [] as Array<Record<string, unknown>> },
   gatewayMock: {
     previewSubscriptionPlanChange: vi.fn(),
     updateSubscriptionPlan: vi.fn(),
@@ -11,22 +13,10 @@ const { gatewayMock } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('@alusa/platform-billing', () => ({
-  PLATFORM_PLANS: {
-    STARTER: { maxActiveStudents: 60 },
-    PREMIUM: { maxActiveStudents: 150 },
-    PRO: { maxActiveStudents: 300 },
-  },
-  PlatformBillingError: class PlatformBillingError extends Error {
-    code: string;
-    details?: unknown;
-
-    constructor(message: string, code: string, details?: unknown) {
-      super(message);
-      this.code = code;
-      this.details = details;
-    }
-  },
+vi.mock('@alusa/platform-billing', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@alusa/platform-billing')>();
+  return {
+  ...actual,
   createDefaultPlatformBillingStripeGateway: vi.fn(() => gatewayMock),
   schedulePlatformBillingDowngrade: vi.fn(async (input, deps) => {
     const claimToken = 'test-claim-token';
@@ -34,7 +24,7 @@ vi.mock('@alusa/platform-billing', () => ({
       contaId: input.contaId, environment: input.environment, billingAccountId: input.billingAccountId,
       stripeSubscriptionId: input.planChange.stripeSubscriptionId, fromPlanCode: input.planChange.fromPlanCode,
       toPlanCode: input.planChange.toPlanCode, effectiveAt: input.planChange.effectiveAt,
-      operationId: input.planChange.id, claimToken, claimAt: new Date(), claimExpiresBefore: new Date(0),
+      operationId: input.planChange.id, changeType: input.changeType, claimToken, claimAt: new Date(), claimExpiresBefore: new Date(0),
     });
     if (!reserved) throw new Error('reservation lost');
     const schedule = await deps.stripeGateway.scheduleSubscriptionPlanChange({
@@ -42,11 +32,11 @@ vi.mock('@alusa/platform-billing', () => ({
       priceId: input.planChange.stripePriceId,
       effectiveAt: input.planChange.effectiveAt,
       metadata: { contaId: input.contaId, planCode: input.planChange.toPlanCode, billingContext: 'platform', planChangeId: input.planChange.id },
-      idempotencyKey: `alusa:${input.environment}:${input.contaId}:plan-change:${input.planChange.id}:stripe-downgrade`,
+      idempotencyKey: `alusa:${input.environment}:${input.contaId}:plan-change:${input.planChange.id}:${input.idempotencySuffix ?? (input.changeType === 'UPGRADE' ? 'stripe-band-transition' : 'stripe-downgrade')}`,
     });
     await deps.store.persistSchedule({ planChangeId: input.planChange.id, scheduleId: schedule.scheduleId, activeStudents: input.activeStudents, claimToken });
     await deps.store.completePendingPlanClaim({ billingAccountId: input.billingAccountId, operationId: input.planChange.id, claimToken, effectiveAt: schedule.effectiveAt });
-    await deps.store.createAuditLog({ action: 'PLATFORM_BILLING_DOWNGRADE_SCHEDULED' });
+    await deps.store.createAuditLog({ action: input.changeType === 'UPGRADE' ? 'PLATFORM_BILLING_BAND_TRANSITION_SCHEDULED' : 'PLATFORM_BILLING_DOWNGRADE_SCHEDULED' });
     return schedule;
   }),
   evaluateStudentCapacity: vi.fn(({ activeStudents, planCode }) => {
@@ -58,18 +48,45 @@ vi.mock('@alusa/platform-billing', () => ({
       maxActiveStudents,
     };
   }),
-  resolveStripePriceId: vi.fn(({ planCode }) => `price_${planCode.toLowerCase()}`),
-}));
+  resolveStableSchoolPriceBand: vi.fn(() => 'BAND_101_150'),
+  resolveStripePriceId: vi.fn(({ planCode }) => planCode === 'BAND_101_150' ? 'price_premium' : `price_${planCode.toLowerCase()}`),
+};
+});
 
 vi.mock('@/src/server/platform-billing/platform-billing-server', () => ({
   resolvePlatformBillingEnvironment: () => 'TEST',
+  countActivePlatformBillingStudents: async ({ tx, contaId }: { tx: { matricula: { findMany: () => Promise<unknown[]> } }; contaId: string }) => {
+    const rows = await tx.matricula.findMany();
+    return new Set(rows.map((row) => (row as { alunoId: string }).alunoId)).size;
+  },
 }));
 
-import { applyDuePlatformPlanChanges, requestPlatformPlanChange } from '@/src/server/platform-billing/plan-change-actions';
+vi.mock('@/lib/prisma-tenant', () => ({
+  runWithTenant: async (_contaId: string, callback: (tx: unknown) => unknown) => callback({
+    conta: { findUnique: async () => ({ timezone: 'UTC' }) },
+    platformBillingAccount: { findUnique: async () => mockState.account },
+    platformBillingMonthlySnapshot: { findMany: async () => mockState.snapshots },
+    matricula: {
+      findMany: async () => Array.from({ length: mockState.studentCount }, (_, index) => ({
+        alunoId: `student_${index}`,
+        dataInicio: new Date('2020-01-01T00:00:00.000Z'),
+        plano: { valor: 200, periodicidade: 'MENSAL' },
+        combo: null,
+        descontos: [],
+      })),
+    },
+  }),
+}));
+
+import { applyDuePlatformPlanChanges, assertTargetBandCoversCurrentUsage, requestPlatformPlanChange, scheduleStablePlatformPriceBandTransition } from '@/src/server/platform-billing/plan-change-actions';
 
 describe('requestPlatformPlanChange', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockState.account = null;
+    mockState.snapshots = [];
+    mockState.studentCount = 0;
+    vi.mocked(resolveStableSchoolPriceBand).mockReturnValue('BAND_101_150');
     gatewayMock.updateSubscriptionPlan.mockResolvedValue({
       id: 'sub_1',
       status: 'trialing',
@@ -84,13 +101,117 @@ describe('requestPlatformPlanChange', () => {
     });
   });
 
+  it('schedules a stable automated band change at renewal with no proration', async () => {
+    const renewal = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000);
+    const account = {
+      id: 'billing_account_1', contaId: 'conta_1', environment: 'TEST', status: 'ACTIVE',
+      planCode: 'BAND_001_025', stripeSubscriptionId: 'sub_1', stripePriceId: 'price_old_band',
+      currentPeriodEnd: renewal, trialEndsAt: null, cancelAtPeriodEnd: false,
+      pendingPlanCode: null, pendingChangeType: null, pendingChangeOperationId: null,
+    };
+    mockState.account = account;
+    mockState.studentCount = 30;
+    mockState.snapshots = [
+      { periodStart: new Date('2026-10-01T00:00:00Z'), candidateBand: 'BAND_026_050' },
+      { periodStart: new Date('2026-09-01T00:00:00Z'), candidateBand: 'BAND_026_050' },
+      { periodStart: new Date('2026-08-01T00:00:00Z'), candidateBand: 'BAND_026_050' },
+    ];
+    const prisma = createPrismaMock({ account, activeStudents: 30 });
+    vi.mocked(resolveStableSchoolPriceBand).mockReturnValue('BAND_026_050');
+
+    await expect(scheduleStablePlatformPriceBandTransition({
+      prisma: prisma as never, contaId: 'conta_1', environment: 'TEST', targetPlanCode: 'BAND_026_050',
+    })).resolves.toBe('scheduled');
+    expect(gatewayMock.scheduleSubscriptionPlanChange).toHaveBeenCalledWith(expect.objectContaining({
+      subscriptionId: 'sub_1', priceId: 'price_band_026_050', effectiveAt: renewal,
+    }));
+    expect(prisma.platformBillingPlanChange.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ type: 'UPGRADE', status: 'PENDING_EFFECTIVE_DATE', createdByUserId: null }),
+    }));
+    expect(prisma.platformBillingAuditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: 'PLATFORM_BILLING_BAND_TRANSITION_SCHEDULED', actorUserId: undefined }),
+    }));
+  });
+
+  it('does not automatically reprice a legacy subscription after new-band closes', async () => {
+    mockState.account = {
+      id: 'billing_account_1', contaId: 'conta_1', environment: 'TEST', status: 'ACTIVE',
+      planCode: 'STARTER', stripeSubscriptionId: 'sub_1', currentPeriodEnd: new Date(Date.now() + 86400000),
+      cancelAtPeriodEnd: false, pendingPlanCode: null, pendingChangeType: null,
+    };
+    mockState.studentCount = 30;
+    mockState.snapshots = Array.from({ length: 3 }, (_, index) => ({
+      periodStart: new Date(Date.UTC(2026, 9 - index, 1)), candidateBand: 'BAND_026_050',
+    }));
+    vi.mocked(resolveStableSchoolPriceBand).mockReturnValue('BAND_026_050');
+    const prisma = createPrismaMock({ account: mockState.account, activeStudents: 30 });
+
+    await expect(scheduleStablePlatformPriceBandTransition({
+      prisma: prisma as never, contaId: 'conta_1', environment: 'TEST', targetPlanCode: 'BAND_026_050',
+    })).resolves.toBe('not-eligible');
+    expect(prisma.platformBillingPlanChange.create).not.toHaveBeenCalled();
+    expect(gatewayMock.scheduleSubscriptionPlanChange).not.toHaveBeenCalled();
+  });
+
+  it('recovers an automatic band schedule retry with the same change and provider idempotency key', async () => {
+    const renewal = new Date(Date.now() + 20 * 24 * 60 * 60 * 1000);
+    const account = {
+      id: 'billing_account_1', contaId: 'conta_1', environment: 'TEST', status: 'ACTIVE',
+      planCode: 'BAND_001_025', stripeSubscriptionId: 'sub_1', stripePriceId: 'price_old_band',
+      currentPeriodEnd: renewal, trialEndsAt: null, cancelAtPeriodEnd: false,
+      pendingPlanCode: null, pendingChangeType: null, pendingChangeOperationId: null,
+    };
+    mockState.account = account;
+    mockState.studentCount = 30;
+    mockState.snapshots = [
+      { periodStart: new Date('2026-10-01T00:00:00Z'), candidateBand: 'BAND_026_050' },
+      { periodStart: new Date('2026-09-01T00:00:00Z'), candidateBand: 'BAND_026_050' },
+      { periodStart: new Date('2026-08-01T00:00:00Z'), candidateBand: 'BAND_026_050' },
+    ];
+    const prisma = createPrismaMock({ account, activeStudents: 30 });
+    vi.mocked(resolveStableSchoolPriceBand).mockReturnValue('BAND_026_050');
+    const retryRecord = {
+      id: 'auto_band_change', type: 'UPGRADE', status: 'PENDING_EFFECTIVE_DATE',
+      fromPlanCode: 'BAND_001_025', toPlanCode: 'BAND_026_050', stripeSubscriptionId: 'sub_1',
+      stripePriceId: 'price_band_026_050', effectiveAt: renewal, metadata: { automaticBandTransition: true },
+    };
+    prisma.platformBillingPlanChange.create
+      .mockResolvedValueOnce(retryRecord)
+      .mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002', clientVersion: '5.18.0', meta: { target: ['contaId', 'environment', 'idempotencyKey'] },
+      }));
+    prisma.platformBillingPlanChange.findUnique.mockResolvedValueOnce(retryRecord);
+    gatewayMock.scheduleSubscriptionPlanChange.mockRejectedValueOnce(new Error('Stripe schedule timeout'))
+      .mockResolvedValueOnce({ scheduleId: 'sched_1', effectiveAt: renewal });
+
+    await expect(scheduleStablePlatformPriceBandTransition({
+      prisma: prisma as never, contaId: 'conta_1', environment: 'TEST', targetPlanCode: 'BAND_026_050',
+    })).rejects.toThrow('Stripe schedule timeout');
+    await expect(scheduleStablePlatformPriceBandTransition({
+      prisma: prisma as never, contaId: 'conta_1', environment: 'TEST', targetPlanCode: 'BAND_026_050',
+    })).resolves.toBe('scheduled');
+
+    const providerKeys = gatewayMock.scheduleSubscriptionPlanChange.mock.calls.map(([args]) => args.idempotencyKey);
+    expect(providerKeys).toHaveLength(2);
+    expect(providerKeys[0]).toBe(providerKeys[1]);
+    expect(prisma.platformBillingPlanChange.create).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a target band that would underprice current billable usage', () => {
+    expect(() => assertTargetBandCoversCurrentUsage('BAND_026_050', 51, 'conta_1'))
+      .toThrowError(expect.objectContaining({ code: 'PLATFORM_BILLING_PLAN_CHANGE_INCOMPATIBLE' }));
+    expect(() => assertTargetBandCoversCurrentUsage('BAND_026_050', 501, 'conta_1'))
+      .toThrowError(expect.objectContaining({ code: 'PLATFORM_BILLING_PLAN_CHANGE_INCOMPATIBLE' }));
+    expect(() => assertTargetBandCoversCurrentUsage('BAND_026_050', 42, 'conta_1')).not.toThrow();
+  });
+
   it('rejects oversized idempotency keys before querying plan-change state', async () => {
     const prisma = createPrismaMock();
     await expect(requestPlatformPlanChange({
       prisma: prisma as never,
       contaId: 'conta_1',
       actorUserId: 'user_1',
-      targetPlanCode: 'PREMIUM',
+      targetPlanCode: 'BAND_101_150',
       idempotencyKey: 'k'.repeat(129),
     })).rejects.toMatchObject({ code: 'PLATFORM_BILLING_INPUT_INVALID' });
     expect(prisma.platformBillingPlanChange.findUnique).not.toHaveBeenCalled();
@@ -100,7 +221,7 @@ describe('requestPlatformPlanChange', () => {
     const effectiveAt = new Date('2026-07-15T00:00:00.000Z');
     const existing = {
       id: 'plan_change_downgrade', type: 'DOWNGRADE', status: 'PENDING_EFFECTIVE_DATE',
-      fromPlanCode: 'PRO', toPlanCode: 'PREMIUM', stripeSubscriptionId: 'sub_1',
+      fromPlanCode: 'PRO', toPlanCode: 'BAND_101_150', stripeSubscriptionId: 'sub_1',
       stripePriceId: 'price_premium', effectiveAt, metadata: { activeStudents: 42 },
     };
     const prisma = createPrismaMock({
@@ -114,7 +235,7 @@ describe('requestPlatformPlanChange', () => {
     prisma.platformBillingPlanChange.findUnique.mockResolvedValue(existing);
     const result = await requestPlatformPlanChange({
       prisma: prisma as never, contaId: 'conta_1', actorUserId: 'user_1',
-      targetPlanCode: 'PREMIUM', idempotencyKey: 'idem_downgrade_replay',
+      targetPlanCode: 'BAND_101_150', idempotencyKey: 'idem_downgrade_replay',
     });
     expect(result).toMatchObject({ planChangeId: existing.id, status: 'PENDING_EFFECTIVE_DATE' });
     expect(gatewayMock.scheduleSubscriptionPlanChange).toHaveBeenCalledWith(expect.objectContaining({
@@ -123,7 +244,7 @@ describe('requestPlatformPlanChange', () => {
     }));
     expect(prisma.platformBillingAccount.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: 'billing_account_1', stripeSubscriptionId: 'sub_1' }),
-      data: expect.objectContaining({ pendingPlanCode: 'PREMIUM', pendingChangeType: 'DOWNGRADE' }),
+      data: expect.objectContaining({ pendingPlanCode: 'BAND_101_150', pendingChangeType: 'DOWNGRADE' }),
     }));
   });
 
@@ -148,7 +269,7 @@ describe('requestPlatformPlanChange', () => {
       prisma: prisma as never,
       contaId: 'conta_1',
       actorUserId: 'user_1',
-      targetPlanCode: 'PREMIUM',
+      targetPlanCode: 'BAND_101_150',
       idempotencyKey: 'idem_trial_plan_change',
     });
 
@@ -168,7 +289,7 @@ describe('requestPlatformPlanChange', () => {
       where: { id: 'billing_account_1' },
       data: expect.objectContaining({
         status: 'TRIALING',
-        planCode: 'PREMIUM',
+        planCode: 'BAND_101_150',
         stripePriceId: 'price_premium',
         pendingPlanCode: null,
         pendingChangeType: null,
@@ -192,7 +313,7 @@ describe('requestPlatformPlanChange', () => {
 
     const result = await requestPlatformPlanChange({
       prisma: prisma as never, contaId: 'conta_1', actorUserId: 'user_1',
-      targetPlanCode: 'PREMIUM', idempotencyKey: 'idem_upgrade_operation_id',
+      targetPlanCode: 'BAND_101_150', idempotencyKey: 'idem_upgrade_operation_id',
     });
 
     expect(result).toMatchObject({ status: 'PENDING_PAYMENT', type: 'UPGRADE' });
@@ -203,7 +324,7 @@ describe('requestPlatformPlanChange', () => {
         OR: expect.arrayContaining([expect.objectContaining({ pendingChangeOperationId: null })]),
       }),
       data: expect.objectContaining({
-        pendingPlanCode: 'PREMIUM', pendingChangeType: 'UPGRADE',
+        pendingPlanCode: 'BAND_101_150', pendingChangeType: 'UPGRADE',
         pendingChangeOperationId: 'plan_change_1', pendingChangeClaimToken: null,
         pendingChangeClaimedAt: null,
       }),
@@ -223,7 +344,7 @@ describe('requestPlatformPlanChange', () => {
     });
     const record = {
       id: 'plan_change_loser', type: 'UPGRADE', status: 'PENDING_PAYMENT', fromPlanCode: 'STARTER',
-      toPlanCode: 'PREMIUM', stripeSubscriptionId: 'sub_1', stripePriceId: 'price_premium',
+      toPlanCode: 'BAND_101_150', stripeSubscriptionId: 'sub_1', stripePriceId: 'price_premium',
       effectiveAt: null, metadata: null,
     };
     prisma.platformBillingPlanChange.create.mockResolvedValueOnce(record);
@@ -234,7 +355,7 @@ describe('requestPlatformPlanChange', () => {
 
     await expect(requestPlatformPlanChange({
       prisma: prisma as never, contaId: 'conta_1', actorUserId: 'user_1',
-      targetPlanCode: 'PREMIUM', idempotencyKey: 'idem_upgrade_loser',
+      targetPlanCode: 'BAND_101_150', idempotencyKey: 'idem_upgrade_loser',
     })).rejects.toMatchObject({ code: 'PLATFORM_BILLING_PLAN_CHANGE_IN_PROGRESS' });
 
     expect(gatewayMock.updateSubscriptionPlan).not.toHaveBeenCalled();
@@ -260,7 +381,7 @@ describe('requestPlatformPlanChange', () => {
     const prisma = createPrismaMock({ account, activeStudents: 12 });
     const record = {
       id: 'plan_change_1', type: 'UPGRADE', status: 'PENDING_PAYMENT', fromPlanCode: 'STARTER',
-      toPlanCode: 'PREMIUM', stripeSubscriptionId: 'sub_1', stripePriceId: 'price_premium',
+      toPlanCode: 'BAND_101_150', stripeSubscriptionId: 'sub_1', stripePriceId: 'price_premium',
       effectiveAt: null, metadata: null,
     };
     prisma.platformBillingPlanChange.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(record);
@@ -276,10 +397,10 @@ describe('requestPlatformPlanChange', () => {
 
     const request = {
       prisma: prisma as never, contaId: 'conta_1', actorUserId: 'user_1',
-      targetPlanCode: 'PREMIUM' as const, idempotencyKey: 'idem_upgrade_recovery',
+      targetPlanCode: 'BAND_101_150' as const, idempotencyKey: 'idem_upgrade_recovery',
     };
     await expect(requestPlatformPlanChange(request)).rejects.toThrow('local plan-change write failed');
-    expect(account).toMatchObject({ pendingPlanCode: 'PREMIUM', pendingChangeOperationId: 'plan_change_1' });
+    expect(account).toMatchObject({ pendingPlanCode: 'BAND_101_150', pendingChangeOperationId: 'plan_change_1' });
     await expect(requestPlatformPlanChange(request)).resolves.toMatchObject({ status: 'PENDING_PAYMENT', planChangeId: 'plan_change_1' });
 
     const providerCalls = gatewayMock.updateSubscriptionPlan.mock.calls;
@@ -301,7 +422,7 @@ describe('requestPlatformPlanChange', () => {
     const prisma = createPrismaMock({ account, activeStudents: 12 });
     const record = {
       id: 'plan_change_rejected', type: 'UPGRADE', status: 'PENDING_PAYMENT', fromPlanCode: 'STARTER',
-      toPlanCode: 'PREMIUM', stripeSubscriptionId: 'sub_1', stripePriceId: 'price_premium',
+      toPlanCode: 'BAND_101_150', stripeSubscriptionId: 'sub_1', stripePriceId: 'price_premium',
       effectiveAt: null, metadata: null,
     };
     prisma.platformBillingPlanChange.create.mockResolvedValueOnce(record);
@@ -318,12 +439,12 @@ describe('requestPlatformPlanChange', () => {
 
     await expect(requestPlatformPlanChange({
       prisma: prisma as never, contaId: 'conta_1', actorUserId: 'user_1',
-      targetPlanCode: 'PREMIUM', idempotencyKey: 'idem_upgrade_rejected',
+      targetPlanCode: 'BAND_101_150', idempotencyKey: 'idem_upgrade_rejected',
     })).rejects.toThrow('invalid upgrade');
 
     expect(prisma.platformBillingAccount.updateMany).toHaveBeenCalledTimes(2);
     expect(prisma.platformBillingAccount.updateMany.mock.calls[1]?.[0].where).toMatchObject({
-      pendingPlanCode: 'PREMIUM', pendingChangeType: 'UPGRADE', pendingChangeOperationId: 'plan_change_rejected',
+      pendingPlanCode: 'BAND_101_150', pendingChangeType: 'UPGRADE', pendingChangeOperationId: 'plan_change_rejected',
     });
     expect(account).toMatchObject({ pendingPlanCode: null, pendingChangeOperationId: null });
     expect(prisma.platformBillingPlanChange.updateMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -351,7 +472,7 @@ describe('requestPlatformPlanChange', () => {
       id: 'plan_change_race',
       type: 'UPGRADE',
       status: 'APPLIED',
-      toPlanCode: 'PREMIUM',
+      toPlanCode: 'BAND_101_150',
       effectiveAt: trialEndsAt,
       metadata: null,
     };
@@ -370,7 +491,7 @@ describe('requestPlatformPlanChange', () => {
       prisma: prisma as never,
       contaId: 'conta_1',
       actorUserId: 'user_1',
-      targetPlanCode: 'PREMIUM',
+      targetPlanCode: 'BAND_101_150',
       idempotencyKey: 'idem_trial_plan_change_race',
     });
 
@@ -395,7 +516,7 @@ describe('requestPlatformPlanChange', () => {
     });
     const pendingDowngrade = {
       id: 'plan_change_trial_downgrade', type: 'DOWNGRADE', status: 'PENDING_EFFECTIVE_DATE',
-      fromPlanCode: 'PRO', toPlanCode: 'PREMIUM', stripeSubscriptionId: 'sub_1',
+      fromPlanCode: 'PRO', toPlanCode: 'BAND_101_150', stripeSubscriptionId: 'sub_1',
       stripePriceId: 'price_premium', effectiveAt, metadata: { activeStudents: 42 },
     };
     prisma.platformBillingPlanChange.findUnique
@@ -410,7 +531,7 @@ describe('requestPlatformPlanChange', () => {
 
     const result = await requestPlatformPlanChange({
       prisma: prisma as never, contaId: 'conta_1', actorUserId: 'user_1',
-      targetPlanCode: 'PREMIUM', idempotencyKey: 'idem_trial_downgrade_replay',
+      targetPlanCode: 'BAND_101_150', idempotencyKey: 'idem_trial_downgrade_replay',
     });
 
     expect(result).toMatchObject({ planChangeId: pendingDowngrade.id, status: 'PENDING_EFFECTIVE_DATE' });
@@ -706,7 +827,8 @@ describe('applyDuePlatformPlanChanges tenant binding', () => {
 function createPrismaMock(input: {
   account: Record<string, unknown>;
   activeStudents: number;
-}) {
+} = { account: {}, activeStudents: 0 }) {
+  mockState.studentCount = input.activeStudents;
   return {
     $transaction: vi.fn(async (callback) => callback({
       platformBillingAccount: { updateMany: vi.fn(async () => ({ count: 1 })) },
@@ -731,6 +853,13 @@ function createPrismaMock(input: {
         ...data,
       })),
       updateMany: vi.fn(async () => ({ count: 1 })),
+    },
+    platformBillingMonthlySnapshot: {
+      findMany: vi.fn(async () => [
+        { periodStart: new Date('2026-09-01T00:00:00.000Z'), candidateBand: 'BAND_101_150' },
+        { periodStart: new Date('2026-08-01T00:00:00.000Z'), candidateBand: 'BAND_101_150' },
+        { periodStart: new Date('2026-07-01T00:00:00.000Z'), candidateBand: 'BAND_101_150' },
+      ]),
     },
     platformBillingAuditLog: {
       create: vi.fn(async ({ data }) => ({ id: 'audit_1', ...data })),

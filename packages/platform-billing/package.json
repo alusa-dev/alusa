@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./commercial-model": {
+      "types": "./dist/commercial-model.d.ts",
+      "default": "./dist/commercial-model.js"
     }
   },
   "scripts": {

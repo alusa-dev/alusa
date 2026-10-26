@@ -6,6 +6,7 @@ import {
   updateContratoModeloInputDTOSchema,
 } from '@/features/contracts/dtos';
 import { mapContratoModeloRecordToDTO } from '@/features/contracts/mappers';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import {
   deleteContractModelForTenant,
   getContractModelForTenant,
@@ -43,6 +44,8 @@ export async function GET(_request: NextRequest, { params }: Params) {
 export async function PUT(request: NextRequest, { params }: Params) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 401 });
+  const billingBlocked = await platformBillingAccessResponseForConta({ contaId: user.contaId, capability: 'CONTRACT_WRITE' });
+  if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
   try {
     const body = updateContratoModeloInputDTOSchema.parse(await request.json());
     const result = await updateContractModelForTenant({
@@ -79,6 +82,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
 export async function DELETE(_request: NextRequest, { params }: Params) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 401 });
+  const billingBlocked = await platformBillingAccessResponseForConta({ contaId: user.contaId, capability: 'CONTRACT_WRITE' });
+  if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
   try {
     const result = await deleteContractModelForTenant({
       contaId: user.contaId,

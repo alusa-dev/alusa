@@ -18,6 +18,7 @@ import {
 import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { invalidateChargeResourceCache } from '@/lib/cache/invalidation';
 import { logFinanceOperationalEvent } from '@alusa/finance/foundation/operational-log';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 
 
@@ -58,6 +59,8 @@ export async function updateCobrancaRoute(req: NextRequest, { params }: { params
       return NextResponse.json({ success: false, error: 'Sem permissão' }, { status: 403 });
     }
     const { contaId } = user;
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId, capability: 'CHARGE_CREATE' });
+    if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
     const { id } = rawParams;
     const parsedBody = cobrancaUpdateInputDTOSchema.safeParse(await req.json().catch(() => null));
@@ -645,6 +648,8 @@ export async function deleteCobrancaRoute(_req: NextRequest, { params }: { param
       return NextResponse.json({ success: false, error: 'Sem permissão' }, { status: 403 });
     }
     const { contaId } = user;
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId, capability: 'CHARGE_CREATE' });
+    if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
     const { id } = rawParams;
 

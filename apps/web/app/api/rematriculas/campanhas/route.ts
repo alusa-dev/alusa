@@ -7,6 +7,7 @@ import {
   listRenewalManagementFromHttp,
 } from '@/src/server/enrollments/renewal-http-commands.service';
 import { hasRenewalPermission } from '@/src/server/enrollments/renewal-permissions.service';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 const campaignSchema = z.object({
   nome: z.string().trim().min(2),
@@ -54,6 +55,9 @@ export async function GET() {
 export async function POST(request: Request) {
   const auth = await requireUser('renewal.campaign.create');
   if ('error' in auth) return auth.error;
+
+  const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.user.contaId, capability: 'ENROLLMENT_WRITE' });
+  if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
   try {
     const body = campaignSchema.parse(await request.json().catch(() => null));

@@ -144,10 +144,32 @@ enum PlatformBillingEnvironment {
 }
 
 enum PlatformBillingPlanCode {
+  // Historical identifiers remain for existing Stripe subscriptions and webhook replay only.
   STARTER
   PREMIUM
   PRO
   CUSTOM
+  // Public price bands are appended by migration to preserve PostgreSQL enum order.
+  BAND_001_025
+  BAND_026_050
+  BAND_051_100
+  BAND_101_150
+  BAND_151_200
+  BAND_201_300
+  BAND_301_400
+  BAND_401_500
+}
+
+enum PlatformBillingPriceBand {
+  BAND_001_025
+  BAND_026_050
+  BAND_051_100
+  BAND_101_150
+  BAND_151_200
+  BAND_201_300
+  BAND_301_400
+  BAND_401_500
+  SPECIALIST
 }
 
 enum PlatformBillingAccountStatus {
@@ -1400,6 +1422,7 @@ model Conta {
   platformBillingAuditLogs          PlatformBillingAuditLog[]
   platformBillingPlanChanges        PlatformBillingPlanChange[]
   platformBillingIssues             PlatformBillingIssue[]
+  platformBillingMonthlySnapshots   PlatformBillingMonthlySnapshot[]
   logsFinanceiros                   LogFinanceiro[]
   logsIntegracao                    LogIntegracao[]
   asaasIntegrationJobs              AsaasIntegrationJob[]
@@ -4087,8 +4110,10 @@ model PlatformBillingAccount {
   auditLogs        PlatformBillingAuditLog[]
   planChanges      PlatformBillingPlanChange[]
   issues           PlatformBillingIssue[]
+  monthlySnapshots PlatformBillingMonthlySnapshot[]
 
   @@unique([contaId, environment], name: "uq_platform_billing_account_conta_env")
+  @@unique([contaId, id], name: "uq_platform_billing_account_conta_id")
   @@unique([environment, stripeCustomerId], name: "uq_platform_billing_account_env_customer")
   @@unique([environment, stripeSubscriptionId], name: "uq_platform_billing_account_env_subscription")
   @@index([contaId, status], name: "idx_platform_billing_account_conta_status")
@@ -4097,6 +4122,25 @@ model PlatformBillingAccount {
   @@index([environment, accessStatus], name: "idx_platform_billing_account_env_access")
   @@index([pendingChangeEffectiveAt], name: "idx_platform_billing_account_pending_effective")
   @@index([contaId, environment, pendingChangeOperationId], name: "idx_platform_billing_account_pending_operation")
+}
+
+model PlatformBillingMonthlySnapshot {
+  id                 String                     @id @default(cuid())
+  contaId            String
+  billingAccountId   String?
+  environment        PlatformBillingEnvironment
+  periodStart        DateTime                   @db.Date
+  studentCount       Int
+  candidateBand      PlatformBillingPriceBand?
+  specialistRequired Boolean                    @default(false)
+  createdAt          DateTime                   @default(now())
+
+  conta          Conta                   @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  billingAccount PlatformBillingAccount? @relation(fields: [contaId, billingAccountId], references: [contaId, id], onDelete: Restrict)
+
+  @@unique([contaId, environment, periodStart], name: "uq_platform_billing_monthly_snapshot_conta_env_period")
+  @@index([contaId, environment, candidateBand, periodStart], name: "idx_platform_billing_monthly_snapshot_candidate")
+  @@index([billingAccountId, periodStart], name: "idx_platform_billing_monthly_snapshot_account_period")
 }
 
 model PlatformBillingCheckoutSession {
@@ -6080,6 +6124,7 @@ model FinanceProfile {
   mobilePhone   String?
   landlinePhone String?
   incomeValue   Decimal? @db.Decimal(12, 2)
+  onboardingStudentCount Int? // NULL para contas legadas; migration restringe valores preenchidos a >= 1.
   address       String?
   addressNumber String?
   province      String?

@@ -1,6 +1,7 @@
 import { logFinanceApiError } from '@/lib/api/finance-api-response';
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import {
   costCenterInputDTOSchema,
   centroCustoMutationResultDTOSchema,
@@ -64,6 +65,8 @@ export async function POST(req: NextRequest) {
   try {
     const auth = await resolveTenantSession();
     if (!auth.ok) return err(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida' : 'Usuario nao autenticado');
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'FINANCIAL_CONFIG_WRITE' });
+    if (billingBlocked) return err(billingBlocked.status, billingBlocked.body.error, billingBlocked.body.message);
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return err(403, 'SEM_PERMISSAO', 'Acesso negado');
 
     const parsed = costCenterInputDTOSchema.safeParse(await req.json());

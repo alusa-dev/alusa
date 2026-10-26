@@ -47,14 +47,14 @@ describe.skipIf(!isTestDatabase)('platform billing checkout PostgreSQL contentio
       const common = {
         contaId,
         contaName: 'Checkout race integration fixture',
-        planCode: 'STARTER',
+        planCode: 'BAND_001_025',
         successUrl: 'https://app.alusa.test/billing/success',
         cancelUrl: 'https://app.alusa.test/billing/cancel',
         envSource: {
           STRIPE_ENVIRONMENT: 'TEST',
           STRIPE_SECRET_KEY: 'sk_test_integration',
-          STRIPE_PRICE_STARTER_MONTHLY: 'price_starter_test',
-          STRIPE_PRICE_PREMIUM_MONTHLY: 'price_premium_test',
+          STRIPE_PRICE_BAND_001_025_MONTHLY: 'price_band_001_025_test',
+          STRIPE_PRICE_BAND_026_050_MONTHLY: 'price_band_026_050_test',
         },
       };
 
@@ -64,7 +64,7 @@ describe.skipIf(!isTestDatabase)('platform billing checkout PostgreSQL contentio
       );
       await vi.waitFor(() => expect(createCheckoutSession).toHaveBeenCalledTimes(1));
       const second = createPlatformBillingCheckoutSession(
-        { ...common, idempotencyKey: 'checkout-race-b', planCode: 'PREMIUM' },
+        { ...common, idempotencyKey: 'checkout-race-b', planCode: 'BAND_026_050' },
         { store, stripeGateway },
       );
       const secondResult = await Promise.allSettled([second]);

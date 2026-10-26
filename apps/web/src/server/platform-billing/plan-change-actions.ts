@@ -3,20 +3,30 @@ import {
   PLATFORM_PLANS,
   PlatformBillingError,
   createDefaultPlatformBillingStripeGateway,
+  getSchoolPriceBandRank,
+  resolveStableSchoolPriceBand,
+  resolveSchoolCommercialTarget,
+  isPublicPlatformPlanCode,
   evaluateStudentCapacity,
   resolveStripePriceId,
   schedulePlatformBillingDowngrade,
   type PlatformPlanCode,
   type PublicPlatformPlanCode,
 } from '@alusa/platform-billing';
-import { resolvePlatformBillingEnvironment } from './platform-billing-server';
+import { countActivePlatformBillingStudents, resolvePlatformBillingEnvironment } from './platform-billing-server';
+import { runWithTenant } from '@/lib/prisma-tenant';
 import { logApiOperationalEvent } from '@/lib/observability/api-logger';
 
-const PLAN_RANK: Record<PublicPlatformPlanCode, number> = {
-  STARTER: 1,
+const LEGACY_PLAN_RANK: Record<'STARTER' | 'PREMIUM' | 'PRO' | 'CUSTOM', number> = {
+  STARTER: 0,
   PREMIUM: 2,
-  PRO: 3,
+  PRO: 6,
+  CUSTOM: 0,
 };
+
+export function getPlatformPlanRank(code: PlatformPlanCode): number {
+  return isPublicPlatformPlanCode(code) ? getSchoolPriceBandRank(code) : LEGACY_PLAN_RANK[code];
+}
 
 type PlatformPlanChangeResponse = {
   planChangeId: string;
@@ -91,7 +101,12 @@ export async function requestPlatformPlanChange(input: {
       if (!account || account.stripeSubscriptionId !== existing.stripeSubscriptionId) {
         throw new PlatformBillingError('Subscription changed after downgrade request; reconcile the plan change.', 'PLATFORM_BILLING_REPLAY_INVALID', { idempotencyKey });
       }
-      await scheduleAndPersistDowngrade({
+      assertTargetBandCoversCurrentUsage(
+        input.targetPlanCode,
+        await countCurrentBillableStudents(input.contaId),
+        input.contaId,
+      );
+      await scheduleAndPersistPlanChange({
         prisma: input.prisma,
         stripeGateway: createDefaultPlatformBillingStripeGateway(process.env),
         contaId: input.contaId,
@@ -132,8 +147,33 @@ export async function requestPlatformPlanChange(input: {
     );
   }
 
-  const currentRank = PLAN_RANK[account.planCode as PublicPlatformPlanCode];
-  const targetRank = PLAN_RANK[input.targetPlanCode];
+  const snapshots = await input.prisma.platformBillingMonthlySnapshot.findMany({
+    where: { contaId: input.contaId, environment },
+    orderBy: { periodStart: 'desc' },
+    take: 3,
+    select: { periodStart: true, candidateBand: true },
+  });
+  const stableBand = resolveStableSchoolPriceBand({
+    currentBand: isPublicPlatformPlanCode(account.planCode) ? account.planCode : null,
+    snapshots,
+  });
+  if (stableBand !== input.targetPlanCode) {
+    throw new PlatformBillingError(
+      'A new price band must be present in three consecutive monthly closes before it can be applied.',
+      'PLATFORM_BILLING_PLAN_CHANGE_NOT_STABLE',
+      { contaId: input.contaId, targetPlanCode: input.targetPlanCode },
+    );
+  }
+
+  const currentBillableStudents = await countCurrentBillableStudents(input.contaId);
+  assertTargetBandCoversCurrentUsage(
+    input.targetPlanCode,
+    currentBillableStudents,
+    input.contaId,
+  );
+
+  const currentRank = getPlatformPlanRank(account.planCode as PlatformPlanCode);
+  const targetRank = getPlatformPlanRank(input.targetPlanCode);
   const type = targetRank > currentRank ? 'UPGRADE' : 'DOWNGRADE';
   const stripePriceId = resolveStripePriceId({
     planCode: input.targetPlanCode,
@@ -142,21 +182,7 @@ export async function requestPlatformPlanChange(input: {
   });
 
   if (account.status === 'TRIALING') {
-    const activeStudents = await countActiveStudents(input.prisma, input.contaId);
-    const capacity = evaluateStudentCapacity({
-      contaId: input.contaId,
-      planCode: input.targetPlanCode,
-      activeStudents,
-      additionalActiveStudents: 0,
-    });
-    if (!capacity.allowed) {
-      throw new PlatformBillingError(
-        'Current active students are not compatible with the target plan.',
-        'PLATFORM_BILLING_PLAN_CHANGE_INCOMPATIBLE',
-        { ...capacity },
-      );
-    }
-
+    const activeStudents = currentBillableStudents;
     const createdPlanChange = await createPlatformPlanChangeWithIdempotency(input.prisma, {
       data: {
         contaId: input.contaId,
@@ -185,7 +211,7 @@ export async function requestPlatformPlanChange(input: {
     });
     if (createdPlanChange.replayed) {
       if (createdPlanChange.record.status === 'PENDING_EFFECTIVE_DATE' && createdPlanChange.record.effectiveAt) {
-        await scheduleAndPersistDowngrade({
+        await scheduleAndPersistPlanChange({
           prisma: input.prisma,
           stripeGateway: createDefaultPlatformBillingStripeGateway(process.env),
           contaId: input.contaId,
@@ -294,21 +320,7 @@ export async function requestPlatformPlanChange(input: {
   }
 
   if (type === 'DOWNGRADE') {
-    const activeStudents = await countActiveStudents(input.prisma, input.contaId);
-    const capacity = evaluateStudentCapacity({
-      contaId: input.contaId,
-      planCode: input.targetPlanCode,
-      activeStudents,
-      additionalActiveStudents: 0,
-    });
-    if (!capacity.allowed) {
-      throw new PlatformBillingError(
-        'Current active students are not compatible with the target plan.',
-        'PLATFORM_BILLING_PLAN_CHANGE_INCOMPATIBLE',
-        { ...capacity },
-      );
-    }
-
+    const activeStudents = currentBillableStudents;
     const createdPlanChange = await createPlatformPlanChangeWithIdempotency(input.prisma, {
       data: {
         contaId: input.contaId,
@@ -335,7 +347,7 @@ export async function requestPlatformPlanChange(input: {
     });
     if (createdPlanChange.replayed) {
       if (createdPlanChange.record.status === 'PENDING_EFFECTIVE_DATE' && createdPlanChange.record.effectiveAt) {
-        await scheduleAndPersistDowngrade({
+        await scheduleAndPersistPlanChange({
           prisma: input.prisma,
           stripeGateway: createDefaultPlatformBillingStripeGateway(process.env),
           contaId: input.contaId,
@@ -364,7 +376,7 @@ export async function requestPlatformPlanChange(input: {
       }, 'Subscription has no current period end for a scheduled downgrade.');
       throw new PlatformBillingError('Subscription renewal date is unavailable.', 'PLATFORM_BILLING_PLAN_CHANGE_INVALID');
     }
-    await scheduleAndPersistDowngrade({
+    await scheduleAndPersistPlanChange({
       prisma: input.prisma,
       stripeGateway: createDefaultPlatformBillingStripeGateway(process.env),
       contaId: input.contaId,
@@ -419,6 +431,135 @@ export async function requestPlatformPlanChange(input: {
     idempotencyKey,
     replayed: createdPlanChange.replayed,
   });
+}
+
+export function assertTargetBandCoversCurrentUsage(
+  targetPlanCode: PublicPlatformPlanCode,
+  activeStudents: number,
+  contaId: string,
+) {
+  const currentUsage = resolveSchoolCommercialTarget(activeStudents);
+  const targetRank = getPlatformPlanRank(targetPlanCode);
+  const usageRank = currentUsage?.kind === 'SELF_SERVICE'
+    ? getPlatformPlanRank(currentUsage.band.code)
+    : Number.POSITIVE_INFINITY;
+  if (usageRank > targetRank) {
+    throw new PlatformBillingError(
+      'The selected price band is below the current billable enrollment count.',
+      'PLATFORM_BILLING_PLAN_CHANGE_INCOMPATIBLE',
+      {
+        contaId,
+        targetPlanCode,
+        activeStudents,
+        requiredBand: currentUsage?.kind === 'SELF_SERVICE' ? currentUsage.band.code : 'SPECIALIST',
+      },
+    );
+  }
+}
+
+export async function scheduleStablePlatformPriceBandTransition(input: {
+  prisma: PrismaClient;
+  contaId: string;
+  environment: 'TEST' | 'LIVE';
+  targetPlanCode: PublicPlatformPlanCode;
+}): Promise<'scheduled' | 'already-current' | 'not-eligible' | 'usage-exceeds-band'> {
+  const current = await runWithTenant(input.contaId, async (tx) => {
+    const [account, snapshots, activeStudents] = await Promise.all([
+      tx.platformBillingAccount.findUnique({
+        where: { uq_platform_billing_account_conta_env: { contaId: input.contaId, environment: input.environment } },
+      }),
+      tx.platformBillingMonthlySnapshot.findMany({
+        where: { contaId: input.contaId, environment: input.environment },
+        orderBy: { periodStart: 'desc' },
+        take: 3,
+        select: { periodStart: true, candidateBand: true },
+      }),
+      countActivePlatformBillingStudents({ tx, contaId: input.contaId }),
+    ]);
+    return { account, snapshots, activeStudents };
+  });
+  const { account, snapshots, activeStudents } = current;
+  if (!account || !account.planCode || account.planCode === 'CUSTOM'
+    // Legacy catalog subscriptions remain reconciliation-only. They need an
+    // explicitly contracted transition before the new price bands apply.
+    || !isPublicPlatformPlanCode(account.planCode)
+    || account.status !== 'ACTIVE' || !account.stripeSubscriptionId
+    || !account.currentPeriodEnd || account.currentPeriodEnd <= new Date()
+    || account.cancelAtPeriodEnd || account.pendingPlanCode || account.pendingChangeType) {
+    return 'not-eligible';
+  }
+  const stableBand = resolveStableSchoolPriceBand({
+    currentBand: isPublicPlatformPlanCode(account.planCode) ? account.planCode : null,
+    snapshots,
+  });
+  if (stableBand !== input.targetPlanCode) return 'not-eligible';
+  if (account.planCode === input.targetPlanCode) return 'already-current';
+  const currentUsage = resolveSchoolCommercialTarget(activeStudents);
+  if (currentUsage?.kind !== 'SELF_SERVICE'
+    || getPlatformPlanRank(currentUsage.band.code) > getPlatformPlanRank(input.targetPlanCode)) {
+    await upsertDueDowngradeIssue(input.prisma, {
+      change: {
+        contaId: input.contaId,
+        correlationId: null,
+      },
+      account,
+      environment: input.environment,
+      code: 'PRICE_BAND_USAGE_EXCEEDS_STABLE_TARGET',
+      title: 'A faixa estável não cobre a quantidade atual de alunos',
+      message: 'A alteração automática foi adiada porque a faixa atual de uso já exige um valor maior.',
+      fingerprint: `${account.id}:${input.targetPlanCode}:usage-exceeds-band`,
+      details: { activeStudents, targetPlanCode: input.targetPlanCode },
+    });
+    return 'usage-exceeds-band';
+  }
+
+  const latestClose = snapshots[0]?.periodStart;
+  if (!latestClose) return 'not-eligible';
+  const idempotencyKey = `auto-band:${latestClose.toISOString().slice(0, 10)}:${input.targetPlanCode}`;
+  const environment = input.environment;
+  const stripePriceId = resolveStripePriceId({ planCode: input.targetPlanCode, environment, source: process.env });
+  const changeType = getPlatformPlanRank(input.targetPlanCode) > getPlatformPlanRank(account.planCode as PlatformPlanCode)
+    ? 'UPGRADE'
+    : 'DOWNGRADE';
+  const created = await createPlatformPlanChangeWithIdempotency(input.prisma, {
+    data: {
+      contaId: input.contaId,
+      billingAccountId: account.id,
+      environment,
+      type: changeType,
+      status: 'PENDING_EFFECTIVE_DATE',
+      fromPlanCode: account.planCode as PlatformPlanCode,
+      toPlanCode: input.targetPlanCode,
+      stripeSubscriptionId: account.stripeSubscriptionId,
+      stripePriceId,
+      effectiveAt: account.currentPeriodEnd,
+      idempotencyKey,
+      createdByUserId: null,
+      correlationId: idempotencyKey,
+      metadata: {
+        automaticBandTransition: true,
+        sourcePeriodStart: latestClose.toISOString().slice(0, 10),
+        activeStudents,
+      },
+    },
+    contaId: input.contaId,
+    environment,
+    idempotencyKey,
+  });
+  if (created.record.status !== 'PENDING_EFFECTIVE_DATE') return 'not-eligible';
+  await scheduleAndPersistPlanChange({
+    prisma: input.prisma,
+    stripeGateway: createDefaultPlatformBillingStripeGateway(process.env),
+    contaId: input.contaId,
+    actorUserId: null,
+    environment,
+    idempotencyKey,
+    account,
+    planChange: created.record,
+    activeStudents,
+    emitAudit: !created.replayed,
+  });
+  return 'scheduled';
 }
 
 export async function requestPlatformSubscriptionCancellation(input: {
@@ -878,7 +1019,7 @@ export async function applyDuePlatformPlanChanges(input: {
     const stripeSubscription = await gateway.retrieveSubscription(account.stripeSubscriptionId);
     if (hasExpiredClaim && stripeSubscription.priceId !== stripePriceId) {
       try {
-        const recovered = await scheduleAndPersistDowngrade({
+        const recovered = await scheduleAndPersistPlanChange({
           prisma: input.prisma,
           stripeGateway: gateway,
           contaId: change.contaId,
@@ -1386,11 +1527,11 @@ function isDefinitiveStripeNoEffect(error: unknown): boolean {
   return candidate.type === 'StripeInvalidRequestError' && candidate.statusCode === 400;
 }
 
-async function scheduleAndPersistDowngrade(input: {
+async function scheduleAndPersistPlanChange(input: {
   prisma: PrismaClient;
   stripeGateway: ReturnType<typeof createDefaultPlatformBillingStripeGateway>;
   contaId: string;
-  actorUserId: string;
+  actorUserId: string | null;
   environment: 'TEST' | 'LIVE';
   idempotencyKey: string;
   account: {
@@ -1416,7 +1557,7 @@ async function scheduleAndPersistDowngrade(input: {
 }): Promise<{ scheduleId: string; effectiveAt: Date }> {
   const { account, planChange } = input;
   if (
-    planChange.type !== 'DOWNGRADE'
+    (planChange.type !== 'DOWNGRADE' && planChange.type !== 'UPGRADE')
     || planChange.status !== 'PENDING_EFFECTIVE_DATE'
     || !planChange.fromPlanCode
     || !planChange.toPlanCode
@@ -1426,7 +1567,7 @@ async function scheduleAndPersistDowngrade(input: {
     || !account.planCode
     || !account.stripeSubscriptionId
   ) {
-    throw new PlatformBillingError('Stored downgrade cannot be safely scheduled or recovered.', 'PLATFORM_BILLING_REPLAY_INVALID', { planChangeId: planChange.id });
+    throw new PlatformBillingError('Stored plan change cannot be safely scheduled or recovered.', 'PLATFORM_BILLING_REPLAY_INVALID', { planChangeId: planChange.id });
   }
   const result = await schedulePlatformBillingDowngrade({
     contaId: input.contaId,
@@ -1434,6 +1575,8 @@ async function scheduleAndPersistDowngrade(input: {
     actorUserId: input.actorUserId,
     environment: input.environment,
     idempotencyKey: input.idempotencyKey,
+      changeType: planChange.type,
+      idempotencySuffix: planChange.type === 'DOWNGRADE' ? 'stripe-downgrade' : 'stripe-band-transition',
     planChange: {
       id: planChange.id,
       fromPlanCode: planChange.fromPlanCode as PlatformPlanCode,
@@ -1464,7 +1607,7 @@ async function scheduleAndPersistDowngrade(input: {
               { pendingPlanCode: null, pendingChangeType: null, pendingChangeOperationId: null },
               {
                 pendingPlanCode: update.toPlanCode,
-                pendingChangeType: 'DOWNGRADE',
+                pendingChangeType: update.changeType,
                 pendingChangeOperationId: update.operationId,
                 OR: [
                   { pendingChangeClaimToken: null },
@@ -1475,7 +1618,7 @@ async function scheduleAndPersistDowngrade(input: {
           },
           data: {
             pendingPlanCode: update.toPlanCode,
-            pendingChangeType: 'DOWNGRADE',
+            pendingChangeType: update.changeType,
             pendingChangeEffectiveAt: update.effectiveAt,
             pendingChangeOperationId: update.operationId,
             pendingChangeClaimToken: update.claimToken,
@@ -1752,16 +1895,15 @@ async function auditPlanChange(
 
 async function countActiveStudents(prisma: PrismaClient, contaId: string): Promise<number> {
   const rows = await prisma.matricula.findMany({
-    where: {
-      contaId,
-      status: 'ATIVA',
-      aluno: { status: 'ATIVO' },
-    },
+    where: { contaId, status: 'ATIVA', aluno: { status: 'ATIVO' } },
     distinct: ['alunoId'],
     select: { alunoId: true },
   });
-
   return rows.length;
+}
+
+async function countCurrentBillableStudents(contaId: string): Promise<number> {
+  return runWithTenant(contaId, (tx) => countActivePlatformBillingStudents({ tx, contaId }));
 }
 
 function namespaceStripeIdempotencyKey(environment: 'TEST' | 'LIVE', contaId: string, key: string): string {

@@ -52,7 +52,7 @@ describe.skipIf(!isTestDatabase)('platform billing trial PostgreSQL contention',
           id: `sub_trial_race_${suffix}`,
           customerId: stripeCustomerId,
           status: 'trialing' as const,
-          priceId: 'price_starter_test',
+          priceId: 'price_band_001_025_test',
           currentPeriodEnd: new Date(Date.now() + 14 * 24 * 60 * 60_000),
           cancelAtPeriodEnd: false,
           trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60_000),
@@ -67,12 +67,12 @@ describe.skipIf(!isTestDatabase)('platform billing trial PostgreSQL contention',
       const common = {
         contaId,
         contaName: 'Trial race integration fixture',
-        planCode: 'STARTER',
+        planCode: 'BAND_001_025',
         envSource: {
           STRIPE_ENVIRONMENT: 'TEST',
           STRIPE_SECRET_KEY: 'sk_test_integration',
-          STRIPE_PRICE_STARTER_MONTHLY: 'price_starter_test',
-          STRIPE_PRICE_PREMIUM_MONTHLY: 'price_premium_test',
+          STRIPE_PRICE_BAND_001_025_MONTHLY: 'price_band_001_025_test',
+          STRIPE_PRICE_BAND_026_050_MONTHLY: 'price_band_026_050_test',
         },
       };
 
@@ -83,7 +83,7 @@ describe.skipIf(!isTestDatabase)('platform billing trial PostgreSQL contention',
       await vi.waitFor(() => expect(createTrialSubscriptionWithoutPaymentMethod).toHaveBeenCalledTimes(1));
       const second = await Promise.allSettled([
         createPlatformBillingTrialWithoutPaymentMethod(
-          { ...common, idempotencyKey: 'trial-race-b', planCode: 'PREMIUM' },
+          { ...common, idempotencyKey: 'trial-race-b', planCode: 'BAND_026_050' },
           { store, stripeGateway },
         ),
       ]);

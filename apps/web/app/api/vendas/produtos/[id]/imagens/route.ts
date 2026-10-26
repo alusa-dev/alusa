@@ -12,6 +12,7 @@ import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { readBoundedFormData } from '@/lib/upload-request';
 import { withTenantUploadQuota } from '@/lib/upload-quota.server';
 import { randomUUID } from 'node:crypto';
+import { storeWriteBillingBlock } from '../../../_helpers';
 
 const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp'] as const;
@@ -44,6 +45,8 @@ export async function POST(req: Request, context: RouteContext) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     const { contaId } = auth;
+    const billingBlocked = await storeWriteBillingBlock(auth.contaId);
+    if (billingBlocked) return billingBlocked;
     const limiter = await rateLimitAsync(`product-image:${contaId}:${auth.userId}:${ipFromRequest(req)}`, 20, 10 * 60_000);
     if (!limiter.ok) return jsonError(429, 'RATE_LIMITED', 'Muitas tentativas. Aguarde alguns minutos.');
 
@@ -101,6 +104,8 @@ export async function PATCH(req: Request, context: RouteContext) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return jsonError(401, 'NAO_AUTENTICADO', 'Usuário não autenticado');
     const { contaId } = auth;
+    const billingBlocked = await storeWriteBillingBlock(auth.contaId);
+    if (billingBlocked) return billingBlocked;
 
     const { id: productId } = await Promise.resolve(context.params);
     const parsed = productImagesReorderInputDTOSchema.safeParse(await req.json());

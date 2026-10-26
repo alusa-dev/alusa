@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
 import { contratoDTOSchema, contratoRouteParamsDTOSchema } from '@/features/contracts/dtos';
 import { mapContratoRecordToDTO } from '@/features/contracts/mappers';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import { regenerateContractLinkForTenant } from '@/src/server/contracts/contract-read.service';
 
 export async function PATCH(
@@ -12,6 +13,8 @@ export async function PATCH(
   const user = await getSessionUser();
   if (!user?.contaId)
     return NextResponse.json({ error: { message: 'Não autorizado' } }, { status: 401 });
+  const billingBlocked = await platformBillingAccessResponseForConta({ contaId: user.contaId, capability: 'CONTRACT_WRITE' });
+  if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
   try {
     const { id } = contratoRouteParamsDTOSchema.parse(await params);
     const result = await regenerateContractLinkForTenant({

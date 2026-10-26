@@ -7,6 +7,7 @@ import {
   updateMatriculaJurosMultaInputDTOSchema,
 } from '@/features/enrollments/dtos';
 import { updateEnrollmentTerms } from '@/src/server/enrollments/update-enrollment-terms.service';
+import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 
 function jsonError(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
@@ -41,6 +42,8 @@ export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }
     }
 
     const { id: matriculaId } = matriculaRouteParamsDTOSchema.parse(await ctx.params);
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: contaCtx.contaId, capability: 'ENROLLMENT_WRITE' });
+    if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
     const result = await updateEnrollmentTerms({
       matriculaId,
       contaId: contaCtx.contaId,
