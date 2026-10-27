@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { InfoCallout } from '@/components/ui/info-callout';
+import { InfoCallout, InfoCalloutLink } from '@/components/ui/info-callout';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
@@ -349,6 +349,8 @@ export function PlatformBillingFeature({ checkoutState, setupState }: { checkout
     : paymentMethod.status === 'present' ? 'Alterar pagamento' : 'Cadastrar pagamento';
   const cancellationNotice = getCancellationNotice(summary?.account ?? null);
   const trialEndingNotice = getTrialEndingNotice(summary?.account ?? null, currentPlan);
+  const monthlyCloseInconclusive = summary?.issues.some((issue) => issue.code === 'MONTHLY_CLOSE_INCONCLUSIVE') ?? false;
+  const otherBillingIssues = summary?.issues.filter((issue) => issue.code !== 'MONTHLY_CLOSE_INCONCLUSIVE') ?? [];
   const canStartSelfServiceFlow = (!hasManageableSubscription || trialExpired) && commercialTarget?.kind === 'SELF_SERVICE';
 
   async function startCheckout(studentCount?: number, expiredSessionRetry = 0) {
@@ -536,6 +538,18 @@ export function PlatformBillingFeature({ checkoutState, setupState }: { checkout
         </InfoCallout>
       ) : null}
 
+      {otherBillingIssues.map((issue) => (
+        <InfoCallout
+          key={issue.id}
+          variant={issue.severity === 'CRITICAL' ? 'warning' : 'info'}
+          size="sm"
+          title={issue.title}
+          showIcon
+        >
+          {issue.message}
+        </InfoCallout>
+      ))}
+
       {checkoutSuccessState === 'checking' ? (
         <InfoCallout variant="info" size="sm" showIcon>
           Recebemos seu retorno do Stripe e estamos confirmando a assinatura. Aguarde alguns instantes antes de iniciar outra contratação.
@@ -559,19 +573,19 @@ export function PlatformBillingFeature({ checkoutState, setupState }: { checkout
 
       {currentAccessStatus === 'GRACE_PERIOD' ? (
         <InfoCallout variant="warning" size="sm" showIcon>
-          Pagamento pendente até {formatDate(summary.account?.gracePeriodEndsAt ?? null)}.
+          Há um pagamento pendente até {formatDate(summary.account?.gracePeriodEndsAt ?? null)}. Regularize pela seção Pagamento para manter o acesso sem restrições.
         </InfoCallout>
       ) : null}
 
       {currentAccessStatus === 'RESTRICTED' ? (
         <InfoCallout variant="warning" size="sm" showIcon>
-          Conta restrita. Regularize para liberar novas ações.
+          O acesso está restrito por pagamento pendente. Regularize na seção Pagamento para liberar novas ações.
         </InfoCallout>
       ) : null}
 
       {currentAccessStatus === 'CANCELED' && !cancellationNotice ? (
         <InfoCallout variant="warning" size="sm" showIcon>
-          Assinatura cancelada. O acesso ao plano foi encerrado.
+          Sua assinatura foi encerrada e o acesso ao plano terminou.
         </InfoCallout>
       ) : null}
 
@@ -603,17 +617,7 @@ export function PlatformBillingFeature({ checkoutState, setupState }: { checkout
         </InfoCallout>
       ) : summary.account?.status === 'TRIALING' && summary.account.trialEndsAt && !hasScheduledCancellation ? (
         <InfoCallout variant="brand" size="sm" showIcon>
-          Teste gratuito ativo até {formatDate(summary.account.trialEndsAt)}. Ao final, você decide se quer contratar e confirma o pagamento.
-        </InfoCallout>
-      ) : null}
-
-      {summary.issues.length > 0 ? (
-        <InfoCallout
-          variant={summary.issues.some((issue) => issue.severity === 'CRITICAL') ? 'warning' : 'info'}
-          size="sm"
-          showIcon
-        >
-          Atenção: identificamos uma pendência no faturamento da conta.
+          Seu teste gratuito termina em {formatDate(summary.account.trialEndsAt)}. Se quiser continuar, use “Contratar plano” e confirme o pagamento.
         </InfoCallout>
       ) : null}
 
@@ -639,6 +643,12 @@ export function PlatformBillingFeature({ checkoutState, setupState }: { checkout
                 <span>{planUsageLabel}</span>
               </div>
             </div>
+            {monthlyCloseInconclusive ? (
+              <InfoCallout variant="brand" size="sm" title="Sua mensalidade atual foi mantida" className="mt-4">
+                <p>O fechamento mensal mais recente não pôde ser confirmado. Mantenha os alunos e as matrículas atualizados para que os próximos fechamentos reflitam a realidade da escola.</p>
+                <InfoCalloutLink href="/students" calloutVariant="brand" className="mt-2 inline-block">Ver alunos</InfoCalloutLink>
+              </InfoCallout>
+            ) : null}
             <p className="mt-4 text-[13px] text-[#747474] alusa-dark:text-[color:var(--color-text-secondary)]">
               {renewalLabel}
             </p>
@@ -1197,19 +1207,19 @@ function getRenewalLabel(account: BillingAccount | null, paymentMethod: PaymentM
 function getCancellationNotice(account: BillingAccount | null) {
   if (!account?.cancelAtPeriodEnd) return null;
   if (account.status === 'CANCELED' || account.accessStatus === 'CANCELED') {
-    return 'Assinatura cancelada. O acesso ao plano foi encerrado.';
+    return 'Sua assinatura foi encerrada e o acesso ao plano terminou.';
   }
 
   const accessDate = formatDate(account.currentPeriodEnd ?? account.trialEndsAt);
   if (accessDate === '-') {
-    return 'Assinatura cancelada. O acesso continua até o fim do período atual.';
+    return 'O cancelamento está agendado para o fim do período atual. Você pode reverter na seção Plano se quiser manter o plano.';
   }
 
   if (account.status === 'TRIALING') {
-    return `Assinatura cancelada. O acesso ao teste gratuito continua até ${accessDate}.`;
+    return `Seu cancelamento está agendado. O teste gratuito continua até ${accessDate}; você pode reverter na seção Plano.`;
   }
 
-  return `Assinatura cancelada. O acesso continua até ${accessDate}.`;
+  return `O cancelamento está agendado para ${accessDate}. Você pode reverter na seção Plano se quiser manter o plano.`;
 }
 
 function planName(code: PlanCode) {
@@ -1225,7 +1235,7 @@ function getBillingStatusLabel(status: BillingStatus) {
     case 'TRIALING':
       return 'Em teste';
     case 'CHECKOUT_PENDING':
-      return 'Pagamento pendente';
+      return 'Contratação aguardando pagamento';
     case 'PAST_DUE':
       return 'Pagamento pendente';
     case 'CANCELED':
@@ -1316,13 +1326,13 @@ function getTrialEndingNotice(
     : 'a faixa atual de alunos';
   const msUntilEnd = trialEndsAt.getTime() - Date.now();
   if (msUntilEnd <= 0) {
-    return `Seu teste gratuito terminou em ${trialEndDate}. A condição atual é ${commercialTerms}. Contrate e confirme o pagamento para liberar novas operações.`;
+    return `Seu teste gratuito terminou em ${trialEndDate}. A condição atual é ${commercialTerms}. Use “Contratar plano” e confirme o pagamento para continuar usando as operações.`;
   }
 
   const daysUntilEnd = Math.ceil(msUntilEnd / (24 * 60 * 60 * 1000));
   if (daysUntilEnd > 3) return null;
 
-  return `Seu teste gratuito termina em ${daysUntilEnd} ${daysUntilEnd === 1 ? 'dia' : 'dias'} (${trialEndDate}). A condição atual é ${commercialTerms}. Depois, você escolhe se quer contratar e confirma o pagamento.`;
+  return `Seu teste gratuito termina em ${daysUntilEnd} ${daysUntilEnd === 1 ? 'dia' : 'dias'} (${trialEndDate}). A condição atual é ${commercialTerms}. Se quiser continuar, use “Contratar plano” e confirme o pagamento.`;
 }
 
 

@@ -22,8 +22,8 @@ export function CheckoutResumePopup({
   onResume,
   placement = 'viewport',
   autoDismissMs = 5000,
-  title = 'Falta pouco para contratar seu plano',
-  description = 'Seu plano continua disponível. Retome quando quiser.',
+  title = 'Sua contratação está aguardando pagamento',
+  description = 'Retome o checkout para revisar e confirmar o pagamento do plano.',
   actionLabel = 'Retomar contratação',
 }: CheckoutResumePopupProps) {
   const [paused, setPaused] = useState(false);

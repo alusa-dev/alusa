@@ -97,14 +97,21 @@ export async function capturePlatformBillingMonthlySnapshots(input: {
         }],
         skipDuplicates: true,
       });
-      const inconclusiveFingerprint = `${environment}:${conta.id}:monthly-close-inconclusive:${periodStart.toISOString().slice(0, 10)}`;
-      const priorCloseIssue = await tx.platformBillingIssue.findUnique({
-        where: { uq_platform_billing_issue_env_fingerprint: { environment, fingerprint: inconclusiveFingerprint } },
-        select: { id: true, contaId: true, status: true },
+      const openCloseIssues = await tx.platformBillingIssue.findMany({
+        where: {
+          contaId: conta.id,
+          environment,
+          code: 'MONTHLY_CLOSE_INCONCLUSIVE',
+          status: 'OPEN',
+        },
+        select: { id: true, fingerprint: true },
       });
-      if (priorCloseIssue?.contaId === conta.id && priorCloseIssue.status === 'OPEN') {
+      const capturedPeriod = periodStart.toISOString().slice(0, 10);
+      for (const issue of openCloseIssues) {
+        const issuePeriod = getMonthlyCloseIssuePeriod(issue.fingerprint, environment, conta.id);
+        if (!issuePeriod || issuePeriod > capturedPeriod) continue;
         const resolved = await tx.platformBillingIssue.updateMany({
-          where: { id: priorCloseIssue.id, contaId: conta.id, status: 'OPEN' },
+          where: { id: issue.id, contaId: conta.id, environment, status: 'OPEN' },
           data: { status: 'RESOLVED', resolvedAt: now },
         });
         if (resolved.count > 0) {
@@ -114,9 +121,9 @@ export async function capturePlatformBillingMonthlySnapshots(input: {
               billingAccountId: billingAccount?.id ?? null,
               action: 'PLATFORM_BILLING_MONTHLY_CLOSE_ISSUE_RESOLVED',
               entityType: 'PlatformBillingIssue',
-              entityId: inconclusiveFingerprint,
-              correlationId: inconclusiveFingerprint,
-              metadata: { periodStart: periodStart.toISOString().slice(0, 10), resolution: 'snapshot-captured' },
+              entityId: issue.fingerprint,
+              correlationId: issue.fingerprint,
+              metadata: { issuePeriodStart: issuePeriod, resolvedByPeriodStart: capturedPeriod, resolution: 'newer-snapshot-established-baseline-no-backfill' },
             },
           });
         }
@@ -303,6 +310,15 @@ async function recordInconclusiveClose(input: {
       },
     });
   });
+}
+
+function getMonthlyCloseIssuePeriod(fingerprint: string, environment: PlatformBillingEnvironment, contaId: string): string | null {
+  const prefix = `${environment}:${contaId}:monthly-close-inconclusive:`;
+  if (!fingerprint.startsWith(prefix)) return null;
+  const period = fingerprint.slice(prefix.length);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(period)) return null;
+  const parsed = new Date(`${period}T00:00:00.000Z`);
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== period ? null : period;
 }
 
 function getPreviousClosedMonth(timezone: string | null, now: Date): { periodStart: Date; canCapture: boolean } {
