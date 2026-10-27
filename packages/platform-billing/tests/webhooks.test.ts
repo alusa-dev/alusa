@@ -313,6 +313,46 @@ describe('@alusa/platform-billing webhooks', () => {
     expect(store.accounts[0]).toMatchObject({
       stripeSubscriptionId: 'sub_checkout', status: 'CHECKOUT_PENDING', accessStatus: 'PENDING',
     });
+    expect(store.checkoutSessions[0]?.status).toBe('COMPLETED');
+
+    // A distinct Stripe event can redeliver the same completed Checkout; the
+    // local status remains completed and the webhook can finish idempotently.
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_checkout_bind_redelivery', 'checkout.session.completed', {
+        id: 'cs_bind', customer: 'cus_1', subscription: 'sub_checkout', payment_status: 'unpaid',
+        metadata: { contaId: 'conta_1', checkoutRequestKey: 'checkout-key' },
+      }),
+      environment: 'TEST', envSource,
+      stripeGateway: checkoutGateway({
+        sessionId: 'cs_bind', requestKey: 'checkout-key', customerId: 'cus_1', subscriptionId: 'sub_checkout', contaId: 'conta_1',
+        planCode: 'STARTER', priceId: 'price_starter_test', subscriptionStatus: 'incomplete', invoice: null,
+      }),
+    }, store);
+    expect(store.checkoutSessions[0]?.status).toBe('COMPLETED');
+  });
+
+  it('keeps checkout completion retryable when its metadata request key has no local session', async () => {
+    const store = createMemoryStore([buildAccount({
+      status: 'CHECKOUT_PENDING', accessStatus: 'PENDING', stripeCustomerId: 'cus_missing_local',
+      stripeSubscriptionId: null, pendingPlanCode: 'STARTER', checkoutClaimKey: 'missing-local-key',
+    })]);
+
+    await expect(processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_checkout_missing_local', 'checkout.session.completed', {
+        id: 'cs_missing_local', customer: 'cus_missing_local', subscription: 'sub_missing_local',
+        metadata: { contaId: 'conta_1', checkoutRequestKey: 'missing-local-key' },
+      }),
+      environment: 'TEST', envSource,
+      stripeGateway: checkoutGateway({
+        sessionId: 'cs_missing_local', requestKey: 'missing-local-key', customerId: 'cus_missing_local',
+        subscriptionId: 'sub_missing_local', contaId: 'conta_1', planCode: 'STARTER',
+        priceId: 'price_starter_test', subscriptionStatus: 'incomplete', invoice: null,
+      }),
+    }, store)).rejects.toMatchObject({ code: 'PLATFORM_BILLING_CHECKOUT_RECONCILIATION_REQUIRED' });
+
+    expect(store.webhookEvents[0]).toMatchObject({ status: 'FAILED', attempts: 1 });
+    expect(store.accounts[0]).toMatchObject({ status: 'CHECKOUT_PENDING', stripeSubscriptionId: null });
+    expect(store.checkoutSessions).toEqual([]);
   });
 
   it('keeps a new price-band checkout pending until a paid invoice webhook confirms activation', async () => {
@@ -1580,6 +1620,13 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
       }
     },
     async clearCheckoutClaim() {},
+    async markCheckoutSessionCompleted(input) {
+      const session = checkoutSessions.find((item) => item.contaId === input.contaId
+        && item.environment === input.environment
+        && item.stripeCheckoutSessionId === input.stripeCheckoutSessionId
+        && (item.status === 'CREATED' || item.status === 'COMPLETED'));
+      if (session) session.status = 'COMPLETED';
+    },
     async updateAccountFromStripeSubscription(input) {
       const account = accounts.find((item) => item.id === input.accountId);
       if (!account) throw new Error('account not found');

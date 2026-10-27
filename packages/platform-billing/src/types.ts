@@ -365,6 +365,11 @@ export interface PlatformBillingStore {
   }): Promise<void>;
   clearCheckoutClaim(_input: { contaId: string; environment: PlatformBillingEnvironment; idempotencyKey: string }): Promise<boolean>;
   markCheckoutSessionExpired(_input: { contaId: string; environment: PlatformBillingEnvironment; idempotencyKey: string }): Promise<void>;
+  markCheckoutSessionCompleted(_input: {
+    contaId: string;
+    environment: PlatformBillingEnvironment;
+    stripeCheckoutSessionId: string;
+  }): Promise<void>;
   updateAccountFromStripeSubscription(
     _input: UpdatePlatformBillingAccountFromStripeSubscriptionInput,
   ): Promise<PlatformBillingAccountRecord>;

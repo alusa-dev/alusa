@@ -376,6 +376,18 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
       });
     },
 
+    markCheckoutSessionCompleted: async ({ contaId, environment, stripeCheckoutSessionId }) => {
+      await db.platformBillingCheckoutSession.updateMany({
+        where: {
+          contaId,
+          environment,
+          stripeCheckoutSessionId,
+          status: { in: ['CREATED', 'COMPLETED'] },
+        },
+        data: { status: 'COMPLETED' },
+      });
+    },
+
     updateAccountFromStripeSubscription: async (input) => {
       const now = new Date();
       const account = await runWithOptionalTransaction(db, async (tx) => {

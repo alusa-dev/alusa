@@ -213,7 +213,12 @@ async function processCheckoutCompleted(
       environment: input.environment,
       idempotencyKey: checkoutRequestKey,
     });
-    if (!localCheckout) return contaId;
+    if (!localCheckout) {
+      throw new PlatformBillingError(
+        'Completed Checkout has no matching local checkout record yet.',
+        'PLATFORM_BILLING_CHECKOUT_RECONCILIATION_REQUIRED',
+      );
+    }
 
     const defaultGateway = createDefaultPlatformBillingStripeGateway(input.envSource);
     const gateway = input.stripeGateway ?? defaultGateway;
@@ -230,7 +235,7 @@ async function processCheckoutCompleted(
       localCheckout.stripeCustomerId === customerId &&
       localCheckout.idempotencyKey === checkoutRequestKey &&
       readCheckoutCancelRequestKey(localCheckout.cancelUrl) === checkoutRequestKey &&
-      localCheckout.status === 'CREATED' &&
+      (localCheckout.status === 'CREATED' || localCheckout.status === 'COMPLETED') &&
       localCheckout.stripePriceId === resolvedPriceId &&
       remoteCheckout.id === localCheckout.stripeCheckoutSessionId &&
       remoteCheckout.status === 'complete' &&
@@ -247,6 +252,16 @@ async function processCheckoutCompleted(
     if (!checkoutMatches) {
       throw new PlatformBillingError('Completed Checkout does not match its persisted request.', 'PLATFORM_BILLING_WEBHOOK_INVALID');
     }
+
+    // Stripe is authoritative for Checkout completion. Update the local
+    // record only after its tenant, environment, customer, subscription and
+    // price bindings have all been verified. The store operation is scoped
+    // by tenant/environment/session and is safe to repeat on webhook retries.
+    await store.markCheckoutSessionCompleted({
+      contaId,
+      environment: input.environment,
+      stripeCheckoutSessionId: localCheckout.stripeCheckoutSessionId,
+    });
 
     const ownsCurrentAttempt = account.checkoutClaimKey === checkoutRequestKey &&
       account.pendingPlanCode === localCheckout.planCode;
