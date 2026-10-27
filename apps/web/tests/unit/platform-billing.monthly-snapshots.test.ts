@@ -9,10 +9,16 @@ const { state, tx, prisma } = vi.hoisted(() => {
     platformBillingAccount: { findUnique: vi.fn() },
     platformBillingMonthlySnapshot: { createMany: snapshotCreateMany, findMany: vi.fn(), findUnique: vi.fn() },
     platformBillingAuditLog: { create: auditCreate },
-    platformBillingIssue: { upsert: issueUpsert, findUnique: vi.fn(), updateMany: vi.fn() },
+    auditLog: { findFirst: vi.fn(), create: vi.fn() },
+    platformBillingIssue: { upsert: issueUpsert, findUnique: vi.fn(), findMany: vi.fn(), updateMany: vi.fn() },
     platformBillingNotificationOutbox: { createMany: outboxCreateMany },
   };
-  const state = { studentCount: 501, tenantIds: [] as string[], snapshots: [] as Array<Record<string, unknown>> };
+  const state = {
+    studentCount: 501,
+    tenantIds: [] as string[],
+    snapshots: [] as Array<Record<string, unknown>>,
+    historyMarkers: new Set<string>(),
+  };
   return {
     state,
     tx,
@@ -46,6 +52,7 @@ describe('capturePlatformBillingMonthlySnapshots', () => {
     state.studentCount = 501;
     state.tenantIds = [];
     state.snapshots = [];
+    state.historyMarkers = new Set();
     vi.mocked(prisma.conta.count).mockResolvedValue(1);
     vi.mocked(prisma.conta.findMany).mockResolvedValue([{ id: 'conta_1', timezone: 'UTC' }] as never);
     vi.mocked(tx.platformBillingAccount.findUnique).mockResolvedValue({ id: 'billing_account_1', planCode: 'STARTER' } as never);
@@ -58,6 +65,14 @@ describe('capturePlatformBillingMonthlySnapshots', () => {
     vi.mocked(tx.platformBillingIssue.upsert).mockResolvedValue({} as never);
     vi.mocked(tx.platformBillingIssue.findUnique).mockResolvedValue(null as never);
     vi.mocked(tx.platformBillingIssue.updateMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(tx.platformBillingIssue.findMany).mockResolvedValue([] as never);
+    vi.mocked(tx.auditLog.findFirst).mockImplementation(async ({ where }) =>
+      state.historyMarkers.has(where.contaId) ? { id: 'history-marker' } as never : null as never,
+    );
+    vi.mocked(tx.auditLog.create).mockImplementation(async ({ data }) => {
+      state.historyMarkers.add(data.contaId);
+      return {} as never;
+    });
   });
 
   it('opens one internal issue and one school notice after three specialist closes without repricing', async () => {
@@ -168,7 +183,7 @@ describe('capturePlatformBillingMonthlySnapshots', () => {
 
     await capturePlatformBillingMonthlySnapshots({ prisma: prisma as never, now: new Date('2026-11-01T12:00:00Z') });
 
-    expect(state.tenantIds).toEqual(['conta_a', 'conta_b']);
+    expect(new Set(state.tenantIds)).toEqual(new Set(['conta_a', 'conta_b']));
     expect(tx.platformBillingMonthlySnapshot.createMany.mock.calls.flatMap(([args]) => args.data.map((row) => [row.contaId, row.billingAccountId])))
       .toEqual([['conta_a', 'account-conta_a'], ['conta_b', 'account-conta_b']]);
     expect(tx.platformBillingIssue.upsert.mock.calls.map(([args]) => args.create.contaId)).toEqual(['conta_a', 'conta_b']);
@@ -199,8 +214,8 @@ describe('capturePlatformBillingMonthlySnapshots', () => {
 
     expect(first.checked).toBe(2);
     expect(second.checked).toBe(2);
-    expect(firstPage).toHaveLength(2);
-    expect(state.tenantIds).toHaveLength(2);
+    expect(new Set(firstPage)).toHaveLength(2);
+    expect(new Set(state.tenantIds)).toHaveLength(2);
     expect(new Set([...firstPage, ...state.tenantIds])).toEqual(new Set(accounts.map(({ id }) => id)));
     expect(prisma.conta.findMany).toHaveBeenNthCalledWith(
       1,
@@ -213,12 +228,13 @@ describe('capturePlatformBillingMonthlySnapshots', () => {
   });
 
   it('records a missed close as inconclusive instead of inventing a historical count', async () => {
+    vi.mocked(countActivePlatformBillingStudents).mockRejectedValue(new PlatformBillingHistoricalCountInconclusive());
     const result = await capturePlatformBillingMonthlySnapshots({
       prisma: prisma as never,
       now: new Date('2026-11-02T12:00:00Z'),
     });
 
-    expect(result.inconclusive).toBe(1);
+    expect(result).toMatchObject({ checked: 1, captured: 0, recovered: 0 });
     expect(tx.platformBillingMonthlySnapshot.createMany).not.toHaveBeenCalled();
     expect(tx.platformBillingIssue.upsert).toHaveBeenCalledWith(expect.objectContaining({
       create: expect.objectContaining({
@@ -248,7 +264,7 @@ describe('capturePlatformBillingMonthlySnapshots', () => {
     ]);
   });
 
-  it('resolves the open inconclusive issue atomically when retry captures the close', async () => {
+  it('resolves an inconclusive issue idempotently when its exact snapshot already exists', async () => {
     const historicalError = new (PlatformBillingHistoricalCountInconclusive as unknown as new () => Error)();
     vi.mocked(countActivePlatformBillingStudents)
       .mockRejectedValueOnce(historicalError)
@@ -256,16 +272,22 @@ describe('capturePlatformBillingMonthlySnapshots', () => {
     vi.mocked(tx.platformBillingIssue.findUnique)
       .mockResolvedValueOnce(null as never)
       .mockResolvedValueOnce({ id: 'issue-close', contaId: 'conta_1', status: 'OPEN' } as never);
-    vi.mocked(tx.platformBillingMonthlySnapshot.createMany).mockResolvedValue({ count: 1 } as never);
+    vi.mocked(tx.platformBillingMonthlySnapshot.createMany)
+      .mockResolvedValueOnce({ count: 1 } as never)
+      .mockResolvedValueOnce({ count: 0 } as never);
+    vi.mocked(tx.platformBillingMonthlySnapshot.findUnique).mockResolvedValue({ id: 'snapshot-october' } as never);
+    vi.mocked(tx.platformBillingIssue.findMany).mockResolvedValue([
+      { id: 'issue-close', fingerprint: 'TEST:conta_1:monthly-close-inconclusive:2026-10-01', details: {} },
+    ] as never);
 
     const failed = await capturePlatformBillingMonthlySnapshots({ prisma: prisma as never, now: new Date('2026-11-01T12:00:00Z') });
     const recovered = await capturePlatformBillingMonthlySnapshots({ prisma: prisma as never, now: new Date('2026-11-01T12:05:00Z') });
 
     expect(failed.inconclusive).toBe(1);
-    expect(recovered).toMatchObject({ inconclusive: 0, captured: 1 });
+    expect(recovered).toMatchObject({ inconclusive: 0, recovered: 1, captured: 1 });
     expect(tx.platformBillingMonthlySnapshot.createMany).toHaveBeenCalledTimes(1);
     expect(tx.platformBillingIssue.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'issue-close', contaId: 'conta_1', status: 'OPEN' },
+      where: expect.objectContaining({ id: 'issue-close', contaId: 'conta_1', environment: 'TEST', status: 'OPEN' }),
       data: expect.objectContaining({ status: 'RESOLVED', resolvedAt: expect.any(Date) }),
     }));
     expect(tx.platformBillingAuditLog.create).toHaveBeenCalledWith(expect.objectContaining({

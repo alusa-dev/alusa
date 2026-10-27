@@ -11,10 +11,12 @@ const mocks = vi.hoisted(() => ({
   financialGate: vi.fn(),
   cancelInvoice: vi.fn(),
   markPaid: vi.fn(),
+  reverseTransaction: vi.fn(),
+  session: vi.fn(async () => ({ ok: true, contaId: 'conta_a', userId: 'user_a', role: 'FINANCEIRO' })),
 }));
 
 vi.mock('@/lib/api/with-tenant-session', () => ({
-  resolveTenantSession: vi.fn(async () => ({ ok: true, contaId: 'conta_a', userId: 'user_a', role: 'FINANCEIRO' })),
+  resolveTenantSession: mocks.session,
 }));
 vi.mock('@/src/server/platform-billing/capacity', () => ({
   platformBillingAccessResponseForConta: mocks.access,
@@ -22,6 +24,7 @@ vi.mock('@/src/server/platform-billing/capacity', () => ({
 vi.mock('@/src/server/finance/refund-charge.service', () => ({ executeCobrancaRefund: mocks.refund }));
 vi.mock('@/src/server/finance/undo-cash-payment.service', () => ({ executeUndoCashPayment: mocks.undo }));
 vi.mock('@/src/server/finance/charge-payment-method.service', () => ({ updateCobrancaFormaPagamento: mocks.paymentMethod }));
+vi.mock('@/src/server/finance/financial-transaction.service', () => ({ reverseFinancialTransaction: mocks.reverseTransaction }));
 vi.mock('@/features/finance/operations/charges/mappers', () => ({ mapCobrancaUpdateFormaPagamentoResultToDTO: (value: unknown) => value }));
 vi.mock('@/lib/finance/resolve-charge-route-ref', () => ({ resolveChargeFromRouteRef: mocks.resolveCharge }));
 vi.mock('@/lib/finance/financial-account-gate', () => ({ guardFinancialAccountOr412: mocks.financialGate }));
@@ -41,6 +44,7 @@ import { PUT as changeMethod } from '@/app/api/cobrancas/[id]/forma-pagamento/ro
 import { POST as cancelChargeNf } from '@/app/api/cobrancas/[id]/nota-fiscal/cancelar/route';
 import { POST as cancelInvoiceRoute } from '@/app/api/finance/invoices/[invoiceId]/cancel/route';
 import { POST as markPaid } from '@/app/api/financeiro/cobrancas/[id]/marcar-pago/route';
+import { POST as reverseTransaction } from '@/app/api/financeiro/lancamentos/[id]/estornar/route';
 import { assertPlatformAccess, PlatformBillingError, type PlatformBillingAccountRecord } from '@alusa/platform-billing';
 
 const params = (id = 'charge_a') => ({ params: Promise.resolve({ id }) });
@@ -56,12 +60,14 @@ const routes = [
   { name: 'charge tax invoice cancellation', call: () => cancelChargeNf(request('http://localhost/nf'), params()), service: mocks.cancelChargeInvoice },
   { name: 'finance invoice cancellation', call: () => cancelInvoiceRoute(request('http://localhost/invoice'), { params: Promise.resolve({ invoiceId: 'invoice_a' }) } as never), service: mocks.cancelInvoice },
   { name: 'manual payment correction', call: () => markPaid(request('http://localhost/mark-paid', 'POST', {}) as never, params()), service: mocks.markPaid },
+  { name: 'financial transaction reversal', call: () => reverseTransaction(request('http://localhost/transaction/reverse', 'POST', { dataEstorno: '2026-10-27', motivo: 'correção financeira' }) as never, params('transaction_a')), service: mocks.reverseTransaction },
 ];
 
 describe('FINANCIAL_CORRECTION route capability', () => {
   let billingStatus: 'PENDING' | 'RESTRICTED' | 'CANCELED';
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.session.mockResolvedValue({ ok: true, contaId: 'conta_a', userId: 'user_a', role: 'FINANCEIRO' });
     billingStatus = 'RESTRICTED';
     mocks.access.mockImplementation(async ({ contaId, capability }) => {
       const account = {
@@ -89,6 +95,7 @@ describe('FINANCIAL_CORRECTION route capability', () => {
     mocks.cancelChargeInvoice.mockResolvedValue({ success: true, data: {} });
     mocks.cancelInvoice.mockResolvedValue({ success: true, data: {} });
     mocks.markPaid.mockResolvedValue({ success: true, data: { isOffline: true } });
+    mocks.reverseTransaction.mockResolvedValue({ ok: false, code: 'NAO_ENCONTRADO', message: 'Lançamento não encontrado' });
   });
 
   it.each(routes)('blocks $name for PENDING before the action according to the billing policy', async ({ call, service }) => {
@@ -107,5 +114,40 @@ describe('FINANCIAL_CORRECTION route capability', () => {
       expect(response.status).not.toBe(402);
     }
     expect(service).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not invoke reversal for an unauthorized role', async () => {
+    mocks.session.mockResolvedValue({ ok: true, contaId: 'conta_a', userId: 'user_a', role: 'RECEPCAO' });
+
+    const response = await reverseTransaction(
+      request('http://localhost/transaction/reverse', 'POST', { dataEstorno: '2026-10-27' }) as never,
+      params('transaction_a'),
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.access).not.toHaveBeenCalled();
+    expect(mocks.reverseTransaction).not.toHaveBeenCalled();
+  });
+
+  it('passes only the authenticated tenant to the reversal service under restricted and canceled billing', async () => {
+    for (const status of ['RESTRICTED', 'CANCELED'] as const) {
+      billingStatus = status;
+      const response = await reverseTransaction(
+        request('http://localhost/transaction/reverse', 'POST', {
+          dataEstorno: '2026-10-27', motivo: 'correção', contaId: 'conta_other',
+        }) as never,
+        params('transaction_a'),
+      );
+      expect(response.status).toBe(404);
+    }
+
+    expect(mocks.reverseTransaction).toHaveBeenNthCalledWith(1, {
+      contaId: 'conta_a', userId: 'user_a', lancamentoId: 'transaction_a',
+      dataEstorno: '2026-10-27', motivo: 'correção',
+    });
+    expect(mocks.reverseTransaction).toHaveBeenNthCalledWith(2, {
+      contaId: 'conta_a', userId: 'user_a', lancamentoId: 'transaction_a',
+      dataEstorno: '2026-10-27', motivo: 'correção',
+    });
   });
 });

@@ -54,7 +54,8 @@ As tabelas de dados da conta são tenant-scoped por `contaId`, têm FK para `Con
 | 301–400 | R$ 559 |
 | 401–500 | R$ 649 |
 
-Acima de 500, novas contratações seguem para atendimento especializado. Uma
+Até 500 alunos elegíveis, novas contas podem seguir pelo onboarding self-service;
+acima de 500, novas contratações seguem para atendimento especializado/lista de espera. Isso não bloqueia a operação de uma conta já contratada. Uma
 Conta já contratada não tem matrículas ou operações escolares bloqueadas por
 ultrapassar 500 alunos. A mesma faixa permanece até três fechamentos mensais
 consecutivos confirmarem outra faixa; o novo preço aplica no ciclo futuro.
@@ -100,7 +101,7 @@ Price IDs são lidos do ambiente server-side. Nenhum Price ID arbitrário vindo 
 - Rejeitar contratação self-service acima de 500 alunos, sem limitar matrículas ou operação de Conta já contratada.
 - Contar alunos uma vez por matrícula ativa e efetiva com valor de ciclo positivo, considerando periodicidades, descontos e vigência.
 - Resolver faixa inicial por contagem server-side ou estimativa confirmada e persistida; a quantidade enviada ao checkout não define o preço.
-- Fechamentos mensais são únicos por Conta/ambiente/competência; competência perdida ou sem histórico suficiente gera issue e não é calculada retroativamente com a contagem atual.
+- Fechamentos mensais são únicos por Conta/ambiente/competência; competência perdida só pode ser reconstruída pelo período original com histórico elegível, marcador de auditoria anterior ao mês e sem exclusões posteriores. Caso contrário, permanece issue sem snapshot especulativo; recuperação não agenda preço retroativo.
 - Agendar downgrade para o próximo ciclo e bloquear downgrade incompatível com alunos ativos.
 - Solicitar upgrade via Stripe com `payment_behavior=pending_if_incomplete` e proration, consolidando plano superior somente por webhook.
 - Agendar cancelamento no fim do período e reverter antes do encerramento.

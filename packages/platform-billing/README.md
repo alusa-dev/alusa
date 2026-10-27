@@ -18,8 +18,17 @@ As faixas mensais são: 1–25 R$ 169; 26–50 R$ 229; 51–100 R$ 289;
 contratações e não bloqueia a operação de escolas já contratadas. Mudanças
 exigem três fechamentos consecutivos na mesma faixa.
 
-O trial dura 14 dias sem exigir cartão. A coleta de método de pagamento no
-Portal é bloqueada durante trial não pago; a contratação após o trial ocorre
-em Checkout explícito e a ativação depende de confirmação financeira Stripe.
+O trial dura 14 dias sem exigir cartão. A inclusão opcional de cartão durante o
+trial usa Setup Checkout separado, com consentimento explícito, e não converte
+o plano nem inicia cobrança. A contratação ocorre em Checkout explícito e a
+ativação depende de confirmação financeira Stripe.
 O job não reconstrói uma competência perdida usando dados atuais: cria issue
-`MONTHLY_CLOSE_INCONCLUSIVE` e preserva a faixa vigente.
+`MONTHLY_CLOSE_INCONCLUSIVE` e preserva a faixa vigente. Uma competência mais
+recente não resolve o mês ausente por si só. A manutenção pode reconstruir a
+competência original quando a contagem histórica passa as verificações de
+`updatedAt`, existe marcador de cobertura anterior ao mês e não houve matrícula
+excluída após o fechamento. Caso contrário, a issue permanece aberta. Contas
+ainda fora do billing ou abertas depois do fim do período não recebem issues
+retroativas de fechamento. A recuperação não agenda mudança de preço; só o
+fluxo mensal normal avalia três competências consecutivas e aplica qualquer
+alteração em ciclo futuro.

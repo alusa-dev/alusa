@@ -314,6 +314,16 @@ export async function deleteMobileEnrollment(input: { actor: MobileEnrollmentAct
     if (charges || payments || subscriptions || installmentPlans || contracts || enrollment.matriculaFamiliarId || enrollment.asaasSubscriptionId) {
       throw new Error('Esta matrícula possui histórico ou vínculos ativos. Para preservar os registros, encerre a matrícula em vez de excluí-la.');
     }
+    await tx.auditLog.create({
+      data: {
+        contaId: input.actor.contaId,
+        actorType: 'USER',
+        actorId: input.actor.userId,
+        action: 'MATRICULA_HARD_DELETED',
+        entityType: 'MATRICULA',
+        entityId: enrollment.id,
+      },
+    });
     await tx.matricula.delete({ where: { id: input.enrollmentId } });
     return { deleted: true };
   });

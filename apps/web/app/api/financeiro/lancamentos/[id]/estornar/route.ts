@@ -35,7 +35,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return err(403, 'SEM_PERMISSAO', 'Acesso negado');
     }
-    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'MONEY_TRANSFER' });
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'FINANCIAL_CORRECTION' });
     if (billingBlocked) return err(billingBlocked.status, billingBlocked.body.error, billingBlocked.body.message);
 
     const { id } = financeiroRouteIdParamsDTOSchema.parse(await params);

@@ -4,6 +4,15 @@ Este checklist e para quando a Alusa decidir ativar cobrancas reais com Stripe B
 
 Status atual: nao executar agora. A implementacao deve permanecer em homologacao/test mode ate decisao explicita de rollout.
 
+O modelo implementado é uma única faixa mensal de R$ 169 a R$ 649. Onboarding
+self-service é limitado a 500 alunos elegíveis; acima disso, novas contas são
+encaminhadas a atendimento especializado/lista de espera. Três fechamentos
+mensais consecutivos e válidos sustentam uma mudança de faixa, com aplicação
+futura e sem cobrança retroativa. Trial dura 14 dias sem cartão obrigatório;
+cartão opcional durante o trial não converte nem cobra, e a contratação exige
+Checkout explícito. Esses comportamentos implementados não significam que a
+cobrança Stripe LIVE esteja habilitada.
+
 ## Regra de seguranca
 
 - Nao trocar `STRIPE_ENVIRONMENT` para `LIVE` sem aprovacao de produto, financeiro e engenharia.
@@ -104,6 +113,9 @@ Cadencia sugerida:
 - Troca de plano em trial.
 - Troca de plano fora do trial.
 - Plano incompativel por limite de alunos ativos.
+- Checkout explícito pago, cartão recusado, autenticação/SCA, idempotência e retry; duplicidade, desordem, assinatura substituída, falha e reconciliação de webhooks.
+- Trial expirado pausado e proteção contra trial duplicado; incluir cartão opcional sem conversão automática.
+- Três fechamentos consecutivos antes da troca de faixa, mudança futura sem prorrata surpresa, conta legada compatível e operação mantida acima de 500 alunos.
 
 ## Auditoria
 

@@ -2,7 +2,7 @@
 
 Este documento registra o estado atual da implementacao de assinaturas da Alusa com Stripe Billing.
 
-Status: implementacao pronta para homologacao, mas producao nao sera ativada agora.
+Status: funcionalidades implementadas e em homologacao. Producao nao esta habilitada; este documento nao comprova testes end-to-end recentes nem autorizacao para lancar cobrancas.
 
 ## Escopo
 
@@ -15,7 +15,7 @@ A Asaas continua separada e responsavel pelo financeiro educacional das escolas:
 - Onboarding financeiro com `Cadastrar depois`, iniciando trial de 14 dias sem cartão.
 - Trial com contagem correta na Alusa.
 - Avisos visuais de trial ativo e fim do trial.
-- Cadastro de cartão durante trial não pago é bloqueado pelo backend para não autorizar cobrança futura apenas pela inclusão do método de pagamento.
+- Inclusão opcional de cartão durante trial usa um fluxo Setup separado, com consentimento explícito; salvar cartão não converte o trial nem inicia cobrança.
 - Contratação paga exige Checkout explícito; retorno do navegador não confirma ativação.
 - Troca de plano fora do trial.
 - Regras de capacidade antes da troca ou reativacao de plano.
@@ -36,11 +36,11 @@ A Asaas continua separada e responsavel pelo financeiro educacional das escolas:
 
 ### Escola inicia trial sem cartao
 
-A escola escolhe `Cadastrar depois`. A Alusa cria o estado comercial da conta, inicia o trial e permite continuar o onboarding. Ao fim do trial, o administrador pode confirmar o plano e o pagamento pelo Checkout.
+A escola escolhe `Cadastrar depois`. A Alusa cria o estado comercial da conta, inicia o trial de 14 dias sem exigir cartão e permite continuar o onboarding. A inclusão opcional de cartão durante o trial não contrata o plano nem inicia cobrança. Ao fim do trial, o administrador precisa confirmar plano e pagamento em um Checkout explícito.
 
 ### Trial perto do fim
 
-A Alusa pode exibir callout e notificacao amigavel. A ação principal leva à contratação explícita; cadastrar cartão no Portal durante o trial é recusado pelo servidor.
+A Alusa pode exibir callout e notificacao amigavel. A ação principal leva à contratação explícita. O fluxo de Setup de cartão é separado da assinatura e depende de consentimento e webhook; ele não substitui o Checkout de contratação.
 
 ### Cobranca pos-trial paga
 
@@ -70,15 +70,24 @@ Assinatura ja cancelada nao deve ser tratada como simples reversao. A Alusa abre
 
 ### Mudança de faixa
 
-O preço segue a faixa de alunos ativos pagantes da tabela comercial vigente. A
+O modelo comercial usa uma única faixa mensal por alunos elegíveis (R$ 169 a
+R$ 649). Até 500 alunos, a contratação pode seguir o onboarding self-service;
+acima de 500, novas contas seguem para atendimento especializado/lista de
+espera e não recebem preço automático. Esse limite não bloqueia contas já
+contratadas. O preço segue a faixa de alunos elegíveis da tabela comercial vigente. A
 faixa contratada só muda depois de três fechamentos consecutivos válidos na
 mesma faixa; a aplicação é programada para o ciclo futuro e não gera preço
-personalizado automaticamente acima de 500 alunos. Uma competência perdida ou
-inconclusiva gera issue operacional e não altera o preço vigente.
+retroativo nem prorrata surpresa. Uma competência perdida ou inconclusiva gera
+issue operacional, preserva a faixa vigente e não pode ser resolvida por um
+fechamento posterior por si só. A manutenção só reconstrói a competência
+original quando o contador histórico, o marcador de cobertura de auditoria e a
+ausência de exclusões posteriores comprovam o período. Essa recuperação não
+agenda mudança de preço; a decisão ainda exige três competências consecutivas
+e o fluxo mensal agenda qualquer transição para ciclo futuro.
 
 ## Estados principais
 
-- `TRIALING`: teste gratis ativo.
+- `TRIALING`: trial grátis de 14 dias ativo; cartão é opcional e não converte o plano.
 - `ACTIVE`: assinatura ativa e acesso normal.
 - `PAST_DUE`: pagamento pendente.
 - `GRACE_PERIOD`: acesso temporariamente mantido durante recuperacao de pagamento.
@@ -128,6 +137,16 @@ Endpoint interno:
 
 - `/api/admin/platform-billing/maintenance`
 
+Rotas principais implementadas:
+
+- `GET /api/platform-billing/summary` e `GET /api/platform-billing/access` leem o estado local.
+- `POST /api/platform-billing/trial` inicia trial; `POST /api/platform-billing/checkout` exige a contratação explícita.
+- `POST /api/platform-billing/plan-change`, `/cancel` e `/portal` gerenciam mudanças comerciais e billing portal. O Portal inicia Setup Checkout opcional de cartão durante trial quando solicitado com consentimento.
+- `/api/webhooks/stripe` recebe eventos; rotas administrativas em `/api/admin/platform-billing/` drenam/reexecutam webhooks, reconciliam e processam manutenção.
+
+As rotas estão implementadas; a presença delas não significa que estejam
+publicadas para self-service em produção nem que Stripe LIVE esteja configurada.
+
 Protecao:
 
 - `PLATFORM_BILLING_WORKER_SECRET`
@@ -170,14 +189,14 @@ Devem ficar auditaveis:
 - reconciliacao automatica;
 - divergencia que exige acao manual.
 
-## Validacoes ja realizadas
+## Validacao deste branch
 
-- Prisma generate executado.
-- Migration local aplicada.
-- Testes do pacote `platform-billing` passaram.
-- Build/typecheck de `platform-billing` passou.
-- Typecheck de `apps/web` passou.
-- Fluxos manuais principais foram validados em test mode.
+- `pnpm --dir packages/platform-billing exec dotenv -e ../../.env.test -- vitest run`: 187 testes passaram, incluindo concorrência PostgreSQL para trial, Checkout, invoice e webhook.
+- Testes de `apps/web/src/server/platform-billing`, `apps/web/app/api/platform-billing` e a integração de elegibilidade em `alusa_test`: 90 passaram.
+- Typecheck de `@alusa/web` e `@alusa/platform-billing` passou.
+- A integração da elegibilidade usa PostgreSQL local `alusa_test`; isso verifica o SQL e os limites de dados, não Stripe.
+- Uma chave Stripe `sk_test_` está configurada, mas a listagem read-only não encontrou Test Clocks. Os cenários Stripe acelerados de trial, cobrança, SCA e webhooks permanecem sem homologação sandbox nesta execução.
+- Nenhuma chamada Stripe LIVE, ativação pública ou cobrança real foi realizada. A implementação existente e os testes locais não equivalem a aprovação para produção.
 
 ## O que nao fazer agora
 

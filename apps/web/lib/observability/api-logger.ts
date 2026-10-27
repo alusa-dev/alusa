@@ -98,6 +98,7 @@ export type ApiOperationalEventName =
   | 'api.platform_billing.notification_email.failed'
   | 'api.platform_billing.summary.invalid_dto'
   | 'job.platform_billing.monthly_price_transition.failed'
+  | 'job.platform_billing.monthly_snapshot_recovery.inconclusive'
   | 'api.account.close.subscription_cancel.failed'
   | 'api.account.close.failed'
   | 'api.plans.list.failed'

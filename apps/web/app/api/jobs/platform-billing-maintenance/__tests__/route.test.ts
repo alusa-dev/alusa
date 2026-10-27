@@ -35,7 +35,7 @@ describe('GET /api/jobs/platform-billing-maintenance telemetry', () => {
     mocks.expireTrials.mockResolvedValue({ checked: 0, detected: 0, notificationQueued: 0 });
     mocks.expireGracePeriods.mockResolvedValue({ checked: 0, restricted: 0, notified: 0 });
     mocks.reconcile.mockResolvedValue({ checkedAccounts: 0, issues: 0 });
-    mocks.captureMonthlySnapshots.mockResolvedValue({ checked: 0, captured: 0, readyForSpecialist: 0, transitionsScheduled: 0, specialistNoticesCreated: 0 });
+    mocks.captureMonthlySnapshots.mockResolvedValue({ checked: 0, captured: 0, recovered: 0, readyForSpecialist: 0, transitionsScheduled: 0, specialistNoticesCreated: 0 });
   });
 
   it('counts reconciled billing issues as useful work', async () => {
@@ -58,6 +58,7 @@ describe('GET /api/jobs/platform-billing-maintenance telemetry', () => {
     mocks.captureMonthlySnapshots.mockResolvedValue({
       checked: 1,
       captured: 1,
+      recovered: 0,
       readyForSpecialist: 0,
       transitionsScheduled: 0,
       specialistNoticesCreated: 0,
@@ -72,6 +73,30 @@ describe('GET /api/jobs/platform-billing-maintenance telemetry', () => {
       'platform-billing-maintenance',
       expect.objectContaining({ startedAt: expect.any(Number), correlationId: expect.any(String) }),
       expect.objectContaining({ pricingSnapshotsCaptured: 1 }),
+      expect.objectContaining({ workStatus: 'worked' }),
+    );
+  });
+
+  it('counts a reconstructed historical competence as useful work', async () => {
+    mocks.captureMonthlySnapshots.mockResolvedValue({
+      checked: 1,
+      captured: 0,
+      recovered: 1,
+      inconclusive: 0,
+      readyForSpecialist: 0,
+      transitionsScheduled: 0,
+      specialistNoticesCreated: 0,
+    });
+
+    const response = await GET(new Request('http://localhost/api/jobs/platform-billing-maintenance', {
+      headers: { 'x-cron-token': 'cron-secret' },
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mocks.logJobResult).toHaveBeenCalledWith(
+      'platform-billing-maintenance',
+      expect.objectContaining({ startedAt: expect.any(Number), correlationId: expect.any(String) }),
+      expect.objectContaining({ pricingSnapshotsRecovered: 1 }),
       expect.objectContaining({ workStatus: 'worked' }),
     );
   });

@@ -63,6 +63,7 @@ async function run(req: Request) {
       billingIssues: reconciliation.issues,
       pricingSnapshotsChecked: monthlySnapshots.checked,
       pricingSnapshotsCaptured: monthlySnapshots.captured,
+      pricingSnapshotsRecovered: monthlySnapshots.recovered,
       pricingSnapshotsInconclusive: monthlySnapshots.inconclusive,
       pricingSpecialistCandidates: monthlySnapshots.readyForSpecialist,
       pricingSpecialistNoticesCreated: monthlySnapshots.specialistNoticesCreated,
@@ -70,7 +71,7 @@ async function run(req: Request) {
     }, {
       partialFailure: failed > 0 || monthlySnapshots.inconclusive > 0,
       workStatus: webhooks.processed + webhooks.notifications.claimed + planChanges.checked +
-        trials.checked + gracePeriods.checked + reconciliation.issues + monthlySnapshots.captured +
+        trials.checked + gracePeriods.checked + reconciliation.issues + monthlySnapshots.captured + monthlySnapshots.recovered +
         monthlySnapshots.specialistNoticesCreated + monthlySnapshots.transitionsScheduled > 0 ? 'worked' : 'unknown',
     });
 

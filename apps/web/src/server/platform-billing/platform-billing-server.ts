@@ -2,7 +2,6 @@
 // O sufixo explícito mantém a resolução ESM válida nesses dois ambientes.
 import { NextResponse } from 'next/server.js';
 import { parseStripeEnvironment, type StripeEnvironment } from '@alusa/stripe';
-import { hasBillableEnrollment } from '@alusa/platform-billing';
 import type { TenantTransactionClient } from '@/lib/prisma-tenant';
 
 const PLATFORM_BILLING_MANAGE_ROLES = new Set(['ADMIN', 'FINANCEIRO']);
@@ -72,6 +71,32 @@ export async function countActivePlatformBillingStudents(params: {
     return parts;
   }, {});
   const asOfDate = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+  if (historical) {
+    // Current enrollment rows cannot reveal a physical delete. Historical
+    // recovery is accepted only for competencies whose entire start predates
+    // a durable audit-coverage marker, and only when no audited deletion took
+    // place after the competence closed.
+    const monthStartAuditFloor = new Date(
+      Date.UTC(Number(dateParts.year), Number(dateParts.month) - 1, 1) - 14 * 60 * 60 * 1000,
+    );
+    const historyCoverage = await params.tx.auditLog.findFirst({
+      where: {
+        contaId: params.contaId,
+        action: 'PLATFORM_BILLING_ELIGIBILITY_HISTORY_TRACKING_STARTED',
+        createdAt: { lte: monthStartAuditFloor },
+      },
+      select: { id: true },
+    });
+    const deletionAfterClose = await params.tx.auditLog.findFirst({
+      where: {
+        contaId: params.contaId,
+        action: { in: ['MATRICULA_HARD_DELETED', 'FAMILY_ENROLLMENT_DRAFT_ROLLED_BACK'] },
+        createdAt: { gt: asOf },
+      },
+      select: { id: true },
+    });
+    if (!historyCoverage || deletionAfterClose) throw new PlatformBillingHistoricalCountInconclusive();
+  }
   const rows = await params.tx.$queryRaw<Array<{ studentCount: bigint; historyInconclusive: boolean }>>`
     WITH enrollment_state AS (
       SELECT

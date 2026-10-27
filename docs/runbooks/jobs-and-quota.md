@@ -105,19 +105,27 @@ da interrupção ainda está presente.
 ## Fechamento mensal do faturamento da plataforma
 
 `platform-billing-maintenance` executa a captura em lotes rotativos de até 200
-Contas a cada cinco minutos. Um fechamento usa a competência encerrada na
+Contas com conta de faturamento da plataforma no ambiente a cada cinco minutos;
+tenants ainda fora do ciclo comercial não geram issues de fechamento. Um fechamento usa a competência encerrada na
 timezone da escola, com unicidade por `contaId + environment + periodStart`.
+Conta de faturamento criada depois do fim da competência também não ganha um
+snapshot ou issue retroativo para esse período anterior ao onboarding comercial.
 O histórico relacional não contém versões completas. A reconstrução compara
-`updatedAt` da matrícula, aluno, plano/combo e a inclusão de descontos para
-detectar mudanças posteriores à competência. Como `DescontoMatricula` não tem
-tombstone de exclusão, uma remoção direta ou não auditada de desconto não pode
-ser reconstruída; não remover descontos de matrículas ativas sem preservar um
-registro auditável. Se uma matrícula elegível ou esses dados relacionados
-mudaram depois da competência, a reconstrução é inconclusiva. Se a janela local do primeiro dia foi perdida ou a contagem
-histórica não pode ser comprovada, o job cria uma issue
-`MONTHLY_CLOSE_INCONCLUSIVE`, não inventa uma contagem usando dados atuais e
-preserva a faixa/preço vigente. Acompanhe `pricingSnapshotsInconclusive` no
+`updatedAt` da matrícula, aluno, plano/combo e a inclusão de descontos e exige
+um marcador de auditoria criado antes do início da competência. Exclusões de
+matrícula e rollback de rascunho também deixam tombstones em `AuditLog`; uma
+exclusão posterior ao fechamento torna a reconstrução inconclusiva. `DescontoMatricula`
+guarda o valor aplicado e não tem atualização em place. Se a janela local do
+primeiro dia foi perdida ou qualquer evidência histórica for insuficiente, o
+job mantém a issue `MONTHLY_CLOSE_INCONCLUSIVE`, não inventa uma contagem usando
+dados atuais e preserva a faixa/preço vigente. A manutenção pode reconstruir
+somente a competência original quando o histórico de elegibilidade e de
+exclusões estiver coberto; um fechamento posterior sozinho não resolve nem
+substitui o snapshot ausente. Acompanhe `pricingSnapshotsInconclusive` no
 resultado do job e as issues abertas no painel de faturamento da plataforma.
+Tentativas de recuperação da mesma issue usam um cooldown persistido de uma hora,
+reduzindo alertas repetidos sem interromper novas tentativas automáticas; cada
+execução concorrente reivindica o intervalo com base na versão atual da issue.
 Três snapshots de competências consecutivas e válidas na mesma faixa são
 necessários para programar a transição no ciclo futuro.
 

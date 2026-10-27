@@ -505,6 +505,17 @@ async function rollbackFamilyEnrollmentDraft(params: {
     const matriculaIds = draftMatriculas.map((item) => item.id);
 
     if (matriculaIds.length > 0) {
+      await tx.auditLog.create({
+        data: {
+          contaId: params.contaId,
+          actorType: 'SYSTEM',
+          action: 'FAMILY_ENROLLMENT_DRAFT_ROLLED_BACK',
+          entityType: 'FamilyEnrollmentOperation',
+          entityId: params.operationId,
+          correlationId: params.operationId,
+          metadata: { matriculaIds },
+        },
+      });
       // ContratoAtual aponta para Contrato; limpe a referência antes de
       // remover os contratos gerados durante a tentativa.
       await tx.matricula.updateMany({
