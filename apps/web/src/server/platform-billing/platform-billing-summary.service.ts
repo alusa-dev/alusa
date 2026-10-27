@@ -53,6 +53,7 @@ export async function getPlatformBillingSummary(params: {
     webhookStats,
     latestReconciliation,
     recentSnapshots,
+    savedTrialCardAudit,
   ] = await Promise.all([
     store.findAccount({ contaId: params.contaId, environment: params.environment }),
     store.listInvoices({ contaId: params.contaId, environment: params.environment, limit: 24 }),
@@ -129,6 +130,15 @@ export async function getPlatformBillingSummary(params: {
       take: 3,
       select: { periodStart: true, candidateBand: true },
     }),
+    params.tx.platformBillingAuditLog.findFirst({
+      where: {
+        contaId: params.contaId,
+        action: 'PLATFORM_BILLING_TRIAL_CARD_SETUP_COMPLETED',
+        webhookEnvironment: params.environment,
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { metadata: true },
+    }),
   ]);
 
   const stableCandidate = resolveStableSchoolPriceBand({
@@ -150,6 +160,7 @@ export async function getPlatformBillingSummary(params: {
     account: account ? serializeAccount(account) : null,
     access: serializeAccessSnapshot(account, now),
     paymentMethod: resolvePaymentMethodSummary(account),
+    savedTrialPaymentMethod: serializeSavedTrialPaymentMethod(savedTrialCardAudit?.metadata),
     plans: Object.values(PLATFORM_PLANS).filter((plan) => plan.publicCheckoutEnabled),
     invoices: invoices.map(serializeInvoice),
     health: {
@@ -215,6 +226,22 @@ export async function getPlatformBillingSummary(params: {
   }
 
   return { ok: true, summary: parsedSummary.data };
+}
+
+function serializeSavedTrialPaymentMethod(value: unknown) {
+  if (!value || typeof value !== 'object') return null;
+  const metadata = value as Record<string, unknown>;
+  const card = metadata.card && typeof metadata.card === 'object' ? metadata.card as Record<string, unknown> : {};
+  const last4 = typeof card.last4 === 'string' ? card.last4 : null;
+  if (!last4 || metadata.allowRedisplay !== 'always') return null;
+  return {
+    status: 'saved_non_default' as const,
+    type: 'card' as const,
+    brand: typeof card.brand === 'string' ? card.brand : null,
+    last4,
+    expMonth: typeof card.expMonth === 'number' ? card.expMonth : null,
+    expYear: typeof card.expYear === 'number' ? card.expYear : null,
+  };
 }
 
 function resolvePaymentMethodSummary(account: PlatformBillingAccountRecord | null) {

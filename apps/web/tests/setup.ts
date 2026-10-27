@@ -26,6 +26,7 @@ vi.mock('@/src/server/platform-billing/capacity', async () => {
   return {
     ...actual,
     assertPlatformAccessForConta: vi.fn().mockResolvedValue(undefined),
+    platformBillingAccessResponseForConta: vi.fn().mockResolvedValue(null),
   };
 });
 

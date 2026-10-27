@@ -3,7 +3,11 @@ import type { PrismaClient } from '@prisma/client';
 import { prisma as defaultPrisma } from '@/lib/prisma';
 import {
   getStripeClient,
+  listStripeCheckoutSessionsForCustomerSince,
   retrieveStripeInvoiceEventObject,
+  retrieveStripeSetupCheckoutSession,
+  retrieveStripeSetupIntent,
+  allowStripePaymentMethodRedisplay,
   retrieveStripeSubscriptionEventObject,
   type StripeWebhookEvent,
 } from '@alusa/stripe';
@@ -17,6 +21,14 @@ import {
 } from '@alusa/platform-billing';
 import type { PlatformBillingEnvironment } from '@alusa/platform-billing';
 import { resolvePlatformBillingEnvironment } from './platform-billing-server';
+import { runWithTenant } from '@/lib/prisma-tenant';
+import {
+  completeTrialCardSetup,
+  expireTrialCardSetup,
+  TRIAL_CARD_SETUP_EXPIRED_ACTION,
+  TRIAL_CARD_SETUP_SUCCESS_ACTION,
+  type TrialCardSetupConsent,
+} from './trial-card-setup-webhook';
 import { notifyPlatformBillingEvent } from './platform-billing-notifications';
 import {
   logApiOperationalEvent,
@@ -126,6 +138,97 @@ export async function drainStripeWebhookWorker(input: {
   for (const event of orderStripeWebhookEventsForProcessing(claimed)) {
     try {
       const canonicalEvent = await retrieveCanonicalStripeEvent(event.payload as StripeWebhookEvent);
+      if (isOptionalTrialCardSetupExpirationEvent(canonicalEvent)) {
+        const expiredCandidate = canonicalEvent.data.object as unknown as Record<string, unknown>;
+        if (expiredCandidate.status === 'complete'
+          && await hasCompletedTrialCardSetupAudit(db, canonicalEvent, environment)) {
+          await store.markWebhookEventProcessed({ id: event.id, contaId: event.contaId ?? undefined, workerId });
+          result.ignored += 1;
+          continue;
+        }
+        const expired = await expireTrialCardSetup({
+          event: canonicalEvent,
+          environment,
+          retrieveSession: async (id) => retrieveStripeSetupCheckoutSession(getStripeClient(process.env), id),
+          loadConsent: (input) => loadTrialCardSetupConsent(db, input),
+          record: async (data) => runWithTenant(data.contaId, async (tx) => {
+            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`trial-card-terminal:${data.environment}:${data.contaId}:${data.sessionId}`}, 0))`;
+            const existing = await tx.platformBillingAuditLog.findFirst({
+              where: { contaId: data.contaId, billingAccountId: data.accountId,
+                action: TRIAL_CARD_SETUP_EXPIRED_ACTION, webhookEnvironment: data.environment, entityId: data.sessionId },
+              select: { id: true },
+            });
+            if (existing) return;
+            const sessionAudit = await tx.platformBillingAuditLog.findFirst({
+              where: { contaId: data.contaId, billingAccountId: data.accountId,
+                action: 'PLATFORM_BILLING_TRIAL_CARD_SETUP_SESSION_CREATED', correlationId: data.requestKey, entityId: data.sessionId },
+              select: { id: true },
+            });
+            if (!sessionAudit) await tx.platformBillingAuditLog.create({ data: {
+              contaId: data.contaId, billingAccountId: data.accountId,
+              action: 'PLATFORM_BILLING_TRIAL_CARD_SETUP_SESSION_CREATED', webhookEnvironment: data.environment,
+              webhookEventId: data.eventId, entityType: 'StripeSetupCheckout', entityId: data.sessionId,
+              correlationId: data.requestKey, metadata: { recoveredViaWebhook: true, sessionId: data.sessionId, expiresAt: null },
+            } });
+            await tx.platformBillingAuditLog.create({ data: {
+              contaId: data.contaId, billingAccountId: data.accountId,
+              action: TRIAL_CARD_SETUP_EXPIRED_ACTION, webhookEnvironment: data.environment,
+              webhookEventId: data.eventId, entityType: 'StripeSetupCheckout', entityId: data.sessionId,
+              correlationId: data.requestKey, metadata: { verifiedBy: 'checkout.session.expired' },
+            } });
+          }),
+        });
+        await store.markWebhookEventProcessed({ id: event.id, contaId: expired.contaId, workerId });
+        result.processed += 1;
+        continue;
+      }
+      if (isOptionalTrialCardSetupEvent(canonicalEvent)) {
+        const completed = await completeTrialCardSetup({
+          event: canonicalEvent,
+          environment,
+          stripe: {
+            retrieveSession: async (id) => retrieveStripeSetupCheckoutSession(getStripeClient(process.env), id),
+            retrieveSetupIntent: async (id) => retrieveStripeSetupIntent(getStripeClient(process.env), id),
+            allowPaymentMethodRedisplay: async (id) => allowStripePaymentMethodRedisplay(getStripeClient(process.env), id),
+          },
+          loadConsent: (input) => loadTrialCardSetupConsent(db, input),
+          record: async (data) => runWithTenant(data.contaId, async (tx) => {
+            await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`trial-card-terminal:${data.environment}:${data.contaId}:${data.sessionId}`}, 0))`;
+            const sessionAudit = await tx.platformBillingAuditLog.findFirst({
+              where: { contaId: data.contaId, billingAccountId: data.accountId, action: 'PLATFORM_BILLING_TRIAL_CARD_SETUP_SESSION_CREATED', correlationId: data.requestKey, entityId: data.sessionId },
+              select: { id: true },
+            });
+            if (!sessionAudit) {
+              await tx.platformBillingAuditLog.create({ data: {
+                contaId: data.contaId, billingAccountId: data.accountId,
+                action: 'PLATFORM_BILLING_TRIAL_CARD_SETUP_SESSION_CREATED',
+                webhookEnvironment: data.environment, webhookEventId: data.eventId,
+                entityType: 'StripeSetupCheckout', entityId: data.sessionId, correlationId: data.requestKey,
+                metadata: { recoveredViaWebhook: true, setupUrl: null, sessionId: data.sessionId },
+              } });
+            }
+            const existing = await tx.platformBillingAuditLog.findFirst({
+              where: { contaId: data.contaId, billingAccountId: data.accountId, action: TRIAL_CARD_SETUP_SUCCESS_ACTION, webhookEnvironment: data.environment, entityId: data.sessionId },
+              select: { id: true },
+            });
+            if (existing) return;
+            await tx.platformBillingAuditLog.create({ data: {
+              contaId: data.contaId, billingAccountId: data.accountId,
+              action: TRIAL_CARD_SETUP_SUCCESS_ACTION, webhookEnvironment: data.environment,
+              webhookEventId: data.eventId, entityType: 'StripeSetupCheckout', entityId: data.sessionId,
+              correlationId: data.requestKey,
+              metadata: {
+                setupIntentId: data.setupIntentId, paymentMethodId: data.paymentMethodId,
+                allowRedisplay: 'always', consentVersion: data.consentVersion, consentAcceptedAt: data.acceptedAt,
+                card: data.card, source: data.source,
+              },
+            } });
+          }),
+        });
+        await store.markWebhookEventProcessed({ id: event.id, contaId: completed.contaId, workerId });
+        result.processed += 1;
+        continue;
+      }
       const processed = await processPersistedPlatformBillingWebhookEvent(
         {
           event: canonicalEvent,
@@ -280,6 +383,11 @@ async function retrieveCanonicalStripeEvent(event: StripeWebhookEvent): Promise<
       canonical = await retrieveStripeSubscriptionEventObject(client, id);
     } else if (event.type.startsWith('invoice.')) {
       canonical = await retrieveStripeInvoiceEventObject(client, id);
+    } else if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.expired') {
+      const eventMetadata = raw.metadata && typeof raw.metadata === 'object' ? raw.metadata as Record<string, unknown> : {};
+      if (raw.mode === 'setup' && eventMetadata.checkoutPurpose === 'optional_trial_payment_method') {
+        canonical = await retrieveStripeSetupCheckoutSession(client, id);
+      }
     }
     if (!canonical) return event;
     return {
@@ -296,6 +404,94 @@ async function retrieveCanonicalStripeEvent(event: StripeWebhookEvent): Promise<
     if (event.type === 'customer.subscription.deleted' && statusCode === 404) return event;
     throw error;
   }
+}
+
+function isOptionalTrialCardSetupEvent(event: StripeWebhookEvent): boolean {
+  if (event.type !== 'checkout.session.completed') return false;
+  const session = event.data.object as unknown as Record<string, unknown>;
+  const metadata = session.metadata && typeof session.metadata === 'object'
+    ? session.metadata as Record<string, unknown> : {};
+  return session.mode === 'setup' && metadata.billingContext === 'platform'
+    && metadata.checkoutPurpose === 'optional_trial_payment_method';
+}
+
+function isOptionalTrialCardSetupExpirationEvent(event: StripeWebhookEvent): boolean {
+  if (event.type !== 'checkout.session.expired') return false;
+  const session = event.data.object as unknown as Record<string, unknown>;
+  const metadata = session.metadata && typeof session.metadata === 'object'
+    ? session.metadata as Record<string, unknown> : {};
+  return session.mode === 'setup' && metadata.billingContext === 'platform'
+    && metadata.checkoutPurpose === 'optional_trial_payment_method';
+}
+
+async function hasCompletedTrialCardSetupAudit(
+  db: PrismaClient,
+  event: StripeWebhookEvent,
+  environment: PlatformBillingEnvironment,
+): Promise<boolean> {
+  const session = event.data.object as unknown as Record<string, unknown>;
+  const metadata = session.metadata && typeof session.metadata === 'object'
+    ? session.metadata as Record<string, unknown> : {};
+  const contaId = typeof metadata.contaId === 'string' ? metadata.contaId : null;
+  const requestKey = typeof metadata.consentRequestKey === 'string' ? metadata.consentRequestKey : null;
+  const customerValue = session.customer;
+  const customerId = typeof customerValue === 'string'
+    ? customerValue
+    : customerValue && typeof customerValue === 'object' && 'id' in customerValue && typeof customerValue.id === 'string'
+      ? customerValue.id : null;
+  const sessionId = typeof session.id === 'string' ? session.id : null;
+  if (!contaId || !requestKey || !customerId || !sessionId) return false;
+  return runWithTenant(contaId, async (tx) => {
+    const account = await tx.platformBillingAccount.findFirst({
+      where: { contaId, environment, stripeCustomerId: customerId }, select: { id: true },
+    });
+    if (!account) return false;
+    const completed = await tx.platformBillingAuditLog.findFirst({
+      where: { contaId, billingAccountId: account.id, action: TRIAL_CARD_SETUP_SUCCESS_ACTION,
+        webhookEnvironment: environment, entityId: sessionId, correlationId: requestKey }, select: { id: true },
+    });
+    return Boolean(completed);
+  });
+}
+
+async function loadTrialCardSetupConsent(
+  db: PrismaClient,
+  input: { contaId: string; environment: PlatformBillingEnvironment; customerId: string; requestKey: string; sessionId: string },
+): Promise<TrialCardSetupConsent | null> {
+  return runWithTenant(input.contaId, async (tx) => {
+    const account = await tx.platformBillingAccount.findFirst({
+      where: { contaId: input.contaId, environment: input.environment, stripeCustomerId: input.customerId },
+      select: { id: true },
+    });
+    if (!account) return null;
+    const [consent, sessionAudit, claimAudit, completedAudit] = await Promise.all([
+      tx.platformBillingAuditLog.findFirst({
+        where: { contaId: input.contaId, billingAccountId: account.id, action: 'PLATFORM_BILLING_TRIAL_CARD_CONSENT', correlationId: input.requestKey },
+        select: { metadata: true },
+      }),
+      tx.platformBillingAuditLog.findFirst({
+        where: { contaId: input.contaId, billingAccountId: account.id, action: 'PLATFORM_BILLING_TRIAL_CARD_SETUP_SESSION_CREATED', correlationId: input.requestKey, entityId: input.sessionId },
+        select: { id: true },
+      }),
+      tx.platformBillingAuditLog.findFirst({
+        where: { contaId: input.contaId, billingAccountId: account.id, action: 'PLATFORM_BILLING_TRIAL_CARD_SETUP_CLAIMED', correlationId: input.requestKey },
+        select: { id: true },
+      }),
+      tx.platformBillingAuditLog.findFirst({
+        where: { contaId: input.contaId, billingAccountId: account.id, action: TRIAL_CARD_SETUP_SUCCESS_ACTION, webhookEnvironment: input.environment, entityId: input.sessionId },
+        select: { id: true },
+      }),
+    ]);
+    const metadata = consent?.metadata && typeof consent.metadata === 'object'
+      ? consent.metadata as Record<string, unknown> : {};
+    if (!consent || (!sessionAudit && !claimAudit) || typeof metadata.version !== 'string'
+      || typeof metadata.acceptedAt !== 'string' || metadata.status !== 'REQUESTED') return null;
+    return {
+      accountId: account.id, stripeCustomerId: input.customerId,
+      consentVersion: metadata.version, acceptedAt: metadata.acceptedAt,
+      sessionId: input.sessionId, alreadyCompleted: Boolean(completedAudit),
+    };
+  });
 }
 
 export async function listStripeWebhookEvents(

@@ -26,6 +26,9 @@ const { state, checkoutMock, trialMock, portalMock, logApiOperationalEventMock, 
         wizardCompletedAt: new Date('2030-01-01T00:00:00Z'), onboardingStudentCount: state.declaredStudents,
       }) },
       platformBillingAccount: { findUnique: vi.fn(async () => state.planCode || state.trialEndsAt ? {
+        id: 'account_a',
+        stripeCustomerId: 'cus_a',
+        stripeSubscriptionId: 'sub_a',
         planCode: state.planCode,
         status: state.billingStatus,
         trialEndsAt: state.trialEndsAt,
@@ -71,7 +74,6 @@ vi.mock('@alusa/platform-billing', () => ({
     return { kind: 'SELF_SERVICE', band: { code } };
   },
   resolvePlatformBillingCheckoutPlan: async (
-    input: { requestedStudentCount?: number },
     deps: { loadContext: () => Promise<{
       activeStudents: number;
       billingPlanCode: string | null;
@@ -96,7 +98,7 @@ vi.mock('@alusa/platform-billing', () => ({
       return { kind: 'SPECIALIST', reason: 'CONFIRMED_SPECIALIST' };
     }
     if (currentBand) return { kind: 'RESOLVED', planCode: currentBand, currentBand };
-    const studentCount = input.requestedStudentCount ?? declared ?? context.activeStudents;
+    const studentCount = context.activeStudents > 0 ? context.activeStudents : declared ?? 0;
     const target = studentCount > 500 ? { kind: 'SPECIALIST' as const, band: null } : {
       kind: 'SELF_SERVICE' as const,
       band: { code: studentCount > 400 ? 'BAND_401_500'
@@ -115,10 +117,14 @@ vi.mock('@alusa/platform-billing', () => ({
   },
 }));
 vi.mock('@/lib/api/with-tenant-session', () => ({
+  resolveTenantSession: async () => ({ ok: true, contaId: tenantContext.contaId, userId: tenantContext.userId }),
   withTenantSession: (handler: (_context: typeof tenantContext) => unknown) => {
     if (state.tenantSessionError) throw state.tenantSessionError;
     return handler(tenantContext);
   },
+}));
+vi.mock('@/lib/prisma-tenant', () => ({
+  runWithTenant: async (_contaId: string, handler: (tx: typeof tenantContext.tx) => unknown) => handler(tenantContext.tx),
 }));
 vi.mock('@/lib/observability/api-logger', () => ({ getRequestId: () => 'request_1', logApiOperationalEvent: logApiOperationalEventMock }));
 vi.mock('@/lib/rate-limit', () => ({ ipFromRequest: () => '127.0.0.1', rateLimitAsync: async () => ({ ok: true }) }));

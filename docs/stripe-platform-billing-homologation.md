@@ -12,12 +12,11 @@ A Asaas continua separada e responsavel pelo financeiro educacional das escolas:
 
 ## O que ja fica coberto
 
-- Onboarding financeiro com cadastro de cartao.
-- Onboarding financeiro com `Cadastrar depois`, iniciando trial sem cartao.
+- Onboarding financeiro com `Cadastrar depois`, iniciando trial de 14 dias sem cartão.
 - Trial com contagem correta na Alusa.
 - Avisos visuais de trial ativo e fim do trial.
-- Cadastro de cartao durante o trial.
-- Troca de plano durante o trial.
+- Cadastro de cartão durante trial não pago é bloqueado pelo backend para não autorizar cobrança futura apenas pela inclusão do método de pagamento.
+- Contratação paga exige Checkout explícito; retorno do navegador não confirma ativação.
 - Troca de plano fora do trial.
 - Regras de capacidade antes da troca ou reativacao de plano.
 - Cancelamento de assinatura.
@@ -35,17 +34,13 @@ A Asaas continua separada e responsavel pelo financeiro educacional das escolas:
 
 ## Comportamento no dia a dia
 
-### Escola inicia trial com cartao
-
-A escola escolhe o plano, cadastra o cartao na Stripe e volta para a Alusa. A assinatura fica em trial. A cobranca so comeca no fim do teste, se nao houver cancelamento antes.
-
 ### Escola inicia trial sem cartao
 
-A escola escolhe `Cadastrar depois`. A Alusa cria o estado comercial da conta, inicia o trial e permite continuar o onboarding. O usuario pode voltar depois e cadastrar o cartao.
+A escola escolhe `Cadastrar depois`. A Alusa cria o estado comercial da conta, inicia o trial e permite continuar o onboarding. Ao fim do trial, o administrador pode confirmar o plano e o pagamento pelo Checkout.
 
 ### Trial perto do fim
 
-A Alusa pode exibir callout e notificacao amigavel. Se nao houver cartao, a acao principal deve levar para atualizar pagamento. A mensagem deve evitar repeticao em varias areas da tela.
+A Alusa pode exibir callout e notificacao amigavel. A ação principal leva à contratação explícita; cadastrar cartão no Portal durante o trial é recusado pelo servidor.
 
 ### Cobranca pos-trial paga
 
@@ -73,13 +68,13 @@ Se a assinatura ja estiver encerrada, a acao correta e reativar, abrindo escolha
 
 Assinatura ja cancelada nao deve ser tratada como simples reversao. A Alusa abre o fluxo de escolha de plano e cria novo checkout. O estado local so deve ser confirmado apos retorno/webhook da Stripe.
 
-### Troca de plano
+### Mudança de faixa
 
-Troca de plano respeita limite de alunos ativos:
-
-- Se o plano suporta a quantidade atual de alunos, a acao fica disponivel.
-- Se o plano nao suporta, o card deve indicar plano incompativel.
-- Downgrade nao deve ser permitido enquanto houver alunos ativos acima do limite.
+O preço segue a faixa de alunos ativos pagantes da tabela comercial vigente. A
+faixa contratada só muda depois de três fechamentos consecutivos válidos na
+mesma faixa; a aplicação é programada para o ciclo futuro e não gera preço
+personalizado automaticamente acima de 500 alunos. Uma competência perdida ou
+inconclusiva gera issue operacional e não altera o preço vigente.
 
 ## Estados principais
 

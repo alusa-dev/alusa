@@ -14,8 +14,7 @@ Status atual: nao executar agora. A implementacao deve permanecer em homologacao
 
 ## Stripe Dashboard
 
-- Criar Products e Prices live para `STARTER`, `PREMIUM` e `PRO`.
-- Conferir que os valores live batem com a politica comercial vigente.
+- Criar/validar Stripe Prices live correspondentes às faixas comerciais vigentes (1–25 R$169; 26–50 R$229; 51–100 R$289; 101–150 R$349; 151–200 R$419; 201–300 R$479; 301–400 R$559; 401–500 R$649).
 - Configurar Customer Portal live para alterar cartao, ver faturas, baixar recibos e atualizar dados de cobranca.
 - Ativar Smart Retries em Billing > Revenue recovery > Retries.
 - Definir politica de dunning antes do rollout. Recomendacao inicial: ate 8 tentativas em 14 dias, com 7 dias de carencia controlados pela Alusa.
@@ -89,8 +88,8 @@ Cadencia sugerida:
 
 ## Cenarios obrigatorios com Test Clocks
 
-- Trial com cartao cadastrado.
-- Trial sem cartao cadastrado.
+- Trial sem cartão e expiração sem cobrança automática.
+- Inclusão opcional de cartão durante trial usa Setup Checkout com consentimento explícito; verificar webhook Setup concluído, consentimento e cartão mascarado sem alterar defaults ou acesso. Contratação paga segue explícita no Checkout de assinatura.
 - Evento `customer.subscription.trial_will_end`.
 - Cobranca pos-trial paga.
 - Cobranca pos-trial falha.

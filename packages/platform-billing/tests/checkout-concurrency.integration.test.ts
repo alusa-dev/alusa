@@ -41,6 +41,7 @@ describe.skipIf(!isTestDatabase)('platform billing checkout PostgreSQL contentio
       });
       const stripeGateway = {
         createCustomer: vi.fn(async () => { throw new Error('fixture already has a customer'); }),
+        listCustomerSubscriptions: vi.fn(async () => ({ subscriptions: [], complete: true })),
         createCheckoutSession,
       } as unknown as PlatformBillingStripeGateway;
       const store = createPrismaPlatformBillingStore(prisma);
@@ -59,12 +60,12 @@ describe.skipIf(!isTestDatabase)('platform billing checkout PostgreSQL contentio
       };
 
       const first = createPlatformBillingCheckoutSession(
-        { ...common, idempotencyKey: 'checkout-race-a' },
+        { ...common, idempotencyKey: 'checkout-race-a', cancelUrl: `${common.cancelUrl}?checkoutRequestKey=checkout-race-a` },
         { store, stripeGateway },
       );
       await vi.waitFor(() => expect(createCheckoutSession).toHaveBeenCalledTimes(1));
       const second = createPlatformBillingCheckoutSession(
-        { ...common, idempotencyKey: 'checkout-race-b', planCode: 'BAND_026_050' },
+        { ...common, idempotencyKey: 'checkout-race-b', cancelUrl: `${common.cancelUrl}?checkoutRequestKey=checkout-race-b`, planCode: 'BAND_026_050' },
         { store, stripeGateway },
       );
       const secondResult = await Promise.allSettled([second]);

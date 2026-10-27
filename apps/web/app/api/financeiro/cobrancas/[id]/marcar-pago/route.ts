@@ -82,7 +82,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!auth.ok) return complete(err(auth.reason === 'CONTA_MISMATCH' ? 403 : 401, auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO', auth.reason === 'CONTA_MISMATCH' ? 'Conta inválida' : 'Usuário não autenticado'), auth.reason === 'CONTA_MISMATCH' ? 'CONTA_INVALIDA' : 'NAO_AUTENTICADO');
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
       return complete(err(403, 'SEM_PERMISSAO', 'Acesso negado'), 'SEM_PERMISSAO');
-    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'CHARGE_CREATE' });
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'FINANCIAL_CORRECTION' });
     if (billingBlocked) return complete(err(billingBlocked.status, billingBlocked.body.error, billingBlocked.body.message), billingBlocked.body.error);
 
     const { id } = await params;

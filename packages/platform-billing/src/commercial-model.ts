@@ -62,16 +62,16 @@ export function resolveStableSchoolPriceBand(input: {
   return newest.candidateBand;
 }
 
-/** One pupil is counted once when any active, effective enrollment has a recurring amount. */
-export function hasBillableMonthlyEnrollment(input: {
+/** One pupil is counted once when any active, effective enrollment has a paid cycle. */
+export function hasBillableEnrollment(input: {
   active: boolean;
   effective: boolean;
-  monthlyAmountCents: number | null;
+  cycleAmountCents: number | null;
   fullScholarship: boolean;
 }): boolean {
   return input.active && input.effective && !input.fullScholarship &&
-    input.monthlyAmountCents !== null && Number.isFinite(input.monthlyAmountCents) &&
-    input.monthlyAmountCents > 0;
+    input.cycleAmountCents !== null && Number.isFinite(input.cycleAmountCents) &&
+    input.cycleAmountCents > 0;
 }
 
 function isPreviousUtcMonth(newer: Date, older: Date): boolean {

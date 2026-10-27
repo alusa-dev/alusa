@@ -63,11 +63,12 @@ async function run(req: Request) {
       billingIssues: reconciliation.issues,
       pricingSnapshotsChecked: monthlySnapshots.checked,
       pricingSnapshotsCaptured: monthlySnapshots.captured,
+      pricingSnapshotsInconclusive: monthlySnapshots.inconclusive,
       pricingSpecialistCandidates: monthlySnapshots.readyForSpecialist,
       pricingSpecialistNoticesCreated: monthlySnapshots.specialistNoticesCreated,
       pricingBandTransitionsScheduled: monthlySnapshots.transitionsScheduled,
     }, {
-      partialFailure: failed > 0,
+      partialFailure: failed > 0 || monthlySnapshots.inconclusive > 0,
       workStatus: webhooks.processed + webhooks.notifications.claimed + planChanges.checked +
         trials.checked + gracePeriods.checked + reconciliation.issues + monthlySnapshots.captured +
         monthlySnapshots.specialistNoticesCreated + monthlySnapshots.transitionsScheduled > 0 ? 'worked' : 'unknown',

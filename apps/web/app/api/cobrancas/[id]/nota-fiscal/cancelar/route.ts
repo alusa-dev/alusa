@@ -41,7 +41,7 @@ export async function POST(_req: Request, context: RouteContext) {
     const auth = await resolveTenantSession();
     if (!auth.ok) return json(401, { error: 'NAO_AUTENTICADO' });
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) return json(403, { error: 'SEM_PERMISSAO' });
-    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'CHARGE_CREATE' });
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'FINANCIAL_CORRECTION' });
     if (billingBlocked) return json(billingBlocked.status, billingBlocked.body);
 
     const gate = await guardFinancialAccountOr412(auth.contaId);

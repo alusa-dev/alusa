@@ -102,6 +102,25 @@ de `removeBackoff`/recuperação de fila exige uma chamada administrativa com
 Isso evita que uma rotina periódica reative uma fila do Asaas enquanto a causa
 da interrupção ainda está presente.
 
+## Fechamento mensal do faturamento da plataforma
+
+`platform-billing-maintenance` executa a captura em lotes rotativos de até 200
+Contas a cada cinco minutos. Um fechamento usa a competência encerrada na
+timezone da escola, com unicidade por `contaId + environment + periodStart`.
+O histórico relacional não contém versões completas. A reconstrução compara
+`updatedAt` da matrícula, aluno, plano/combo e a inclusão de descontos para
+detectar mudanças posteriores à competência. Como `DescontoMatricula` não tem
+tombstone de exclusão, uma remoção direta ou não auditada de desconto não pode
+ser reconstruída; não remover descontos de matrículas ativas sem preservar um
+registro auditável. Se uma matrícula elegível ou esses dados relacionados
+mudaram depois da competência, a reconstrução é inconclusiva. Se a janela local do primeiro dia foi perdida ou a contagem
+histórica não pode ser comprovada, o job cria uma issue
+`MONTHLY_CLOSE_INCONCLUSIVE`, não inventa uma contagem usando dados atuais e
+preserva a faixa/preço vigente. Acompanhe `pricingSnapshotsInconclusive` no
+resultado do job e as issues abertas no painel de faturamento da plataforma.
+Três snapshots de competências consecutivas e válidas na mesma faixa são
+necessários para programar a transição no ciclo futuro.
+
 ## Bootstrap do read model KYC de subconta
 
 `process-kyc-sync` roda a cada minuto para consumir apenas jobs duráveis

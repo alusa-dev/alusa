@@ -2,9 +2,8 @@
 // O sufixo explícito mantém a resolução ESM válida nesses dois ambientes.
 import { NextResponse } from 'next/server.js';
 import { parseStripeEnvironment, type StripeEnvironment } from '@alusa/stripe';
-import { hasBillableMonthlyEnrollment } from '@alusa/platform-billing';
+import { hasBillableEnrollment } from '@alusa/platform-billing';
 import type { TenantTransactionClient } from '@/lib/prisma-tenant';
-import { isAcademicDateInFuture } from '@alusa/shared/date-only';
 
 const PLATFORM_BILLING_MANAGE_ROLES = new Set(['ADMIN', 'FINANCEIRO']);
 
@@ -57,44 +56,93 @@ export async function resolvePlatformBillingActor(params: {
 export async function countActivePlatformBillingStudents(params: {
   tx: TenantTransactionClient;
   contaId: string;
+  asOf?: Date;
 }): Promise<number> {
+  const asOf = params.asOf ?? new Date();
+  const historical = params.asOf !== undefined;
   const account = await params.tx.conta.findUnique({
     where: { id: params.contaId },
     select: { timezone: true },
   });
-  const rows = await params.tx.matricula.findMany({
-    where: {
-      contaId: params.contaId,
-      status: 'ATIVA',
-      aluno: {
-        status: 'ATIVO',
-      },
-    },
-    select: {
-      alunoId: true,
-      dataInicio: true,
-      plano: { select: { valor: true, periodicidade: true } },
-      combo: { select: { valor: true, periodicidade: true } },
-      descontos: { select: { valorFinal: true } },
-    },
-  });
+  const dateParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: account?.timezone || 'UTC',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(asOf).reduce<Record<string, string>>((parts, part) => {
+    if (part.type !== 'literal') parts[part.type] = part.value;
+    return parts;
+  }, {});
+  const asOfDate = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+  const rows = await params.tx.$queryRaw<Array<{ studentCount: bigint; historyInconclusive: boolean }>>`
+    WITH enrollment_state AS (
+      SELECT
+        m."alunoId",
+        m."updatedAt",
+        m.status,
+        m."cancelledAt",
+        m."dataInicioPausa",
+        m."cobrarDurantePausa",
+        m."dataInicio",
+        m."dataFim",
+        m."dataFimContrato",
+        a.status AS "studentStatus",
+        a."dataInativacao",
+        a."updatedAt" AS "studentUpdatedAt",
+        c."updatedAt" AS "comboUpdatedAt",
+        p."updatedAt" AS "planUpdatedAt",
+        COALESCE(c.valor, p.valor, 0) AS "cycleAmount",
+        COALESCE(SUM(dm."valorFinal"), 0) AS "discountAmount",
+        MAX(dm."createdAt") AS "latestDiscountCreatedAt"
+      FROM "Matricula" m
+      JOIN "Aluno" a ON a.id = m."alunoId" AND a."contaId" = m."contaId"
+      LEFT JOIN "Combo" c ON c.id = m."comboId" AND c."contaId" = m."contaId"
+      LEFT JOIN "Plano" p ON p.id = m."planoId" AND p."contaId" = m."contaId"
+      LEFT JOIN "DescontoMatricula" dm ON dm."matriculaId" = m.id
+      WHERE m."contaId" = ${params.contaId}
+      GROUP BY m.id, a.status, a."dataInativacao", a."updatedAt", c.valor, c."updatedAt", p.valor, p."updatedAt"
+    ),
+    effective_enrollment AS (
+      SELECT *,
+        CASE
+          WHEN ${historical} THEN
+            (status = 'ATIVA'
+              OR (status = 'ENCERRADA' AND ("dataFim" IS NOT NULL OR "dataFimContrato" IS NOT NULL))
+              OR (status = 'CANCELADA' AND "cancelledAt" > ${asOf})
+              OR (status = 'PAUSADA' AND ("cobrarDurantePausa" OR "dataInicioPausa" > ${asOf})))
+            AND ("studentStatus" = 'ATIVO' OR "dataInativacao" > ${asOf})
+          ELSE status = 'ATIVA' AND "studentStatus" = 'ATIVO'
+        END
+        AND "dataInicio"::date <= ${asOfDate}::date
+        AND ("dataFim" IS NULL OR "dataFim"::date >= ${asOfDate}::date)
+        AND ("dataFimContrato" IS NULL OR "dataFimContrato"::date >= ${asOfDate}::date)
+        AS "activeAtDate"
+      FROM enrollment_state
+    )
+    SELECT
+      COUNT(DISTINCT "alunoId") FILTER (
+        WHERE "activeAtDate" AND "cycleAmount" > 0 AND "discountAmount" < "cycleAmount"
+      ) AS "studentCount",
+      COALESCE(BOOL_OR("dataInicio"::date <= ${asOfDate}::date AND (
+        "updatedAt" > ${asOf}
+        OR "studentUpdatedAt" > ${asOf}
+        OR "comboUpdatedAt" > ${asOf}
+        OR "planUpdatedAt" > ${asOf}
+        OR "latestDiscountCreatedAt" > ${asOf}
+      )), FALSE) AS "historyInconclusive"
+    FROM effective_enrollment
+  `;
+  const result = rows[0];
+  if (!result) return 0;
+  if (historical && result.historyInconclusive) {
+    throw new PlatformBillingHistoricalCountInconclusive();
+  }
+  return Number(result.studentCount);
+}
 
-  return new Set(rows
-    .filter((row) => {
-      const effective = !isAcademicDateInFuture(row.dataInicio, new Date(), account?.timezone ?? undefined);
-      const recurring = row.combo ?? row.plano;
-      const amountCents = recurring?.periodicidade === 'MENSAL'
-        ? Math.round(Number(recurring.valor) * 100)
-        : null;
-      const discountCents = row.descontos.reduce((sum, discount) => sum + Math.round(Number(discount.valorFinal) * 100), 0);
-      return hasBillableMonthlyEnrollment({
-        active: true,
-        effective,
-        monthlyAmountCents: amountCents,
-        fullScholarship: amountCents !== null && amountCents > 0 && discountCents >= amountCents,
-      });
-    })
-    .map((row) => row.alunoId)).size;
+export class PlatformBillingHistoricalCountInconclusive extends Error {
+  constructor() {
+    super('Historical platform billing student eligibility cannot be reconstructed safely.');
+    this.name = 'PlatformBillingHistoricalCountInconclusive';
+  }
 }
 
 export function assertCanManagePlatformBilling(canManage: boolean): NextResponse | null {

@@ -1,3 +1,5 @@
+import React from 'react';
+
 type CardBrandAsset = {
   src: string;
   label: string;

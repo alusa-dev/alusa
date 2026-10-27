@@ -429,6 +429,7 @@ export interface PlatformBillingStripeGateway {
     }>;
     complete: boolean;
   }>;
+  cancelSubscription(_subscriptionId: string, _idempotencyKey: string): Promise<void>;
   retrieveCheckoutSession(_sessionId: string): Promise<{
     id: string;
     status: string | null;

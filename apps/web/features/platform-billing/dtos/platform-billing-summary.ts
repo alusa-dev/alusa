@@ -134,6 +134,14 @@ const paymentMethodSummarySchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('missing') }),
   z.object({ status: z.literal('unknown') }),
 ]);
+const savedTrialPaymentMethodSchema = z.object({
+  status: z.literal('saved_non_default'),
+  type: z.literal('card'),
+  brand: z.string().nullable(),
+  last4: z.string().length(4),
+  expMonth: z.number().int().nullable(),
+  expYear: z.number().int().nullable(),
+});
 
 export const platformBillingSummaryDTOSchema = z.object({
   environment: z.enum(['TEST', 'LIVE']),
@@ -162,6 +170,7 @@ export const platformBillingSummaryDTOSchema = z.object({
     generatedAt: z.string().datetime(),
   }),
   paymentMethod: paymentMethodSummarySchema,
+  savedTrialPaymentMethod: savedTrialPaymentMethodSchema.nullable().optional(),
   plans: z.array(publicPlatformPlanDTOSchema).min(1),
   invoices: z.array(billingInvoiceSchema),
   health: z.object({

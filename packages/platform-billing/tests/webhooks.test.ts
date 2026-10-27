@@ -16,12 +16,30 @@ const envSource = {
   STRIPE_ENVIRONMENT: 'TEST',
   STRIPE_SECRET_KEY: 'sk_test_foundation',
   STRIPE_PRICE_STARTER_MONTHLY: 'price_starter_test',
+  STRIPE_PRICE_BAND_026_050_MONTHLY: 'price_band_026_050',
   STRIPE_PRICE_PREMIUM_MONTHLY: 'price_premium_test',
   STRIPE_PRICE_PRO_MONTHLY: 'price_pro_test',
 };
 let nextStripeEventCreated = 1_800_000_001;
 
 describe('@alusa/platform-billing webhooks', () => {
+  it('ignores optional trial-card Setup Checkout without binding a subscription or granting access', async () => {
+    const store = createMemoryStore([buildAccount({
+      id: 'pba_setup', contaId: 'conta_1', status: 'TRIALING', accessStatus: 'TRIALING',
+      stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_trial',
+    })]);
+    const result = await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_setup_trial_card', 'checkout.session.completed', {
+        id: 'cs_setup', mode: 'setup', customer: 'cus_1', subscription: null,
+        metadata: { contaId: 'conta_1', billingContext: 'platform', checkoutPurpose: 'optional_trial_payment_method' },
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+    expect(result.status).toBe('ignored');
+    expect(store.accounts[0]).toMatchObject({ status: 'TRIALING', accessStatus: 'TRIALING', stripeSubscriptionId: 'sub_trial' });
+    expect(store.paidIssueResolutions).toEqual([]);
+  });
+
   it('rejects cross-Conta subscription metadata and leaves both tenant accounts unchanged', async () => {
     const store = createMemoryStore([
       buildAccount({ id: 'pba_a', contaId: 'conta_a', status: 'ACTIVE', planCode: 'STARTER', stripeCustomerId: 'cus_a', stripeSubscriptionId: 'sub_a', stripePriceId: 'price_starter_test' }),
@@ -71,6 +89,47 @@ describe('@alusa/platform-billing webhooks', () => {
     }, store)).rejects.toMatchObject({ code: 'PLATFORM_BILLING_WEBHOOK_INVALID' });
     expect(store.accounts).toEqual(before);
     expect(store.invoices).toEqual([]);
+  });
+
+  it('rejects invoice customer mismatch from bound subscription even without metadata before any persistence', async () => {
+    const store = createMemoryStore([
+      buildAccount({ id: 'pba_a', contaId: 'conta_a', status: 'PAST_DUE', accessStatus: 'RESTRICTED', stripeCustomerId: 'cus_a', stripeSubscriptionId: 'sub_a', stripePriceId: 'price_starter_test' }),
+      buildAccount({ id: 'pba_b', contaId: 'conta_b', status: 'ACTIVE', accessStatus: 'ACTIVE', stripeCustomerId: 'cus_b', stripeSubscriptionId: 'sub_b' }),
+    ]);
+    const before = structuredClone(store.accounts);
+    await expect(processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_invoice_customer_mismatch', 'invoice.payment_failed', {
+        id: 'in_wrong_customer', customer: 'cus_b', subscription: 'sub_a', status: 'open',
+        amount_due: 22900, amount_paid: 0, currency: 'brl',
+        lines: { data: [{ price: { id: 'price_starter_test' } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, store)).rejects.toMatchObject({ code: 'PLATFORM_BILLING_WEBHOOK_INVALID' });
+
+    expect(store.accounts).toEqual(before);
+    expect(store.invoices).toEqual([]);
+    expect(store.auditLogs).toEqual([]);
+  });
+
+  it('rejects invoice with id and subscription but missing customer before persistence or account changes', async () => {
+    const store = createMemoryStore([buildAccount({
+      id: 'pba_a', contaId: 'conta_a', status: 'PAST_DUE', accessStatus: 'RESTRICTED',
+      stripeCustomerId: 'cus_a', stripeSubscriptionId: 'sub_a', stripePriceId: 'price_starter_test',
+    })]);
+    const before = structuredClone(store.accounts);
+
+    await expect(processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_invoice_missing_customer', 'invoice.payment_failed', {
+        id: 'in_missing_customer', subscription: 'sub_a', status: 'open',
+        amount_due: 22900, amount_paid: 0, currency: 'brl',
+        lines: { data: [{ price: { id: 'price_starter_test' } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, store)).rejects.toMatchObject({ code: 'PLATFORM_BILLING_WEBHOOK_INVALID' });
+
+    expect(store.accounts).toEqual(before);
+    expect(store.invoices).toEqual([]);
+    expect(store.auditLogs).toEqual([]);
   });
 
   it('finalizes a plan change when a canonical subscription update confirms the target price', async () => {
@@ -387,6 +446,10 @@ describe('@alusa/platform-billing webhooks', () => {
         lines: { data: [{ price: { id: 'price_band_026_050' } }] },
       }),
       environment: 'TEST', envSource: bandPrices,
+      stripeGateway: checkoutGateway({
+        sessionId: 'cs_band', requestKey: 'checkout_band_key', customerId: 'cus_band', subscriptionId: 'sub_band',
+        contaId: 'conta_1', planCode: 'BAND_026_050', priceId: 'price_band_026_050', subscriptionStatus: 'active', invoice: null,
+      }),
     }, store);
 
     expect(store.accounts[0]).toMatchObject({
@@ -395,30 +458,92 @@ describe('@alusa/platform-billing webhooks', () => {
     });
   });
 
-  it('reactivates a canceled legacy account only after its newly bound subscription invoice is paid', async () => {
+  it('keeps a reactivation with prior paid history restricted until its new invoice is paid', async () => {
     const store = createMemoryStore([buildAccount({
       status: 'CANCELED', accessStatus: 'CANCELED', planCode: 'STARTER',
+      stripeCustomerId: 'cus_reactivation_history', stripeSubscriptionId: 'sub_reactivation_history',
+      stripePriceId: 'price_band_026_050', pendingPlanCode: 'BAND_026_050', pendingChangeType: 'REACTIVATE',
+      firstPaidAt: new Date('2025-10-01T00:00:00.000Z'),
+      lastSuccessfulPaymentAt: new Date('2026-10-01T00:00:00.000Z'),
+    })]);
+
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_reactivation_history_active', 'customer.subscription.updated', {
+        id: 'sub_reactivation_history', customer: 'cus_reactivation_history', status: 'active', cancel_at_period_end: false,
+        metadata: { contaId: 'conta_1', planCode: 'BAND_026_050', billingContext: 'platform', flow: 'reactivation' },
+        items: { data: [{ price: { id: 'price_band_026_050' } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+
+    expect(store.accounts[0]).toMatchObject({
+      status: 'CANCELED', accessStatus: 'CANCELED', pendingChangeType: 'REACTIVATE',
+      firstPaidAt: new Date('2025-10-01T00:00:00.000Z'),
+      lastSuccessfulPaymentAt: new Date('2026-10-01T00:00:00.000Z'),
+    });
+  });
+
+  it('reactivates an expired paused unpaid trial only after Checkout binds the new subscription and its invoice is paid', async () => {
+    const store = createMemoryStore([buildAccount({
+      status: 'PAUSED', accessStatus: 'RESTRICTED', planCode: 'STARTER',
       stripeCustomerId: 'cus_reactivated', stripeSubscriptionId: 'sub_old', stripePriceId: 'price_starter_test',
-      canceledAt: new Date('2026-10-01T00:00:00.000Z'), restrictedAt: new Date('2026-10-01T00:00:00.000Z'),
-      pendingPlanCode: 'STARTER', pendingChangeType: 'REACTIVATE',
+      trialEndsAt: new Date('2026-10-25T00:00:00.000Z'),
+      canceledAt: null, restrictedAt: new Date('2026-10-25T00:00:00.000Z'),
+      pendingPlanCode: 'BAND_026_050', pendingChangeType: 'REACTIVATE',
       pendingChangeEffectiveAt: new Date('2026-10-26T00:00:00.000Z'), pendingChangeOperationId: 'reactivation-operation',
       checkoutClaimKey: 'request-reactivation', checkoutClaimPhase: 'REQUESTING',
     })]);
-    addCheckoutSession(store, { idempotencyKey: 'request-reactivation', planCode: 'STARTER', stripeCustomerId: 'cus_reactivated', stripePriceId: 'price_starter_test', stripeCheckoutSessionId: 'cs_reactivation' });
+    addCheckoutSession(store, { idempotencyKey: 'request-reactivation', planCode: 'BAND_026_050', stripeCustomerId: 'cus_reactivated', stripePriceId: 'price_band_026_050', stripeCheckoutSessionId: 'cs_reactivation' });
     const earlyPaidInvoice = stripeEvent('evt_reactivation_invoice_paid', 'invoice.paid', paidInvoice({
-      id: 'in_reactivation', customer: 'cus_reactivated', subscription: 'sub_new', priceId: 'price_starter_test',
+      id: 'in_reactivation', customer: 'cus_reactivated', subscription: 'sub_new', priceId: 'price_band_026_050', amountPaid: 22900,
     }));
     await expect(processPlatformBillingWebhookEvent({ event: earlyPaidInvoice, environment: 'TEST', envSource }, store))
       .rejects.toMatchObject({ code: 'PLATFORM_BILLING_ACCOUNT_NOT_FOUND' });
     await processPlatformBillingWebhookEvent({
       event: stripeEvent('evt_reactivation_subscription_first', 'customer.subscription.created', {
         id: 'sub_new', customer: 'cus_reactivated', status: 'active', cancel_at_period_end: false,
-        metadata: { contaId: 'conta_1', planCode: 'STARTER', billingContext: 'platform' },
-        items: { data: [{ price: { id: 'price_starter_test' } }] },
+        metadata: { contaId: 'conta_1', planCode: 'BAND_026_050', billingContext: 'platform', flow: 'reactivation', checkoutRequestKey: 'request-reactivation', reactivationFromSubscriptionId: 'sub_old', reactivationFromPlanCode: 'STARTER', reactivationFromPriceId: 'price_starter_test' },
+        items: { data: [{ price: { id: 'price_band_026_050' } }] },
       }),
       environment: 'TEST', envSource,
     }, store);
-    expect(store.accounts[0]).toMatchObject({ status: 'CANCELED', stripeSubscriptionId: 'sub_old' });
+    expect(store.accounts[0]).toMatchObject({ status: 'PAUSED', stripeSubscriptionId: 'sub_old' });
+
+    let oldSubscriptionStatus = 'paused';
+    const reactivationGateway = checkoutGateway({
+      sessionId: 'cs_reactivation', requestKey: 'request-reactivation', customerId: 'cus_reactivated', subscriptionId: 'sub_new', contaId: 'conta_1',
+      planCode: 'BAND_026_050', priceId: 'price_band_026_050', subscriptionStatus: 'active', invoice: null,
+      reactivationOrigin: { subscriptionId: 'sub_old', planCode: 'STARTER', priceId: 'price_starter_test' },
+    });
+    const cancelOldSubscription = vi.fn(async (id: string) => {
+      if (id === 'sub_old') oldSubscriptionStatus = 'canceled';
+    });
+    reactivationGateway.listCustomerSubscriptions = async (customerId: string) => ({
+      complete: true,
+      subscriptions: [
+        {
+          id: 'sub_old', customerId, status: oldSubscriptionStatus, livemode: false,
+          metadata: { contaId: 'conta_1', planCode: 'STARTER', billingContext: 'platform' }, priceIds: ['price_starter_test'],
+        },
+        {
+          id: 'sub_new', customerId, status: 'active', livemode: false,
+          metadata: {
+            contaId: 'conta_1', planCode: 'BAND_026_050', billingContext: 'platform', flow: 'reactivation',
+            checkoutRequestKey: 'request-reactivation', reactivationFromSubscriptionId: 'sub_old',
+            reactivationFromPlanCode: 'STARTER', reactivationFromPriceId: 'price_starter_test',
+          }, priceIds: ['price_band_026_050'],
+        },
+        {
+          id: 'sub_other_tenant', customerId, status: 'paused', livemode: false,
+          metadata: { contaId: 'conta_2', planCode: 'STARTER', billingContext: 'platform' }, priceIds: ['price_starter_test'],
+        },
+        {
+          id: 'sub_other_environment', customerId, status: 'paused', livemode: true,
+          metadata: { contaId: 'conta_1', planCode: 'STARTER', billingContext: 'platform' }, priceIds: ['price_starter_test'],
+        },
+      ],
+    });
+    reactivationGateway.cancelSubscription = cancelOldSubscription;
 
     await processPlatformBillingWebhookEvent({
       event: stripeEvent('evt_reactivation_checkout_bound', 'checkout.session.completed', {
@@ -426,16 +551,47 @@ describe('@alusa/platform-billing webhooks', () => {
         metadata: { contaId: 'conta_1', checkoutRequestKey: 'request-reactivation' },
       }),
       environment: 'TEST', envSource,
-      stripeGateway: checkoutGateway({
-        sessionId: 'cs_reactivation', requestKey: 'request-reactivation', customerId: 'cus_reactivated', subscriptionId: 'sub_new', contaId: 'conta_1',
-        planCode: 'STARTER', priceId: 'price_starter_test', subscriptionStatus: 'active',
-        invoice: paidInvoice({ id: 'in_reactivation', customer: 'cus_reactivated', subscription: 'sub_new', priceId: 'price_starter_test' }),
-      }),
+      stripeGateway: reactivationGateway,
     }, store);
-    expect(store.accounts[0]).toMatchObject({ status: 'ACTIVE', stripeSubscriptionId: 'sub_new', pendingChangeType: null });
+    expect(store.accounts[0]).toMatchObject({ status: 'PAUSED', stripeSubscriptionId: 'sub_new', pendingChangeType: 'REACTIVATE' });
+
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_reactivation_subscription_active_before_invoice', 'customer.subscription.updated', {
+        id: 'sub_new', customer: 'cus_reactivated', status: 'active', cancel_at_period_end: false,
+        metadata: { contaId: 'conta_1', planCode: 'BAND_026_050', billingContext: 'platform', flow: 'reactivation', checkoutRequestKey: 'request-reactivation', reactivationFromSubscriptionId: 'sub_old', reactivationFromPlanCode: 'STARTER', reactivationFromPriceId: 'price_starter_test' },
+        items: { data: [{ price: { id: 'price_band_026_050' } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+    expect(store.accounts[0]).toMatchObject({ status: 'PAUSED', accessStatus: 'RESTRICTED', planCode: 'STARTER', pendingChangeType: 'REACTIVATE' });
+
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_reactivation_zero_invoice', 'invoice.paid', {
+        ...paidInvoice({ id: 'in_reactivation_zero', customer: 'cus_reactivated', subscription: 'sub_new', priceId: 'price_band_026_050', amountPaid: 0 }),
+        status: 'paid',
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+    expect(store.accounts[0]).toMatchObject({ status: 'PAUSED', accessStatus: 'RESTRICTED', firstPaidAt: null, pendingChangeType: 'REACTIVATE' });
+
+    const failedReactivationInvoice = paidInvoice({ id: 'in_reactivation_failed', customer: 'cus_reactivated', subscription: 'sub_new', priceId: 'price_band_026_050', amountPaid: 0 });
+    failedReactivationInvoice.status = 'open';
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_reactivation_failed_invoice', 'invoice.payment_failed', failedReactivationInvoice),
+      environment: 'TEST', envSource,
+    }, store);
+    expect(store.accounts[0]).toMatchObject({ status: 'PAUSED', accessStatus: 'RESTRICTED', firstPaidAt: null, pendingChangeType: 'REACTIVATE' });
+
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_reactivation_paid_after_active', 'invoice.paid', paidInvoice({
+        id: 'in_reactivation', customer: 'cus_reactivated', subscription: 'sub_new', priceId: 'price_band_026_050', amountPaid: 22900,
+      })),
+      environment: 'TEST', envSource,
+      stripeGateway: reactivationGateway,
+    }, store);
 
     expect(store.accounts[0]).toMatchObject({
-      status: 'ACTIVE', accessStatus: 'ACTIVE', stripeSubscriptionId: 'sub_new', planCode: 'STARTER',
+      status: 'ACTIVE', accessStatus: 'ACTIVE', stripeSubscriptionId: 'sub_new', planCode: 'BAND_026_050',
       pendingPlanCode: null, pendingChangeType: null, pendingChangeEffectiveAt: null,
       pendingChangeOperationId: null, pendingChangeClaimToken: null, checkoutClaimKey: null,
       checkoutClaimPhase: null, canceledAt: null, restrictedAt: null,
@@ -443,7 +599,22 @@ describe('@alusa/platform-billing webhooks', () => {
     });
     expect(store.accounts[0]?.firstPaidAt).toBeInstanceOf(Date);
     expect(store.accounts[0]?.lastSuccessfulPaymentAt).toBeInstanceOf(Date);
-    expect(store.invoices[0]).toMatchObject({ status: 'PAID', amountPaid: 14900, stripeSubscriptionId: 'sub_new' });
+    expect(store.invoices.find((invoice) => invoice.stripeInvoiceId === 'in_reactivation'))
+      .toMatchObject({ status: 'PAID', amountPaid: 22900, stripeSubscriptionId: 'sub_new' });
+    expect(cancelOldSubscription).toHaveBeenCalledWith('sub_old', 'platform-reactivation-cleanup:pba_1:sub_old');
+    expect(cancelOldSubscription).not.toHaveBeenCalledWith('sub_other_tenant', expect.anything());
+    expect(cancelOldSubscription).not.toHaveBeenCalledWith('sub_other_environment', expect.anything());
+    expect(oldSubscriptionStatus).toBe('canceled');
+
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_old_trial_pause_late', 'customer.subscription.updated', {
+        id: 'sub_old', customer: 'cus_reactivated', status: 'paused', cancel_at_period_end: false,
+        metadata: { contaId: 'conta_1', planCode: 'STARTER', billingContext: 'platform' },
+        items: { data: [{ price: { id: 'price_starter_test' } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+    expect(store.accounts[0]).toMatchObject({ status: 'ACTIVE', accessStatus: 'ACTIVE', stripeSubscriptionId: 'sub_new' });
 
     await expect(processPlatformBillingWebhookEvent({
       event: stripeEvent('evt_reactivation_checkout_bound', 'checkout.session.completed', {
@@ -453,11 +624,11 @@ describe('@alusa/platform-billing webhooks', () => {
       environment: 'TEST', envSource,
       stripeGateway: checkoutGateway({
         sessionId: 'cs_reactivation', customerId: 'cus_reactivated', subscriptionId: 'sub_new', contaId: 'conta_1',
-        planCode: 'STARTER', priceId: 'price_starter_test', subscriptionStatus: 'active',
-        invoice: paidInvoice({ id: 'in_reactivation', customer: 'cus_reactivated', subscription: 'sub_new', priceId: 'price_starter_test' }),
+        planCode: 'BAND_026_050', priceId: 'price_band_026_050', subscriptionStatus: 'active', invoice: null,
+        reactivationOrigin: { subscriptionId: 'sub_old', planCode: 'STARTER', priceId: 'price_starter_test' },
       }),
     }, store)).resolves.toMatchObject({ status: 'duplicate' });
-    expect(store.invoices).toHaveLength(1);
+    expect(store.invoices).toHaveLength(3);
 
     await processPlatformBillingWebhookEvent({
       event: stripeEvent('evt_old_subscription_late_cancel', 'customer.subscription.deleted', {
@@ -468,6 +639,76 @@ describe('@alusa/platform-billing webhooks', () => {
       environment: 'TEST', envSource,
     }, store);
     expect(store.accounts[0]).toMatchObject({ status: 'ACTIVE', stripeSubscriptionId: 'sub_new' });
+  });
+
+  it('keeps reactivation restricted when the paid subscription has no persisted lineage metadata', async () => {
+    const store = createMemoryStore([buildAccount({
+      status: 'PAUSED', accessStatus: 'RESTRICTED', planCode: 'STARTER',
+      stripeCustomerId: 'cus_missing_lineage', stripeSubscriptionId: 'sub_new', stripePriceId: 'price_starter_test',
+      pendingPlanCode: 'BAND_026_050', pendingChangeType: 'REACTIVATE',
+    })]);
+    addCheckoutSession(store, {
+      idempotencyKey: 'missing-lineage-key', planCode: 'BAND_026_050', stripeCustomerId: 'cus_missing_lineage',
+      stripePriceId: 'price_band_026_050', stripeCheckoutSessionId: 'cs_missing_lineage',
+    });
+    const gateway = checkoutGateway({
+      sessionId: 'cs_missing_lineage', requestKey: 'missing-lineage-key', customerId: 'cus_missing_lineage',
+      subscriptionId: 'sub_new', contaId: 'conta_1', planCode: 'BAND_026_050', priceId: 'price_band_026_050',
+      subscriptionStatus: 'active', invoice: null,
+    });
+    const cancel = vi.fn(async () => undefined);
+    gateway.cancelSubscription = cancel;
+
+    await expect(processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_missing_lineage_paid', 'invoice.paid', paidInvoice({
+        id: 'in_missing_lineage', customer: 'cus_missing_lineage', subscription: 'sub_new', priceId: 'price_band_026_050', amountPaid: 22900,
+      })),
+      environment: 'TEST', envSource, stripeGateway: gateway,
+    }, store)).rejects.toMatchObject({ code: 'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED' });
+
+    expect(store.accounts[0]).toMatchObject({
+      status: 'PAUSED', accessStatus: 'RESTRICTED', pendingChangeType: 'REACTIVATE', firstPaidAt: null,
+    });
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it('does not clear reactivation when lineage points to a different old subscription', async () => {
+    const store = createMemoryStore([buildAccount({
+      status: 'PAUSED', accessStatus: 'RESTRICTED', planCode: 'STARTER',
+      stripeCustomerId: 'cus_invalid_lineage', stripeSubscriptionId: 'sub_new', stripePriceId: 'price_starter_test',
+      pendingPlanCode: 'BAND_026_050', pendingChangeType: 'REACTIVATE',
+    })]);
+    addCheckoutSession(store, {
+      idempotencyKey: 'invalid-lineage-key', planCode: 'BAND_026_050', stripeCustomerId: 'cus_invalid_lineage',
+      stripePriceId: 'price_band_026_050', stripeCheckoutSessionId: 'cs_invalid_lineage',
+    });
+    const gateway = checkoutGateway({
+      sessionId: 'cs_invalid_lineage', requestKey: 'invalid-lineage-key', customerId: 'cus_invalid_lineage',
+      subscriptionId: 'sub_new', contaId: 'conta_1', planCode: 'BAND_026_050', priceId: 'price_band_026_050',
+      subscriptionStatus: 'active', invoice: null,
+      reactivationOrigin: { subscriptionId: 'sub_wrong', planCode: 'STARTER', priceId: 'price_starter_test' },
+    });
+    const cancel = vi.fn(async () => undefined);
+    gateway.cancelSubscription = cancel;
+    gateway.listCustomerSubscriptions = async (customerId: string) => ({
+      complete: true,
+      subscriptions: [
+        { id: 'sub_old', customerId, status: 'paused', livemode: false, metadata: { contaId: 'conta_1', billingContext: 'platform', planCode: 'STARTER' }, priceIds: ['price_starter_test'] },
+        { id: 'sub_new', customerId, status: 'active', livemode: false, metadata: { contaId: 'conta_1', billingContext: 'platform', planCode: 'BAND_026_050', flow: 'reactivation', checkoutRequestKey: 'invalid-lineage-key', reactivationFromSubscriptionId: 'sub_wrong', reactivationFromPlanCode: 'STARTER', reactivationFromPriceId: 'price_starter_test' }, priceIds: ['price_band_026_050'] },
+      ],
+    });
+
+    await expect(processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_invalid_lineage_paid', 'invoice.paid', paidInvoice({
+        id: 'in_invalid_lineage', customer: 'cus_invalid_lineage', subscription: 'sub_new', priceId: 'price_band_026_050', amountPaid: 22900,
+      })),
+      environment: 'TEST', envSource, stripeGateway: gateway,
+    }, store)).rejects.toMatchObject({ code: 'PLATFORM_BILLING_WEBHOOK_INVALID' });
+
+    expect(store.accounts[0]).toMatchObject({
+      status: 'PAUSED', accessStatus: 'RESTRICTED', pendingChangeType: 'REACTIVATE', firstPaidAt: null,
+    });
+    expect(cancel).not.toHaveBeenCalled();
   });
 
   it('keeps a canceled current subscription canceled when a delayed invoice is paid', async () => {
@@ -539,13 +780,14 @@ describe('@alusa/platform-billing webhooks', () => {
         sessionId: 'cs_unpaid', requestKey: 'unpaid-checkout-key', customerId: 'cus_unpaid_checkout',
         subscriptionId: 'sub_unpaid', contaId: 'conta_1', planCode: 'STARTER', priceId: 'price_starter_test',
         subscriptionStatus: 'active', invoice: unpaid,
+        reactivationOrigin: { subscriptionId: 'sub_old_unpaid', planCode: 'STARTER', priceId: 'price_starter_test' },
       }),
     }, store);
     expect(store.accounts[0]).toMatchObject({ status: 'CANCELED', stripeSubscriptionId: 'sub_unpaid' });
     expect(store.invoices).toEqual([]);
   });
 
-  it('projects canonical payment when subscription.created already bound the current session before completion', async () => {
+  it('keeps a new bound active subscription pending until a positive paid invoice confirms access', async () => {
     const store = createMemoryStore([buildAccount({
       status: 'CHECKOUT_PENDING', accessStatus: 'PENDING', planCode: 'STARTER', pendingPlanCode: 'STARTER',
       stripeCustomerId: 'cus_sub_first', stripeSubscriptionId: 'sub_current_checkout', stripePriceId: 'price_starter_test',
@@ -561,15 +803,160 @@ describe('@alusa/platform-billing webhooks', () => {
       stripeGateway: checkoutGateway({
         sessionId: 'cs_sub_first', requestKey: 'sub-first-checkout', customerId: 'cus_sub_first',
         subscriptionId: 'sub_current_checkout', contaId: 'conta_1', planCode: 'STARTER', priceId: 'price_starter_test',
-        subscriptionStatus: 'active', invoice: paidInvoice({
-          id: 'in_sub_first', customer: 'cus_sub_first', subscription: 'sub_current_checkout', priceId: 'price_starter_test',
-        }),
+        subscriptionStatus: 'active', invoice: null,
+      }),
+    }, store);
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_sub_first_active_before_invoice', 'customer.subscription.updated', {
+        id: 'sub_current_checkout', customer: 'cus_sub_first', status: 'active', cancel_at_period_end: false,
+        metadata: { contaId: 'conta_1', planCode: 'STARTER', billingContext: 'platform' },
+        items: { data: [{ price: { id: 'price_starter_test' } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+    expect(store.accounts[0]).toMatchObject({
+      status: 'CHECKOUT_PENDING', accessStatus: 'PENDING', stripeSubscriptionId: 'sub_current_checkout', firstPaidAt: null,
+    });
+
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_sub_first_invoice_paid', 'invoice.paid', paidInvoice({
+        id: 'in_sub_first', customer: 'cus_sub_first', subscription: 'sub_current_checkout', priceId: 'price_starter_test',
+      })),
+      environment: 'TEST', envSource,
+      stripeGateway: checkoutGateway({
+        sessionId: 'cs_sub_first', requestKey: 'sub-first-checkout', customerId: 'cus_sub_first',
+        subscriptionId: 'sub_current_checkout', contaId: 'conta_1', planCode: 'STARTER', priceId: 'price_starter_test',
+        subscriptionStatus: 'active', invoice: null,
       }),
     }, store);
     expect(store.accounts[0]).toMatchObject({ status: 'ACTIVE', accessStatus: 'ACTIVE', stripeSubscriptionId: 'sub_current_checkout' });
     expect(store.accounts[0]?.firstPaidAt).toEqual(new Date(1_798_000_000 * 1000));
     expect(store.accounts[0]?.lastSuccessfulPaymentAt).toEqual(new Date(1_798_000_000 * 1000));
     expect(store.invoices[0]).toMatchObject({ stripeInvoiceId: 'in_sub_first', status: 'PAID', amountPaid: 14900 });
+  });
+
+  it('processes a valid paid Checkout when subscription.created bound first, while rejecting divergent checkout lineage', async () => {
+    const store = createMemoryStore([buildAccount({
+      status: 'CHECKOUT_PENDING', accessStatus: 'PENDING', planCode: 'STARTER', pendingPlanCode: 'STARTER',
+      stripeCustomerId: 'cus_ordered_checkout', stripeSubscriptionId: null, stripePriceId: 'price_starter_test',
+      checkoutClaimKey: 'ordered-checkout-key', checkoutClaimPhase: 'REQUESTING',
+    })]);
+    addCheckoutSession(store, {
+      idempotencyKey: 'ordered-checkout-key', planCode: 'STARTER', stripeCustomerId: 'cus_ordered_checkout',
+      stripePriceId: 'price_starter_test', stripeCheckoutSessionId: 'cs_ordered_checkout',
+    });
+    const metadata = {
+      contaId: 'conta_1', planCode: 'STARTER', billingContext: 'platform', flow: 'subscription',
+      checkoutRequestKey: 'ordered-checkout-key',
+    };
+    const gateway = checkoutGateway({
+      sessionId: 'cs_ordered_checkout', requestKey: 'ordered-checkout-key', customerId: 'cus_ordered_checkout',
+      subscriptionId: 'sub_ordered_checkout', contaId: 'conta_1', planCode: 'STARTER',
+      priceId: 'price_starter_test', subscriptionStatus: 'active', invoice: null,
+    });
+
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_ordered_subscription_created', 'customer.subscription.created', {
+        id: 'sub_ordered_checkout', customer: 'cus_ordered_checkout', status: 'active', cancel_at_period_end: false,
+        metadata, items: { data: [{ price: { id: 'price_starter_test' } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+    expect(store.accounts[0]).toMatchObject({
+      status: 'CHECKOUT_PENDING', accessStatus: 'PENDING', stripeSubscriptionId: 'sub_ordered_checkout',
+      checkoutClaimKey: 'ordered-checkout-key',
+    });
+
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_ordered_checkout_completed', 'checkout.session.completed', {
+        id: 'cs_ordered_checkout', customer: 'cus_ordered_checkout', subscription: 'sub_ordered_checkout',
+        metadata: { contaId: 'conta_1', checkoutRequestKey: 'ordered-checkout-key' },
+      }),
+      environment: 'TEST', envSource, stripeGateway: gateway,
+    }, store);
+    expect(store.accounts[0]).toMatchObject({ status: 'CHECKOUT_PENDING', accessStatus: 'PENDING', stripeSubscriptionId: 'sub_ordered_checkout' });
+    expect(store.accounts[0]?.checkoutClaimKey).toBeNull();
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_ordered_invoice_paid', 'invoice.paid', paidInvoice({
+        id: 'in_ordered_checkout', customer: 'cus_ordered_checkout', subscription: 'sub_ordered_checkout', priceId: 'price_starter_test',
+      })),
+      environment: 'TEST', envSource, stripeGateway: gateway,
+    }, store);
+    expect(store.accounts[0]).toMatchObject({ status: 'ACTIVE', accessStatus: 'ACTIVE', stripeSubscriptionId: 'sub_ordered_checkout' });
+    expect(store.accounts[0]?.firstPaidAt).toBeInstanceOf(Date);
+
+    const newerClaimStore = createMemoryStore([buildAccount({
+      status: 'CHECKOUT_PENDING', accessStatus: 'PENDING', planCode: 'STARTER', pendingPlanCode: 'STARTER',
+      stripeCustomerId: 'cus_newer_claim', stripeSubscriptionId: 'sub_newer_claim', stripePriceId: 'price_starter_test',
+      checkoutClaimKey: 'verified-key', checkoutClaimPhase: 'REQUESTING',
+    })]);
+    addCheckoutSession(newerClaimStore, {
+      idempotencyKey: 'verified-key', planCode: 'STARTER', stripeCustomerId: 'cus_newer_claim',
+      stripePriceId: 'price_starter_test', stripeCheckoutSessionId: 'cs_verified_claim',
+    });
+    const persistCheckoutCompleted = newerClaimStore.markCheckoutSessionCompleted;
+    newerClaimStore.markCheckoutSessionCompleted = async (input) => {
+      await persistCheckoutCompleted(input);
+      newerClaimStore.accounts[0]!.checkoutClaimKey = 'newer-attempt-key';
+    };
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_newer_claim_preserved', 'checkout.session.completed', {
+        id: 'cs_verified_claim', customer: 'cus_newer_claim', subscription: 'sub_newer_claim',
+        metadata: { contaId: 'conta_1', checkoutRequestKey: 'verified-key' },
+      }),
+      environment: 'TEST', envSource,
+      stripeGateway: checkoutGateway({
+        sessionId: 'cs_verified_claim', requestKey: 'verified-key', customerId: 'cus_newer_claim',
+        subscriptionId: 'sub_newer_claim', contaId: 'conta_1', planCode: 'STARTER',
+        priceId: 'price_starter_test', subscriptionStatus: 'incomplete', invoice: null,
+      }),
+    }, newerClaimStore);
+    expect(newerClaimStore.accounts[0]?.checkoutClaimKey).toBe('newer-attempt-key');
+
+    const invalidCheckoutStore = createMemoryStore([buildAccount({
+      status: 'CHECKOUT_PENDING', accessStatus: 'PENDING', planCode: 'STARTER', pendingPlanCode: 'STARTER',
+      stripeCustomerId: 'cus_invalid_checkout', stripeSubscriptionId: 'sub_invalid_checkout',
+      stripePriceId: 'price_starter_test', checkoutClaimKey: 'verified-key', checkoutClaimPhase: 'REQUESTING',
+    })]);
+    addCheckoutSession(invalidCheckoutStore, {
+      idempotencyKey: 'verified-key', planCode: 'STARTER', stripeCustomerId: 'cus_invalid_checkout',
+      stripePriceId: 'price_starter_test', stripeCheckoutSessionId: 'cs_invalid_checkout',
+    });
+    await expect(processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_invalid_checkout_claim', 'checkout.session.completed', {
+        id: 'cs_invalid_checkout', customer: 'cus_invalid_checkout', subscription: 'sub_invalid_checkout',
+        metadata: { contaId: 'conta_1', checkoutRequestKey: 'verified-key' },
+      }),
+      environment: 'TEST', envSource,
+      stripeGateway: checkoutGateway({
+        sessionId: 'cs_invalid_checkout', requestKey: 'wrong-key', customerId: 'cus_invalid_checkout',
+        subscriptionId: 'sub_invalid_checkout', contaId: 'conta_1', planCode: 'STARTER',
+        priceId: 'price_starter_test', subscriptionStatus: 'active', invoice: null,
+      }),
+    }, invalidCheckoutStore)).rejects.toMatchObject({ code: 'PLATFORM_BILLING_WEBHOOK_INVALID' });
+    expect(invalidCheckoutStore.accounts[0]?.checkoutClaimKey).toBe('verified-key');
+
+    const divergentStore = createMemoryStore([buildAccount({
+      status: 'CHECKOUT_PENDING', accessStatus: 'PENDING', planCode: 'STARTER', pendingPlanCode: 'STARTER',
+      stripeCustomerId: 'cus_divergent_checkout', stripeSubscriptionId: 'sub_divergent_checkout',
+      stripePriceId: 'price_starter_test',
+    })]);
+    addCheckoutSession(divergentStore, {
+      idempotencyKey: 'expected-checkout-key', planCode: 'STARTER', stripeCustomerId: 'cus_divergent_checkout',
+      stripePriceId: 'price_starter_test', stripeCheckoutSessionId: 'cs_expected_checkout',
+    });
+    const divergentGateway = checkoutGateway({
+      sessionId: 'cs_expected_checkout', requestKey: 'wrong-request-key', customerId: 'cus_divergent_checkout',
+      subscriptionId: 'sub_divergent_checkout', contaId: 'conta_1', planCode: 'STARTER',
+      priceId: 'price_starter_test', subscriptionStatus: 'active', invoice: null,
+    });
+    await expect(processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_divergent_checkout_paid', 'invoice.paid', paidInvoice({
+        id: 'in_divergent_checkout', customer: 'cus_divergent_checkout', subscription: 'sub_divergent_checkout', priceId: 'price_starter_test',
+      })),
+      environment: 'TEST', envSource, stripeGateway: divergentGateway,
+    }, divergentStore)).rejects.toMatchObject({ code: 'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED' });
+    expect(divergentStore.accounts[0]).toMatchObject({ status: 'CHECKOUT_PENDING', accessStatus: 'PENDING' });
   });
 
   it('does not fail a plan change from stale pending_update_expired after the account CAS rejects it', async () => {
@@ -641,6 +1028,7 @@ describe('@alusa/platform-billing webhooks', () => {
   it('resolves current invoice price from pricing.price_details and ignores proration lines', async () => {
     const store = createMemoryStore([buildAccount({
       status: 'ACTIVE', planCode: 'STARTER', stripeCustomerId: 'cus_1', stripeSubscriptionId: 'sub_1', stripePriceId: 'price_starter_test',
+      firstPaidAt: new Date('2026-01-01T00:00:00.000Z'), lastSuccessfulPaymentAt: new Date('2026-10-01T00:00:00.000Z'),
     })]);
     await processPlatformBillingWebhookEvent({
       event: stripeEvent('evt_invoice_nested_price', 'invoice.paid', {
@@ -757,6 +1145,8 @@ describe('@alusa/platform-billing webhooks', () => {
         stripeCustomerId: 'cus_1',
         stripeSubscriptionId: 'sub_1',
         stripePriceId: 'price_starter_test',
+        firstPaidAt: new Date('2026-01-01T00:00:00.000Z'),
+        lastSuccessfulPaymentAt: new Date('2026-10-01T00:00:00.000Z'),
       }),
     ]);
 
@@ -1459,15 +1849,16 @@ function addCheckoutSession(
   });
 }
 
-function paidInvoice(input: { id: string; customer: string; subscription: string; priceId: string }): Record<string, unknown> {
+function paidInvoice(input: { id: string; customer: string; subscription: string; priceId: string; amountPaid?: number }): Record<string, unknown> {
+  const amount = input.amountPaid ?? 14900;
   return {
     id: input.id,
     customer: input.customer,
     subscription: input.subscription,
     status: 'paid',
     livemode: false,
-    amount_due: 14900,
-    amount_paid: 14900,
+    amount_due: amount,
+    amount_paid: amount,
     currency: 'brl',
     status_transitions: { paid_at: 1_798_000_000 },
     metadata: { contaId: 'conta_1' },
@@ -1478,12 +1869,28 @@ function paidInvoice(input: { id: string; customer: string; subscription: string
 function checkoutGateway(input: {
   sessionId: string; requestKey: string; customerId: string; subscriptionId: string; contaId: string;
   planCode: string; priceId: string; subscriptionStatus: string; invoice: Record<string, unknown> | null;
+  reactivationOrigin?: { subscriptionId: string; planCode: string; priceId: string };
 }) {
+  const metadata = {
+    contaId: input.contaId,
+    billingContext: 'platform',
+    checkoutRequestKey: input.requestKey,
+    planCode: input.planCode,
+    flow: 'subscription',
+    ...(input.reactivationOrigin ? {
+      flow: 'reactivation',
+      reactivationFromSubscriptionId: input.reactivationOrigin.subscriptionId,
+      reactivationFromPlanCode: input.reactivationOrigin.planCode,
+      reactivationFromPriceId: input.reactivationOrigin.priceId,
+    } : {}),
+  };
   return {
+    listCustomerSubscriptions: async () => ({ subscriptions: [], complete: true }),
+    cancelSubscription: async () => undefined,
     retrieveCheckoutSession: async () => ({
       id: input.sessionId, status: 'complete', livemode: false, customerId: input.customerId,
       clientReferenceId: input.contaId,
-      metadata: { contaId: input.contaId, billingContext: 'platform', checkoutRequestKey: input.requestKey, planCode: input.planCode },
+      metadata,
       priceIds: [input.priceId], subscriptionId: input.subscriptionId,
     }),
     retrieveLatestSubscriptionInvoice: async () => input.invoice,
@@ -1494,7 +1901,7 @@ function checkoutGateway(input: {
     }),
     retrieveSubscriptionSnapshot: async () => ({
       id: input.subscriptionId, customerId: input.customerId, status: input.subscriptionStatus, livemode: false,
-      metadata: { contaId: input.contaId, billingContext: 'platform', planCode: input.planCode },
+      metadata,
       priceIds: [input.priceId], currentPeriodEnd: new Date('2026-11-26T00:00:00.000Z'),
       cancelAtPeriodEnd: false, trialEndsAt: null,
     }),
@@ -1666,12 +2073,6 @@ function createMemoryStore(initialAccounts: PlatformBillingAccountRecord[] = [])
       if (input.pendingChangeOperationId !== undefined) {
         account.pendingChangeOperationId = input.pendingChangeOperationId;
         account.pendingChangeClaimToken = null;
-      }
-      if (input.stripeSubscriptionId) {
-        account.checkoutClaimKey = null;
-        account.checkoutClaimPhase = null;
-        account.checkoutClaimedAt = null;
-        account.checkoutRequestExpiresAt = null;
       }
       if (!input.cancelAtPeriodEnd && account.pendingChangeType === 'CANCEL_AT_PERIOD_END') {
         account.pendingChangeType = null;

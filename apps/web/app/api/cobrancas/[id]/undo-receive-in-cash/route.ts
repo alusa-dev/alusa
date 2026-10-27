@@ -14,7 +14,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase())) {
       return NextResponse.json({ error: 'Acesso negado' }, { status: 403 });
     }
-    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'CHARGE_CREATE' });
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'FINANCIAL_CORRECTION' });
     if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
     const { id } = cobrancaRouteParamsDTOSchema.parse(await params);

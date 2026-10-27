@@ -36,6 +36,7 @@ export type PlatformBillingCapability =
   | 'ENROLLMENT_WRITE'
   | 'CONTRACT_WRITE'
   | 'CHARGE_CREATE'
+  | 'FINANCIAL_CORRECTION'
   | 'FINANCIAL_CONFIG_WRITE'
   | 'ADMIN_WRITE';
 
@@ -61,6 +62,7 @@ export const PLATFORM_BILLING_CAPABILITIES: readonly PlatformBillingCapability[]
   'ENROLLMENT_WRITE',
   'CONTRACT_WRITE',
   'CHARGE_CREATE',
+  'FINANCIAL_CORRECTION',
   'FINANCIAL_CONFIG_WRITE',
   'ADMIN_WRITE',
 ];
@@ -75,6 +77,7 @@ const RESTRICTED_ALLOWED_CAPABILITIES = new Set<PlatformBillingCapability>([
   'ACCOUNT_READ',
   'REPORT_READ',
   'MONEY_READ',
+  'FINANCIAL_CORRECTION',
 ]);
 
 const CANCELED_ALLOWED_CAPABILITIES = new Set<PlatformBillingCapability>([
@@ -85,6 +88,7 @@ const CANCELED_ALLOWED_CAPABILITIES = new Set<PlatformBillingCapability>([
   'ACCOUNT_READ',
   'REPORT_READ',
   'MONEY_READ',
+  'FINANCIAL_CORRECTION',
 ]);
 
 export function computeGracePeriodEnd(input: { failedAt: Date; gracePeriodDays?: number }): Date {

@@ -93,9 +93,11 @@ export async function POST(req: NextRequest) {
     ]);
     // On first onboarding, the validated and persisted declaration sets the
     // initial trial band. Later self-service flows use live billable enrollments.
-    const pricingStudentCount = onboardingPricing?.wizardCompletedAt && onboardingPricing.onboardingStudentCount
-      ? onboardingPricing.onboardingStudentCount
-      : activeStudents;
+    const pricingStudentCount = activeStudents > 0
+      ? activeStudents
+      : onboardingPricing?.wizardCompletedAt && onboardingPricing.onboardingStudentCount !== null
+        ? onboardingPricing.onboardingStudentCount
+        : activeStudents;
     const commercialTarget = resolveSchoolCommercialTarget(pricingStudentCount);
     if (!commercialTarget || commercialTarget.kind === 'SPECIALIST') {
       return NextResponse.json({

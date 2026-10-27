@@ -7,9 +7,9 @@ const { state, tx, prisma } = vi.hoisted(() => {
   const issueUpsert = vi.fn();
   const tx = {
     platformBillingAccount: { findUnique: vi.fn() },
-    platformBillingMonthlySnapshot: { createMany: snapshotCreateMany, findMany: vi.fn() },
+    platformBillingMonthlySnapshot: { createMany: snapshotCreateMany, findMany: vi.fn(), findUnique: vi.fn() },
     platformBillingAuditLog: { create: auditCreate },
-    platformBillingIssue: { upsert: issueUpsert },
+    platformBillingIssue: { upsert: issueUpsert, findUnique: vi.fn(), updateMany: vi.fn() },
     platformBillingNotificationOutbox: { createMany: outboxCreateMany },
   };
   const state = { studentCount: 501, tenantIds: [] as string[], snapshots: [] as Array<Record<string, unknown>> };
@@ -29,6 +29,7 @@ vi.mock('@/lib/prisma-tenant', () => ({
 vi.mock('@/lib/prisma', () => ({ prisma: {} }));
 vi.mock('@/src/server/platform-billing/platform-billing-server', () => ({
   countActivePlatformBillingStudents: vi.fn(async () => state.studentCount),
+  PlatformBillingHistoricalCountInconclusive: class PlatformBillingHistoricalCountInconclusive extends Error {},
   resolvePlatformBillingEnvironment: () => 'TEST',
 }));
 vi.mock('@/src/server/platform-billing/plan-change-actions', () => ({
@@ -36,6 +37,7 @@ vi.mock('@/src/server/platform-billing/plan-change-actions', () => ({
 }));
 
 import { capturePlatformBillingMonthlySnapshots } from '@/src/server/platform-billing/monthly-snapshots';
+import { countActivePlatformBillingStudents, PlatformBillingHistoricalCountInconclusive } from '@/src/server/platform-billing/platform-billing-server';
 import { scheduleStablePlatformPriceBandTransition } from '@/src/server/platform-billing/plan-change-actions';
 
 describe('capturePlatformBillingMonthlySnapshots', () => {
@@ -52,7 +54,10 @@ describe('capturePlatformBillingMonthlySnapshots', () => {
       { periodStart: new Date('2026-09-01T00:00:00Z'), candidateBand: 'SPECIALIST' },
       { periodStart: new Date('2026-08-01T00:00:00Z'), candidateBand: 'SPECIALIST' },
     ] as never);
+    vi.mocked(tx.platformBillingMonthlySnapshot.findUnique).mockResolvedValue(null as never);
     vi.mocked(tx.platformBillingIssue.upsert).mockResolvedValue({} as never);
+    vi.mocked(tx.platformBillingIssue.findUnique).mockResolvedValue(null as never);
+    vi.mocked(tx.platformBillingIssue.updateMany).mockResolvedValue({ count: 1 } as never);
   });
 
   it('opens one internal issue and one school notice after three specialist closes without repricing', async () => {
@@ -88,7 +93,7 @@ describe('capturePlatformBillingMonthlySnapshots', () => {
 
     expect(first).toMatchObject({ readyForSpecialist: 1, specialistNoticesCreated: 1, transitionsScheduled: 0 });
     expect(afterTransitionWindow).toMatchObject({ readyForSpecialist: 1, specialistNoticesCreated: 0, transitionsScheduled: 0 });
-    expect(tx.platformBillingIssue.upsert).toHaveBeenCalledWith(expect.objectContaining({
+    expect(tx.platformBillingIssue.upsert).toHaveBeenNthCalledWith(1, expect.objectContaining({
       create: expect.objectContaining({
         code: 'SPECIALIST_NEGOTIATION_REQUIRED',
         details: expect.objectContaining({
@@ -205,5 +210,69 @@ describe('capturePlatformBillingMonthlySnapshots', () => {
       2,
       expect.objectContaining({ take: 2, skip: expect.any(Number) }),
     );
+  });
+
+  it('records a missed close as inconclusive instead of inventing a historical count', async () => {
+    const result = await capturePlatformBillingMonthlySnapshots({
+      prisma: prisma as never,
+      now: new Date('2026-11-02T12:00:00Z'),
+    });
+
+    expect(result.inconclusive).toBe(1);
+    expect(tx.platformBillingMonthlySnapshot.createMany).not.toHaveBeenCalled();
+    expect(tx.platformBillingIssue.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({
+        code: 'MONTHLY_CLOSE_INCONCLUSIVE',
+        status: 'OPEN',
+        details: expect.objectContaining({ reason: 'MISSED_CLOSE_WINDOW', automaticPricing: false }),
+      }),
+    }));
+  });
+
+  it('distinguishes known historical uncertainty from operational failures and reopens a resolved issue', async () => {
+    vi.mocked(tx.platformBillingIssue.findUnique).mockResolvedValue({
+      id: 'issue-1', status: 'RESOLVED', details: { reason: 'OLDER_REASON' },
+    } as never);
+    vi.mocked(countActivePlatformBillingStudents)
+      .mockRejectedValueOnce(new PlatformBillingHistoricalCountInconclusive())
+      .mockRejectedValueOnce(new Error('database unavailable'));
+    await capturePlatformBillingMonthlySnapshots({ prisma: prisma as never, now: new Date('2026-11-01T12:00:00Z') });
+    await capturePlatformBillingMonthlySnapshots({ prisma: prisma as never, now: new Date('2026-11-01T12:05:00Z') });
+    const inconclusiveUpdates = tx.platformBillingIssue.upsert.mock.calls
+      .map(([args]) => args)
+      .filter((args) => args.create.code === 'MONTHLY_CLOSE_INCONCLUSIVE')
+      .map((args) => args.update);
+    expect(inconclusiveUpdates).toEqual([
+      expect.objectContaining({ status: 'OPEN', resolvedAt: null, details: expect.objectContaining({ reason: 'HISTORICAL_DATA_INSUFFICIENT' }) }),
+      expect.objectContaining({ status: 'OPEN', resolvedAt: null, details: expect.objectContaining({ reason: 'CLOSE_PROCESSING_FAILED' }) }),
+    ]);
+  });
+
+  it('resolves the open inconclusive issue atomically when retry captures the close', async () => {
+    const historicalError = new (PlatformBillingHistoricalCountInconclusive as unknown as new () => Error)();
+    vi.mocked(countActivePlatformBillingStudents)
+      .mockRejectedValueOnce(historicalError)
+      .mockResolvedValueOnce(42);
+    vi.mocked(tx.platformBillingIssue.findUnique)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce({ id: 'issue-close', contaId: 'conta_1', status: 'OPEN' } as never);
+    vi.mocked(tx.platformBillingMonthlySnapshot.createMany).mockResolvedValue({ count: 1 } as never);
+
+    const failed = await capturePlatformBillingMonthlySnapshots({ prisma: prisma as never, now: new Date('2026-11-01T12:00:00Z') });
+    const recovered = await capturePlatformBillingMonthlySnapshots({ prisma: prisma as never, now: new Date('2026-11-01T12:05:00Z') });
+
+    expect(failed.inconclusive).toBe(1);
+    expect(recovered).toMatchObject({ inconclusive: 0, captured: 1 });
+    expect(tx.platformBillingMonthlySnapshot.createMany).toHaveBeenCalledTimes(1);
+    expect(tx.platformBillingIssue.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'issue-close', contaId: 'conta_1', status: 'OPEN' },
+      data: expect.objectContaining({ status: 'RESOLVED', resolvedAt: expect.any(Date) }),
+    }));
+    expect(tx.platformBillingAuditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        action: 'PLATFORM_BILLING_MONTHLY_CLOSE_ISSUE_RESOLVED',
+        entityId: 'TEST:conta_1:monthly-close-inconclusive:2026-10-01',
+      }),
+    }));
   });
 });

@@ -3,7 +3,13 @@ import {
   createStripeBillingCustomer,
   createStripeBillingPortalSession,
   createStripeSubscriptionCheckoutSession,
+  createStripeSetupCheckoutSession,
+  listStripeCheckoutSessionsForCustomerSince,
+  retrieveStripeSetupCheckoutSession,
+  retrieveStripeSetupIntent,
+  allowStripePaymentMethodRedisplay,
   createStripeTrialSubscriptionWithoutPaymentMethod,
+  cancelStripeSubscription,
   getStripeMissingCustomerId,
   releaseStripeSubscriptionSchedule,
   retrieveStripeCustomer,
@@ -13,6 +19,36 @@ import {
 } from '../src';
 
 describe('@alusa/stripe billing operations', () => {
+  it('paginates Checkout Session reconciliation by customer and created lower bound', async () => {
+    const list = vi.fn()
+      .mockResolvedValueOnce({ data: [{ id: 'cs_page_1' }], has_more: true })
+      .mockResolvedValueOnce({ data: [{ id: 'cs_page_2' }], has_more: false });
+    const client = { checkout: { sessions: { list } } };
+    const createdAfter = new Date('2026-10-27T12:00:00.000Z');
+
+    await expect(listStripeCheckoutSessionsForCustomerSince(client as never, 'cus_1', createdAfter))
+      .resolves.toEqual({ sessions: [{ id: 'cs_page_1' }, { id: 'cs_page_2' }], complete: true });
+
+    expect(list).toHaveBeenNthCalledWith(1, { customer: 'cus_1', created: { gte: Math.floor(createdAfter.getTime() / 1000) }, limit: 100 });
+    expect(list).toHaveBeenNthCalledWith(2, { customer: 'cus_1', created: { gte: Math.floor(createdAfter.getTime() / 1000) }, limit: 100, starting_after: 'cs_page_1' });
+  });
+
+  it('cancels with a stable idempotency key and skips an already canceled subscription', async () => {
+    const retrieve = vi.fn()
+      .mockResolvedValueOnce({ id: 'sub_paused', status: 'paused' })
+      .mockResolvedValueOnce({ id: 'sub_canceled', status: 'canceled' })
+      .mockResolvedValueOnce({ id: 'sub_resumed', status: 'active' });
+    const cancel = vi.fn(async () => ({ id: 'sub_paused', status: 'canceled' }));
+    const client = { subscriptions: { retrieve, cancel } };
+
+    await cancelStripeSubscription(client as never, 'sub_paused', 'cleanup-key');
+    await cancelStripeSubscription(client as never, 'sub_canceled', 'cleanup-key');
+    await expect(cancelStripeSubscription(client as never, 'sub_resumed', 'cleanup-key')).rejects.toThrow('no longer paused');
+
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(cancel).toHaveBeenCalledWith('sub_paused', {}, { idempotencyKey: 'cleanup-key' });
+  });
+
   it('retrieves Checkout status and bindings including the actual line-item price', async () => {
     const retrieve = vi.fn(async () => ({
       id: 'cs_test_1', status: 'open', livemode: false, customer: 'cus_1',
@@ -142,6 +178,7 @@ describe('@alusa/stripe billing operations', () => {
       phases: [{ start_date: 1_700_000_000, end_date: 1_800_000_000, items: [{ price: 'price_current', quantity: 1 }] }],
     };
     const client = {
+      customers: { retrieve: vi.fn(async () => ({ id: 'cus_test_1', invoice_settings: { default_payment_method: null }, default_source: null })) },
       subscriptions: {
         retrieve: vi.fn()
           .mockResolvedValueOnce({ id: 'sub_1', schedule: null })
@@ -200,6 +237,7 @@ describe('@alusa/stripe billing operations', () => {
 
   it('cria assinatura trial sem coletar forma de pagamento e pausa no fim', async () => {
     const client = {
+      customers: { retrieve: vi.fn(async () => ({ id: 'cus_test_1', invoice_settings: { default_payment_method: null }, default_source: null })) },
       subscriptions: {
         create: vi.fn(async () => ({
           id: 'sub_test_1',
@@ -238,6 +276,18 @@ describe('@alusa/stripe billing operations', () => {
       }),
       { idempotencyKey: 'idem_trial' },
     );
+  });
+
+  it('refuses a no-card trial if the Customer already has a default payment method', async () => {
+    const client = {
+      customers: { retrieve: vi.fn(async () => ({ id: 'cus_test_1', invoice_settings: { default_payment_method: 'pm_existing' }, default_source: null })) },
+      subscriptions: { create: vi.fn() },
+    };
+    await expect(createStripeTrialSubscriptionWithoutPaymentMethod(client as never, {
+      customerId: 'cus_test_1', priceId: 'price_test', metadata: { contaId: 'conta_1' }, trialDays: 14,
+      idempotencyKey: 'idem_trial',
+    })).rejects.toThrow(/default payment method/);
+    expect(client.subscriptions.create).not.toHaveBeenCalled();
   });
 
   it('cria Checkout Session em modo subscription usando Price', async () => {
@@ -287,6 +337,43 @@ describe('@alusa/stripe billing operations', () => {
       }),
       { idempotencyKey: 'idem_checkout' },
     );
+  });
+
+  it('cria Checkout Setup sem assinatura ou cobrança e marca finalidade opcional', async () => {
+    const create = vi.fn(async () => ({ id: 'cs_setup_1', url: 'https://checkout.stripe.test/setup', expires_at: null }));
+    const client = { checkout: { sessions: { create } } };
+    await expect(createStripeSetupCheckoutSession(client as never, {
+      customerId: 'cus_test_1', currency: 'brl', successUrl: 'https://alusa.test/success', cancelUrl: 'https://alusa.test/cancel',
+      clientReferenceId: 'conta_1', metadata: { contaId: 'conta_1', billingContext: 'platform' },
+      idempotencyKey: 'optional-card:TEST:conta_1:key-1',
+      expiresAt: new Date('2026-10-27T13:00:00.000Z'),
+    })).resolves.toMatchObject({ id: 'cs_setup_1', url: 'https://checkout.stripe.test/setup' });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'setup', customer: 'cus_test_1',
+      currency: 'brl',
+      expires_at: Math.floor(new Date('2026-10-27T13:00:00.000Z').getTime() / 1000),
+      metadata: expect.objectContaining({ checkoutPurpose: 'optional_trial_payment_method', contaId: 'conta_1' }),
+      setup_intent_data: { metadata: expect.objectContaining({ checkoutPurpose: 'optional_trial_payment_method' }) },
+    }), { idempotencyKey: 'optional-card:TEST:conta_1:key-1' });
+  });
+
+  it('verifica Setup Checkout e só marca redisplay do PaymentMethod, sem alterar defaults', async () => {
+    const session = { id: 'cs_setup_1', mode: 'setup' };
+    const intent = { id: 'seti_1', status: 'succeeded' };
+    const update = vi.fn(async () => ({ id: 'pm_1', allow_redisplay: 'always' }));
+    const client = {
+      checkout: { sessions: { retrieve: vi.fn(async () => session) } },
+      setupIntents: { retrieve: vi.fn(async () => intent) },
+      paymentMethods: { update }, customers: { update: vi.fn() }, subscriptions: { update: vi.fn() },
+    };
+    await expect(retrieveStripeSetupCheckoutSession(client as never, 'cs_setup_1')).resolves.toEqual(session);
+    await expect(retrieveStripeSetupIntent(client as never, 'seti_1')).resolves.toEqual(intent);
+    await expect(allowStripePaymentMethodRedisplay(client as never, 'pm_1')).resolves.toEqual({ id: 'pm_1', allow_redisplay: 'always' });
+    expect(client.checkout.sessions.retrieve).toHaveBeenCalledWith('cs_setup_1', { expand: ['setup_intent'] });
+    expect(client.setupIntents.retrieve).toHaveBeenCalledWith('seti_1', { expand: ['payment_method'] });
+    expect(update).toHaveBeenCalledWith('pm_1', { allow_redisplay: 'always' });
+    expect(client.customers.update).not.toHaveBeenCalled();
+    expect(client.subscriptions.update).not.toHaveBeenCalled();
   });
 
   it('cria Billing Portal Session com return URL', async () => {

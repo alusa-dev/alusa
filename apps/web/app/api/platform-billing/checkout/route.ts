@@ -19,7 +19,6 @@ import { resolveTenantPlatformBillingCheckoutPlan } from '@/src/server/platform-
 
 const checkoutSchema = z.object({
   idempotencyKey: z.string().trim().min(1).max(128).optional(),
-  studentCount: z.number().int().min(1).max(500).optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -77,7 +76,6 @@ export async function POST(req: NextRequest) {
       tx,
       contaId,
       environment,
-      requestedStudentCount: parsed.data.studentCount,
     });
     if (commercialPlan.kind === 'SPECIALIST' && commercialPlan.reason === 'CONFIRMED_SPECIALIST') {
       return NextResponse.json({
@@ -103,9 +101,7 @@ export async function POST(req: NextRequest) {
     const origin = new URL(req.url).origin;
     const cancelUrl = new URL('/conta/plano-faturamento?checkout=cancel', origin);
     cancelUrl.searchParams.set('checkoutRequestKey', idempotencyKey);
-    if (!currentBand && parsed.data.studentCount !== undefined) {
-      cancelUrl.searchParams.set('studentCount', String(parsed.data.studentCount));
-    }
+    if (!currentBand) cancelUrl.searchParams.set('studentCount', String(commercialPlan.studentCount));
     let result: Awaited<ReturnType<typeof createPlatformBillingCheckoutSession>>;
     try {
       result = await createPlatformBillingCheckoutSession(

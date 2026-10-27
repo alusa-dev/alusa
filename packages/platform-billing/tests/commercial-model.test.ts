@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   SCHOOL_PRICE_BANDS,
-  hasBillableMonthlyEnrollment,
+  hasBillableEnrollment,
   resolveStableSchoolPriceBand,
   resolveSchoolCommercialTarget,
   shouldApplySchoolPriceBand,
@@ -47,10 +47,10 @@ describe('@alusa/platform-billing commercial model', () => {
   });
 
   it('counts only effective active monthly enrollment with a positive amount', () => {
-    const eligible = { active: true, effective: true, monthlyAmountCents: 10000, fullScholarship: false };
-    expect(hasBillableMonthlyEnrollment(eligible)).toBe(true);
-    expect(hasBillableMonthlyEnrollment({ ...eligible, fullScholarship: true })).toBe(false);
-    expect(hasBillableMonthlyEnrollment({ ...eligible, monthlyAmountCents: 0 })).toBe(false);
-    expect(hasBillableMonthlyEnrollment({ ...eligible, effective: false })).toBe(false);
+    const eligible = { active: true, effective: true, cycleAmountCents: 10000, fullScholarship: false };
+    expect(hasBillableEnrollment(eligible)).toBe(true);
+    expect(hasBillableEnrollment({ ...eligible, fullScholarship: true })).toBe(false);
+    expect(hasBillableEnrollment({ ...eligible, cycleAmountCents: 0 })).toBe(false);
+    expect(hasBillableEnrollment({ ...eligible, effective: false })).toBe(false);
   });
 });

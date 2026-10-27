@@ -25,7 +25,7 @@ Os dois fluxos não se dependem. `@alusa/stripe` não importa Prisma, Asaas ou f
 ## Packages
 
 - `@alusa/stripe`: adapter técnico server-side da Stripe. Valida `STRIPE_SECRET_KEY`, `STRIPE_ENVIRONMENT`, inicializa singleton do SDK oficial `stripe`, cria Customer, Checkout Session em modo `subscription`, Billing Portal Session, preview de alteração de assinatura, update de Price e `cancel_at_period_end`.
-- `@alusa/platform-billing`: catálogo comercial da plataforma, tipos dos planos, política de acesso, limite de alunos, resolução segura de Stripe Price IDs, retry de webhooks, casos de uso server-side e store Prisma para persistência comercial.
+- `@alusa/platform-billing`: faixas comerciais por alunos elegíveis, política de acesso, resolução segura de Stripe Price IDs, retry de webhooks, casos de uso server-side e store Prisma para persistência comercial.
 
 ## Persistência comercial
 
@@ -41,17 +41,23 @@ A integração adiciona models próprios, sem reutilizar `Subscription`, `Custom
 
 As tabelas de dados da conta são tenant-scoped por `contaId`, têm FK para `Conta`, índices compostos iniciando por `contaId` e policy RLS `tenant_isolation` quando `app_security` existe. `PlatformBillingWebhookEvent` é técnico e pode receber evento antes de identificar a `Conta`.
 
-## Planos iniciais
+## Modelo comercial vigente
 
-| Plano | Valor mensal | Limite |
-| --- | ---: | ---: |
-| Starter | R$ 149 | 60 alunos ativos |
-| Premium | R$ 279 | 150 alunos ativos |
-| Pro | R$ 499 | 300 alunos ativos |
+| Alunos elegíveis | Valor mensal |
+| --- | ---: |
+| 1–25 | R$ 169 |
+| 26–50 | R$ 229 |
+| 51–100 | R$ 289 |
+| 101–150 | R$ 349 |
+| 151–200 | R$ 419 |
+| 201–300 | R$ 479 |
+| 301–400 | R$ 559 |
+| 401–500 | R$ 649 |
 
-Todos incluem Alusa completa, usuários internos ilimitados, professores ilimitados, cadastros históricos ilimitados e nenhum módulo bloqueado.
-
-O plano `CUSTOM` representa contratação personalizada acima de 300 alunos e não fica disponível para checkout público nesta fase.
+Acima de 500, novas contratações seguem para atendimento especializado. Uma
+Conta já contratada não tem matrículas ou operações escolares bloqueadas por
+ultrapassar 500 alunos. A mesma faixa permanece até três fechamentos mensais
+consecutivos confirmarem outra faixa; o novo preço aplica no ciclo futuro.
 
 ## Variáveis de ambiente
 
@@ -79,15 +85,22 @@ Price IDs são lidos do ambiente server-side. Nenhum Price ID arbitrário vindo 
 - Criar Customer Stripe da assinatura comercial da escola.
 - Criar Checkout Session Stripe em `mode: subscription`, sempre usando Price ID resolvido no servidor.
 - Reusar sessão local quando a mesma idempotency key for recebida.
-- Criar Billing Portal Session para conta que já possui `stripeCustomerId`.
+- Criar Billing Portal Session para conta que já possui `stripeCustomerId`; durante trial não pago, a ação de cartão usa Checkout `mode=setup` separado da assinatura, com moeda BRL, metadados de finalidade e idempotency key tenant-scoped. O webhook reconhece essa finalidade e não vincula subscription, não altera status nem libera acesso. O backend faz preflight e recusa se Customer tiver `invoice_settings.default_payment_method` ou `default_source`.
+- A coleta opcional acima exige consentimento explícito e auditado (versão do texto e timestamp) antes de abrir Setup Checkout. O preflight recusa quando Customer ou Subscription já tem método padrão. A homologação em Stripe Sandbox/Test Clock ainda é necessária para confirmar anexação sem default e interação com a configuração real da conta; nenhuma confirmação externa foi executada nesta alteração. Sem homologação, mantenha a proteção server-side e cobrança somente após fluxo Checkout explícito.
+- Setup Checkout expira explicitamente após 60 minutos. Uma claim indeterminada só é liberada por `checkout.session.expired` depois de recuperar a sessão canônica e conferir tenant, Customer, finalidade e consentimento. Se a criação retornou erro ambíguo sem ID local, após 26 horas o backend pagina a listagem read-only do Customer desde a claim; só confirma ausência quando todas as páginas terminam sem sessão da tentativa. Sessão concluída encontrada nessa listagem usa a mesma validação canônica de Checkout, SetupIntent, PaymentMethod e consentimento do webhook; registra reconciliação sem inventar `webhookEventId` e sem alterar defaults. Erro Stripe, limite de paginação, sessão relacionada com metadados incompletos ou sessão ainda aberta mantém a claim bloqueada para reconciliação operacional. Nunca limpar a claim por timeout genérico.
+- Após `checkout.session.completed`, o worker recupera a Checkout Session e o SetupIntent na Stripe, exige `status=succeeded`, correspondência de Customer/Conta/consentimento persistido e PaymentMethod de cartão anexado ao Customer. Com o consentimento registrado, atualiza apenas `PaymentMethod.allow_redisplay=always` e grava cartão mascarado em auditoria tenant-scoped. O resumo exibe esse cartão em bloco separado como “salvo para contratação”; `paymentMethodStatus` e `access.hasPaymentMethod` continuam representando apenas o método padrão.
+- O processamento Setup não altera Customer/Subscription default, não cria assinatura, não gera invoice e não libera acesso. A idempotência combina inbox de eventos Stripe, auditoria por sessão/evento e update repetível de `allow_redisplay`. O cartão pode ser apresentado pelo Checkout pago; assinatura e cobrança continuam exigindo ação explícita de contratação e confirmação no Stripe Checkout. A homologação em Stripe Sandbox/Test Clock ainda é necessária para validar o comportamento do método salvo no Checkout real.
+- Referência oficial: [Save and reuse payment methods with Checkout](https://docs.stripe.com/payments/checkout/save-and-reuse?payment-ui=checkout-form) (mode `setup`, PaymentMethod anexado ao Customer e webhook `checkout.session.completed`).
+- Antes de criar trial via API, consultar o Customer Stripe e recusar quando `invoice_settings.default_payment_method` ou `default_source` já existir. A configuração `missing_payment_method=pause` só pausa quando falta um método disponível; não é proteção contra Customer legado com default.
 - Validar webhook Stripe com corpo bruto e `stripe-signature`.
 - Persistir webhook Stripe em inbox e responder HTTP rapidamente.
 - Processar `checkout.session.completed`, `customer.subscription.*` e `invoice.*` por worker assíncrono.
 - Atualizar status comercial da conta por evento Stripe.
 - Persistir invoices comerciais para histórico de faturamento.
-- Rejeitar plano que não suporta a quantidade atual de alunos ativos.
-- Contar alunos ativos por matrículas `ATIVA` e aluno `ATIVO`, usando `distinct alunoId`.
-- Bloquear criação/ativação/reativação de matrícula que ultrapassa limite comercial, com advisory lock transacional por `Conta`.
+- Rejeitar contratação self-service acima de 500 alunos, sem limitar matrículas ou operação de Conta já contratada.
+- Contar alunos uma vez por matrícula ativa e efetiva com valor de ciclo positivo, considerando periodicidades, descontos e vigência.
+- Resolver faixa inicial por contagem server-side ou estimativa confirmada e persistida; a quantidade enviada ao checkout não define o preço.
+- Fechamentos mensais são únicos por Conta/ambiente/competência; competência perdida ou sem histórico suficiente gera issue e não é calculada retroativamente com a contagem atual.
 - Agendar downgrade para o próximo ciclo e bloquear downgrade incompatível com alunos ativos.
 - Solicitar upgrade via Stripe com `payment_behavior=pending_if_incomplete` e proration, consolidando plano superior somente por webhook.
 - Agendar cancelamento no fim do período e reverter antes do encerramento.

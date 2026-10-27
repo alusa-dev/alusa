@@ -15,13 +15,12 @@ export type PlatformBillingCheckoutCommercialContext = {
 };
 
 export type ResolvePlatformBillingCheckoutPlanResult =
-  | { kind: 'RESOLVED'; planCode: PublicPlatformPlanCode; currentBand: string | null }
+  | { kind: 'RESOLVED'; planCode: PublicPlatformPlanCode; currentBand: string | null; studentCount: number }
   | { kind: 'SPECIALIST'; reason: 'CONFIRMED_SPECIALIST' | 'COUNT_ABOVE_SELF_SERVICE'; studentCount?: number }
   | { kind: 'UNSTABLE' };
 
 /** Resolves the current self-service plan from persisted commercial state. */
 export async function resolvePlatformBillingCheckoutPlan(
-  input: { requestedStudentCount?: number },
   deps: { loadContext: () => Promise<PlatformBillingCheckoutCommercialContext> },
 ): Promise<ResolvePlatformBillingCheckoutPlanResult> {
   const context = await deps.loadContext();
@@ -36,17 +35,20 @@ export async function resolvePlatformBillingCheckoutPlan(
   });
   if (stableTarget === 'SPECIALIST') return { kind: 'SPECIALIST', reason: 'CONFIRMED_SPECIALIST' };
 
+  if (context.billingPlanCode && !isPublicPlatformPlanCode(context.billingPlanCode)) {
+    return { kind: 'UNSTABLE' };
+  }
+
   // A confirmed band remains in force until monthly snapshots formally
   // establish a transition. Live enrollment counts do not reprice it.
-  if (currentBand) return { kind: 'RESOLVED', planCode: currentBand, currentBand };
+  if (currentBand) return { kind: 'RESOLVED', planCode: currentBand, currentBand, studentCount: context.activeStudents };
 
-  const studentCount = input.requestedStudentCount ?? declaredStudentCount ?? context.activeStudents;
+  // Existing effective enrollment data wins. Before the school has students,
+  // use only the completed and persisted onboarding declaration.
+  const studentCount = context.activeStudents > 0 ? context.activeStudents : declaredStudentCount ?? 0;
   const target = resolveSchoolCommercialTarget(studentCount);
   if (!target || target.kind === 'SPECIALIST') {
-    if (context.billingPlanCode && !isPublicPlatformPlanCode(context.billingPlanCode)) {
-      return { kind: 'UNSTABLE' };
-    }
     return { kind: 'SPECIALIST', reason: 'COUNT_ABOVE_SELF_SERVICE', studentCount };
   }
-  return { kind: 'RESOLVED', planCode: target.band.code, currentBand };
+  return { kind: 'RESOLVED', planCode: target.band.code, currentBand, studentCount };
 }

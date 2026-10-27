@@ -47,6 +47,25 @@ function buildCheckoutReturnAccount(contaId = 'conta_a', billingAccountId = 'bil
   };
 }
 
+function buildExpiredPausedTrialAccount(): PlatformBillingAccountRecord {
+  const trialEndsAt = new Date(Date.now() - 60_000);
+  return {
+    id: 'pba_trial', contaId: 'conta_1', environment: 'TEST', status: 'PAUSED',
+    planCode: 'BAND_001_025', stripeCustomerId: 'cus_test_1', stripeSubscriptionId: 'sub_trial_1',
+    stripePriceId: 'price_starter_test', currentPeriodEnd: null, cancelAtPeriodEnd: false,
+    trialEndsAt, trialWillEndNotifiedAt: null, accessStatus: 'RESTRICTED',
+    gracePeriodEndsAt: null, restrictedAt: trialEndsAt, canceledAt: null,
+    lastPaymentFailedAt: null, firstPaidAt: null, lastSuccessfulPaymentAt: null,
+    paymentMethodStatus: 'MISSING', paymentMethodType: null, paymentMethodBrand: null,
+    paymentMethodLast4: null, paymentMethodExpMonth: null, paymentMethodExpYear: null,
+    restrictionReason: 'TRIAL_EXPIRED', gracePeriodStartedAt: null, accessStateVersion: 0,
+    lastProviderEventCreatedAt: null, lastStripeEventId: null, lastReconciledAt: null,
+    pendingPlanCode: null, pendingChangeType: null, pendingChangeEffectiveAt: null,
+    pendingChangeOperationId: null, pendingChangeClaimToken: null,
+    checkoutClaimKey: null, checkoutClaimPhase: null, checkoutClaimedAt: null, checkoutRequestExpiresAt: null,
+  };
+}
+
 function buildCheckoutReturnSession(
   contaId = 'conta_a',
   billingAccountId = 'billing_a',
@@ -1193,11 +1212,20 @@ describe('@alusa/platform-billing use cases', () => {
       currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: expiredAt, pendingUpdateId: null,
     }));
     stripeGateway.retrieveCustomer = vi.fn(async () => ({ id: 'cus_trial', deleted: false }));
+    stripeGateway.listCustomerSubscriptions = vi.fn(async () => ({
+      complete: true,
+      subscriptions: [{
+        id: 'sub_trial', customerId: 'cus_trial', status: 'paused', livemode: false,
+        metadata: { contaId: 'conta_1', planCode: 'BAND_001_025', billingContext: 'platform' },
+        priceIds: ['price_starter_test'],
+      }],
+    }));
 
     await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
 
     expect(stripeGateway.createCustomer).not.toHaveBeenCalled();
     expect(stripeGateway.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({ customerId: 'cus_trial' }));
+    expect(stripeGateway.listCustomerSubscriptions).toHaveBeenCalledWith('cus_trial');
     expect(store.accounts[0]?.stripeCustomerId).toBe('cus_trial');
   });
 
@@ -1349,9 +1377,82 @@ describe('@alusa/platform-billing use cases', () => {
 
     expect(stripeGateway.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
       priceId: 'price_band_151_200_test',
-      metadata: expect.objectContaining({ flow: 'reactivation' }),
+      metadata: expect.objectContaining({
+        flow: 'reactivation',
+        reactivationFromSubscriptionId: 'sub_trial_1',
+        reactivationFromPlanCode: 'BAND_151_200',
+        reactivationFromPriceId: 'price_band_151_200_test',
+      }),
       trialDays: null,
     }));
+    expect(store.accounts[0]).toMatchObject({
+      status: 'CANCELED', pendingChangeType: 'REACTIVATE',
+      stripeSubscriptionId: 'sub_trial_1',
+    });
+  });
+
+  it('reuses the same reactivation Checkout after the claim moved PAUSED to CANCELED', async () => {
+    const store = createMemoryStore([buildExpiredPausedTrialAccount()]);
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.listCustomerSubscriptions = vi.fn(async () => ({
+      complete: true,
+      subscriptions: [{
+        id: 'sub_trial_1', customerId: 'cus_test_1', status: 'paused', livemode: false,
+        metadata: { contaId: 'conta_1', billingContext: 'platform', planCode: 'BAND_001_025' },
+        priceIds: ['price_starter_test'],
+      }],
+    }));
+    stripeGateway.retrieveCheckoutSession = vi.fn(async (id: string) =>
+      checkoutRemote(store.checkoutSessions[0]!, id, 'open'));
+
+    const first = await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+    const retry = await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+
+    expect(first.reused).toBe(false);
+    expect(retry).toMatchObject({ reused: true, checkoutSessionId: first.checkoutSessionId });
+    expect(store.checkoutSessions).toHaveLength(1);
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
+    expect(store.accounts[0]).toMatchObject({
+      status: 'CANCELED', pendingChangeType: 'REACTIVATE', stripeSubscriptionId: 'sub_trial_1',
+    });
+  });
+
+  it('creates a fresh reactivation session after the old paused-trial Checkout expires and its claim clears', async () => {
+    const store = createMemoryStore([buildExpiredPausedTrialAccount()]);
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.listCustomerSubscriptions = vi.fn(async () => ({
+      complete: true,
+      subscriptions: [{
+        id: 'sub_trial_1', customerId: 'cus_test_1', status: 'paused', livemode: false,
+        metadata: { contaId: 'conta_1', billingContext: 'platform', planCode: 'BAND_001_025' },
+        priceIds: ['price_starter_test'],
+      }],
+    }));
+    stripeGateway.retrieveCheckoutSession = vi.fn(async (id: string) =>
+      checkoutRemote(store.checkoutSessions[0]!, id, 'expired'));
+    stripeGateway.createCheckoutSession = vi.fn()
+      .mockResolvedValueOnce({ id: 'cs_reactivation_old', url: 'https://checkout.stripe.test/old', expiresAt: null })
+      .mockResolvedValueOnce({ id: 'cs_reactivation_new', url: 'https://checkout.stripe.test/new', expiresAt: null });
+
+    await createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway });
+    await expect(createPlatformBillingCheckoutSession(buildCheckoutInput(), { store, stripeGateway }))
+      .rejects.toMatchObject({ code: 'PLATFORM_BILLING_CHECKOUT_EXPIRED_RETRY_REQUIRED' });
+    expect(store.checkoutSessions[0]?.status).toBe('EXPIRED');
+    expect(store.accounts[0]).toMatchObject({
+      status: 'CANCELED', pendingChangeType: null, pendingPlanCode: null, stripeSubscriptionId: 'sub_trial_1',
+    });
+
+    const fresh = await createPlatformBillingCheckoutSession(
+      checkoutInputWithKey('fresh-reactivation-key'), { store, stripeGateway },
+    );
+
+    expect(fresh).toMatchObject({ reused: false, checkoutSessionId: 'cs_reactivation_new' });
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(2);
+    expect(store.checkoutSessions).toHaveLength(2);
+    expect(store.checkoutSessions.map((session) => session.status)).toEqual(['EXPIRED', 'CREATED']);
+    expect(store.accounts[0]).toMatchObject({
+      status: 'CANCELED', pendingChangeType: 'REACTIVATE', stripeSubscriptionId: 'sub_trial_1',
+    });
   });
 
   it('reusa sessão local quando idempotency key já existe', async () => {
@@ -1737,6 +1838,35 @@ describe('@alusa/platform-billing use cases', () => {
     expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(2);
   });
 
+  it('allows a new checkout after the paid reactivation is later canceled and old subscription is canceled', async () => {
+    const store = createMemoryStore([{
+      ...buildExpiredPausedTrialAccount(),
+      status: 'CANCELED', accessStatus: 'CANCELED', stripeSubscriptionId: 'sub_new',
+      firstPaidAt: new Date('2026-10-26T00:00:00.000Z'),
+      lastSuccessfulPaymentAt: new Date('2026-10-26T00:00:00.000Z'),
+      pendingChangeType: null, pendingPlanCode: null,
+    }]);
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.listCustomerSubscriptions = vi.fn(async () => ({
+      complete: true,
+      subscriptions: ['sub_old', 'sub_new'].map((id) => ({
+        id, customerId: 'cus_test_1', status: 'canceled', livemode: false,
+        metadata: { contaId: 'conta_1', billingContext: 'platform', planCode: 'BAND_001_025' },
+        priceIds: ['price_starter_test'],
+      })),
+    }));
+
+    const result = await createPlatformBillingCheckoutSession(
+      checkoutInputWithKey('after-cancel-new-key'), { store, stripeGateway },
+    );
+
+    expect(result.reused).toBe(false);
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(1);
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({ flow: 'reactivation' }),
+    }));
+  });
+
   it('preserva o claim quando a resposta do Stripe é ambígua e retoma com a mesma chave', async () => {
     const store = createMemoryStore();
     const stripeGateway = createStripeGatewayMock();
@@ -2109,6 +2239,27 @@ describe('@alusa/platform-billing use cases', () => {
     expect(store.auditLogs[0]?.action).toBe('PLATFORM_BILLING_PORTAL_SESSION_CREATED');
   });
 
+  it('does not allow payment-method collection during an unpaid active trial', async () => {
+    const store = createMemoryStore([{
+      id: 'pba_trial', contaId: 'conta_1', environment: 'TEST', status: 'TRIALING',
+      planCode: 'BAND_001_025', stripeCustomerId: 'cus_trial', stripeSubscriptionId: 'sub_trial',
+      stripePriceId: 'price_starter_test', currentPeriodEnd: null, cancelAtPeriodEnd: false,
+      trialEndsAt: new Date(Date.now() + 60_000), trialWillEndNotifiedAt: null,
+      accessStatus: 'ACTIVE', gracePeriodEndsAt: null, restrictedAt: null, canceledAt: null,
+      lastPaymentFailedAt: null, firstPaidAt: null, lastSuccessfulPaymentAt: null,
+      pendingPlanCode: null, pendingChangeType: null, pendingChangeEffectiveAt: null,
+    } as PlatformBillingAccountRecord]);
+    const stripeGateway = createStripeGatewayMock();
+
+    await expect(createPlatformBillingPortalSession({
+      contaId: 'conta_1', returnUrl: 'https://app.alusa.test/billing',
+      idempotencyKey: 'idem_portal_trial', envSource,
+    }, { store, stripeGateway })).rejects.toMatchObject({
+      code: 'PLATFORM_BILLING_TRIAL_CHECKOUT_REQUIRED',
+    });
+    expect(stripeGateway.createPortalSession).not.toHaveBeenCalled();
+  });
+
   it('rejeita portal quando não há Stripe customer local', async () => {
     const store = createMemoryStore([
       {
@@ -2229,6 +2380,7 @@ function createStripeGatewayMock(): PlatformBillingStripeGateway {
       priceIds: ['price_starter_test'],
       currentPeriodEnd: null, cancelAtPeriodEnd: false, trialEndsAt: null,
     })),
+    cancelSubscription: vi.fn(async () => undefined),
     retrieveCustomer: vi.fn(async (customerId: string) => ({ id: customerId, deleted: false })),
     previewSubscriptionPlanChange: vi.fn(),
     updateSubscriptionPlan: vi.fn(),

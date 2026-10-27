@@ -3,6 +3,7 @@ import { createDefaultPlatformBillingStripeGateway } from './stripe-gateway';
 import { computeGracePeriodEnd } from './access-policy';
 import { PlatformBillingError } from './errors';
 import { resolvePlanCodeFromStripePriceId, resolveStripePriceId } from './price-mapping';
+import { isPlatformPlanCode } from './plans';
 import type { PlatformPlanCode } from './plans';
 import type {
   PlatformBillingAccountRecord,
@@ -18,7 +19,7 @@ export interface ProcessPlatformBillingWebhookInput {
   environment: PlatformBillingEnvironment;
   envSource?: Record<string, string | undefined>;
   stripeGateway?: Pick<PlatformBillingStripeGateway, 'retrieveSubscription' | 'retrieveSubscriptionSnapshot'> &
-    Partial<Pick<PlatformBillingStripeGateway, 'retrieveCheckoutSession' | 'retrieveLatestSubscriptionInvoice'>>;
+    Partial<Pick<PlatformBillingStripeGateway, 'retrieveCheckoutSession' | 'retrieveLatestSubscriptionInvoice' | 'listCustomerSubscriptions' | 'cancelSubscription'>>;
   workerId?: string;
   inboxId?: string;
 }
@@ -146,7 +147,16 @@ export async function processPersistedPlatformBillingWebhookEvent(
 
   try {
     if (input.event.type === 'checkout.session.completed') {
-      contaId = await processCheckoutCompleted(eventObject, input, store);
+      const sessionMetadata = readMetadata(eventObject);
+      if (readString(eventObject.mode) === 'setup'
+        && sessionMetadata.billingContext === 'platform'
+        && sessionMetadata.checkoutPurpose === 'optional_trial_payment_method') {
+        // Setup Checkout only attaches a non-default PaymentMethod. It never
+        // binds a subscription or grants paid access.
+        throw new IgnoredPlatformBillingWebhookEvent();
+      } else {
+        contaId = await processCheckoutCompleted(eventObject, input, store);
+      }
     } else if (input.event.type === 'checkout.session.expired') {
       contaId = await processCheckoutExpired(eventObject, input, store);
     } else if (input.event.type.startsWith('customer.subscription.')) {
@@ -266,11 +276,25 @@ async function processCheckoutCompleted(
     const ownsCurrentAttempt = account.checkoutClaimKey === checkoutRequestKey &&
       account.pendingPlanCode === localCheckout.planCode;
     const alreadyBound = account.stripeSubscriptionId === subscriptionId;
+    const alreadyBoundToThisCheckout = alreadyBound &&
+      ((account.status === 'CHECKOUT_PENDING' && account.pendingPlanCode === localCheckout.planCode) ||
+        (account.status === 'ACTIVE' && account.planCode === localCheckout.planCode && Boolean(account.firstPaidAt || account.lastSuccessfulPaymentAt))) &&
+      (!account.checkoutClaimKey || account.checkoutClaimKey === checkoutRequestKey);
+    const reactivationOriginMatches = remoteCheckout.metadata.flow === 'reactivation' &&
+      remoteCheckout.metadata.reactivationFromSubscriptionId === account.stripeSubscriptionId &&
+      remoteCheckout.metadata.reactivationFromPlanCode === account.planCode &&
+      remoteCheckout.metadata.reactivationFromPriceId === account.stripePriceId;
     const isCanceledReactivation = account.status === 'CANCELED' &&
-      account.pendingChangeType === 'REACTIVATE' && ownsCurrentAttempt;
+      account.pendingChangeType === 'REACTIVATE' && ownsCurrentAttempt && reactivationOriginMatches;
+    const isExpiredUnpaidTrialReactivation =
+      (account.status === 'PAUSED' || account.status === 'TRIALING') &&
+      account.pendingChangeType === 'REACTIVATE' && ownsCurrentAttempt &&
+      account.trialEndsAt !== null && account.trialEndsAt.getTime() <= Date.now() &&
+      !account.firstPaidAt && !account.lastSuccessfulPaymentAt &&
+      Boolean(account.stripeSubscriptionId) && account.stripeSubscriptionId !== subscriptionId && reactivationOriginMatches;
     const isNewPendingCheckout = account.status === 'CHECKOUT_PENDING' && ownsCurrentAttempt &&
       !account.stripeSubscriptionId;
-    if (!alreadyBound && (!isNewPendingCheckout && !isCanceledReactivation)) {
+    if (!alreadyBoundToThisCheckout && (!isNewPendingCheckout && !isCanceledReactivation && !isExpiredUnpaidTrialReactivation)) {
       // A stale completion must not replace a subscription or consume a newer claim.
       return contaId;
     }
@@ -284,11 +308,24 @@ async function processCheckoutCompleted(
         stripeSubscriptionId: subscriptionId,
         idempotencyKey: checkoutRequestKey,
       });
+    } else if (account.checkoutClaimKey === checkoutRequestKey) {
+      // A subscription event may have bound the provider ID before this
+      // Checkout webhook. Release only the claim still owned by this verified
+      // Checkout; a newer request key is never cleared here.
+      await store.bindCheckoutSubscription({
+        accountId: account.id,
+        contaId,
+        environment: input.environment,
+        stripeCustomerId: customerId,
+        stripeSubscriptionId: subscriptionId,
+        idempotencyKey: checkoutRequestKey,
+      });
     }
 
     const boundAccount = await store.findAccountByStripeSubscriptionId({ environment: input.environment, stripeSubscriptionId: subscriptionId });
     if (!boundAccount || boundAccount.id !== account.id || boundAccount.contaId !== contaId ||
-      boundAccount.stripeCustomerId !== customerId || boundAccount.checkoutClaimKey) return contaId;
+      boundAccount.stripeCustomerId !== customerId ||
+      (boundAccount.checkoutClaimKey && boundAccount.checkoutClaimKey !== checkoutRequestKey)) return contaId;
 
     const canonicalSubscription = await getCanonicalActiveBoundSubscription({
       subscriptionId,
@@ -439,6 +476,56 @@ async function processSubscriptionEvent(
   const statePriceId = readSubscriptionPriceId(subscriptionState);
   const planCode = statePriceId ? resolvePlanCodeSafely(statePriceId, input) : account.planCode;
   const status = mapSubscriptionStatus(readString(subscriptionState.status));
+  const hasUnpaidReactivationLineage = account.pendingChangeType === 'REACTIVATE' || metadata.flow === 'reactivation';
+  const waitingForFirstPaidInvoice = status === 'ACTIVE' &&
+    (account.status === 'CHECKOUT_PENDING' || hasUnpaidReactivationLineage);
+  if (waitingForFirstPaidInvoice) {
+    const isUnpaidReactivation = hasUnpaidReactivationLineage;
+    const heldStatus = isUnpaidReactivation && account.status === 'ACTIVE' ? 'PAUSED' : account.status;
+    const heldAccessStatus = heldStatus === 'PAUSED' ? 'RESTRICTED'
+      : heldStatus === 'CANCELED' ? 'CANCELED'
+        : account.accessStatus;
+    if (heldStatus !== account.status || heldAccessStatus !== account.accessStatus ||
+      account.stripeSubscriptionId !== subscriptionId ||
+      (isUnpaidReactivation && account.pendingChangeType !== 'REACTIVATE')) {
+      await store.updateAccountFromStripeSubscription({
+        accountId: account.id,
+        expectedAccountSnapshot: {
+          contaId: account.contaId,
+          environment: account.environment,
+          stripeSubscriptionId: account.stripeSubscriptionId,
+          pendingChangeOperationId: account.pendingChangeOperationId,
+          pendingChangeClaimToken: account.pendingChangeClaimToken ?? null,
+          lastProviderEventCreatedAt: account.lastProviderEventCreatedAt,
+          lastStripeEventId: account.lastStripeEventId ?? null,
+        },
+        status: heldStatus,
+        accessStatus: heldAccessStatus,
+        planCode: account.planCode,
+        stripeSubscriptionId: subscriptionId,
+        stripePriceId: account.stripePriceId,
+        currentPeriodEnd: account.currentPeriodEnd,
+        cancelAtPeriodEnd: account.cancelAtPeriodEnd,
+        trialEndsAt: account.trialEndsAt,
+        lastProviderEventCreatedAt: eventCreatedAt,
+        pendingChangeType: isUnpaidReactivation ? 'REACTIVATE' : undefined,
+        pendingPlanCode: isUnpaidReactivation ? account.pendingPlanCode ?? planCode : undefined,
+        lastStripeEventId: input.event.id,
+      });
+    }
+    await store.createAuditLog({
+      contaId: account.contaId,
+      billingAccountId: account.id,
+      action: 'PLATFORM_BILLING_ACTIVATION_WAITING_FOR_PAID_INVOICE',
+      webhookEnvironment: input.environment,
+      webhookEventId: input.event.id,
+      entityType: 'StripeSubscription',
+      entityId: subscriptionId,
+      correlationId: input.event.id,
+      metadata: { status: 'active', accessStatus: heldAccessStatus, reason: 'positive_paid_invoice_required' },
+    });
+    return account.contaId;
+  }
   const pendingPlanCode = account.pendingPlanCode;
   const pendingPlanChangeId = account.pendingChangeOperationId;
   const pendingChangeType = account.pendingChangeType === 'UPGRADE' || account.pendingChangeType === 'DOWNGRADE'
@@ -450,7 +537,7 @@ async function processSubscriptionEvent(
   const pendingUpdateExpired = input.event.type === 'customer.subscription.pending_update_expired';
   const hasCanonicalPendingUpdate = Boolean(subscriptionState.pending_update);
   const confirmsPendingPlanApplied = Boolean(
-    pendingPlanCode && shouldCommitPlan
+    pendingPlanCode && account.pendingChangeType !== 'REACTIVATE' && shouldCommitPlan
     && planCode === pendingPlanCode && statePriceId === resolveStripePriceId({
       planCode: pendingPlanCode,
       environment: input.environment,
@@ -561,7 +648,14 @@ async function processInvoiceEvent(
   const customerId = readStripeId(invoice.customer);
   const subscriptionId = readStripeId(invoice.subscription) ?? readNestedString(invoice, ['parent', 'subscription_details', 'subscription']);
 
-  if (!invoiceId || !customerId) return null;
+  if (!invoiceId) return null;
+  if (!customerId) {
+    throw new PlatformBillingError(
+      'Stripe invoice is missing its customer binding.',
+      'PLATFORM_BILLING_WEBHOOK_INVALID',
+      { invoiceId, subscriptionId, environment: input.environment },
+    );
+  }
 
   const account =
     (subscriptionId
@@ -579,6 +673,13 @@ async function processInvoiceEvent(
     throw new PlatformBillingError(
       'Stripe invoice could not be bound to a platform billing account.',
       'PLATFORM_BILLING_ACCOUNT_NOT_FOUND',
+      { invoiceId, subscriptionId, environment: input.environment },
+    );
+  }
+  if (account.stripeCustomerId !== customerId) {
+    throw new PlatformBillingError(
+      'Stripe invoice customer does not match the bound platform billing account.',
+      'PLATFORM_BILLING_WEBHOOK_INVALID',
       { invoiceId, subscriptionId, environment: input.environment },
     );
   }
@@ -670,7 +771,17 @@ async function processInvoiceEvent(
       readUnixDate(invoice.status_transitions && (invoice.status_transitions as StripeObject).paid_at) ??
       readUnixDate(input.event.created) ?? new Date();
     const graceEligible = isPaymentPaidSubscriptionEligible(account);
-    const canonicalReactivation = paidConversion && account.status === 'CANCELED'
+    const isBoundReactivationAttempt = account.pendingChangeType === 'REACTIVATE'
+      && account.stripeSubscriptionId === subscriptionId;
+    const isBoundPendingCheckoutAttempt = account.status === 'CHECKOUT_PENDING'
+      && account.stripeSubscriptionId === subscriptionId;
+    const hasNoPriorPaidInvoice = !account.firstPaidAt && !account.lastSuccessfulPaymentAt;
+    const firstPaidActiveAccount = account.status === 'ACTIVE' && hasNoPriorPaidInvoice
+      && account.stripeSubscriptionId === subscriptionId;
+    const shouldVerifyBoundSubscription = paidConversion &&
+      (isBoundReactivationAttempt || isBoundPendingCheckoutAttempt ||
+        (account.status === 'CHECKOUT_PENDING' && account.stripeSubscriptionId === subscriptionId) || firstPaidActiveAccount);
+    const canonicalBoundSubscription = shouldVerifyBoundSubscription
       ? await getCanonicalActiveBoundSubscription({
           subscriptionId,
           customerId,
@@ -680,13 +791,111 @@ async function processInvoiceEvent(
           gateway: input.stripeGateway ?? createDefaultPlatformBillingStripeGateway(input.envSource),
         })
       : null;
-    const confirmsReactivation = Boolean(canonicalReactivation && account.pendingChangeType === 'REACTIVATE');
+    const reactivationOrigin = canonicalBoundSubscription
+      ? readReactivationOrigin(canonicalBoundSubscription.metadata)
+      : null;
+    let validatedReactivationOrigin: ReturnType<typeof readReactivationOrigin> = null;
+    const canonicalFlow = canonicalBoundSubscription?.metadata.flow;
+    const isReactivationAttempt = isBoundReactivationAttempt || canonicalFlow === 'reactivation';
+    if (paidConversion && (isBoundReactivationAttempt || isBoundPendingCheckoutAttempt || firstPaidActiveAccount) &&
+      (!canonicalBoundSubscription ||
+        (isReactivationAttempt && (!reactivationOrigin || canonicalFlow !== 'reactivation')) ||
+        (!isReactivationAttempt && canonicalFlow !== 'subscription'))) {
+      await holdReactivationAccountForReconciliation({
+        account,
+        subscriptionId,
+        planCode: account.pendingPlanCode ?? planCode,
+        eventId: input.event.id,
+        environment: input.environment,
+        store,
+      });
+      throw new PlatformBillingError(
+        'Paid first-invoice activation is missing a canonical and verifiable Checkout lineage.',
+        'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED',
+      );
+    }
+    if (paidConversion && isBoundPendingCheckoutAttempt && !isReactivationAttempt && canonicalBoundSubscription) {
+      await validatePaidSubscriptionCheckoutLineage({
+        account,
+        subscriptionId,
+        customerId,
+        environment: input.environment,
+        source: input.envSource,
+        metadata: canonicalBoundSubscription.metadata,
+        priceId: canonicalBoundSubscription.priceIds[0] ?? '',
+        store,
+        gateway: input.stripeGateway?.retrieveCheckoutSession
+          ? input.stripeGateway as Pick<PlatformBillingStripeGateway, 'retrieveCheckoutSession'>
+          : createDefaultPlatformBillingStripeGateway(input.envSource),
+      });
+    }
+    if (paidConversion && isReactivationAttempt) {
+      if (!canonicalBoundSubscription || !reactivationOrigin) {
+        await holdReactivationAccountForReconciliation({
+          account,
+          subscriptionId,
+          planCode: account.pendingPlanCode ?? planCode,
+          eventId: input.event.id,
+          environment: input.environment,
+          store,
+        });
+        throw new PlatformBillingError(
+          'Paid reactivation is missing a canonical subscription lineage; access remains restricted for reconciliation.',
+          'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED',
+        );
+      }
+      const suppliedGateway = input.stripeGateway;
+      const verificationGateway = suppliedGateway?.retrieveCheckoutSession
+        ? suppliedGateway as Pick<PlatformBillingStripeGateway, 'retrieveCheckoutSession'>
+        : createDefaultPlatformBillingStripeGateway(input.envSource);
+      validatedReactivationOrigin = await validateReactivationCheckoutLineage({
+        account,
+        subscriptionId,
+        customerId,
+        environment: input.environment,
+        source: input.envSource,
+        metadata: canonicalBoundSubscription.metadata,
+        priceId: canonicalBoundSubscription.priceIds[0] ?? '',
+        origin: reactivationOrigin,
+        store,
+        gateway: verificationGateway,
+      }).catch(async (error: unknown) => {
+        await holdReactivationAccountForReconciliation({
+          account,
+          subscriptionId,
+          planCode: account.pendingPlanCode ?? planCode,
+          eventId: input.event.id,
+          environment: input.environment,
+          store,
+        });
+        throw error;
+      });
+    }
+    const confirmsReactivation = Boolean(canonicalBoundSubscription && isReactivationAttempt && validatedReactivationOrigin);
+    if (paidConversion && confirmsReactivation && canonicalBoundSubscription && validatedReactivationOrigin) {
+      const suppliedGateway = input.stripeGateway;
+      const cleanupGateway = suppliedGateway?.listCustomerSubscriptions && suppliedGateway.cancelSubscription
+        ? suppliedGateway as Pick<PlatformBillingStripeGateway, 'listCustomerSubscriptions' | 'cancelSubscription'>
+        : createDefaultPlatformBillingStripeGateway(input.envSource);
+      await cancelSupersededPausedTrialSubscriptions({
+        account,
+        newSubscriptionId: subscriptionId,
+        newPlanCode: canonicalBoundSubscription.metadata.planCode,
+        newPriceId: canonicalBoundSubscription.priceIds[0] ?? '',
+        oldSubscriptionId: validatedReactivationOrigin.subscriptionId,
+        oldPlanCode: validatedReactivationOrigin.planCode,
+        oldPriceId: validatedReactivationOrigin.priceId,
+        environment: input.environment,
+        source: input.envSource,
+        gateway: cleanupGateway,
+      });
+    }
     const nextStatus = resolveInvoicePaymentAccountStatus({
       accountStatus: account.status,
       trialEndsAt: account.trialEndsAt,
       isPaymentFailed: effectiveFailure,
       graceEligible,
-      isPaidBoundSubscriptionActive: Boolean(canonicalReactivation),
+      isPaidBoundSubscriptionActive: confirmsReactivation && Boolean(canonicalBoundSubscription),
     });
     const nextAccessStatus = effectiveFailure && !graceEligible
       ? 'RESTRICTED'
@@ -708,9 +917,9 @@ async function processInvoiceEvent(
       stripeSubscriptionId: subscriptionToPersist,
       webhookLease: input.workerId && input.inboxId ? { id: input.inboxId, workerId: input.workerId } : undefined,
       stripePriceId: priceId,
-      currentPeriodEnd: canonicalReactivation?.currentPeriodEnd ?? account.currentPeriodEnd,
-      cancelAtPeriodEnd: canonicalReactivation?.cancelAtPeriodEnd ?? account.cancelAtPeriodEnd,
-      trialEndsAt: canonicalReactivation?.trialEndsAt ?? account.trialEndsAt,
+      currentPeriodEnd: canonicalBoundSubscription?.currentPeriodEnd ?? account.currentPeriodEnd,
+      cancelAtPeriodEnd: canonicalBoundSubscription?.cancelAtPeriodEnd ?? account.cancelAtPeriodEnd,
+      trialEndsAt: canonicalBoundSubscription?.trialEndsAt ?? account.trialEndsAt,
       gracePeriodEndsAt: effectiveFailure && graceEligible
         ? account.gracePeriodEndsAt ?? computeGracePeriodEnd({
           failedAt: account.gracePeriodStartedAt ?? paymentStateChangedAt,
@@ -730,7 +939,7 @@ async function processInvoiceEvent(
       gracePeriodStartedAt: effectiveFailure && graceEligible
         ? account.gracePeriodStartedAt ?? paymentStateChangedAt
         : null,
-      canceledAt: canonicalReactivation ? null : account.canceledAt,
+      canceledAt: confirmsReactivation ? null : account.canceledAt,
       lastProviderEventCreatedAt: readUnixDate(input.event.created),
       pendingPlanCode: confirmsReactivation ? null : undefined,
       pendingChangeType: effectiveFailure && graceEligible
@@ -797,6 +1006,225 @@ async function getCanonicalActiveBoundSubscription(input: {
     snapshot.priceIds.length === 1 &&
     snapshot.priceIds[0] === input.expectedPriceId) return snapshot;
   return null;
+}
+
+function readReactivationOrigin(metadata: Record<string, string>): {
+  subscriptionId: string;
+  planCode: PlatformPlanCode;
+  priceId: string;
+} | null {
+  const subscriptionId = readString(metadata.reactivationFromSubscriptionId);
+  const planCode = readString(metadata.reactivationFromPlanCode);
+  const priceId = readString(metadata.reactivationFromPriceId);
+  const checkoutRequestKey = readString(metadata.checkoutRequestKey);
+  if (metadata.flow !== 'reactivation' || !subscriptionId || !planCode || !isPlatformPlanCode(planCode) || !priceId || !checkoutRequestKey) {
+    return null;
+  }
+  return { subscriptionId, planCode, priceId };
+}
+
+async function holdReactivationAccountForReconciliation(input: {
+  account: PlatformBillingAccountRecord;
+  subscriptionId: string;
+  planCode: PlatformPlanCode | null;
+  eventId: string;
+  environment: PlatformBillingEnvironment;
+  store: PlatformBillingStore;
+}): Promise<void> {
+  const heldStatus = input.account.status === 'ACTIVE' ? 'PAUSED' : input.account.status;
+  const heldAccessStatus = heldStatus === 'PAUSED' ? 'RESTRICTED'
+    : heldStatus === 'CANCELED' ? 'CANCELED'
+      : input.account.accessStatus;
+  if (heldStatus !== input.account.status || heldAccessStatus !== input.account.accessStatus ||
+    input.account.pendingChangeType !== 'REACTIVATE' ||
+    (input.planCode && input.account.pendingPlanCode !== input.planCode)) {
+    await input.store.updateAccountFromStripeSubscription({
+      accountId: input.account.id,
+      expectedAccountSnapshot: {
+        contaId: input.account.contaId,
+        environment: input.account.environment,
+        stripeSubscriptionId: input.account.stripeSubscriptionId,
+        pendingChangeOperationId: input.account.pendingChangeOperationId,
+        pendingChangeClaimToken: input.account.pendingChangeClaimToken ?? null,
+        lastProviderEventCreatedAt: input.account.lastProviderEventCreatedAt,
+        lastStripeEventId: input.account.lastStripeEventId ?? null,
+      },
+      status: heldStatus,
+      accessStatus: heldAccessStatus,
+      planCode: input.account.planCode,
+      stripeSubscriptionId: input.subscriptionId,
+      stripePriceId: input.account.stripePriceId,
+      currentPeriodEnd: input.account.currentPeriodEnd,
+      cancelAtPeriodEnd: input.account.cancelAtPeriodEnd,
+      trialEndsAt: input.account.trialEndsAt,
+      restrictedAt: heldStatus === 'PAUSED' ? input.account.restrictedAt ?? new Date() : input.account.restrictedAt,
+      pendingPlanCode: input.planCode ?? undefined,
+      pendingChangeType: 'REACTIVATE',
+      lastStripeEventId: input.eventId,
+    });
+  }
+  await input.store.createAuditLog({
+    contaId: input.account.contaId,
+    billingAccountId: input.account.id,
+    action: 'PLATFORM_BILLING_REACTIVATION_RECONCILIATION_REQUIRED',
+    webhookEnvironment: input.environment,
+    webhookEventId: input.eventId,
+    entityType: 'StripeSubscription',
+    entityId: input.subscriptionId,
+    correlationId: input.eventId,
+    metadata: { status: heldStatus, accessStatus: heldAccessStatus, reason: 'missing_or_invalid_paid_checkout_lineage' },
+  });
+}
+
+async function validateReactivationCheckoutLineage(input: {
+  account: PlatformBillingAccountRecord;
+  subscriptionId: string;
+  customerId: string;
+  environment: PlatformBillingEnvironment;
+  source?: Record<string, string | undefined>;
+  metadata: Record<string, string>;
+  priceId: string;
+  origin: NonNullable<ReturnType<typeof readReactivationOrigin>>;
+  store: PlatformBillingStore;
+  gateway: Pick<PlatformBillingStripeGateway, 'retrieveCheckoutSession'>;
+}): Promise<NonNullable<ReturnType<typeof readReactivationOrigin>>> {
+  const idempotencyKey = readString(input.metadata.checkoutRequestKey);
+  if (!idempotencyKey || input.metadata.flow !== 'reactivation') {
+    throw new PlatformBillingError('Reactivation lineage metadata is missing.', 'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED');
+  }
+  const checkout = await input.store.findCheckoutSessionByIdempotencyKey({
+    contaId: input.account.contaId,
+    environment: input.environment,
+    idempotencyKey,
+  });
+  if (!checkout || checkout.billingAccountId !== input.account.id ||
+    checkout.stripeCustomerId !== input.customerId || checkout.idempotencyKey !== idempotencyKey ||
+    (checkout.status !== 'CREATED' && checkout.status !== 'COMPLETED') ||
+    checkout.planCode !== input.metadata.planCode || checkout.stripePriceId !== input.priceId ||
+    resolveStripePriceId({ planCode: checkout.planCode, environment: input.environment, source: input.source }) !== input.priceId ||
+    readCheckoutCancelRequestKey(checkout.cancelUrl) !== idempotencyKey) {
+    throw new PlatformBillingError('Reactivation lineage does not match the persisted tenant Checkout.', 'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED');
+  }
+
+  const remote = await input.gateway.retrieveCheckoutSession(checkout.stripeCheckoutSessionId);
+  const remoteMetadata = remote.metadata;
+  if (remote.id !== checkout.stripeCheckoutSessionId || remote.status !== 'complete' ||
+    remote.livemode !== (input.environment === 'LIVE') || remote.customerId !== input.customerId ||
+    remote.clientReferenceId !== input.account.contaId || remote.subscriptionId !== input.subscriptionId ||
+    remote.priceIds.length !== 1 || remote.priceIds[0] !== input.priceId ||
+    remoteMetadata.contaId !== input.account.contaId || remoteMetadata.billingContext !== 'platform' ||
+    remoteMetadata.flow !== 'reactivation' || remoteMetadata.checkoutRequestKey !== idempotencyKey ||
+    remoteMetadata.planCode !== input.metadata.planCode ||
+    remoteMetadata.reactivationFromSubscriptionId !== input.origin.subscriptionId ||
+    remoteMetadata.reactivationFromPlanCode !== input.origin.planCode ||
+    remoteMetadata.reactivationFromPriceId !== input.origin.priceId ||
+    input.metadata.reactivationFromSubscriptionId !== input.origin.subscriptionId ||
+    input.metadata.reactivationFromPlanCode !== input.origin.planCode ||
+    input.metadata.reactivationFromPriceId !== input.origin.priceId) {
+    throw new PlatformBillingError('Reactivation lineage does not match the current Stripe Checkout.', 'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED');
+  }
+  return input.origin;
+}
+
+async function validatePaidSubscriptionCheckoutLineage(input: {
+  account: PlatformBillingAccountRecord;
+  subscriptionId: string;
+  customerId: string;
+  environment: PlatformBillingEnvironment;
+  source?: Record<string, string | undefined>;
+  metadata: Record<string, string>;
+  priceId: string;
+  store: PlatformBillingStore;
+  gateway: Pick<PlatformBillingStripeGateway, 'retrieveCheckoutSession'>;
+}): Promise<void> {
+  const idempotencyKey = readString(input.metadata.checkoutRequestKey);
+  if (!idempotencyKey || input.metadata.flow !== 'subscription') {
+    throw new PlatformBillingError('Paid subscription is missing its Checkout request binding.', 'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED');
+  }
+  const checkout = await input.store.findCheckoutSessionByIdempotencyKey({
+    contaId: input.account.contaId,
+    environment: input.environment,
+    idempotencyKey,
+  });
+  if (!checkout || checkout.billingAccountId !== input.account.id || checkout.stripeCustomerId !== input.customerId ||
+    checkout.idempotencyKey !== idempotencyKey || (checkout.status !== 'CREATED' && checkout.status !== 'COMPLETED') ||
+    checkout.planCode !== input.metadata.planCode || checkout.stripePriceId !== input.priceId ||
+    resolveStripePriceId({ planCode: checkout.planCode, environment: input.environment, source: input.source }) !== input.priceId ||
+    readCheckoutCancelRequestKey(checkout.cancelUrl) !== idempotencyKey) {
+    throw new PlatformBillingError('Paid subscription does not match the persisted tenant Checkout.', 'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED');
+  }
+  const remote = await input.gateway.retrieveCheckoutSession(checkout.stripeCheckoutSessionId);
+  if (remote.id !== checkout.stripeCheckoutSessionId || remote.status !== 'complete' ||
+    remote.livemode !== (input.environment === 'LIVE') || remote.customerId !== input.customerId ||
+    remote.clientReferenceId !== input.account.contaId || remote.subscriptionId !== input.subscriptionId ||
+    remote.priceIds.length !== 1 || remote.priceIds[0] !== input.priceId ||
+    remote.metadata.contaId !== input.account.contaId || remote.metadata.billingContext !== 'platform' ||
+    remote.metadata.flow !== 'subscription' || remote.metadata.checkoutRequestKey !== idempotencyKey ||
+    remote.metadata.planCode !== input.metadata.planCode) {
+    throw new PlatformBillingError('Paid subscription does not match its current Stripe Checkout.', 'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED');
+  }
+}
+
+async function cancelSupersededPausedTrialSubscriptions(input: {
+  account: PlatformBillingAccountRecord;
+  newSubscriptionId: string;
+  newPlanCode: string;
+  newPriceId: string;
+  oldSubscriptionId: string;
+  oldPlanCode: PlatformPlanCode;
+  oldPriceId: string;
+  environment: PlatformBillingEnvironment;
+  source?: Record<string, string | undefined>;
+  gateway: Pick<PlatformBillingStripeGateway, 'listCustomerSubscriptions' | 'cancelSubscription'>;
+}): Promise<void> {
+  const customerId = input.account.stripeCustomerId;
+  const configuredOldPriceId = resolveStripePriceId({
+    planCode: input.oldPlanCode,
+    environment: input.environment,
+    source: input.source,
+  });
+  if (!customerId || !input.newPlanCode || !input.newPriceId ||
+    !input.oldSubscriptionId || input.oldSubscriptionId === input.newSubscriptionId ||
+    configuredOldPriceId !== input.oldPriceId) {
+    throw new PlatformBillingError('Cannot safely identify the previous trial subscription.', 'PLATFORM_BILLING_WEBHOOK_INVALID');
+  }
+
+  const listed = await input.gateway.listCustomerSubscriptions(customerId);
+  if (!listed.complete) {
+    throw new PlatformBillingError('Stripe subscription list is incomplete; trial cleanup will retry.', 'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED');
+  }
+  const expectedLivemode = input.environment === 'LIVE';
+  const ownedPlatformSubscription = (subscription: (typeof listed.subscriptions)[number], planCode: string, priceId: string) =>
+    subscription.customerId === customerId &&
+    subscription.livemode === expectedLivemode &&
+    subscription.metadata.contaId === input.account.contaId &&
+    subscription.metadata.billingContext === 'platform' &&
+    subscription.metadata.planCode === planCode &&
+    subscription.priceIds.length === 1 && subscription.priceIds[0] === priceId;
+
+  const newSubscription = listed.subscriptions.find((subscription) => subscription.id === input.newSubscriptionId);
+  const listedOrigin = newSubscription ? readReactivationOrigin(newSubscription.metadata) : null;
+  if (!newSubscription || !ownedPlatformSubscription(newSubscription, input.newPlanCode, input.newPriceId) ||
+    newSubscription.status !== 'active' || listedOrigin?.subscriptionId !== input.oldSubscriptionId ||
+    listedOrigin.planCode !== input.oldPlanCode || listedOrigin.priceId !== input.oldPriceId) {
+    throw new PlatformBillingError('Paid reactivation subscription is not the expected active tenant subscription.', 'PLATFORM_BILLING_WEBHOOK_INVALID');
+  }
+  const oldSubscription = listed.subscriptions.find((subscription) => subscription.id === input.oldSubscriptionId);
+  if (!oldSubscription || !ownedPlatformSubscription(oldSubscription, input.oldPlanCode, input.oldPriceId)) {
+    throw new PlatformBillingError('The previous trial subscription does not match its validated tenant lineage.', 'PLATFORM_BILLING_WEBHOOK_INVALID');
+  }
+  if (oldSubscription.status === 'canceled') return;
+  if (oldSubscription.status !== 'paused') {
+    throw new PlatformBillingError('The previous trial subscription is no longer paused; cleanup requires reconciliation.', 'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED');
+  }
+
+  // The explicit Stripe metadata link identifies the source subscription;
+  // old and new band prices are validated independently. The stable key makes
+  // retries safe if cancellation succeeded but the local webhook transaction did not.
+  await input.gateway.cancelSubscription(
+    oldSubscription.id,
+    `platform-reactivation-cleanup:${input.account.id}:${oldSubscription.id}`,
+  );
 }
 
 function isVerifiedPaidCheckoutInvoice(input: {

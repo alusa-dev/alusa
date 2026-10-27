@@ -6,10 +6,9 @@ export function resolveTenantPlatformBillingCheckoutPlan(input: {
   tx: TenantTransactionClient;
   contaId: string;
   environment: 'TEST' | 'LIVE';
-  requestedStudentCount?: number;
 }) {
-  const { tx, contaId, environment, requestedStudentCount } = input;
-  return resolvePlatformBillingCheckoutPlan({ requestedStudentCount }, {
+  const { tx, contaId, environment } = input;
+  return resolvePlatformBillingCheckoutPlan({
     loadContext: async () => {
       const [activeStudents, billingAccount, onboardingPricing, recentSnapshots] = await Promise.all([
         countActivePlatformBillingStudents({ tx, contaId }),

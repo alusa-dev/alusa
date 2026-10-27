@@ -5,7 +5,8 @@ import {
   createPlatformBillingPortalSession,
   createPrismaPlatformBillingStore,
 } from '@alusa/platform-billing';
-import { withTenantSession } from '@/lib/api/with-tenant-session';
+import { resolveTenantSession, withTenantSession } from '@/lib/api/with-tenant-session';
+import { runWithTenant } from '@/lib/prisma-tenant';
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import {
@@ -17,6 +18,15 @@ import {
   platformBillingIdempotencyKeyDTOSchema,
   platformBillingPortalInputDTOSchema,
 } from '@/features/platform-billing/dtos';
+import { startTrialCardSetupCheckout } from '@/src/server/platform-billing/trial-card-setup-checkout';
+
+async function readBody(req: NextRequest): Promise<unknown> {
+  try {
+    return await req.json();
+  } catch {
+    return null;
+  }
+}
 
 export async function POST(req: NextRequest) {
   const requestIp = ipFromRequest(req);
@@ -39,6 +49,53 @@ export async function POST(req: NextRequest) {
   }
   const idempotencyKey = parsedIdempotencyKey.data;
 
+  const auth = await resolveTenantSession();
+  if (!auth.ok) {
+    return NextResponse.json({ error: auth.reason === 'CONTA_MISMATCH' ? 'CONTA_MISMATCH' : 'UNAUTHENTICATED' }, {
+      status: auth.reason === 'CONTA_MISMATCH' ? 403 : 401,
+    });
+  }
+  const setupCandidate = await runWithTenant(auth.contaId, async (tx) => {
+    const actor = await resolvePlatformBillingActor({ tx, contaId: auth.contaId, userId: auth.userId });
+    const forbidden = assertCanManagePlatformBilling(actor.canManagePlatformBilling);
+    if (forbidden) return forbidden;
+    const account = await tx.platformBillingAccount.findUnique({
+      where: { uq_platform_billing_account_conta_env: { contaId: auth.contaId, environment: resolvePlatformBillingEnvironment() } },
+      select: {
+        id: true, status: true, stripeCustomerId: true, stripeSubscriptionId: true,
+        trialEndsAt: true, firstPaidAt: true, lastSuccessfulPaymentAt: true,
+      },
+    });
+    const unpaidTrial = Boolean(account?.trialEndsAt && !account.firstPaidAt && !account.lastSuccessfulPaymentAt
+      && account.status !== 'ACTIVE' && account.status !== 'PAST_DUE');
+    if (unpaidTrial && account?.trialEndsAt && account.trialEndsAt.getTime() <= Date.now()) {
+      return NextResponse.json({
+        error: 'PLATFORM_BILLING_CHECKOUT_REQUIRED',
+        message: 'Seu período de teste terminou. Para contratar, confirme o pagamento pelo Checkout.',
+      }, { status: 409 });
+    }
+    if (!unpaidTrial || !account?.trialEndsAt || account.trialEndsAt.getTime() <= Date.now()) return null;
+    const rate = await rateLimitAsync(`platform-billing:portal:${auth.contaId}:${auth.userId}:${requestIp}`, 30, 10 * 60_000);
+    if (!rate.ok) return NextResponse.json({ error: 'RATE_LIMITED' }, {
+      status: 429, headers: { 'Retry-After': String(Math.ceil((rate.resetAt - Date.now()) / 1000)) },
+    });
+    return {
+      contaId: auth.contaId, userId: auth.userId, billingAccountId: account.id,
+      customerId: account.stripeCustomerId, subscriptionId: account.stripeSubscriptionId,
+    };
+  });
+  if (setupCandidate instanceof NextResponse) return setupCandidate;
+  if (setupCandidate) {
+    const outcome = await startTrialCardSetupCheckout({
+      setupCandidate,
+      consentAccepted: parsedBody.success && parsedBody.data.savePaymentMethodConsent === true,
+      idempotencyKey,
+      requestId: getRequestId(req),
+      origin: new URL(req.url).origin,
+    });
+    return NextResponse.json(outcome.body, { status: outcome.status });
+  }
+
   return withTenantSession(async ({ contaId, userId, tx }) => {
     const rate = await rateLimitAsync(`platform-billing:portal:${contaId}:${userId}:${requestIp}`, 30, 10 * 60_000);
     if (!rate.ok) {
@@ -60,7 +117,10 @@ export async function POST(req: NextRequest) {
         },
       },
       select: {
+        id: true,
         status: true,
+        stripeCustomerId: true,
+        stripeSubscriptionId: true,
         trialEndsAt: true,
         firstPaidAt: true,
         lastSuccessfulPaymentAt: true,
@@ -79,6 +139,17 @@ export async function POST(req: NextRequest) {
         error: 'PLATFORM_BILLING_CHECKOUT_REQUIRED',
         message: 'Seu período de teste terminou. Para contratar, confirme o pagamento pelo Checkout.',
       }, { status: 409 });
+    }
+    const trialWithoutPaidHistory = Boolean(
+      account?.trialEndsAt
+      && account.trialEndsAt.getTime() > Date.now()
+      && !account.firstPaidAt
+      && !account.lastSuccessfulPaymentAt
+      && account.status !== 'ACTIVE'
+      && account.status !== 'PAST_DUE',
+    );
+    if (trialWithoutPaidHistory) {
+      return NextResponse.json({ error: 'PLATFORM_BILLING_TRIAL_CARD_RETRY_REQUIRED' }, { status: 409 });
     }
 
     const origin = new URL(req.url).origin;
@@ -120,14 +191,6 @@ export async function POST(req: NextRequest) {
   });
 }
 
-async function readBody(req: NextRequest): Promise<unknown> {
-  try {
-    return await req.json();
-  } catch {
-    return null;
-  }
-}
-
 function readSafeReturnPath(body: unknown): string {
   if (!body || typeof body !== 'object') return '/account/billing-plan';
   const value = (body as { returnPath?: unknown }).returnPath;
@@ -141,10 +204,13 @@ function readSafeReturnPath(body: unknown): string {
 
 function billingActionErrorResponse(error: unknown): NextResponse | null {
   if (error instanceof PlatformBillingError) {
-    const status = error.code === 'PLATFORM_BILLING_ACCOUNT_NOT_FOUND' ? 404 : 400;
+    const status = error.code === 'PLATFORM_BILLING_ACCOUNT_NOT_FOUND' ? 404
+      : error.code === 'PLATFORM_BILLING_TRIAL_CHECKOUT_REQUIRED' ? 409 : 400;
     return NextResponse.json({
       error: error.code,
-      message: error.code === 'PLATFORM_BILLING_ACCOUNT_NOT_FOUND'
+      message: error.code === 'PLATFORM_BILLING_TRIAL_CHECKOUT_REQUIRED'
+        ? 'A forma de pagamento não pode ser cadastrada durante o teste. Confirme a contratação pelo Checkout após o período de teste.'
+        : error.code === 'PLATFORM_BILLING_ACCOUNT_NOT_FOUND'
         ? 'Nenhuma assinatura encontrada para esta conta.'
         : 'Não foi possível abrir a área de pagamento.',
     }, { status });

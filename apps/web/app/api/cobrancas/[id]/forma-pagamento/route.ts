@@ -34,7 +34,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         { status: 403 },
       );
     }
-    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'CHARGE_CREATE' });
+    const billingBlocked = await platformBillingAccessResponseForConta({ contaId: auth.contaId, capability: 'FINANCIAL_CORRECTION' });
     if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
     const result = await updateCobrancaFormaPagamento({

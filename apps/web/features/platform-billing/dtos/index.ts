@@ -39,6 +39,7 @@ export const platformBillingWebhookReplayInputDTOSchema = z.object({
 
 export const platformBillingPortalInputDTOSchema = z.object({
   returnPath: z.string().optional(),
+  savePaymentMethodConsent: z.boolean().optional(),
 });
 
 export const platformBillingIdempotencyKeyDTOSchema = z.string().trim().min(1).max(128);

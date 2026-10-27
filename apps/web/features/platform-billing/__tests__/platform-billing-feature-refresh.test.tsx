@@ -43,9 +43,10 @@ vi.mock('@/components/ui/confirm-dialog', () => ({
   ) : null,
 }));
 
-import { PlatformBillingFeature } from '../PlatformBillingFeature';
+import { navigateToSetupCheckout, PlatformBillingFeature } from '../PlatformBillingFeature';
 import { CardBrandMark, formatCardBrand } from '../components/CardBrandMark';
 import { PlatformBillingProvider, usePlatformBilling } from '../PlatformBillingContext';
+import type { PlatformBillingSummaryDTO } from '../dtos/platform-billing-summary';
 
 const generatedAt = '2030-05-01T12:00:00.000Z';
 
@@ -118,6 +119,7 @@ function billingSummary(contaName = 'Escola Alusa', cancelAtPeriodEnd = false) {
       generatedAt,
     },
     paymentMethod: { status: 'present', type: 'card', brand: 'visa', last4: '4242', expMonth: 6, expYear: 2028 },
+    savedTrialPaymentMethod: null as PlatformBillingSummaryDTO['savedTrialPaymentMethod'],
     plans,
     invoices: [],
     health: {
@@ -249,6 +251,29 @@ describe('PlatformBillingFeature renewal label', () => {
 });
 
 describe('PlatformBillingFeature refresh after a billing action', () => {
+  it.each(['success', 'canceled'] as const)('shows setup return %s without claiming a paid subscription or default card', async (setupState) => {
+    window.history.replaceState({}, '', `/account/billing-plan?setup=${setupState}&keep=1#card`);
+    const trialAccount = billingSummary();
+    Object.assign(trialAccount.account, { status: 'TRIALING', trialEndsAt: '2030-05-15T12:00:00.000Z' });
+    Object.assign(trialAccount.access, { billingStatus: 'TRIALING' });
+    trialAccount.paymentMethod = { status: 'missing', type: '', brand: '', last4: '', expMonth: 0, expYear: 0 };
+    const fetchMock = vi.fn().mockResolvedValue(response(trialAccount));
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(<PlatformBillingProvider><PlatformBillingFeature setupState={setupState} /></PlatformBillingProvider>);
+
+    expect(await screen.findByText(setupState === 'success'
+      ? /O cadastro do cartão foi concluído\. Isso não ativou assinatura nem gerou cobrança/
+      : /O cadastro do cartão foi cancelado\. Nenhuma assinatura ou cobrança foi iniciada/)).toBeInTheDocument();
+    if (setupState === 'success') await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === '/api/platform-billing/summary')).toHaveLength(2));
+    expect(screen.getByText('Nenhuma forma de pagamento cadastrada')).toBeInTheDocument();
+    expect(screen.queryByText('Assinatura confirmada. Seu plano já está atualizado.')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Visa ••••/)).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/platform-billing/checkout')).toHaveLength(0);
+    expect(window.location.search).toBe('?keep=1');
+    expect(window.location.hash).toBe('#card');
+  });
+
   it('forces a bounded success-return refresh and keeps checkout blocked until ACTIVE is read', async () => {
     const timers = controlCheckoutRefreshTimers();
     window.history.replaceState({}, '', '/billing?keep=1&checkout=success#receipt');
@@ -597,13 +622,13 @@ describe('PlatformBillingFeature refresh after a billing action', () => {
     expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/platform-billing/portal');
     expect(fetchMock.mock.calls.some(([url]) => url === '/api/platform-billing/checkout')).toBe(false);
     if (opensPortalTab) {
-      expect(openSpy).toHaveBeenCalledWith('https://portal.test', '_blank', 'noopener,noreferrer');
+      expect(openSpy).toHaveBeenCalledWith('about:blank', '_blank');
     } else {
       expect(openSpy).not.toHaveBeenCalled();
     }
   });
 
-  it('permite cadastrar pagamento durante o trial quando há customer e falta método de pagamento', async () => {
+  it('não oferece coleta de pagamento durante trial sem autorização de cobrança', async () => {
     const trialAccount = billingSummary();
     Object.assign(trialAccount.account, {
       status: 'TRIALING',
@@ -625,45 +650,70 @@ describe('PlatformBillingFeature refresh after a billing action', () => {
       expMonth: 0,
       expYear: 0,
     };
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(response(trialAccount))
-      .mockResolvedValueOnce(response({ portalSessionId: 'bps_trial', portalUrl: 'https://portal.test' }));
+    const fetchMock = vi.fn().mockResolvedValueOnce(response(trialAccount));
     vi.stubGlobal('fetch', fetchMock);
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
 
     render(<PlatformBillingProvider><PlatformBillingFeature /></PlatformBillingProvider>);
 
-    const paymentButton = await screen.findByRole('button', { name: 'Cadastrar pagamento' });
-    expect((paymentButton as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(paymentButton);
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/platform-billing/portal');
+    await screen.findByText('Plano');
+    expect(screen.queryByRole('button', { name: 'Cadastrar pagamento' })).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls.some(([url]) => url === '/api/platform-billing/checkout')).toBe(false);
-    expect(openSpy).toHaveBeenCalledWith('https://portal.test', '_blank', 'noopener,noreferrer');
+    expect(openSpy).not.toHaveBeenCalled();
   });
 
-  it('permite alterar pagamento durante o trial quando já existe método de pagamento', async () => {
+  it('permite cadastrar cartão opcional durante trial sem abrir Checkout de assinatura', async () => {
     const trialAccount = billingSummary();
     Object.assign(trialAccount.account, {
       status: 'TRIALING',
       trialEndsAt: '2030-05-15T12:00:00.000Z',
     });
     Object.assign(trialAccount.access, { billingStatus: 'TRIALING' });
+    let resolveSetupResponse!: (value: ReturnType<typeof response>) => void;
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response(trialAccount))
-      .mockResolvedValueOnce(response({ portalSessionId: 'bps_trial', portalUrl: 'https://portal.test' }));
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSetupResponse = resolve; }));
     vi.stubGlobal('fetch', fetchMock);
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    const popup = { opener: window, location: { href: 'about:blank' }, close: vi.fn() } as unknown as Window;
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(popup);
 
     render(<PlatformBillingProvider><PlatformBillingFeature /></PlatformBillingProvider>);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Alterar pagamento' }));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/platform-billing/portal');
+    await screen.findByText('Plano');
+    const setupButton = await screen.findByRole('button', { name: 'Cadastrar cartão opcional' });
+    expect(setupButton).toBeDisabled();
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(setupButton);
+    expect(openSpy).toHaveBeenCalledWith('about:blank', '_blank');
+    expect(popup.opener).toBeNull();
+    resolveSetupResponse(response({ setupUrl: 'https://checkout.stripe.test/setup' }));
+    await waitFor(() => expect(popup.location.href).toBe('https://checkout.stripe.test/setup'));
+    expect(fetchMock.mock.calls.some(([url]) => url === '/api/platform-billing/portal')).toBe(true);
     expect(fetchMock.mock.calls.some(([url]) => url === '/api/platform-billing/checkout')).toBe(false);
-    expect(openSpy).toHaveBeenCalledWith('https://portal.test', '_blank', 'noopener,noreferrer');
+  });
+
+  it('exibe cartão Setup salvo sem apresentá-lo como método padrão', async () => {
+    const trial = billingSummary();
+    Object.assign(trial.account, { status: 'TRIALING', paymentMethodStatus: 'MISSING' });
+    trial.paymentMethod = { status: 'missing', type: 'card', brand: '', last4: '', expMonth: 0, expYear: 0 };
+    trial.savedTrialPaymentMethod = {
+      status: 'saved_non_default', type: 'card', brand: 'visa', last4: '4242', expMonth: 6, expYear: 2028,
+    };
+    Object.assign(trial.access, { hasPaymentMethod: false });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response(trial)));
+    render(<PlatformBillingProvider><PlatformBillingFeature /></PlatformBillingProvider>);
+    await screen.findByText('Cartão salvo para contratação');
+    expect(screen.getByText(/Não é o método padrão de cobrança/)).toBeInTheDocument();
+    expect(screen.getByText('Nenhuma forma de pagamento cadastrada')).toBeInTheDocument();
+    expect(trial.access.hasPaymentMethod).toBe(false);
+  });
+
+  it('uses same-tab navigation when a blocked popup returns null', () => {
+    const navigate = vi.fn();
+    const result = navigateToSetupCheckout('https://checkout.stripe.test/setup', null, navigate);
+    expect(result).toBe('same-tab');
+    expect(navigate).toHaveBeenCalledWith('https://checkout.stripe.test/setup');
   });
 
   it('oculta a troca manual de faixa e atualiza o resumo depois de cancelar a assinatura', async () => {

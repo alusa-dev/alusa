@@ -20,6 +20,8 @@ describe('@alusa/platform-billing access policy', () => {
     const account = buildAccount({ accessStatus: 'RESTRICTED', status: 'UNPAID' });
 
     expect(assertPlatformAccess({ contaId: 'conta_1', account, capability: 'MONEY_READ' })).toBe('RESTRICTED');
+    expect(assertPlatformAccess({ contaId: 'conta_1', account, capability: 'FINANCIAL_CORRECTION' })).toBe('RESTRICTED');
+    expect(() => assertPlatformAccess({ contaId: 'conta_1', account, capability: 'CHARGE_CREATE' })).toThrow();
     expect(() => assertPlatformAccess({ contaId: 'conta_1', account, capability: 'MONEY_TRANSFER' })).toThrow();
     expect(() => assertPlatformAccess({ contaId: 'conta_1', account, capability: 'MONEY_WITHDRAW' })).toThrow();
   });

@@ -8,7 +8,7 @@ export {
   SCHOOL_PRICE_BANDS,
   SCHOOL_PRICE_BAND_RANKS,
   getSchoolPriceBandRank,
-  hasBillableMonthlyEnrollment,
+  hasBillableEnrollment,
   isSchoolPriceBandCode,
   resolveStableSchoolPriceBand,
   resolveSchoolCommercialTarget,

@@ -450,10 +450,6 @@ export function createPrismaPlatformBillingStore(db: PlatformBillingPrismaClient
               : {}),
             lastStripeEventId: input.lastStripeEventId,
             ...(input.stripeSubscriptionId ? {
-              checkoutClaimKey: null,
-              checkoutClaimPhase: null,
-              checkoutClaimedAt: null,
-              checkoutRequestExpiresAt: null,
               trialSubscriptionClaimKey: null,
               trialSubscriptionClaimPhase: null,
               trialSubscriptionClaimedAt: null,

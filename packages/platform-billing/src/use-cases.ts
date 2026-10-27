@@ -484,6 +484,7 @@ export async function createPlatformBillingCheckoutSession(
         contaId: parsed.contaId,
         environment: config.environment,
         source: input.envSource,
+        allowExpiredTrialPause: isExpiredUnpaidTrialReactivation(existingAccount),
       });
     }
     if (existingAccount?.stripeSubscriptionId && !isReactivationCheckoutAccount(existingAccount)) {
@@ -572,11 +573,27 @@ export async function createPlatformBillingCheckoutSession(
     contaId: parsed.contaId,
     environment: config.environment,
     source: input.envSource,
+    allowExpiredTrialPause: isExpiredUnpaidTrialReactivation(account),
   });
   // Trials are started only through the no-card trial endpoint. Checkout is
   // always an explicit paid subscription confirmation.
   const trialDays = null;
   const isReactivation = isReactivationCheckoutAccount(account);
+  const reactivationOrigin = isReactivation ? {
+    subscriptionId: account.stripeSubscriptionId,
+    planCode: account.planCode,
+    priceId: account.stripePriceId,
+  } : null;
+  const reactivationMetadata = reactivationOrigin?.subscriptionId && reactivationOrigin.planCode && reactivationOrigin.priceId
+    ? {
+        reactivationFromSubscriptionId: reactivationOrigin.subscriptionId,
+        reactivationFromPlanCode: reactivationOrigin.planCode,
+        reactivationFromPriceId: reactivationOrigin.priceId,
+      }
+    : null;
+  if (isReactivation && !reactivationMetadata) {
+    throw checkoutReconciliationRequired(parsed.contaId, config.environment);
+  }
 
   if (account.stripeSubscriptionId && !isReactivation) {
     throw new PlatformBillingError(
@@ -734,6 +751,7 @@ export async function createPlatformBillingCheckoutSession(
         trialDays: trialDays ? String(trialDays) : '0',
         flow: isReactivation ? 'reactivation' : 'subscription',
         checkoutRequestKey: parsed.idempotencyKey,
+        ...(reactivationMetadata ?? {}),
       },
       trialDays,
       idempotencyKey: stripeIdempotencyKey(config.environment, parsed.contaId, 'checkout', parsed.idempotencyKey),
@@ -810,6 +828,7 @@ async function assertNoRemoteNonterminalSubscription(input: {
   contaId: string;
   environment: 'TEST' | 'LIVE';
   source?: StripeEnvSource;
+  allowExpiredTrialPause?: boolean;
 }): Promise<void> {
   const customerId = input.account.stripeCustomerId;
   if (!customerId || input.account.contaId !== input.contaId || input.account.environment !== input.environment) {
@@ -823,6 +842,7 @@ async function assertNoRemoteNonterminalSubscription(input: {
   );
   if (candidates.length === 0) return;
 
+  let allowedExpiredTrialPause = false;
   for (const subscription of candidates) {
     const metadataPlan = subscription.metadata.planCode;
     let expectedPriceId: string | null = null;
@@ -845,9 +865,16 @@ async function assertNoRemoteNonterminalSubscription(input: {
       subscription.priceIds[0] !== expectedPriceId) {
       throw checkoutReconciliationRequired(input.contaId, input.environment);
     }
+    if (subscription.status === 'paused' &&
+      input.allowExpiredTrialPause &&
+      subscription.id === input.account.stripeSubscriptionId) {
+      allowedExpiredTrialPause = true;
+      continue;
+    }
   }
 
-  if (candidates.length !== 1) throw checkoutReconciliationRequired(input.contaId, input.environment);
+  if (candidates.length > 1) throw checkoutReconciliationRequired(input.contaId, input.environment);
+  if (allowedExpiredTrialPause) return;
   throw new PlatformBillingError(
     'An active or pending Stripe subscription already exists for this account.',
     'PLATFORM_BILLING_SUBSCRIPTION_ALREADY_EXISTS',
@@ -1026,7 +1053,8 @@ function isReactivationCheckoutAccount(account: PlatformBillingAccountRecord): b
 
 function isExpiredUnpaidTrialReactivation(account: PlatformBillingAccountRecord): boolean {
   return Boolean(
-    (account.status === 'PAUSED' || account.status === 'TRIALING') &&
+    (account.status === 'PAUSED' || account.status === 'TRIALING' ||
+      (account.status === 'CANCELED' && account.stripeSubscriptionId !== null && account.planCode !== null)) &&
     account.trialEndsAt && account.trialEndsAt.getTime() <= Date.now() &&
     !account.firstPaidAt && !account.lastSuccessfulPaymentAt,
   );
@@ -1047,6 +1075,16 @@ export async function createPlatformBillingPortalSession(
     throw new PlatformBillingError(
       'Platform billing account was not found.',
       'PLATFORM_BILLING_ACCOUNT_NOT_FOUND',
+      { contaId: parsed.contaId, environment: config.environment },
+    );
+  }
+
+  if (account.status === 'TRIALING' &&
+    account.trialEndsAt && account.trialEndsAt.getTime() > Date.now() &&
+    !account.firstPaidAt && !account.lastSuccessfulPaymentAt) {
+    throw new PlatformBillingError(
+      'Payment details cannot be collected during a trial without explicit paid checkout confirmation.',
+      'PLATFORM_BILLING_TRIAL_CHECKOUT_REQUIRED',
       { contaId: parsed.contaId, environment: config.environment },
     );
   }

@@ -30,7 +30,7 @@ type TestTenantTx = {
 };
 
 const { state, runWithTenantMock } = vi.hoisted(() => {
-  const state = {
+  const base = {
     transactions: {} as Record<string, TestTenantTx>,
     claims: new Set<string>(),
     queuedEvents: new Set<string>(),
@@ -40,23 +40,24 @@ const { state, runWithTenantMock } = vi.hoisted(() => {
     releaseBillingLock: null as (() => void) | null,
     lockReleased: null as Promise<void> | null,
     pendingPayment: null as Promise<void> | null,
-    prisma: {
+  };
+  const prisma = {
       platformBillingAccount: {
-        count: vi.fn(async () => Object.values(state.transactions)
+        count: vi.fn(async () => Object.values(base.transactions)
           .map((transaction) => transaction.account)
-          .filter((account) => !state.claims.has(`${account.id}:trial-expired`)).length),
-        findMany: vi.fn(async ({ skip, take }: { skip: number; take: number }) => Object.values(state.transactions)
+          .filter((account) => !base.claims.has(`${account.id}:trial-expired`)).length),
+        findMany: vi.fn(async ({ skip, take }: { skip: number; take: number }) => Object.values(base.transactions)
           .map((transaction) => transaction.account)
-          .filter((account) => !state.claims.has(`${account.id}:trial-expired`))
+          .filter((account) => !base.claims.has(`${account.id}:trial-expired`))
           .slice(skip, skip + take)),
       },
-    },
   };
+  const state = Object.assign(base, { prisma });
   const runWithTenantMock = vi.fn(async (
     contaId: string,
-    callback: (_transaction: TestTenantTx) => Promise<unknown>,
+    callback: (transaction: TestTenantTx) => Promise<unknown>,
   ) => {
-    const transaction = state.transactions[contaId];
+    const transaction: TestTenantTx | undefined = state.transactions[contaId];
     if (!transaction) throw new Error(`Missing test transaction for ${contaId}`);
     try {
       return await callback(transaction);

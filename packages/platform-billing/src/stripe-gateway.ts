@@ -10,6 +10,7 @@ import {
   previewStripeSubscriptionPlanChange,
   retrieveStripeCustomer,
   retrieveStripeSubscription,
+  cancelStripeSubscription,
   releaseStripeSubscriptionSchedule,
   scheduleStripeSubscriptionPlanChange,
   updateStripeSubscriptionCancelAtPeriodEnd,
@@ -47,6 +48,8 @@ export function createDefaultPlatformBillingStripeGateway(source?: StripeEnvSour
       createStripeTrialSubscriptionWithoutPaymentMethod(client, input),
     createPortalSession: (input) => createStripeBillingPortalSession(client, input),
     retrieveSubscription: (subscriptionId) => retrieveStripeSubscription(client, subscriptionId),
+    cancelSubscription: (subscriptionId, idempotencyKey) =>
+      cancelStripeSubscription(client, subscriptionId, idempotencyKey),
     retrieveSubscriptionSnapshot: async (subscriptionId) => {
       const subscription = await client.subscriptions.retrieve(subscriptionId);
       const singleItem = subscription.items.data.length === 1 ? subscription.items.data[0] : undefined;

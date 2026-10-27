@@ -101,6 +101,7 @@ type PaymentMethodSummary =
 type BillingSummary = PlatformBillingSummaryDTO;
 
 type CheckoutState = 'success' | 'cancel' | null;
+type SetupState = 'success' | 'canceled' | null;
 
 type NoticeDialogState = {
   title: string;
@@ -121,13 +122,15 @@ function createPlatformBillingRequestKey(prefix: string): string {
   throw new Error('Este navegador não consegue criar uma chave segura para a operação.');
 }
 
-export function PlatformBillingFeature({ checkoutState }: { checkoutState?: CheckoutState }) {
+export function PlatformBillingFeature({ checkoutState, setupState }: { checkoutState?: CheckoutState; setupState?: SetupState }) {
   const { summary, loading, refresh, refreshFailed, userId } = usePlatformBilling();
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [trialCardConsent, setTrialCardConsent] = useState(false);
   const [noticeDialog, setNoticeDialog] = useState<NoticeDialogState>(null);
   const [billingSuccessNotice, setBillingSuccessNotice] = useState<string | null>(null);
+  const [setupNotice, setSetupNotice] = useState<string | null>(null);
   const [checkoutCancelPending, setCheckoutCancelPending] = useState(checkoutState === 'cancel');
   const [checkoutSuccessState, setCheckoutSuccessState] = useState<'checking' | 'unconfirmed' | 'confirmed' | null>(
     checkoutState === 'success' ? 'checking' : null,
@@ -142,6 +145,7 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
   const actionIdempotencyKeysRef = useRef<Record<string, string>>({});
   const lastSummaryRef = useRef(summary);
   const checkoutCancelHandledKeyRef = useRef<string | null>(null);
+  const setupReturnHandledRef = useRef<SetupState | null>(null);
   const billingAccountId = summary?.account?.id ?? null;
 
   useEffect(() => {
@@ -155,6 +159,18 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
     setCheckoutSuccessRefreshAttempts(0);
     if (checkoutState === 'success') setCheckoutSuccessState('checking');
   }, [checkoutState, userId]);
+
+  useEffect(() => {
+    if (!setupState || !userId || setupReturnHandledRef.current === setupState) return;
+    setupReturnHandledRef.current = setupState;
+    consumeSetupQuery();
+    if (setupState === 'success') {
+      setSetupNotice('O cadastro do cartão foi concluído. Isso não ativou assinatura nem gerou cobrança; você continuará no período de teste.');
+      void refresh(true);
+    } else {
+      setSetupNotice('O cadastro do cartão foi cancelado. Nenhuma assinatura ou cobrança foi iniciada.');
+    }
+  }, [refresh, setupState, userId]);
 
   function getActionIdempotencyKey(scope: string): string {
     const existing = actionIdempotencyKeysRef.current[scope];
@@ -328,7 +344,9 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
   );
   const paymentTitle = getPaymentMethodTitle(paymentMethod);
   const paymentDescription = getPaymentMethodDescription(paymentMethod);
-  const paymentActionLabel = paymentMethod.status === 'present' ? 'Alterar pagamento' : 'Cadastrar pagamento';
+  const paymentActionLabel = isTrialing
+    ? 'Cadastrar cartão opcional'
+    : paymentMethod.status === 'present' ? 'Alterar pagamento' : 'Cadastrar pagamento';
   const cancellationNotice = getCancellationNotice(summary?.account ?? null);
   const trialEndingNotice = getTrialEndingNotice(summary?.account ?? null, currentPlan);
   const canStartSelfServiceFlow = (!hasManageableSubscription || trialExpired) && commercialTarget?.kind === 'SELF_SERVICE';
@@ -401,27 +419,31 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
   async function openPortal(options?: { newTab?: boolean }) {
     setActionLoading('portal');
     setError(null);
+    const checkoutWindow = options?.newTab ? window.open('about:blank', '_blank') : null;
+    if (checkoutWindow) checkoutWindow.opener = null;
     try {
       const portalScope = 'portal';
       const idempotencyKey = getActionIdempotencyKey(portalScope);
       const response = await fetch('/api/platform-billing/portal', {
         method: 'POST',
-        headers: { 'idempotency-key': idempotencyKey },
+        headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey },
+        body: JSON.stringify(isTrialing ? { savePaymentMethodConsent: trialCardConsent } : {}),
       });
-      const payload = await response.json().catch(() => null) as { portalUrl?: string; error?: string } | null;
-      if (!response.ok || !payload?.portalUrl) {
+      const payload = await response.json().catch(() => null) as { portalUrl?: string; setupUrl?: string; error?: string } | null;
+      const destinationUrl = payload?.setupUrl ?? payload?.portalUrl;
+      if (!response.ok || !destinationUrl) {
         throw new Error(payload?.error === 'PLATFORM_BILLING_ACCOUNT_NOT_FOUND'
           ? 'Nenhuma assinatura encontrada para esta conta.'
           : 'Não foi possível abrir a área de pagamento.');
       }
-      if (options?.newTab) {
-        window.open(payload.portalUrl, '_blank', 'noopener,noreferrer');
+      navigateToSetupCheckout(destinationUrl, checkoutWindow);
+      if (checkoutWindow) {
         clearActionIdempotencyKey(portalScope);
         setActionLoading(null);
         return;
       }
-      window.location.assign(payload.portalUrl);
     } catch (err) {
+      checkoutWindow?.close();
       const message = err instanceof Error ? err.message : 'Não foi possível abrir a área de pagamento.';
       setError(message);
       setNoticeDialog({
@@ -563,6 +585,12 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
         </InfoCallout>
       ) : null}
 
+      {setupNotice ? (
+        <InfoCallout variant="brand" size="sm" showIcon>
+          {setupNotice}
+        </InfoCallout>
+      ) : null}
+
       {cancellationNotice ? (
         <InfoCallout variant="brand" size="sm" showIcon>
           {cancellationNotice}
@@ -693,15 +721,35 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
               ) : null}
             </div>
           </div>
+          {summary?.savedTrialPaymentMethod ? (
+            <div className="mt-4 flex items-center gap-2 rounded-md bg-violet-50 px-3 py-2 text-sm text-violet-950 alusa-dark:bg-violet-500/10 alusa-dark:text-violet-100">
+              <CardBrandMark brand={summary.savedTrialPaymentMethod.brand} />
+              <div>
+                <p className="font-medium">Cartão salvo para contratação</p>
+                <p className="text-xs opacity-80">{formatCardBrand(summary.savedTrialPaymentMethod.brand)} •••• {summary.savedTrialPaymentMethod.last4}. Não é o método padrão de cobrança.</p>
+              </div>
+            </div>
+          ) : null}
         </div>
 
-        {(!isTrialing || Boolean(summary.account?.stripeCustomerId)) && !trialExpired ? (
+        {!trialExpired ? (
 
-          <div className="flex flex-wrap justify-end gap-2">
+          <div className="flex flex-col items-end gap-3">
+            {isTrialing ? (
+              <label className="max-w-2xl text-xs leading-5 text-[#57515f] alusa-dark:text-[color:var(--color-text-secondary)]">
+                <input
+                  type="checkbox"
+                  className="mr-2 align-middle"
+                  checked={trialCardConsent}
+                  onChange={(event) => setTrialCardConsent(event.target.checked)}
+                />
+                Autorizo salvar este cartão para futuras cobranças recorrentes mensais da assinatura Alusa. O valor depende da faixa de alunos ativos e será exibido antes de eu confirmar a contratação paga. Este cadastro não inicia assinatura nem cobrança, e o trial não será convertido automaticamente. O cancelamento da assinatura paga vale ao fim do período vigente.
+              </label>
+            ) : null}
             <Button
               type="button"
               onClick={() => void openPortal({ newTab: true })}
-              disabled={!summary.canManage || actionLoading !== null || !summary.account?.stripeCustomerId}
+              disabled={!summary.canManage || actionLoading !== null || !summary.account?.stripeCustomerId || (isTrialing && !trialCardConsent)}
               className="h-[34px] rounded-[5px] bg-[#512a82] px-4 text-sm font-medium text-[#f9f4fe] shadow-none hover:bg-[#43236c]"
             >
               {actionLoading === 'portal' ? 'Abrindo...' : paymentActionLabel}
@@ -855,6 +903,19 @@ export function PlatformBillingFeature({ checkoutState }: { checkoutState?: Chec
   }
 }
 
+export function navigateToSetupCheckout(
+  destinationUrl: string,
+  checkoutWindow: Window | null,
+  sameTabNavigate: (url: string) => void = (url) => window.location.assign(url),
+): 'popup' | 'same-tab' {
+  if (checkoutWindow) {
+    checkoutWindow.location.href = destinationUrl;
+    return 'popup';
+  }
+  sameTabNavigate(destinationUrl);
+  return 'same-tab';
+}
+
 function consumeCheckoutCancelQuery(): void {
   const url = new URL(window.location.href);
   if (url.searchParams.get('checkout') !== 'cancel') return;
@@ -868,6 +929,13 @@ function consumeCheckoutSuccessQuery(): void {
   const url = new URL(window.location.href);
   if (url.searchParams.get('checkout') !== 'success') return;
   url.searchParams.delete('checkout');
+  window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
+function consumeSetupQuery(): void {
+  const url = new URL(window.location.href);
+  if (url.searchParams.get('setup') !== 'success' && url.searchParams.get('setup') !== 'canceled') return;
+  url.searchParams.delete('setup');
   window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
 }
 

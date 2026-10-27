@@ -41,6 +41,17 @@ export interface CreateStripeSubscriptionCheckoutSessionInput {
   idempotencyKey?: string;
 }
 
+export interface CreateStripeSetupCheckoutSessionInput {
+  customerId: string;
+  currency: string;
+  successUrl: string;
+  cancelUrl: string;
+  clientReferenceId: string;
+  metadata: Record<string, string>;
+  idempotencyKey: string;
+  expiresAt: Date;
+}
+
 export interface StripeSubscriptionCheckoutSessionResult {
   id: string;
   url: string | null;
@@ -214,10 +225,102 @@ export async function createStripeSubscriptionCheckoutSession(
   };
 }
 
+export async function createStripeSetupCheckoutSession(
+  client: Stripe,
+  input: CreateStripeSetupCheckoutSessionInput,
+): Promise<StripeSubscriptionCheckoutSessionResult> {
+  const session = await client.checkout.sessions.create({
+    mode: 'setup',
+    customer: input.customerId,
+    currency: input.currency,
+    success_url: input.successUrl,
+    cancel_url: input.cancelUrl,
+    client_reference_id: input.clientReferenceId,
+    expires_at: Math.floor(input.expiresAt.getTime() / 1000),
+    metadata: { ...input.metadata, checkoutPurpose: 'optional_trial_payment_method' },
+    setup_intent_data: { metadata: { ...input.metadata, checkoutPurpose: 'optional_trial_payment_method' } },
+  }, buildRequestOptions(input.idempotencyKey));
+  return { id: session.id, url: session.url, expiresAt: session.expires_at ? new Date(session.expires_at * 1000) : null };
+}
+
+/** List customer Checkout Sessions created since a timestamp, with a hard page cap. */
+export async function listStripeCheckoutSessionsForCustomerSince(
+  client: Stripe,
+  customerId: string,
+  createdAfter: Date,
+): Promise<{ sessions: Array<Record<string, unknown>>; complete: boolean }> {
+  const sessions: Array<Record<string, unknown>> = [];
+  let startingAfter: string | undefined;
+  const maximumPages = 100;
+  for (let pageNumber = 0; pageNumber < maximumPages; pageNumber += 1) {
+    const page = await client.checkout.sessions.list({
+      customer: customerId,
+      created: { gte: Math.floor(createdAfter.getTime() / 1000) },
+      limit: 100,
+      ...(startingAfter ? { starting_after: startingAfter } : {}),
+    });
+    sessions.push(...page.data.map((session) => readRecord(session)));
+    if (!page.has_more) return { sessions, complete: true };
+    const lastId = page.data.at(-1)?.id;
+    if (!lastId) return { sessions, complete: false };
+    startingAfter = lastId;
+  }
+  return { sessions, complete: false };
+}
+
+/** Retrieve a Checkout Session and its SetupIntent for post-checkout verification. */
+export async function retrieveStripeSetupCheckoutSession(
+  client: Stripe,
+  sessionId: string,
+): Promise<Record<string, unknown>> {
+  return readRecord(await client.checkout.sessions.retrieve(sessionId, { expand: ['setup_intent'] }));
+}
+
+/** Retrieve SetupIntent with its PaymentMethod expanded. */
+export async function retrieveStripeSetupIntent(
+  client: Stripe,
+  setupIntentId: string,
+): Promise<Record<string, unknown>> {
+  return readRecord(await client.setupIntents.retrieve(setupIntentId, { expand: ['payment_method'] }));
+}
+
+/** Update saved-method redisplay only; this never changes customer/subscription defaults. */
+export async function allowStripePaymentMethodRedisplay(
+  client: Stripe,
+  paymentMethodId: string,
+): Promise<Record<string, unknown>> {
+  return readRecord(await client.paymentMethods.update(paymentMethodId, { allow_redisplay: 'always' }));
+}
+
+export async function customerHasDefaultPaymentMethod(client: Stripe, customerId: string, subscriptionId?: string | null): Promise<boolean> {
+  const subscription = subscriptionId
+    ? await client.subscriptions.retrieve(subscriptionId, { expand: ['default_payment_method'] })
+    : null;
+  const customer = await client.customers.retrieve(customerId, { expand: ['invoice_settings.default_payment_method'] });
+  const record = readRecord(customer);
+  if (record.deleted === true) throw new Error('Stripe customer is deleted.');
+  return Boolean(
+    (subscription && (readRecord(subscription).default_payment_method || readRecord(subscription).default_source))
+    || readRecord(record.invoice_settings).default_payment_method
+    || record.default_source,
+  );
+}
+
 export async function createStripeTrialSubscriptionWithoutPaymentMethod(
   client: Stripe,
   input: CreateStripeTrialSubscriptionWithoutPaymentMethodInput,
 ): Promise<StripeSubscriptionRecord> {
+  // `missing_payment_method=pause` only protects trials without an available
+  // default method. A legacy/recovered Customer can already have one, so fail
+  // closed rather than create a trial that could invoice automatically.
+  const customer = await client.customers.retrieve(input.customerId, {
+    expand: ['invoice_settings.default_payment_method'],
+  });
+  const customerRecord = readRecord(customer);
+  const defaultPaymentMethod = readRecord(customerRecord.invoice_settings).default_payment_method;
+  if (customerRecord.deleted === true || defaultPaymentMethod || customerRecord.default_source) {
+    throw new Error('Cannot create a no-payment-method trial for a Customer with a default payment method.');
+  }
   const subscription = await client.subscriptions.create(
     {
       customer: input.customerId,
@@ -261,6 +364,19 @@ export async function retrieveStripeSubscription(
 ): Promise<StripeSubscriptionRecord> {
   const subscription = await client.subscriptions.retrieve(subscriptionId);
   return toSubscriptionRecord(subscription);
+}
+
+export async function cancelStripeSubscription(
+  client: Stripe,
+  subscriptionId: string,
+  idempotencyKey: string,
+): Promise<void> {
+  const current = await client.subscriptions.retrieve(subscriptionId);
+  if (current.status === 'canceled') return;
+  if (current.status !== 'paused') {
+    throw new Error('Refusing to cancel a subscription that is no longer paused.');
+  }
+  await client.subscriptions.cancel(subscriptionId, {}, buildRequestOptions(idempotencyKey));
 }
 
 export async function retrieveStripeCheckoutSession(client: Stripe, sessionId: string): Promise<{
