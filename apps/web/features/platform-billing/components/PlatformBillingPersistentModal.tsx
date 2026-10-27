@@ -54,6 +54,7 @@ export function PlatformBillingPersistentModal() {
   const isRenewed = notice.title === 'Assinatura renovada';
   return (
     <CheckoutResumePopup
+      placement="top-right"
       loading={false}
       title={notice.title}
       description={notice.description}

@@ -9,13 +9,17 @@ import { CheckoutResumePopup } from '@/features/platform-billing/components/Chec
 const previews = [
   { id: 'loading-dots', label: 'Loading dots' },
   { id: 'checkout-resume', label: 'Popup de retomada da contratação' },
+  { id: 'monthly-close-notice', label: 'Aviso de fechamento mensal' },
 ] as const;
-
-const keepPreviewOpen = () => undefined;
 
 export function ComponentPreviewCarousel() {
   const [activeIndex, setActiveIndex] = useState(0);
+  const [previewGeneration, setPreviewGeneration] = useState(0);
   const activePreview = previews[activeIndex];
+
+  function replayPreview() {
+    setPreviewGeneration((generation) => generation + 1);
+  }
 
   function showPrevious() {
     setActiveIndex((current) => (current - 1 + previews.length) % previews.length);
@@ -54,14 +58,31 @@ export function ComponentPreviewCarousel() {
                 <LoadingDots label="Carregando pré-visualização em fundo preto" />
               </div>
             </div>
-          ) : (
+          ) : activePreview.id === 'checkout-resume' ? (
             <CheckoutResumePopup
+              key={previewGeneration}
               placement="inline"
               autoDismissMs={null}
               loading={false}
-              onDismiss={keepPreviewOpen}
-              onResume={keepPreviewOpen}
+              onDismiss={replayPreview}
+              onResume={replayPreview}
             />
+          ) : (
+            <div className="relative min-h-72 w-full self-stretch sm:min-h-96">
+              <div className="absolute right-0 top-0">
+                <CheckoutResumePopup
+                  key={previewGeneration}
+                  placement="inline"
+                  autoDismissMs={null}
+                  loading={false}
+                  title="Sua mensalidade atual foi mantida"
+                  description="O fechamento mensal mais recente não pôde ser confirmado. Mantenha os alunos e as matrículas atualizados para que os próximos fechamentos reflitam a realidade da escola."
+                  actionLabel="Ver alunos"
+                  onDismiss={replayPreview}
+                  onResume={replayPreview}
+                />
+              </div>
+            </div>
           )}
         </div>
 

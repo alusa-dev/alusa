@@ -352,7 +352,7 @@ describe('PlatformBillingFeature refresh after a billing action', () => {
 
     render(<PlatformBillingProvider><PlatformBillingFeature checkoutState="cancel" /></PlatformBillingProvider>);
 
-    expect(await screen.findByText('Falta pouco para contratar seu plano')).toBeInTheDocument();
+    expect(await screen.findByText('Sua contratação está aguardando pagamento')).toBeInTheDocument();
     expect(fetchMock.mock.calls.filter(([url]) => url === '/api/platform-billing/checkout/cancel-return')).toHaveLength(0);
     expect(window.location.search).toBe('');
     window.history.replaceState({}, '', '/');
@@ -373,11 +373,13 @@ describe('PlatformBillingFeature refresh after a billing action', () => {
     await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === '/api/platform-billing/checkout/cancel-return')).toHaveLength(1));
     await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === '/api/platform-billing/summary')).toHaveLength(2));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(screen.getByText('Falta pouco para contratar seu plano')).toBeInTheDocument();
-    expect(screen.getByText('Seu plano continua disponível. Retome quando quiser.')).toBeInTheDocument();
+    expect(screen.getByText('Sua contratação está aguardando pagamento')).toBeInTheDocument();
+    expect(screen.getByText('Retome o checkout para revisar e confirmar o pagamento do plano.')).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: 'Retomar contratação' })).toHaveLength(1);
     expect(fetchMock.mock.calls.filter(([url]) => url === '/api/platform-billing/checkout')).toHaveLength(0);
-    fireEvent.click(screen.getByRole('button', { name: 'Retomar contratação' }));
+    const resumeButton = screen.getByRole('button', { name: 'Retomar contratação' });
+    fireEvent.click(resumeButton);
+    fireEvent.click(resumeButton);
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Confirmar e continuar' }));
     await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === '/api/platform-billing/checkout')).toHaveLength(1));
@@ -395,13 +397,13 @@ describe('PlatformBillingFeature refresh after a billing action', () => {
 
     render(<PlatformBillingProvider><PlatformBillingFeature checkoutState="cancel" /></PlatformBillingProvider>);
 
-    await screen.findByText('Falta pouco para contratar seu plano');
+    await screen.findByText('Sua contratação está aguardando pagamento');
     expect(window.location.pathname).toBe('/billing');
     expect(window.location.search).toBe('?keep=1');
     expect(window.location.hash).toBe('#section');
     expect(fetchMock.mock.calls.filter(([url]) => url === '/api/platform-billing/checkout/cancel-return')).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Fechar aviso' }));
-    expect(screen.queryByText('Falta pouco para contratar seu plano')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Sua contratação está aguardando pagamento')).not.toBeInTheDocument());
     expect(fetchMock.mock.calls.filter(([url]) => url === '/api/platform-billing/checkout')).toHaveLength(0);
     window.history.replaceState({}, '', '/');
   });
@@ -423,7 +425,7 @@ describe('PlatformBillingFeature refresh after a billing action', () => {
     expect((checkoutButton as HTMLButtonElement).disabled).toBe(true);
     expect(window.location.search).toBe('?keep=1&checkout=cancel&checkoutRequestKey=checkout-pending-A');
     expect(window.location.hash).toBe('#pending');
-    expect(screen.queryByText('Falta pouco para contratar seu plano')).not.toBeInTheDocument();
+    expect(screen.queryByText('Sua contratação está aguardando pagamento')).not.toBeInTheDocument();
     expect(screen.queryByText(/confirmando o encerramento/)).not.toBeInTheDocument();
     fireEvent.click(checkoutButton);
     expect(fetchMock.mock.calls.filter(([url]) => url === '/api/platform-billing/checkout')).toHaveLength(0);
@@ -457,15 +459,15 @@ describe('PlatformBillingFeature refresh after a billing action', () => {
     vi.stubGlobal('fetch', fetchMock);
     render(<PlatformBillingProvider><PlatformBillingFeature checkoutState="cancel" /></PlatformBillingProvider>);
 
-    await waitFor(() => expect(screen.getByText('Falta pouco para contratar seu plano')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Sua contratação está aguardando pagamento')).toBeInTheDocument());
     expect(scheduledTimeouts.size).toBe(1);
     fireEvent.focus(screen.getByRole('status'));
     expect(scheduledTimeouts.size).toBe(0);
-    expect(screen.getByText('Falta pouco para contratar seu plano')).toBeInTheDocument();
+    expect(screen.getByText('Sua contratação está aguardando pagamento')).toBeInTheDocument();
     fireEvent.blur(screen.getByRole('status'), { relatedTarget: null });
     expect(scheduledTimeouts.size).toBe(1);
     await act(async () => { scheduledTimeouts.values().next().value?.(); });
-    expect(screen.queryByText('Falta pouco para contratar seu plano')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Sua contratação está aguardando pagamento')).not.toBeInTheDocument());
   });
 
   it('retries a PENDING cancellation return after leaving and reentering the canceled page', async () => {
@@ -494,7 +496,7 @@ describe('PlatformBillingFeature refresh after a billing action', () => {
     cleanup();
     render(tree('cancel'));
     await waitFor(() => expect(cancelCalls).toBe(2));
-    expect(screen.queryByText('Falta pouco para contratar seu plano')).not.toBeInTheDocument();
+    expect(screen.queryByText('Sua contratação está aguardando pagamento')).not.toBeInTheDocument();
     await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) => url === '/api/platform-billing/summary').length).toBeGreaterThanOrEqual(2));
   });
 

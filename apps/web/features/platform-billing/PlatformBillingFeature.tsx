@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { InfoCallout, InfoCalloutLink } from '@/components/ui/info-callout';
+import { InfoCallout } from '@/components/ui/info-callout';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 import DataTable, { type DataTableColumn } from '@/components/layout/DataTable';
@@ -138,6 +138,7 @@ export function PlatformBillingFeature({ checkoutState, setupState }: { checkout
   const [checkoutSuccessRefreshPending, setCheckoutSuccessRefreshPending] = useState(false);
   const [checkoutSuccessRefreshAttempts, setCheckoutSuccessRefreshAttempts] = useState(0);
   const [showCheckoutResume, setShowCheckoutResume] = useState(false);
+  const [monthlyCloseNoticeDismissed, setMonthlyCloseNoticeDismissed] = useState(false);
   const [pricingDialogOpen, setPricingDialogOpen] = useState(false);
   const [pricingStudentCount, setPricingStudentCount] = useState(165);
   const [resumeStudentCount, setResumeStudentCount] = useState<number | null>(null);
@@ -350,6 +351,9 @@ export function PlatformBillingFeature({ checkoutState, setupState }: { checkout
   const cancellationNotice = getCancellationNotice(summary?.account ?? null);
   const trialEndingNotice = getTrialEndingNotice(summary?.account ?? null, currentPlan);
   const monthlyCloseInconclusive = summary?.issues.some((issue) => issue.code === 'MONTHLY_CLOSE_INCONCLUSIVE') ?? false;
+  useEffect(() => {
+    if (!monthlyCloseInconclusive) setMonthlyCloseNoticeDismissed(false);
+  }, [monthlyCloseInconclusive]);
   const otherBillingIssues = summary?.issues.filter((issue) => issue.code !== 'MONTHLY_CLOSE_INCONCLUSIVE') ?? [];
   const canStartSelfServiceFlow = (!hasManageableSubscription || trialExpired) && commercialTarget?.kind === 'SELF_SERVICE';
 
@@ -643,12 +647,6 @@ export function PlatformBillingFeature({ checkoutState, setupState }: { checkout
                 <span>{planUsageLabel}</span>
               </div>
             </div>
-            {monthlyCloseInconclusive ? (
-              <InfoCallout variant="brand" size="sm" title="Sua mensalidade atual foi mantida" className="mt-4">
-                <p>O fechamento mensal mais recente não pôde ser confirmado. Mantenha os alunos e as matrículas atualizados para que os próximos fechamentos reflitam a realidade da escola.</p>
-                <InfoCalloutLink href="/students" calloutVariant="brand" className="mt-2 inline-block">Ver alunos</InfoCalloutLink>
-              </InfoCallout>
-            ) : null}
             <p className="mt-4 text-[13px] text-[#747474] alusa-dark:text-[color:var(--color-text-secondary)]">
               {renewalLabel}
             </p>
@@ -892,6 +890,7 @@ export function PlatformBillingFeature({ checkoutState, setupState }: { checkout
       />
       {showCheckoutResume && !checkoutCancelPending && summary.canManage && (canStartSelfServiceFlow || resumeStudentCount !== null) ? (
         <CheckoutResumePopup
+          placement="top-right"
           loading={actionLoading === 'checkout'}
           onDismiss={dismissCheckoutResume}
           onResume={() => {
@@ -903,6 +902,18 @@ export function PlatformBillingFeature({ checkoutState, setupState }: { checkout
               } else void startCheckout();
             }
           }}
+        />
+      ) : null}
+      {monthlyCloseInconclusive && !monthlyCloseNoticeDismissed ? (
+        <CheckoutResumePopup
+          loading={false}
+          placement="top-right"
+          autoDismissMs={null}
+          title="Sua mensalidade atual foi mantida"
+          description="O fechamento mensal mais recente não pôde ser confirmado. Mantenha os alunos e as matrículas atualizados para que os próximos fechamentos reflitam a realidade da escola."
+          actionLabel="Ver alunos"
+          onDismiss={() => setMonthlyCloseNoticeDismissed(true)}
+          onResume={() => window.location.assign('/students')}
         />
       ) : null}
     </div>
