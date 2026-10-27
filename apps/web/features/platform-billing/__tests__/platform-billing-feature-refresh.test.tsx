@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 void React;
 
 const sessionState = vi.hoisted(() => ({
-  data: { user: { id: 'user-1', role: 'ADMIN' } },
+  data: { user: { id: 'user-1', role: 'ADMIN' } as { id: string; role: string } | null },
   status: 'authenticated',
 }));
 
@@ -45,6 +45,7 @@ vi.mock('@/components/ui/confirm-dialog', () => ({
 
 import { navigateToSetupCheckout, PlatformBillingFeature } from '../PlatformBillingFeature';
 import { CardBrandMark, formatCardBrand } from '../components/CardBrandMark';
+import { PlatformBillingPersistentModal } from '../components/PlatformBillingPersistentModal';
 import { PlatformBillingProvider, usePlatformBilling } from '../PlatformBillingContext';
 import type { PlatformBillingSummaryDTO } from '../dtos/platform-billing-summary';
 
@@ -137,6 +138,24 @@ function billingSummary(contaName = 'Escola Alusa', cancelAtPeriodEnd = false) {
   };
 }
 
+function monthlyCloseSummary(accountId: string, tenantId: string) {
+  const summary = billingSummary();
+  summary.account.id = accountId;
+  summary.access.accountId = accountId;
+  summary.health.contaId = tenantId;
+  return {
+    ...summary,
+    issues: [{
+      id: `monthly-close-${tenantId}`,
+      severity: 'WARNING' as const,
+      code: 'MONTHLY_CLOSE_INCONCLUSIVE',
+      title: 'Sua mensalidade atual foi mantida',
+      message: 'Fechamento mensal inconclusivo.',
+      detectedAt: generatedAt,
+    }],
+  };
+}
+
 describe('platform billing card brand mapping', () => {
   it.each([
     ['visa', 'Visa'],
@@ -221,6 +240,97 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  sessionState.data = { user: { id: 'user-1', role: 'ADMIN' } };
+  sessionState.status = 'authenticated';
+  window.sessionStorage.clear();
+});
+
+describe('monthly close notice in authenticated app shell', () => {
+  const noticeTitle = 'Sua mensalidade atual foi mantida';
+  const storageKey = (userId = 'user-1') =>
+    `alusa:platform-billing:session-notice:v1:monthly-close-inconclusive:${userId}`;
+
+  function renderGlobalBillingModal() {
+    return render(
+      <PlatformBillingProvider>
+        <>
+          <BillingProbe />
+          <PlatformBillingPersistentModal />
+        </>
+      </PlatformBillingProvider>,
+    );
+  }
+
+  it('shows outside the billing page only once during the browser session', async () => {
+    window.sessionStorage.clear();
+    window.history.replaceState({}, '', '/dashboard');
+    const fetchMock = vi.fn().mockResolvedValue(response(monthlyCloseSummary('billing-account-A', 'tenant-A')));
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderGlobalBillingModal();
+
+    expect(await screen.findByText(noticeTitle)).toBeInTheDocument();
+    expect(window.location.pathname).toBe('/dashboard');
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/platform-billing/summary')).toHaveLength(1);
+    await waitFor(() => expect(window.sessionStorage.getItem(storageKey())).toBe('1'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Fechar aviso' }));
+    await waitFor(() => expect(screen.queryByText(noticeTitle)).not.toBeInTheDocument());
+    expect(window.sessionStorage.getItem(storageKey())).toBe('1');
+
+    cleanup();
+    fetchMock.mockClear();
+    renderGlobalBillingModal();
+    await waitFor(() => expect(screen.getByTestId('billing-probe')).toHaveTextContent('Escola Alusa:false'));
+    expect(screen.queryByText(noticeTitle)).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/platform-billing/summary')).toHaveLength(1);
+    window.history.replaceState({}, '', '/');
+  });
+
+  it('marks the session as shown when Ver alunos is activated', async () => {
+    window.sessionStorage.clear();
+    const fetchMock = vi.fn().mockResolvedValue(response(monthlyCloseSummary('billing-account-CTA', 'tenant-CTA')));
+    vi.stubGlobal('fetch', fetchMock);
+    renderGlobalBillingModal();
+
+    expect(await screen.findByText(noticeTitle)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Ver alunos' }));
+    await waitFor(() => expect(window.sessionStorage.getItem(storageKey())).toBe('1'));
+    await waitFor(() => expect(screen.queryByText(noticeTitle)).not.toBeInTheDocument());
+  });
+
+  it('does not show again after switching accounts in the same session and hides after logout', async () => {
+    window.sessionStorage.clear();
+    const tenantA = monthlyCloseSummary('billing-account-A', 'tenant-A');
+    const tenantB = monthlyCloseSummary('billing-account-B', 'tenant-B');
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response(tenantA))
+      .mockResolvedValueOnce(response(tenantB));
+    vi.stubGlobal('fetch', fetchMock);
+    const view = renderGlobalBillingModal();
+
+    expect(await screen.findByText(noticeTitle)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Fechar aviso' }));
+    await waitFor(() => expect(window.sessionStorage.getItem(storageKey())).toBe('1'));
+    await waitFor(() => expect(screen.queryByText(noticeTitle)).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Atualizar faturamento' }));
+    await waitFor(() => expect(screen.getByTestId('billing-probe')).toHaveTextContent('Escola Alusa:false'));
+    expect(screen.queryByText(noticeTitle)).not.toBeInTheDocument();
+    expect(window.sessionStorage.getItem(storageKey())).toBe('1');
+
+    sessionState.data = { user: null };
+    sessionState.status = 'unauthenticated';
+    view.rerender(
+      <PlatformBillingProvider>
+        <>
+          <BillingProbe />
+          <PlatformBillingPersistentModal />
+        </>
+      </PlatformBillingProvider>,
+    );
+    await waitFor(() => expect(screen.queryByText(noticeTitle)).not.toBeInTheDocument());
+  });
 });
 
 describe('PlatformBillingFeature renewal label', () => {

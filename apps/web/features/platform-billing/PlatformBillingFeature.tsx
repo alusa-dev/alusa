@@ -138,7 +138,6 @@ export function PlatformBillingFeature({ checkoutState, setupState }: { checkout
   const [checkoutSuccessRefreshPending, setCheckoutSuccessRefreshPending] = useState(false);
   const [checkoutSuccessRefreshAttempts, setCheckoutSuccessRefreshAttempts] = useState(0);
   const [showCheckoutResume, setShowCheckoutResume] = useState(false);
-  const [monthlyCloseNoticeDismissed, setMonthlyCloseNoticeDismissed] = useState(false);
   const [pricingDialogOpen, setPricingDialogOpen] = useState(false);
   const [pricingStudentCount, setPricingStudentCount] = useState(165);
   const [resumeStudentCount, setResumeStudentCount] = useState<number | null>(null);
@@ -350,10 +349,6 @@ export function PlatformBillingFeature({ checkoutState, setupState }: { checkout
     : paymentMethod.status === 'present' ? 'Alterar pagamento' : 'Cadastrar pagamento';
   const cancellationNotice = getCancellationNotice(summary?.account ?? null);
   const trialEndingNotice = getTrialEndingNotice(summary?.account ?? null, currentPlan);
-  const monthlyCloseInconclusive = summary?.issues.some((issue) => issue.code === 'MONTHLY_CLOSE_INCONCLUSIVE') ?? false;
-  useEffect(() => {
-    if (!monthlyCloseInconclusive) setMonthlyCloseNoticeDismissed(false);
-  }, [monthlyCloseInconclusive]);
   const otherBillingIssues = summary?.issues.filter((issue) => issue.code !== 'MONTHLY_CLOSE_INCONCLUSIVE') ?? [];
   const canStartSelfServiceFlow = (!hasManageableSubscription || trialExpired) && commercialTarget?.kind === 'SELF_SERVICE';
 
@@ -902,18 +897,6 @@ export function PlatformBillingFeature({ checkoutState, setupState }: { checkout
               } else void startCheckout();
             }
           }}
-        />
-      ) : null}
-      {monthlyCloseInconclusive && !monthlyCloseNoticeDismissed ? (
-        <CheckoutResumePopup
-          loading={false}
-          placement="top-right"
-          autoDismissMs={null}
-          title="Sua mensalidade atual foi mantida"
-          description="O fechamento mensal mais recente não pôde ser confirmado. Mantenha os alunos e as matrículas atualizados para que os próximos fechamentos reflitam a realidade da escola."
-          actionLabel="Ver alunos"
-          onDismiss={() => setMonthlyCloseNoticeDismissed(true)}
-          onResume={() => window.location.assign('/students')}
         />
       ) : null}
     </div>

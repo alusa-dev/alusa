@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { CheckoutResumePopup } from './CheckoutResumePopup';
+import { MonthlyCloseInconclusiveNotice } from './MonthlyCloseInconclusiveNotice';
 import { usePlatformBilling } from '@/features/platform-billing/PlatformBillingContext';
 import type { PlatformBillingNotice } from './PlatformBillingNoticeModal';
 import type {
@@ -41,30 +42,34 @@ export function PlatformBillingPersistentModal() {
     setNotice(nextNotice);
   }, [access, summary, userId]);
 
-  if (!notice || dismissedKey?.endsWith(`:${notice.key}`)) return null;
+  const isAccessNoticeVisible = Boolean(notice && !dismissedKey?.endsWith(`:${notice.key}`));
 
   const dismissNotice = () => {
     const accountId = summary?.account?.id ?? access?.accountId;
-    if (!accountId || !userId) return;
+    if (!accountId || !userId || !notice) return;
     const key = `alusa:platform-billing:notice:${STORAGE_VERSION}:${accountId}:${userId}:${notice.key}`;
     try { window.localStorage.setItem(key, '1'); } catch { /* dismissal remains in memory */ }
     setDismissedKey(key);
   };
 
-  const isRenewed = notice.title === 'Assinatura renovada';
   return (
-    <CheckoutResumePopup
-      placement="top-right"
-      loading={false}
-      title={notice.title}
-      description={notice.description}
-      actionLabel={notice.actionLabel}
-      onDismiss={dismissNotice}
-      onResume={() => {
-        dismissNotice();
-        if (!isRenewed) window.location.assign('/account/billing-plan');
-      }}
-    />
+    <>
+      {isAccessNoticeVisible && notice ? (
+        <CheckoutResumePopup
+          placement="top-right"
+          loading={false}
+          title={notice.title}
+          description={notice.description}
+          actionLabel={notice.actionLabel}
+          onDismiss={dismissNotice}
+          onResume={() => {
+            dismissNotice();
+            if (notice.title !== 'Assinatura renovada') window.location.assign('/account/billing-plan');
+          }}
+        />
+      ) : null}
+      <MonthlyCloseInconclusiveNotice suppressed={isAccessNoticeVisible} />
+    </>
   );
 }
 

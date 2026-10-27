@@ -58,7 +58,7 @@ export function CheckoutResumePopup({
     <aside
       role="status"
       aria-live="polite"
-      className={`w-[min(32rem,calc(100vw-2.5rem))] rounded-xl border-0 bg-[#ebe3f4] p-4 text-[#3d3a3f] shadow-[0_20px_25px_-5px_rgba(0,0,0,0.1),0_10px_10px_-5px_rgba(0,0,0,0.04)] ${isExiting ? `animate-out fade-out ${placement === 'top-right' ? 'slide-out-to-top-2' : 'slide-out-to-bottom-2'}` : `animate-in fade-in ${placement === 'top-right' ? 'slide-in-from-top-2' : 'slide-in-from-bottom-2'}`} motion-reduce:animate-none duration-200 motion-reduce:duration-0 ${placement === 'viewport' ? 'fixed bottom-5 right-5 z-[100]' : ''} ${placement === 'top-right' ? 'fixed z-[100]' : ''}`}
+      className={`w-[min(24rem,calc(100vw-2rem))] rounded-xl border-0 bg-[#ebe3f4] p-4 text-[#3d3a3f] shadow-[0_20px_25px_-5px_rgba(0,0,0,0.1),0_10px_10px_-5px_rgba(0,0,0,0.04)] ${isExiting ? `animate-out fade-out ${placement === 'top-right' ? 'slide-out-to-top-2' : 'slide-out-to-bottom-2'}` : `animate-in fade-in ${placement === 'top-right' ? 'slide-in-from-top-2' : 'slide-in-from-bottom-2'}`} motion-reduce:animate-none duration-200 motion-reduce:duration-0 ${placement === 'viewport' ? 'fixed bottom-5 right-5 z-[100]' : ''} ${placement === 'top-right' ? 'fixed z-[100]' : ''}`}
       style={placement === 'top-right' ? { top: '124px', right: 'var(--app-toast-right-offset, 24px)' } : undefined}
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
