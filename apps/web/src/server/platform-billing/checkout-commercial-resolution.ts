@@ -14,7 +14,7 @@ export function resolveTenantPlatformBillingCheckoutPlan(input: {
         countActivePlatformBillingStudents({ tx, contaId }),
         tx.platformBillingAccount.findUnique({
           where: { uq_platform_billing_account_conta_env: { contaId, environment } },
-          select: { planCode: true },
+          select: { planCode: true, status: true, accessStatus: true },
         }),
         tx.financeProfile.findUnique({
           where: { contaId },
@@ -30,6 +30,8 @@ export function resolveTenantPlatformBillingCheckoutPlan(input: {
       return {
         activeStudents,
         billingPlanCode: billingAccount?.planCode ?? null,
+        billingStatus: billingAccount?.status ?? null,
+        billingAccessStatus: billingAccount?.accessStatus ?? null,
         onboardingPricing,
         recentSnapshots,
       };

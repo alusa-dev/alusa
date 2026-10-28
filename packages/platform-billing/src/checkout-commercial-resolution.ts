@@ -10,6 +10,8 @@ import type { SchoolPriceBandCode } from './commercial-model';
 export type PlatformBillingCheckoutCommercialContext = {
   activeStudents: number;
   billingPlanCode: string | null;
+  billingStatus: string | null;
+  billingAccessStatus: string | null;
   onboardingPricing: { wizardCompletedAt: Date | null; onboardingStudentCount: number | null } | null;
   recentSnapshots: Array<{ periodStart: Date; candidateBand: SchoolPriceBandCode | 'SPECIALIST' | null }>;
 };
@@ -35,7 +37,8 @@ export async function resolvePlatformBillingCheckoutPlan(
   });
   if (stableTarget === 'SPECIALIST') return { kind: 'SPECIALIST', reason: 'CONFIRMED_SPECIALIST' };
 
-  if (context.billingPlanCode && !isPublicPlatformPlanCode(context.billingPlanCode)) {
+  const isTerminallyCanceled = context.billingStatus === 'CANCELED' && context.billingAccessStatus === 'CANCELED';
+  if (context.billingPlanCode && !isPublicPlatformPlanCode(context.billingPlanCode) && !isTerminallyCanceled) {
     return { kind: 'UNSTABLE' };
   }
 
