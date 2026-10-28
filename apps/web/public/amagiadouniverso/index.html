@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#251c87" />
+    <meta name="description" content="Escolha sua sessão do espetáculo A Magia do Universo, do Ballet Elaine Costa." />
+    <meta property="og:title" content="A Magia do Universo — Ballet Elaine Costa" />
+    <meta property="og:description" content="Escolha sua sessão e garanta seu ingresso." />
+    <meta property="og:image" content="/amagiadouniverso/assets/background.webp" />
+    <title>A Magia do Universo — Ballet Elaine Costa</title>
+    <link rel="icon" type="image/webp" href="/amagiadouniverso/assets/fcf86.webp" />
+    <link rel="stylesheet" href="/amagiadouniverso/styles.css" />
+    <script src="/amagiadouniverso/event-content.js"></script>
+    <script>
+      (() => {
+        document.documentElement.classList.add('is-loading');
+        const fit = () => {
+          const styles = getComputedStyle(document.documentElement);
+          const safe = (side) => parseFloat(styles.getPropertyValue(`--safe-${side}`)) || 0;
+          const width = window.innerWidth - safe('left') - safe('right');
+          const height = window.innerHeight - safe('top') - safe('bottom');
+          const scale = Math.min(width / 402, height / 874, 1);
+          document.documentElement.style.setProperty('--scene-scale', String(scale));
+        };
+        fit();
+        window.addEventListener('resize', fit, { passive: true });
+      })();
+    </script>
+  </head>
+  <body>
+    <div class="page-loader" role="status" aria-live="polite">
+      <span class="page-loader__spinner" aria-hidden="true"></span>
+      <span>Preparando a magia...</span>
+    </div>
+    <main class="viewport" aria-label="A Magia do Universo, Ballet Elaine Costa">
+      <picture class="scene-background" aria-hidden="true">
+        <source media="(min-width: 768px)" srcset="/amagiadouniverso/assets/background-desktop.webp" />
+        <img class="scene__background" src="/amagiadouniverso/assets/background.webp" alt="" />
+      </picture>
+      <div class="scene-frame">
+        <div class="scene">
+          <img class="scene__overlay" src="/amagiadouniverso/assets/b6f81.svg" alt="" />
+
+          <img
+            class="scene__planet scene__planet--top-left"
+            src="/amagiadouniverso/assets/2692b.webp"
+            alt=""
+          />
+          <img
+            class="scene__planet scene__planet--top-right"
+            src="/amagiadouniverso/assets/3ad81.webp"
+            alt=""
+          />
+          <img
+            class="scene__planet scene__planet--bottom-left"
+            src="/amagiadouniverso/assets/2692b.webp"
+            alt=""
+          />
+
+          <h1 class="visually-hidden">A Magia do Universo</h1>
+          <img
+            class="scene__title-art"
+            src="/amagiadouniverso/assets/28b91.webp"
+            alt="A Magia do Universo"
+          />
+
+          <p
+            class="scene__invitation"
+          >
+            Escolha sua<br />
+            sessão abaixo e<br />
+            garanta seu ingresso!
+          </p>
+
+          <section class="sessions" aria-label="Sessões do espetáculo">
+            <button class="session-card" type="button" data-session="first" disabled>
+              <span class="session-card__label">1º Sessão: 18h00</span>
+              <span class="session-card__ticket-position" aria-hidden="true">
+                <img class="session-card__tickets" src="/amagiadouniverso/assets/686cb.webp" alt="" />
+              </span>
+            </button>
+            <button class="session-card" type="button" data-session="second" disabled>
+              <span class="session-card__label">2º Sessão: 20h00</span>
+              <span class="session-card__ticket-position" aria-hidden="true">
+                <img class="session-card__tickets" src="/amagiadouniverso/assets/686cb.webp" alt="" />
+              </span>
+            </button>
+          </section>
+
+          <p
+            class="scene__secretariat"
+          >
+            Entre em contato com a secretaria<br />
+            para saber em qual sessão sua<br />
+            bailarina irá se apresentar!
+          </p>
+
+          <img class="scene__school-logo" src="/amagiadouniverso/assets/fcf86.webp" alt="Ballet Elaine Costa" />
+        </div>
+      </div>
+    </main>
+    <script src="/amagiadouniverso/landing.js" defer></script>
+  </body>
+</html>

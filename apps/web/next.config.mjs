@@ -202,6 +202,7 @@ const nextConfig = {
   },
   async rewrites() {
     return [
+      { source: '/amagiadouniverso', destination: '/amagiadouniverso/index.html' },
       // Keep /auth/... as the public URL while resolving through the shared auth route group.
       { source: '/auth/login', destination: '/login' },
       { source: '/auth/register', destination: '/register' },
@@ -231,6 +232,15 @@ const nextConfig = {
       },
       {
         source: '/images/:path*',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'public, max-age=31536000, immutable',
+          },
+        ],
+      },
+      {
+        source: '/amagiadouniverso/assets/:path*',
         headers: [
           {
             key: 'Cache-Control',
