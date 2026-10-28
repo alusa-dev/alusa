@@ -27,7 +27,8 @@
   --safe-right: env(safe-area-inset-right, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
-  background: #251c87 url('/amagiadouniverso/assets/background.webp') center / cover no-repeat;
+  min-height: 100%;
+  background: url('/amagiadouniverso/assets/background.webp') center / cover no-repeat;
 }
 
 * {
@@ -45,16 +46,10 @@ body {
   position: relative;
   isolation: isolate;
   overflow: hidden;
+  min-height: 100vh;
+  min-height: 100svh;
+  min-height: 100dvh;
   background: transparent;
-}
-
-body::before {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  background: #251c87 url('/amagiadouniverso/assets/background.webp') center / cover no-repeat;
-  content: "";
-  pointer-events: none;
 }
 
 .viewport {
@@ -63,7 +58,7 @@ body::before {
   display: grid;
   place-items: center;
   overflow: hidden;
-  background: #251c87 url('/amagiadouniverso/assets/background.webp') center / cover no-repeat;
+  background: transparent;
   padding: var(--safe-top) var(--safe-right) var(--safe-bottom) var(--safe-left);
 }
 
@@ -505,9 +500,7 @@ body::before {
 }
 
 @media (min-width: 768px) {
-  :root,
-  body::before,
-  .viewport {
+  :root {
     background-image: url('/amagiadouniverso/assets/background-desktop.webp');
   }
 }
