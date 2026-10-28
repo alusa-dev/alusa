@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { createPrismaPlatformBillingStore, enqueuePlatformBillingWebhookEvent } from '@alusa/platform-billing';
 
 const { stripeMocks, notifyMock } = vi.hoisted(() => ({
   stripeMocks: { getClient: vi.fn(), retrieveInvoice: vi.fn() },
@@ -34,6 +35,7 @@ const isSafeTestDatabase = (() => {
 })();
 const prisma = isSafeTestDatabase ? new PrismaClient() : null;
 let drainStripeWebhookWorker: typeof import('@/src/server/platform-billing/webhook-worker')['drainStripeWebhookWorker'] | undefined;
+let processStripeWebhookQueueMessage: typeof import('@/app/api/queues/platform-billing-stripe-webhooks/route')['processStripeWebhookQueueMessage'] | undefined;
 
 afterAll(async () => {
   if (prisma) await prisma.$disconnect();
@@ -45,6 +47,8 @@ describe.skipIf(!isSafeTestDatabase)('platform billing webhook worker PostgreSQL
   beforeAll(async () => {
     const webhookWorker = await import('@/src/server/platform-billing/webhook-worker');
     drainStripeWebhookWorker = webhookWorker.drainStripeWebhookWorker;
+    const queueConsumer = await import('@/app/api/queues/platform-billing-stripe-webhooks/route');
+    processStripeWebhookQueueMessage = queueConsumer.processStripeWebhookQueueMessage;
   });
 
   it('serializes competing inbox drains and recovers after financial writes but before outbox/finalization', async () => {
@@ -104,13 +108,13 @@ describe.skipIf(!isSafeTestDatabase)('platform billing webhook worker PostgreSQL
           paymentMethodStatus: 'PRESENT',
         },
       });
-      await database.platformBillingWebhookEvent.create({
-        data: {
-          environment: 'TEST', eventId, eventType: 'invoice.paid', contaId,
-          status: 'PENDING', attempts: 0, payload,
-          nextAttemptAt: new Date(Date.now() - 1_000), correlationId: eventId,
-        },
-      });
+      // Model a queue publish outage: use the production inbox enqueue path,
+      // then leave the persisted event for the maintenance worker to recover.
+      const enqueueResult = await enqueuePlatformBillingWebhookEvent(
+        { event: payload as never, environment: 'TEST', envSource: process.env },
+        createPrismaPlatformBillingStore(database),
+      );
+      expect(enqueueResult).toMatchObject({ status: 'queued', eventId, contaId });
       await database.$executeRaw`
         UPDATE "PlatformBillingWebhookEvent"
         SET "nextAttemptAt" = LOCALTIMESTAMP - INTERVAL '1 second'
@@ -201,6 +205,22 @@ describe.skipIf(!isSafeTestDatabase)('platform billing webhook worker PostgreSQL
       expect(competingDrain.claimed).toBe(0);
       expect(competingDrain.workerId).not.toBe(activeLease.workerId);
       expect(activeLease).toMatchObject({ status: 'PROCESSING', attempts: 1 });
+
+      // Simultaneous at-least-once queue delivery must not contend against or
+      // duplicate the mutation held by the maintenance worker's active lease.
+      await expect(processStripeWebhookQueueMessage?.(
+        { environment: 'TEST', eventId },
+        {
+          drain: ({ environment, eventIds }) => drainStripeWebhookWorker!({ prisma: db, environment, eventIds }),
+          findStatus: async ({ environment, eventId: lookupEventId }) => {
+            const current = await database.platformBillingWebhookEvent.findUnique({
+              where: { uq_platform_billing_webhook_env_event: { environment, eventId: lookupEventId } },
+              select: { status: true, nextAttemptAt: true, processingTimeoutAt: true },
+            });
+            return current;
+          },
+        },
+      )).resolves.toBeUndefined();
 
       await database.$executeRaw`
         UPDATE "PlatformBillingWebhookEvent"

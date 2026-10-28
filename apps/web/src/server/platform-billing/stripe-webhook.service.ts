@@ -2,9 +2,18 @@ import {
   createPrismaPlatformBillingStore,
   enqueuePlatformBillingWebhookEvent,
 } from '@alusa/platform-billing';
+import { send } from '@vercel/queue';
+import { after } from 'next/server';
 import { constructStripeWebhookEvent, parseStripeRuntimeConfig } from '@alusa/stripe';
 import { prisma } from '@/lib/prisma';
 import { drainStripeWebhookWorker } from './webhook-worker';
+
+export const PLATFORM_BILLING_STRIPE_WEBHOOK_TOPIC = 'platform-billing-stripe-webhooks';
+
+export type PlatformBillingStripeWebhookQueueMessage = {
+  environment: ReturnType<typeof parseStripeRuntimeConfig>['environment'];
+  eventId: string;
+};
 
 export async function processStripePlatformWebhook(input: {
   rawBody: string;
@@ -20,6 +29,7 @@ export async function processStripePlatformWebhook(input: {
     { event, environment: config.environment, envSource: process.env },
     createPrismaPlatformBillingStore(prisma),
   );
+  scheduleStripeWebhookQueueDelivery({ environment: config.environment, eventId: result.eventId });
   const drainResult = shouldDrainStripeWebhooksInline()
     ? await drainStripeWebhookWorker({
         prisma,
@@ -28,6 +38,25 @@ export async function processStripePlatformWebhook(input: {
       })
     : null;
   return { config, result, drainResult };
+}
+
+export function scheduleStripeWebhookQueueDelivery(message: PlatformBillingStripeWebhookQueueMessage) {
+  after(async () => {
+    try {
+      await send(PLATFORM_BILLING_STRIPE_WEBHOOK_TOPIC, message, {
+        idempotencyKey: `${message.environment}:${message.eventId}`,
+      });
+    } catch (error) {
+      console.error(JSON.stringify({
+        severity: 'error',
+        eventName: 'api.platform_billing.stripe_webhook.queue_publish.failed',
+        route: '/api/webhooks/stripe',
+        environment: message.environment,
+        eventId: message.eventId,
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+      }));
+    }
+  });
 }
 
 function shouldDrainStripeWebhooksInline(): boolean {

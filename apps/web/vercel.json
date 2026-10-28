@@ -12,6 +12,16 @@
   "ignoreCommand": "node ../../scripts/vercel-ignore-build.mjs @alusa/web",
   "installCommand": "cd ../.. && pnpm install --frozen-lockfile",
   "buildCommand": "cd ../.. && pnpm build:vercel",
+  "functions": {
+    "app/api/queues/platform-billing-stripe-webhooks/route.ts": {
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "platform-billing-stripe-webhooks"
+        }
+      ]
+    }
+  },
   "crons": [
     {
       "path": "/api/jobs/platform-billing-maintenance?limit=100",
