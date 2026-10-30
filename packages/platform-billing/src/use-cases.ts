@@ -3,7 +3,7 @@ import { parseStripeRuntimeConfig } from '@alusa/stripe';
 import type { StripeEnvSource, StripeSubscriptionRecord } from '@alusa/stripe';
 import { z } from 'zod';
 import { PlatformBillingError } from './errors';
-import { parsePublicCheckoutPlanCode, resolveStripePriceId } from './price-mapping';
+import { isStripePriceId, parsePublicCheckoutPlanCode, resolveStripePriceId } from './price-mapping';
 import { getPlatformPlan } from './plans';
 import { createDefaultPlatformBillingStripeGateway } from './stripe-gateway';
 import type {
@@ -19,11 +19,19 @@ const nonEmptyString = z.string().trim().min(1);
 const idempotencyKeySchema = nonEmptyString.max(128);
 const urlSchema = z.string().trim().url();
 
+function resolveKnownPriceId(planCode: PlatformPlanCode, environment: 'TEST' | 'LIVE', source?: StripeEnvSource, customPriceId?: string | null) {
+  if (planCode === 'CUSTOM' && isStripePriceId(customPriceId)) return customPriceId;
+  return resolveStripePriceId({ planCode, environment, source });
+}
+
 const createCheckoutInputSchema = z.object({
   contaId: nonEmptyString,
   contaName: nonEmptyString,
   billingEmail: z.string().trim().email().optional(),
   planCode: z.unknown(),
+  stripePriceId: z.string().regex(/^price_[A-Za-z0-9_]+$/).optional(),
+  invitationId: nonEmptyString.optional(),
+  quantity: z.number().int().min(1).max(100_000).optional(),
   successUrl: urlSchema,
   cancelUrl: urlSchema,
   actorUserId: nonEmptyString.optional(),
@@ -44,6 +52,10 @@ const createTrialWithoutPaymentMethodInputSchema = z.object({
   contaName: nonEmptyString,
   billingEmail: z.string().trim().email().optional(),
   planCode: z.unknown(),
+  stripePriceId: z.string().regex(/^price_[A-Za-z0-9_]+$/).optional(),
+  invitationId: nonEmptyString.optional(),
+  quantity: z.number().int().min(1).max(100_000).optional(),
+  trialDays: z.union([z.literal(0), z.literal(7), z.literal(14), z.literal(21), z.literal(30), z.literal(60), z.literal(90)]).optional(),
   actorUserId: nonEmptyString.optional(),
   idempotencyKey: idempotencyKeySchema,
   correlationId: nonEmptyString.optional(),
@@ -54,6 +66,9 @@ export interface CreatePlatformBillingCheckoutSessionInput {
   contaName: string;
   billingEmail?: string;
   planCode: unknown;
+  stripePriceId?: string;
+  invitationId?: string;
+  quantity?: number;
   successUrl: string;
   cancelUrl: string;
   actorUserId?: string;
@@ -165,6 +180,10 @@ export interface CreatePlatformBillingTrialWithoutPaymentMethodInput {
   contaName: string;
   billingEmail?: string;
   planCode: unknown;
+  stripePriceId?: string;
+  invitationId?: string;
+  quantity?: number;
+  trialDays?: number;
   actorUserId?: string;
   idempotencyKey: string;
   correlationId?: string;
@@ -426,11 +445,7 @@ function checkoutSessionBindingMatches(input: {
   }
 
   try {
-    return resolveStripePriceId({
-      planCode: session.planCode,
-      environment: input.environment,
-      source: input.source,
-    }) === session.stripePriceId;
+    return resolveKnownPriceId(session.planCode, input.environment, input.source, session.stripePriceId) === session.stripePriceId;
   } catch {
     return false;
   }
@@ -442,14 +457,19 @@ export async function createPlatformBillingCheckoutSession(
 ): Promise<CreatePlatformBillingCheckoutSessionResult> {
   const parsed = parseCheckoutInput(input);
   const config = parseStripeRuntimeConfig(input.envSource);
-  const planCode = parsePublicCheckoutPlanCode(parsed.planCode);
+  const planCode = parsed.planCode === 'CUSTOM' && isStripePriceId(parsed.stripePriceId)
+    ? 'CUSTOM'
+    : parsePublicCheckoutPlanCode(parsed.planCode);
+  if (planCode === 'CUSTOM' && (!isStripePriceId(parsed.stripePriceId) || !parsed.invitationId)) {
+    throw new PlatformBillingError('Custom plan requires a validated invitation Price.', 'PLATFORM_BILLING_INPUT_INVALID');
+  }
   if (checkoutCancelRequestKey(parsed.cancelUrl) !== parsed.idempotencyKey) {
     throw new PlatformBillingError(
       'Checkout cancel URL must be bound to its request key.',
       'PLATFORM_BILLING_INPUT_INVALID',
     );
   }
-  const stripePriceId = resolveStripePriceId({
+  const stripePriceId = planCode === 'CUSTOM' ? parsed.stripePriceId! : resolveStripePriceId({
     planCode,
     environment: config.environment,
     source: input.envSource,
@@ -474,6 +494,9 @@ export async function createPlatformBillingCheckoutSession(
           requestedPlanCode: planCode,
         },
       );
+    }
+    if (existingSession.stripePriceId !== stripePriceId) {
+      throw new PlatformBillingError('Checkout idempotency key was already used for a different Stripe Price.', 'PLATFORM_BILLING_IDEMPOTENCY_CONFLICT');
     }
     const existingAccount = await deps.store.findAccount({ contaId: parsed.contaId, environment: config.environment });
     const existingStripeGateway = deps.stripeGateway ?? createDefaultPlatformBillingStripeGateway(input.envSource);
@@ -744,11 +767,13 @@ export async function createPlatformBillingCheckoutSession(
       successUrl: parsed.successUrl,
       cancelUrl: parsed.cancelUrl,
       clientReferenceId: parsed.contaId,
+      quantity: parsed.quantity,
       metadata: {
         contaId: parsed.contaId,
         planCode,
         billingContext: 'platform',
-        trialDays: trialDays ? String(trialDays) : '0',
+      trialDays: trialDays ? String(trialDays) : '0',
+      ...(planCode === 'CUSTOM' ? { conditionType: 'custom', invitationId: parsed.invitationId!, studentCount: String(parsed.quantity ?? 1) } : {}),
         flow: isReactivation ? 'reactivation' : 'subscription',
         checkoutRequestKey: parsed.idempotencyKey,
         ...(reactivationMetadata ?? {}),
@@ -848,11 +873,7 @@ async function assertNoRemoteNonterminalSubscription(input: {
     let expectedPriceId: string | null = null;
     try {
       if (metadataPlan) {
-        expectedPriceId = resolveStripePriceId({
-          planCode: metadataPlan as PlatformPlanCode,
-          environment: input.environment,
-          source: input.source,
-        });
+        expectedPriceId = resolveKnownPriceId(metadataPlan as PlatformPlanCode, input.environment, input.source, input.account.stripePriceId);
       }
     } catch {
       // An unrecognized remote subscription is ambiguous and blocks Checkout.
@@ -888,15 +909,20 @@ export async function createPlatformBillingTrialWithoutPaymentMethod(
 ): Promise<CreatePlatformBillingTrialWithoutPaymentMethodResult> {
   const parsed = parseTrialWithoutPaymentMethodInput(input);
   const config = parseStripeRuntimeConfig(input.envSource);
-  const planCode = parsePublicCheckoutPlanCode(parsed.planCode);
-  const stripePriceId = resolveStripePriceId({
+  const planCode: PlatformPlanCode = parsed.planCode === 'CUSTOM' && isStripePriceId(parsed.stripePriceId)
+    ? 'CUSTOM'
+    : parsePublicCheckoutPlanCode(parsed.planCode);
+  if (planCode === 'CUSTOM' && (!isStripePriceId(parsed.stripePriceId) || !parsed.invitationId)) {
+    throw new PlatformBillingError('Custom trial requires a validated school invitation Price.', 'PLATFORM_BILLING_INPUT_INVALID');
+  }
+  const stripePriceId = planCode === 'CUSTOM' ? parsed.stripePriceId! : resolveStripePriceId({
     planCode,
     environment: config.environment,
     source: input.envSource,
   });
 
   const stripeGateway = deps.stripeGateway ?? createDefaultPlatformBillingStripeGateway(input.envSource);
-  const trialDays = getPlatformPlan(planCode).trialDays;
+  const trialDays = parsed.trialDays ?? getPlatformPlan(planCode).trialDays;
   if (!trialDays || trialDays <= 0) {
     throw new PlatformBillingError(
       'Selected platform plan does not support trial.',
@@ -949,12 +975,14 @@ export async function createPlatformBillingTrialWithoutPaymentMethod(
     subscription = await stripeGateway.createTrialSubscriptionWithoutPaymentMethod({
       customerId: accountWithCustomer.stripeCustomerId,
       priceId: stripePriceId,
+      quantity: parsed.quantity,
       metadata: {
         contaId: parsed.contaId,
         planCode,
         billingContext: 'platform',
         trialDays: String(trialDays),
         source: 'finance-wizard-register-later',
+        ...(planCode === 'CUSTOM' && parsed.invitationId ? { conditionType: 'custom', invitationId: parsed.invitationId, studentCount: String(parsed.quantity ?? 1) } : {}),
       },
       trialDays,
       idempotencyKey: stripeIdempotencyKey(config.environment, parsed.contaId, 'trial-subscription', parsed.idempotencyKey),

@@ -143,6 +143,18 @@ enum PlatformBillingEnvironment {
   LIVE
 }
 
+enum PlatformSchoolInvitationStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+enum PlatformSchoolInvitationCondition {
+  STANDARD
+  CUSTOM
+}
+
 enum PlatformBillingPlanCode {
   // Historical identifiers remain for existing Stripe subscriptions and webhook replay only.
   STARTER
@@ -1416,12 +1428,15 @@ model Conta {
   financeReconciliationIssues       FinanceReconciliationIssue[]
   asaasResourceOrigins              AsaasResourceOrigin[]
   financeWebhookSideEffectOutbox    FinanceWebhookSideEffectOutbox[]
+  hubspotAccountCreatedOutbox                  HubSpotAccountCreatedOutbox?
   platformBillingAccounts           PlatformBillingAccount[]
   platformBillingCheckoutSessions   PlatformBillingCheckoutSession[]
   platformBillingInvoices           PlatformBillingInvoice[]
   platformBillingAuditLogs          PlatformBillingAuditLog[]
   platformBillingPlanChanges        PlatformBillingPlanChange[]
   platformBillingIssues             PlatformBillingIssue[]
+  schoolInvitation                             PlatformSchoolInvitation?
+  platformSchoolInvitationConditionAcceptances PlatformSchoolInvitationConditionAcceptance[]
   platformBillingMonthlySnapshots   PlatformBillingMonthlySnapshot[]
   logsFinanceiros                   LogFinanceiro[]
   logsIntegracao                    LogIntegracao[]
@@ -1611,6 +1626,43 @@ model EarlyAccessLead {
 
   @@index([createdAt])
   @@index([source, createdAt])
+}
+
+enum ExpertContactLeadDeliveryState {
+  PENDING
+  NOTE_CREATING
+  DELIVERED
+  EXPIRED
+}
+
+/// Durable outbox/idempotency record for public expert-contact submissions.
+/// It is not tenant-scoped because it is collected before a Conta exists.
+model ExpertContactLeadDelivery {
+  requestId          String                         @id @db.Uuid
+  payloadHash        String?                        @db.Char(64)
+  contactName        String?
+  email              String?
+  institutionName    String?
+  institutionWebsite String?
+  phone              String?
+  institutionType    String?
+  studentsRange      String?
+  state              ExpertContactLeadDeliveryState @default(PENDING)
+  contactId          String?
+  companyId          String?
+  companyAttemptedAt DateTime?
+  dealId             String?
+  dealAttemptedAt    DateTime?
+  taskId             String?
+  taskAttemptedAt    DateTime?
+  noteId             String?
+  noteAttemptedAt    DateTime?
+  deliveredAt        DateTime?
+  createdAt          DateTime                       @default(now())
+  updatedAt          DateTime                       @updatedAt
+
+  @@index([state, createdAt])
+  @@index([payloadHash, updatedAt])
 }
 
 model ContaFinancialPolicy {
@@ -4124,6 +4176,113 @@ model PlatformBillingAccount {
   @@index([contaId, environment, pendingChangeOperationId], name: "idx_platform_billing_account_pending_operation")
 }
 
+// Platform-level commercial invitation; intentionally has no contaId because
+// it exists before a school tenant is created.
+model PlatformSchoolInvitation {
+  id                              String                            @id @default(cuid())
+  tokenHash                       String                            @unique
+  requestIdempotencyKey           String                            @unique
+  schoolName                      String
+  contactName                     String
+  email                           String
+  conditionType                   PlatformSchoolInvitationCondition @default(STANDARD)
+  planCode                        PlatformBillingPlanCode?
+  monthlyAmountCents              Int?
+  customBaseMonthlyAmountCents    Int?
+  customIncludedStudentCount      Int?
+  customMonthlyOverageAmountCents Int?
+  stripePriceId                   String?
+  stripeProductId                 String?
+  studentCount                    Int?
+  trialDays                       Int                               @default(14)
+  currentConditionVersion         Int                               @default(1)
+  expiresAt                       DateTime
+  status                          PlatformSchoolInvitationStatus    @default(PENDING)
+  acceptedAt                      DateTime?
+  acceptedContaId                 String?                           @unique
+  createdByAdminId                String
+  emailDeliveryStatus             String                            @default("PENDING")
+  emailSentAt                     DateTime?
+  emailDeliveryErrorCode          String?
+  emailResendRequestKey           String?
+  emailResentAt                   DateTime?
+  revokedAt                       DateTime?
+  createdAt                       DateTime                          @default(now())
+  updatedAt                       DateTime                          @updatedAt
+
+  acceptedConta        Conta?                                        @relation(fields: [acceptedContaId], references: [id], onDelete: Restrict)
+  history              PlatformSchoolInvitationHistory[]
+  conditionVersions    PlatformSchoolInvitationConditionVersion[]
+  conditionAcceptances PlatformSchoolInvitationConditionAcceptance[]
+  resendRequests       PlatformSchoolInvitationResendRequest[]
+
+  @@unique([id, acceptedContaId], name: "uq_platform_school_invitation_id_accepted_conta", map: "uq_platform_school_invitation_id_accepted_conta")
+  @@index([status, expiresAt, createdAt])
+  @@index([email, status])
+}
+
+model PlatformSchoolInvitationConditionVersion {
+  id           String   @id @default(cuid())
+  invitationId String
+  version      Int
+  snapshot     Json
+  createdBy    String
+  createdAt    DateTime @default(now())
+
+  invitation  PlatformSchoolInvitation                      @relation(fields: [invitationId], references: [id], onDelete: Restrict)
+  acceptances PlatformSchoolInvitationConditionAcceptance[]
+
+  @@unique([invitationId, version])
+  @@index([invitationId, createdAt])
+}
+
+model PlatformSchoolInvitationConditionAcceptance {
+  id                         String                   @id @default(cuid())
+  invitationId               String
+  version                    Int
+  contaId                    String
+  acceptedBy                 String
+  selectedStudentCount       Int
+  selectedPlanCode           PlatformBillingPlanCode?
+  selectedMonthlyAmountCents Int?
+  acceptedAt                 DateTime                 @default(now())
+
+  invitation       PlatformSchoolInvitation                 @relation(fields: [invitationId, contaId], references: [id, acceptedContaId], onDelete: Restrict)
+  conta            Conta                                    @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  conditionVersion PlatformSchoolInvitationConditionVersion @relation(fields: [invitationId, version], references: [invitationId, version], onDelete: Restrict)
+
+  @@unique([invitationId, version, contaId, selectedStudentCount])
+  @@index([contaId, invitationId, version, selectedStudentCount])
+  @@index([invitationId, contaId])
+}
+
+model PlatformSchoolInvitationHistory {
+  id           String   @id @default(cuid())
+  invitationId String
+  actorId      String
+  action       String
+  before       Json?
+  after        Json?
+  createdAt    DateTime @default(now())
+
+  invitation PlatformSchoolInvitation @relation(fields: [invitationId], references: [id], onDelete: Restrict)
+
+  @@index([invitationId, createdAt])
+}
+
+// Durable idempotency ledger: a resend key remains consumed after newer links
+// replace the invitation's current emailResendRequestKey.
+model PlatformSchoolInvitationResendRequest {
+  invitationId          String
+  requestKeyFingerprint String   @db.VarChar(64)
+  createdAt             DateTime @default(now())
+
+  invitation PlatformSchoolInvitation @relation(fields: [invitationId], references: [id], onDelete: Restrict)
+
+  @@id([invitationId, requestKeyFingerprint])
+  @@index([invitationId, createdAt])
+}
+
 model PlatformBillingMonthlySnapshot {
   id                 String                     @id @default(cuid())
   contaId            String
@@ -4133,6 +4292,16 @@ model PlatformBillingMonthlySnapshot {
   studentCount       Int
   candidateBand      PlatformBillingPriceBand?
   specialistRequired Boolean                    @default(false)
+  customQuantitySyncStatus                   String?
+  customQuantitySyncRequestedQuantity        Int?
+  customQuantitySyncOperationKey             String?                    @unique
+  customQuantitySyncStripeSubscriptionId     String?
+  customQuantitySyncStripeSubscriptionItemId String?
+  customQuantitySyncPriceId                  String?
+  customQuantitySyncAttemptCount             Int                        @default(0)
+  customQuantitySyncLastAttemptAt            DateTime?
+  customQuantitySyncLastErrorCode            String?
+  customQuantitySyncAppliedAt                DateTime?
   createdAt          DateTime                   @default(now())
 
   conta          Conta                   @relation(fields: [contaId], references: [id], onDelete: Restrict)
@@ -4141,6 +4310,7 @@ model PlatformBillingMonthlySnapshot {
   @@unique([contaId, environment, periodStart], name: "uq_platform_billing_monthly_snapshot_conta_env_period")
   @@index([contaId, environment, candidateBand, periodStart], name: "idx_platform_billing_monthly_snapshot_candidate")
   @@index([billingAccountId, periodStart], name: "idx_platform_billing_monthly_snapshot_account_period")
+  @@index([contaId, environment, customQuantitySyncStatus, periodStart], name: "idx_platform_billing_monthly_snapshot_quantity_sync")
 }
 
 model PlatformBillingCheckoutSession {
@@ -4267,6 +4437,28 @@ model PlatformBillingNotificationOutbox {
   @@unique([environment, eventId], name: "uq_platform_billing_notification_env_event")
   @@index([status, nextAttemptAt], name: "idx_platform_billing_notification_status_next")
   @@index([contaId, status], name: "idx_platform_billing_notification_conta_status")
+}
+
+model HubSpotAccountCreatedOutbox {
+  id              String    @id @default(cuid())
+  contaId         String    @unique
+  status          String    @default("PENDING")
+  attempts        Int       @default(0)
+  availableAt     DateTime  @default(now())
+  lockedAt        DateTime?
+  claimToken      String?
+  contactId       String?
+  noteId          String?
+  noteAttemptedAt DateTime?
+  deliveredAt     DateTime?
+  lastError       String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@index([status, availableAt, createdAt])
+  @@index([contaId, status])
 }
 
 model PlatformBillingAuditLog {

@@ -10,7 +10,7 @@ export function resolveTenantPlatformBillingCheckoutPlan(input: {
   const { tx, contaId, environment } = input;
   return resolvePlatformBillingCheckoutPlan({
     loadContext: async () => {
-      const [activeStudents, billingAccount, onboardingPricing, recentSnapshots] = await Promise.all([
+      const [activeStudents, billingAccount, onboardingPricing, recentSnapshots, acceptedInvitation] = await Promise.all([
         countActivePlatformBillingStudents({ tx, contaId }),
         tx.platformBillingAccount.findUnique({
           where: { uq_platform_billing_account_conta_env: { contaId, environment } },
@@ -26,6 +26,10 @@ export function resolveTenantPlatformBillingCheckoutPlan(input: {
           take: 3,
           select: { periodStart: true, candidateBand: true },
         }),
+        tx.platformSchoolInvitation.findFirst({
+          where: { acceptedContaId: contaId, status: 'ACCEPTED' },
+          select: { conditionType: true, stripePriceId: true, studentCount: true },
+        }),
       ]);
       return {
         activeStudents,
@@ -34,6 +38,7 @@ export function resolveTenantPlatformBillingCheckoutPlan(input: {
         billingAccessStatus: billingAccount?.accessStatus ?? null,
         onboardingPricing,
         recentSnapshots,
+        acceptedInvitation,
       };
     },
   });

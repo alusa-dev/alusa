@@ -1,5 +1,5 @@
 import { ExternalAsaasOnboardingStatus, FinanceIntegrationMode, Role, type Usuario } from '@prisma/client';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { isValidCpfCnpjDigits, normalizeCpfCnpjDigits } from '@alusa/shared/validators/cpf-cnpj';
 import {
   isAtLeastAgeYears,
@@ -11,6 +11,7 @@ import prisma from '@/lib/prisma';
 import type { LegalDocumentType } from '@/lib/privacy/legal-versions';
 
 export interface FirstUserInput {
+  registrationSource?: 'PUBLIC_SELF_SERVICE';
   escolaNome: string;
 
   cpfCnpj?: string;
@@ -19,6 +20,7 @@ export interface FirstUserInput {
   financeIntegrationMode?: FinanceIntegrationMode;
   birthDate?: string;
   senha: string;
+  schoolInvitationToken?: string;
   legalAcceptance?: {
     accepted: true;
     locale?: string;
@@ -50,18 +52,33 @@ export class InactiveAccountEmailError extends Error {
 }
 export class CpfCnpjInUseError extends Error { constructor() { super('Já existe uma escola registrada com este CPF/CNPJ.'); } }
 export class PasswordPolicyError extends Error { constructor() { super(passwordPolicyMessage); } }
+export class SchoolInvitationInvalidError extends Error { constructor() { super('Convite comercial inválido, expirado ou não disponível.'); } }
+export class SchoolInvitationEmailMismatchError extends Error { constructor() { super('Use o e-mail informado no convite comercial.'); } }
 
 export type FirstUserRegistrationAvailability =
   | { available: true }
   | { available: false; reason: 'LOCAL_ACTIVE' }
   | { available: false; reason: 'LOCAL_DEACTIVATED'; userId: string; email: string };
 
+export async function findSchoolInvitationByToken(token: string) {
+  const tokenHash = createHash('sha256').update(token).digest('hex');
+  return prisma.platformSchoolInvitation.findUnique({ where: { tokenHash } });
+}
+
+export async function findAcceptedSchoolInvitationByToken(token: string) {
+  const tokenHash = createHash('sha256').update(token).digest('hex');
+  return prisma.platformSchoolInvitation.findUnique({
+    where: { tokenHash },
+    select: { status: true, email: true },
+  });
+}
+
 function isAccountDeactivated(status: string | null | undefined, deletedAt: Date | null | undefined): boolean {
   return Boolean(deletedAt) || (typeof status === 'string' && status.toUpperCase() !== 'ATIVO');
 }
 
-async function findUserByEmail(email: string) {
-  return prisma.usuario.findFirst({
+async function findUserByEmail(email: string, database: typeof prisma = prisma) {
+  return database.usuario.findFirst({
     where: { email: { equals: email, mode: 'insensitive' } },
     select: {
       id: true,
@@ -95,7 +112,7 @@ export async function checkFirstUserRegistrationAvailability(input: {
   return { available: false, reason: 'LOCAL_ACTIVE' };
 }
 
-export async function createFirstUser(data: FirstUserInput): Promise<Usuario> {
+export async function createFirstUser(data: FirstUserInput, database: typeof prisma = prisma): Promise<Usuario> {
   const financeIntegrationMode = data.financeIntegrationMode ?? 'WHITELABEL_BAAS';
   const cpfCnpjDigits = data.cpfCnpj ? normalizeCpfCnpjDigits(data.cpfCnpj) : undefined;
   if (cpfCnpjDigits && !isValidCpfCnpjDigits(cpfCnpjDigits)) {
@@ -107,10 +124,22 @@ export async function createFirstUser(data: FirstUserInput): Promise<Usuario> {
   }
   const birthDate = data.birthDate ? parseDateOnlyToUtcDate(data.birthDate) : undefined;
 
+  const invitation = data.schoolInvitationToken
+    ? await database.platformSchoolInvitation.findUnique({ where: { tokenHash: createHash('sha256').update(data.schoolInvitationToken).digest('hex') } })
+    : null;
+  if (data.schoolInvitationToken && !invitation) throw new SchoolInvitationInvalidError();
+  if (invitation && invitation.email !== data.email.trim().toLowerCase()) throw new SchoolInvitationEmailMismatchError();
+  if (invitation && invitation.status === 'ACCEPTED' && invitation.acceptedContaId) {
+    const acceptedUser = await prisma.usuario.findFirst({ where: { contaId: invitation.acceptedContaId, email: { equals: invitation.email, mode: 'insensitive' } } });
+    if (acceptedUser) return acceptedUser;
+    throw new SchoolInvitationInvalidError();
+  }
+  if (invitation && (invitation.status !== 'PENDING' || invitation.expiresAt <= new Date())) throw new SchoolInvitationInvalidError();
+
   // Política de senha
   if (!passwordPolicyRegex.test(data.senha)) throw new PasswordPolicyError();
   // Unicidade email
-  const existingEmail = await findUserByEmail(data.email);
+  const existingEmail = await findUserByEmail(data.email, database);
   if (existingEmail) {
     if (isAccountDeactivated(existingEmail.conta?.status, existingEmail.conta?.deletedAt)) {
       throw new InactiveAccountEmailError(existingEmail.id, existingEmail.email);
@@ -119,13 +148,13 @@ export async function createFirstUser(data: FirstUserInput): Promise<Usuario> {
   }
   // Unicidade CPF/CNPJ para Conta (apenas se fornecido)
   if (cpfCnpjDigits) {
-    const existingConta = await prisma.conta.findFirst({ where: { cpfCnpj: cpfCnpjDigits } });
+    const existingConta = await database.conta.findFirst({ where: { cpfCnpj: cpfCnpjDigits } });
     if (existingConta) throw new CpfCnpjInUseError();
   }
   // Criar conta e usuário ADMIN e marcar como owner em uma transação
   const senhaHash = await hashPassword(data.senha);
   try {
-    const result = await prisma.$transaction(async (tx) => {
+    const result = await database.$transaction(async (tx) => {
       const conta = await tx.conta.create({
         data: {
           id: randomUUID(),
@@ -160,6 +189,27 @@ export async function createFirstUser(data: FirstUserInput): Promise<Usuario> {
         },
       });
       await tx.conta.update({ where: { id: conta.id }, data: { ownerUserId: user.id } });
+
+      if (data.registrationSource === 'PUBLIC_SELF_SERVICE' && !invitation) {
+        await tx.hubSpotAccountCreatedOutbox.create({ data: { contaId: conta.id, availableAt: new Date() } });
+      }
+
+      if (invitation) {
+        const claimed = await tx.platformSchoolInvitation.updateMany({
+          where: { id: invitation.id, status: 'PENDING', expiresAt: { gt: new Date() } },
+          data: { status: 'ACCEPTED', acceptedAt: new Date(), acceptedContaId: conta.id },
+        });
+        if (claimed.count !== 1) throw new SchoolInvitationInvalidError();
+        await tx.platformSchoolInvitationHistory.create({
+          data: {
+            invitationId: invitation.id,
+            actorId: invitation.createdByAdminId,
+            action: 'ACCEPTED',
+            before: { status: 'PENDING' },
+            after: { status: 'ACCEPTED', acceptedContaId: conta.id, acceptedByUserId: user.id },
+          },
+        });
+      }
 
       if (data.legalAcceptance) {
         await tx.legalAcceptance.createMany({

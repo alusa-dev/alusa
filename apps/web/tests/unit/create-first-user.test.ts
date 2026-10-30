@@ -35,6 +35,32 @@ describeIf('createFirstUser', () => {
     const u = (await createFirstUser(base)) as unknown as UserShape;
     expect(u.email).toBe(base.email);
     expect(u.role).toBe('ADMIN');
+    expect(await prisma.hubSpotAccountCreatedOutbox.count({ where: { conta: { is: { usuarios: { some: { email: base.email } } } } } })).toBe(0);
+  });
+
+  it('enfileira uma notificação de conta criada apenas para cadastro self-service público', async () => {
+    const user = await createFirstUser({ ...base, email: 'public-signup@example.com', registrationSource: 'PUBLIC_SELF_SERVICE' });
+    const events = await prisma.hubSpotAccountCreatedOutbox.findMany({ where: { contaId: user.contaId } });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ contaId: user.contaId, status: 'PENDING', attempts: 0 });
+    expect(events[0]?.availableAt.getTime()).toBeGreaterThan(Date.now() - 60_000);
+  });
+
+  it('rolls back the public outbox row when a later registration write fails', async () => {
+    const email = 'public-signup-rollback@example.com';
+    const schoolName = 'Public Signup Rollback';
+    await expect(createFirstUser({
+      ...base,
+      email,
+      escolaNome: schoolName,
+      registrationSource: 'PUBLIC_SELF_SERVICE',
+      legalAcceptance: {
+        accepted: true,
+        documents: [{ documentType: 'TERMS_OF_USE', documentVersion: null as never }],
+      },
+    })).rejects.toThrow();
+    expect(await prisma.usuario.count({ where: { email } })).toBe(0);
+    expect(await prisma.hubSpotAccountCreatedOutbox.count({ where: { conta: { is: { nome: schoolName } } } })).toBe(0);
   });
 
   it('falha senha fraca', async () => {

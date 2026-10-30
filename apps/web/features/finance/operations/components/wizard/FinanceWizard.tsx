@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { Loader2 } from 'lucide-react';
 
@@ -37,6 +37,7 @@ import {
 
 type PersonType = 'PF' | 'PJ';
 type UiStep = 1 | 2 | 3 | 4 | 5;
+type InvitationCondition = { conditionType: 'STANDARD' | 'CUSTOM'; studentCount: number | null; monthlyAmountCents: number | null; customBaseMonthlyAmountCents?: number | null; customIncludedStudentCount?: number | null; customMonthlyOverageAmountCents?: number | null; trialDays: number; currentConditionVersion: number; acceptedCurrentVersion: boolean; acceptedStudentCount: number | null; acceptedPlanCode: string | null; acceptedMonthlyAmountCents: number | null };
 
 type Draft = {
   schoolName: string;
@@ -270,6 +271,13 @@ function FinanceWizardShell({
 
 export function FinanceWizard() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedStudentCount = Number(searchParams.get('studentCount'));
+  const selectedCountFromPricing = Number.isSafeInteger(requestedStudentCount)
+    && requestedStudentCount >= 1
+    && requestedStudentCount <= 2_147_483_647
+    ? requestedStudentCount
+    : null;
   const { data: session, update: updateSession } = useSession();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -280,6 +288,9 @@ export function FinanceWizard() {
   const [transitionDirection, setTransitionDirection] = useState<1 | -1>(1);
   const [draft, setDraft] = useState<Draft>(() => makeDraft(null));
   const [studentCount, setStudentCount] = useState(165);
+  const [invitationCondition, setInvitationCondition] = useState<InvitationCondition | null>(null);
+  const [conditionAccepted, setConditionAccepted] = useState(false);
+  const [provisioningPending, setProvisioningPending] = useState(false);
   const lastCepLookupRef = useRef('');
 
   const financeIntegrationMode =
@@ -288,14 +299,26 @@ export function FinanceWizard() {
   const isExternalAsaasMode = financeIntegrationMode === 'EXTERNAL_ASAAS_ACCOUNT';
 
   // The declared student count is persisted with step 5 and the server derives its price band.
-  const selectedTier = getSchoolPricingTier(studentCount);
-  const monthlyPrice = selectedTier ? new Intl.NumberFormat('pt-BR', {
+  const isCustomInvitation = invitationCondition?.conditionType === 'CUSTOM';
+  const selectedTier = isCustomInvitation ? null : getSchoolPricingTier(studentCount);
+  const monthlyPrice = isCustomInvitation && invitationCondition.monthlyAmountCents !== null
+    ? new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2 }).format(invitationCondition.monthlyAmountCents / 100)
+    : selectedTier ? new Intl.NumberFormat('pt-BR', {
     style: 'currency',
     currency: 'BRL',
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(selectedTier.price) : 'Condição personalizada';
-  const needsSpecialist = studentCount > 500;
+  const needsSpecialist = studentCount > 500 && !isCustomInvitation;
+  const trialDays = invitationCondition?.trialDays ?? 14;
+  const selectedPlanCode = isCustomInvitation ? 'CUSTOM' : selectedTier?.code ?? null;
+  const selectedMonthlyAmountCents = isCustomInvitation
+    ? invitationCondition?.monthlyAmountCents ?? null
+    : selectedTier ? Math.round(selectedTier.price * 100) : null;
+  const acceptedSelectionMatches = Boolean(invitationCondition?.acceptedCurrentVersion
+    && invitationCondition.acceptedStudentCount === studentCount
+    && invitationCondition.acceptedPlanCode === selectedPlanCode
+    && invitationCondition.acceptedMonthlyAmountCents === selectedMonthlyAmountCents);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -303,10 +326,20 @@ export function FinanceWizard() {
     async function load() {
       try {
         setLoading(true);
-        const result = await getWizardState(controller.signal);
+        const [result, conditionResponse] = await Promise.all([
+          getWizardState(controller.signal),
+          fetch('/api/platform-billing/onboarding-condition', { cache: 'no-store', signal: controller.signal }).then((response) => response.ok ? response.json() : null),
+        ]);
+        const condition = conditionResponse?.data as InvitationCondition | null;
+        if (condition) {
+          setInvitationCondition(condition);
+          setConditionAccepted(condition.acceptedCurrentVersion);
+        }
         setWizardState(result.wizard);
         setDraft(makeDraft(result.wizard));
-        setStudentCount(result.wizard.onboardingStudentCount ?? 165);
+        setStudentCount(selectedCountFromPricing ?? (condition?.conditionType === 'CUSTOM'
+          ? condition.studentCount ?? 165
+          : result.wizard.onboardingStudentCount ?? condition?.studentCount ?? 165));
         setCurrentStep(resolveInitialStep(result.wizard));
       } catch (error) {
         if ((error as Error).name !== 'AbortError') {
@@ -319,7 +352,7 @@ export function FinanceWizard() {
 
     void load();
     return () => controller.abort();
-  }, []);
+  }, [selectedCountFromPricing]);
 
   useEffect(() => {
     const cepDigits = draft.postalCode.replace(/\D/g, '');
@@ -454,6 +487,10 @@ export function FinanceWizard() {
   }, [draft, goToStep]);
 
   const handleCompleteWizard = useCallback(async () => {
+    if (invitationCondition && !conditionAccepted) {
+      toast.error('Leia e aceite a condição comercial vigente para continuar.');
+      return;
+    }
     setCompleting(true);
 
     try {
@@ -470,7 +507,42 @@ export function FinanceWizard() {
         toast.error(result.error?.message || 'Nao foi possivel confirmar a criacao da conta.');
         return;
       }
+      setWizardState(result.wizard);
 
+      if (invitationCondition && !acceptedSelectionMatches) {
+        const acceptanceResponse = await fetch('/api/platform-billing/onboarding-condition/acceptance', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ accepted: true, version: invitationCondition.currentConditionVersion, selectedStudentCount: studentCount }),
+        });
+        if (!acceptanceResponse.ok) {
+          setCompleting(false);
+          toast.error('A condição comercial foi atualizada. Recarregue o onboarding para revisar e aceitar a versão atual.');
+          return;
+        }
+        const acceptance = await acceptanceResponse.json().catch(() => null) as {
+          version?: number; selectedStudentCount?: number; selectedPlanCode?: string | null; selectedMonthlyAmountCents?: number | null;
+        } | null;
+        if (acceptance?.version !== invitationCondition.currentConditionVersion
+          || acceptance.selectedStudentCount !== studentCount
+          || acceptance.selectedPlanCode !== selectedPlanCode
+          || acceptance.selectedMonthlyAmountCents !== selectedMonthlyAmountCents) {
+          setCompleting(false);
+          toast.error('Não foi possível confirmar o aceite da condição selecionada. Revise os dados e tente novamente.');
+          return;
+        }
+        setInvitationCondition({ ...invitationCondition, acceptedCurrentVersion: true, acceptedStudentCount: studentCount, acceptedPlanCode: selectedPlanCode, acceptedMonthlyAmountCents: selectedMonthlyAmountCents });
+        setConditionAccepted(true);
+      }
+
+      if (!isExternalAsaasMode && result.provisioningStatus === 'QUEUED') {
+        setProvisioningPending(true);
+        await updateSession().catch(() => undefined);
+        setCompleting(false);
+        toast.info('Estamos configurando sua conta de pagamentos. O teste grátis ainda não começou. Quando a conexão estiver pronta, volte aqui e clique em “Verificar conexão e continuar”.');
+        return;
+      }
+
+      let trialDurationDays = 14;
       if (!needsSpecialist) {
         const idempotencyKey = 'onboarding-trial:initial';
         const trialResponse = await fetch('/api/platform-billing/trial', {
@@ -478,33 +550,64 @@ export function FinanceWizard() {
           headers: { 'content-type': 'application/json', 'idempotency-key': idempotencyKey },
           body: JSON.stringify({}),
         });
-        const trialPayload = await trialResponse.json().catch(() => null) as { error?: string; message?: string } | null;
+        const trialPayload = await trialResponse.json().catch(() => null) as { error?: string; message?: string; trialEndsAt?: string | null } | null;
+        if (trialPayload?.error === 'CHECKOUT_REQUIRED') {
+          const checkoutResponse = await fetch('/api/platform-billing/checkout', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'idempotency-key': 'onboarding-checkout:initial' },
+            body: JSON.stringify({}),
+          });
+          const checkoutPayload = await checkoutResponse.json().catch(() => null) as { checkoutUrl?: string; message?: string } | null;
+          if (!checkoutResponse.ok || !checkoutPayload?.checkoutUrl) {
+            setCompleting(false);
+            toast.error(checkoutPayload?.message ?? 'A configuração terminou, mas não foi possível abrir a contratação. Tente novamente.');
+            return;
+          }
+          window.location.assign(checkoutPayload.checkoutUrl);
+          return;
+        }
         if (!trialResponse.ok) {
+          if (trialPayload?.error === 'FINANCE_ONBOARDING_PENDING') {
+            await updateSession().catch(() => undefined);
+            if (isExternalAsaasMode) {
+              setCompleting(false);
+              toast.info('Seu perfil foi salvo. Conecte sua conta Asaas; depois, volte ao wizard para iniciar o teste grátis.');
+              router.replace('/admin/settings/integrations/asaas');
+              return;
+            }
+            setProvisioningPending(true);
+            setCompleting(false);
+            toast.info('A conexão financeira ainda está sendo concluída. O teste grátis não começou. Quando estiver pronta, volte aqui e clique em “Verificar conexão e continuar”.');
+            return;
+          }
           setCompleting(false);
           toast.error(trialPayload?.message ?? 'A configuração terminou, mas não foi possível iniciar o teste. Tente confirmar novamente.');
           return;
         }
+        if (trialPayload?.trialEndsAt) {
+          trialDurationDays = Math.max(1, Math.ceil((new Date(trialPayload.trialEndsAt).getTime() - Date.now()) / 86_400_000));
+        }
       }
+      setProvisioningPending(false);
 
-      setWizardState(result.wizard);
       await updateSession().catch(() => undefined);
 
       if (isExternalAsaasMode) {
         toast.success(needsSpecialist
-          ? 'Perfil confirmado. Fale com um especialista para definir a condição comercial e conecte sua conta de pagamentos pelo dashboard.'
-          : 'Perfil confirmado. Seu teste grátis de 14 dias começou sem cartão e sem cobrança automática.');
+          ? 'Perfil confirmado. Converse com um especialista antes de iniciar o período de teste.'
+          : `Perfil confirmado. Seu teste grátis de ${trialDurationDays} dias começou sem cartão e sem cobrança automática.`);
         router.replace('/dashboard');
         return;
       }
 
       if (result.provisioningStatus === 'QUEUED') {
         toast.info(needsSpecialist
-          ? 'Estamos criando sua conta de pagamentos. Fale com um especialista para definir a condição comercial.'
-          : 'Estamos criando sua conta de pagamentos. Seu teste grátis de 14 dias já começou sem cartão e sem cobrança automática.');
+          ? 'Perfil confirmado. Converse com um especialista antes de iniciar o período de teste.'
+          : `Sua conta financeira está pronta e o teste grátis de ${trialDurationDays} dias começou sem cartão e sem cobrança automática.`);
       } else {
         toast.success(needsSpecialist
           ? 'Conta financeira confirmada. Fale com um especialista para definir a condição comercial.'
-          : 'Conta financeira confirmada. Seu teste grátis de 14 dias começou sem cartão e sem cobrança automática.');
+          : `Conta financeira confirmada. Seu teste grátis de ${trialDurationDays} dias começou sem cartão e sem cobrança automática.`);
       }
 
       router.replace('/dashboard');
@@ -514,7 +617,7 @@ export function FinanceWizard() {
     } finally {
       setSaving(false);
     }
-  }, [draft.incomeValue, goToStep, isExternalAsaasMode, needsSpecialist, router, studentCount, updateSession]);
+  }, [acceptedSelectionMatches, conditionAccepted, draft.incomeValue, goToStep, invitationCondition, isExternalAsaasMode, needsSpecialist, router, selectedMonthlyAmountCents, selectedPlanCode, studentCount, updateSession]);
 
   if (completing) {
     return <AlusaLogoLoader fullScreen />;
@@ -541,15 +644,15 @@ export function FinanceWizard() {
           Voltar
         </Button>
       ) : null}
+      {currentStep === 4 && isCustomInvitation && !needsSpecialist ? (
+        <a className="text-sm font-semibold text-[#55298a] underline underline-offset-4 hover:text-[#4a2379]" href="mailto:contato@alusa.app">
+          Fale com um especialista para pedir um ajuste
+        </a>
+      ) : null}
       {currentStep === 4 && needsSpecialist ? (
-        <Button
-          asChild
-          className="h-11 min-w-[220px] rounded-md bg-[#55298a] text-sm font-semibold text-white shadow-none transition hover:bg-[#4a2379]"
-        >
-          <a href="mailto:contato@alusa.app?subject=Plano%20para%20escola%20com%20mais%20de%20500%20alunos">
-            Fale com um especialista
-          </a>
-        </Button>
+        <a className="text-sm font-semibold text-[#55298a] underline underline-offset-4 hover:text-[#4a2379]" href="mailto:contato@alusa.app">
+          Fale com um especialista
+        </a>
       ) : (
         <Button
           type="button"
@@ -567,7 +670,7 @@ export function FinanceWizard() {
           disabled={saving}
           className="h-11 w-[151px] rounded-md bg-[#55298a] text-sm font-semibold text-white shadow-none transition hover:bg-[#4a2379] disabled:bg-[#d7d0df] disabled:text-white"
         >
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : currentStep === 5 ? 'Confirmar' : 'Continuar'}
+          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : currentStep === 5 ? provisioningPending ? 'Verificar conexão e continuar' : 'Confirmar' : 'Continuar'}
         </Button>
       )}
     </>
@@ -831,12 +934,9 @@ export function FinanceWizard() {
           >
             <div className="grid content-center gap-4 p-5 sm:p-7">
               <div>
-                <label htmlFor="finance-student-count" className="text-base font-semibold text-[#17121c]">
-                  Alunos pagantes
-                </label>
+                <p className="text-base font-semibold text-[#17121c]">{isCustomInvitation ? 'Condição comercial acordada' : 'Alunos pagantes'}</p>
                 <p id="finance-student-count-help" className="mt-1 text-sm leading-5 text-[#6f6878]">
-                  Conte cada aluno uma vez, mesmo que tenha várias matrículas. Inclua bolsas parciais
-                  e mensalidades em atraso. Não inclua alunos que tenham apenas bolsa integral.
+                  {isCustomInvitation ? 'Esta condição personalizada permanece fixa e não é recalculada pela faixa padrão.' : `${invitationCondition?.conditionType === 'STANDARD' ? 'A faixa inicial do convite é uma estimativa ajustável. Selecione a quantidade atual da escola; o onboarding recalcula a faixa e o valor para sua confirmação antes do trial ou Checkout. ' : ''}Conte cada aluno uma vez, mesmo que tenha várias matrículas. Inclua bolsas parciais e mensalidades em atraso. Não inclua alunos que tenham apenas bolsa integral.`}
                 </p>
               </div>
               <div className="flex items-baseline gap-2">
@@ -845,14 +945,19 @@ export function FinanceWizard() {
                 </output>
                 <span className="text-sm text-[#6f6878]">alunos</span>
               </div>
-              <input
+              {!isCustomInvitation ? <input
                 id="finance-student-count"
                 type="range"
                 min={1}
                 max={501}
                 step={1}
                 value={studentCount}
-                onChange={(event) => setStudentCount(Number(event.target.value))}
+                aria-label="Alunos pagantes"
+                onChange={(event) => {
+                  const nextCount = Number(event.target.value);
+                  setStudentCount(nextCount);
+                  if (invitationCondition) setConditionAccepted(invitationCondition.acceptedCurrentVersion && invitationCondition.acceptedStudentCount === nextCount);
+                }}
                 aria-describedby="finance-student-count-help"
                 aria-valuetext={`${studentCount} alunos`}
                 style={{
@@ -861,11 +966,11 @@ export function FinanceWizard() {
                   margin: 0,
                 } as React.CSSProperties}
                 className="pricing-range focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#55298a]"
-              />
-              <div className="flex justify-between text-xs text-[#7b7484]" aria-hidden="true">
+              /> : null}
+              {!isCustomInvitation ? <div className="flex justify-between text-xs text-[#7b7484]" aria-hidden="true">
                 <span>1 aluno</span>
                 <span>500+ alunos</span>
-              </div>
+              </div> : null}
             </div>
 
             <div className="grid content-center gap-4 border-t border-[#e3ddea] bg-[#fbfafd] p-5 sm:p-7 md:border-l md:border-t-0">
@@ -873,23 +978,22 @@ export function FinanceWizard() {
                 <p className="text-sm font-semibold text-[#6f6878]">{needsSpecialist ? 'Mais de 500 alunos' : selectedTier?.label}</p>
                 <p className="mt-1 text-3xl font-semibold tracking-tight text-[#17121c]" aria-hidden="true">
                   <span className="inline-flex items-baseline tabular-nums">
-                    <span className="mr-[0.12em]">R$</span>
-                    {selectedTier ? <span><SlidingNumber value={selectedTier.price} />,00</span> : <span>Condição personalizada</span>}
+                    {selectedTier ? <><span className="mr-[0.12em]">R$</span><span><SlidingNumber value={selectedTier.price} />,00</span></> : <span>{monthlyPrice}</span>}
                     <span className="ml-1 text-sm font-medium text-[#6f6878]">/mês</span>
                   </span>
                 </p>
                 <span className="sr-only" aria-live="polite" aria-atomic="true">
-                  {needsSpecialist ? 'Mais de 500 alunos, condição personalizada.' : `${selectedTier?.label}, ${monthlyPrice} por mês.`}
+                  {needsSpecialist ? 'Mais de 500 alunos, condição personalizada.' : `${isCustomInvitation ? 'Condição comercial personalizada' : selectedTier?.label}, ${monthlyPrice} por mês.`}
                 </span>
               </div>
               <div>
                 <p className="font-semibold text-[#211b27]">Todos os módulos essenciais incluídos.</p>
                 <p className="mt-1 text-sm leading-5 text-[#6f6878]">
-                  O valor só muda após 3 meses consecutivos em outra faixa.
+                  {isCustomInvitation ? 'Condição fixa acordada para sua escola.' : 'O valor só muda após 3 meses consecutivos em outra faixa.'}
                 </p>
               </div>
               <div className="rounded-md bg-[#f0e7fa] p-3 text-sm leading-5 text-[#4d4557]">
-                <p><strong>14 dias grátis, sem cartão.</strong> Sem cobrança automática. Ao final do período, você decide se quer contratar.</p>
+                <p>{trialDays > 0 ? <><strong>{trialDays} dias grátis, sem cartão.</strong> Sem cobrança automática. Ao final do período, você decide se quer contratar.</> : <><strong>Sem período de teste.</strong> Depois da configuração, você confirma a assinatura pelo Checkout Stripe.</>}</p>
               </div>
             </div>
           </section>
@@ -907,14 +1011,26 @@ export function FinanceWizard() {
               ? 'Como você já usa uma conta de pagamentos, a Alusa vai confirmar o perfil e seguir para a conexão segura dessa conta.'
               : 'A equipe continuará a configuração da conta de pagamentos vinculada à escola após a confirmação dos dados.'}
           </p>
+          {provisioningPending ? (
+            <div role="status" className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
+              <p className="font-semibold">A conexão financeira ainda está em andamento.</p>
+              <p>O teste grátis ainda não começou. Você pode sair e voltar a este wizard; quando a conta Asaas estiver conectada, use “Verificar conexão e continuar” para iniciar o teste.</p>
+            </div>
+          ) : null}
 
           <div className="mt-6 grid gap-4">
             <ReviewSection title="Resumo do plano">
               <SummaryItem label="Alunos na simulação" value={<span className="financial-data">{studentCount}</span>} />
               <SummaryItem label="Faixa escolhida" value={needsSpecialist ? 'Mais de 500 alunos' : selectedTier?.label ?? 'Sem alunos informados'} />
               <SummaryItem label="Mensalidade" value={<span className="financial-data">{monthlyPrice}</span>} />
-              <SummaryItem label="Período de teste" value="14 dias grátis, sem cartão e sem cobrança automática" />
+              <SummaryItem label="Período de teste" value={trialDays > 0 ? `${trialDays} dias grátis, sem cartão e sem cobrança automática` : 'Sem teste grátis'} />
             </ReviewSection>
+
+            {invitationCondition ? <section className="rounded-lg border border-violet-200 bg-violet-50 p-4 text-sm leading-6 text-[#4d4557]">
+              <p className="font-semibold">Condição comercial · versão {invitationCondition.currentConditionVersion}</p>
+              <p>{isCustomInvitation ? `Valor base de ${((invitationCondition.customBaseMonthlyAmountCents ?? invitationCondition.monthlyAmountCents ?? 0) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}, inclui ${invitationCondition.customIncludedStudentCount ?? studentCount} alunos e acrescenta ${((invitationCondition.customMonthlyOverageAmountCents ?? 0) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })} por aluno acima do limite. No momento, a mensalidade estimada é ${monthlyPrice}.` : `Estimativa ajustável de ${studentCount} alunos · ${selectedTier?.label ?? 'faixa especial'} · ${monthlyPrice} por mês`}; {trialDays > 0 ? `teste de ${trialDays} dias, iniciado após concluir a configuração` : 'sem período de teste'}.</p>
+              <label className="mt-3 flex items-start gap-2 font-medium"><input type="checkbox" checked={conditionAccepted} onChange={(event) => setConditionAccepted(event.target.checked)} className="mt-1" /><span>Li e aceito a condição comercial desta versão. O teste não gera cobrança automática; uma contratação posterior exige confirmação.</span></label>
+            </section> : null}
 
             <ReviewSection title="Dados da escola">
               <SummaryItem label="Nome da escola" value={draft.schoolName} />

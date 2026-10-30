@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-19",
+  "updatedAt": "2026-10-30",
   "reviewDocument": "job-schedule-review.md",
   "jobs": [
     { "id": "platform-billing-maintenance", "route": "/api/jobs/platform-billing-maintenance", "schedule": "*/5 * * * *", "scope": "global", "owner": "platform-billing", "criticality": "MAINTENANCE", "retryStrategy": "bounded-backoff", "exclusiveGroup": "platform-billing" },
@@ -39,6 +39,8 @@
     { "id": "reconcile-matricula-cancellations", "route": "/api/jobs/reconcile-matricula-cancellations", "schedule": "*/5 * * * *", "owner": "domain", "criticality": "CRITICAL_FINANCE", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "matricula-cancellations" },
     { "id": "rematriculas-run", "route": "/api/jobs/rematriculas/run", "schedule": "*/5 * * * *", "owner": "domain", "criticality": "CRITICAL_FINANCE", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "rematriculas" },
     { "id": "whatsapp", "route": "/api/jobs/whatsapp", "schedule": "*/5 * * * *", "owner": "whatsapp", "criticality": "NOTIFICATION", "retryStrategy": "idempotent-backoff", "exclusiveGroup": "whatsapp" },
-    { "id": "cleanup-upload-reservations", "route": "/api/jobs/cleanup-upload-reservations", "schedule": "*/10 * * * *", "owner": "uploads", "criticality": "MAINTENANCE", "retryStrategy": "bounded-backoff", "exclusiveGroup": "upload-cleanup" }
+    { "id": "cleanup-upload-reservations", "route": "/api/jobs/cleanup-upload-reservations", "schedule": "*/10 * * * *", "owner": "uploads", "criticality": "MAINTENANCE", "retryStrategy": "bounded-backoff", "exclusiveGroup": "upload-cleanup" },
+    { "id": "expire-expert-contact-pii", "route": "/api/jobs/expire-expert-contact-pii", "schedule": "15 3 * * *", "scope": "global", "owner": "privacy", "criticality": "MAINTENANCE", "retryStrategy": "bounded-backoff", "exclusiveGroup": "expert-contact-retention" },
+    { "id": "process-hubspot-account-created-outbox", "route": "/api/jobs/process-hubspot-account-created-outbox", "schedule": "* * * * *", "scope": "global", "owner": "public-integrations", "criticality": "INTEGRATION", "retryStrategy": "lease-and-retry", "exclusiveGroup": "hubspot-account-created" }
   ]
 }

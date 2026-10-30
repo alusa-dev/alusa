@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { resolvePlatformBillingCheckoutPlan } from '../src';
+import { calculateCustomInvitationMonthlyAmountCents, resolvePlatformBillingCheckoutPlan } from '../src';
 
 const context = {
   activeStudents: 120,
@@ -11,6 +11,12 @@ const context = {
 };
 
 describe('resolvePlatformBillingCheckoutPlan', () => {
+  it('calculates custom monthly overage only above the included students', () => {
+    const terms = { baseMonthlyAmountCents: 20_000, includedStudentCount: 25, monthlyPerStudentOverageCents: 250, studentCount: 30 };
+    expect(calculateCustomInvitationMonthlyAmountCents({ ...terms, studentCount: 20 })).toBe(20_000);
+    expect(calculateCustomInvitationMonthlyAmountCents(terms)).toBe(21_250);
+    expect(calculateCustomInvitationMonthlyAmountCents({ ...terms, studentCount: Number.MAX_SAFE_INTEGER })).toBeNull();
+  });
   it('uses the effective server-side student count rather than a browser-selected count', async () => {
     const loadContext = vi.fn(async () => context);
     const result = await resolvePlatformBillingCheckoutPlan({ loadContext });
@@ -66,6 +72,32 @@ describe('resolvePlatformBillingCheckoutPlan', () => {
     });
 
     expect(result).toEqual({ kind: 'UNSTABLE' });
+  });
+
+  it('preserves a customized invitation Price rather than recalculating a public band', async () => {
+    const result = await resolvePlatformBillingCheckoutPlan({
+      loadContext: async () => ({ ...context, activeStudents: 75, acceptedInvitation: { conditionType: 'CUSTOM', stripePriceId: 'price_custom_123', studentCount: 75 } }),
+    });
+    expect(result).toEqual({ kind: 'RESOLVED', planCode: 'CUSTOM', currentBand: null, studentCount: 75, stripePriceId: 'price_custom_123' });
+  });
+
+  it('recalculates a standard invitation band from the saved adjustable estimate before Stripe checkout', async () => {
+    const result = await resolvePlatformBillingCheckoutPlan({
+      loadContext: async () => ({
+        ...context,
+        activeStudents: 320,
+        onboardingPricing: { wizardCompletedAt: new Date(), onboardingStudentCount: 100 },
+        acceptedInvitation: { conditionType: 'STANDARD', stripePriceId: null, studentCount: 20 },
+      }),
+    });
+    expect(result).toEqual({ kind: 'RESOLVED', planCode: 'BAND_051_100', currentBand: null, studentCount: 100 });
+  });
+
+  it('keeps an accepted custom invitation above 500 on its versioned Price', async () => {
+    const result = await resolvePlatformBillingCheckoutPlan({
+      loadContext: async () => ({ ...context, activeStudents: 501, acceptedInvitation: { conditionType: 'CUSTOM', stripePriceId: 'price_custom_123', studentCount: 501 } }),
+    });
+    expect(result).toEqual({ kind: 'RESOLVED', planCode: 'CUSTOM', currentBand: null, studentCount: 501, stripePriceId: 'price_custom_123' });
   });
 
   it('resolves a canceled legacy account from its current effective student count', async () => {

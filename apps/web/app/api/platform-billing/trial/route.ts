@@ -4,7 +4,6 @@ import {
   PlatformBillingError,
   createPlatformBillingTrialWithoutPaymentMethod,
   createPrismaPlatformBillingStore,
-  resolveSchoolCommercialTarget,
 } from '@alusa/platform-billing';
 import { z } from 'zod';
 import { platformBillingIdempotencyKeyDTOSchema } from '@/features/platform-billing/dtos';
@@ -13,9 +12,9 @@ import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-lo
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import {
   assertCanManagePlatformBilling,
-  countActivePlatformBillingStudents,
   resolvePlatformBillingActor,
 } from '@/src/server/platform-billing/platform-billing-server';
+import { preparePlatformBillingTrial } from '@/src/server/platform-billing/prepare-platform-billing-trial';
 
 const trialSchema = z.object({
   idempotencyKey: z.string().trim().min(1).max(128).optional(),
@@ -70,41 +69,9 @@ export async function POST(req: NextRequest) {
     const forbidden = assertCanManagePlatformBilling(actor.canManagePlatformBilling);
     if (forbidden) return forbidden;
 
-    // The SaaS trial is independent of Asaas finance onboarding/KYC. Account
-    // creation already captures the school/admin setup and this route requires
-    // an active tenant plus an authorized administrator.
-    const conta = await tx.conta.findFirst({
-      where: { id: contaId, status: 'ATIVO', deletedAt: null },
-      select: { id: true },
-    });
-    if (!conta) {
-      return NextResponse.json({
-        error: 'INITIAL_SETUP_REQUIRED',
-        message: 'A conta precisa estar ativa antes de iniciar o período de teste.',
-      }, { status: 409 });
-    }
-
-    const [activeStudents, onboardingPricing] = await Promise.all([
-      countActivePlatformBillingStudents({ tx, contaId }),
-      tx.financeProfile.findUnique({
-        where: { contaId },
-        select: { wizardCompletedAt: true, onboardingStudentCount: true },
-      }),
-    ]);
-    // On first onboarding, the validated and persisted declaration sets the
-    // initial trial band. Later self-service flows use live billable enrollments.
-    const pricingStudentCount = activeStudents > 0
-      ? activeStudents
-      : onboardingPricing?.wizardCompletedAt && onboardingPricing.onboardingStudentCount !== null
-        ? onboardingPricing.onboardingStudentCount
-        : activeStudents;
-    const commercialTarget = resolveSchoolCommercialTarget(pricingStudentCount);
-    if (!commercialTarget || commercialTarget.kind === 'SPECIALIST') {
-      return NextResponse.json({
-        error: 'SPECIALIST_REQUIRED',
-        message: 'Escolas com mais de 500 alunos precisam conversar com um especialista.',
-        activeStudents: pricingStudentCount,
-      }, { status: 422 });
+    const eligibility = await preparePlatformBillingTrial({ tx, contaId });
+    if (!eligibility.ok) {
+      return NextResponse.json(eligibility.body, { status: eligibility.status });
     }
 
     let result: Awaited<ReturnType<typeof createPlatformBillingTrialWithoutPaymentMethod>>;
@@ -114,7 +81,11 @@ export async function POST(req: NextRequest) {
           contaId,
           contaName: actor.conta?.nome ?? 'Conta Alusa',
           billingEmail: actor.user?.email ?? undefined,
-          planCode: commercialTarget.band.code,
+          planCode: eligibility.planCode,
+          stripePriceId: eligibility.stripePriceId,
+          invitationId: eligibility.invitationId,
+          quantity: eligibility.quantity,
+          trialDays: eligibility.trialDays,
           actorUserId: userId,
           idempotencyKey,
           correlationId: idempotencyKey,

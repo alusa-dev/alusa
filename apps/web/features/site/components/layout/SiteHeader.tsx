@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { Menu, X } from '@/features/site/components/icons/icons';
 import { SiteSectionLink } from '@/features/site/components/navigation/SiteSectionLink';
 import { appLoginUrl, primaryNavigation } from '@/features/site/content/navigation';
@@ -11,6 +11,7 @@ import { scrollToSiteTop } from '@/features/site/lib/scroll-to-section';
 import { ButtonLink } from '@/features/site/components/ui/ButtonLink';
 import { Logo } from '@/features/site/components/ui/Logo';
 import { cn } from '@/features/site/lib/cn';
+import { resolveExpertContactHref } from '@/features/site/components/navigation/ExpertContactLink';
 
 function PrimaryNavItem({
   item,
@@ -41,11 +42,17 @@ function PrimaryNavItem({
   );
 }
 
-export function SiteHeader() {
+export function SiteHeader({ selfServiceEnabled = true }: { selfServiceEnabled?: boolean }) {
   const [open, setOpen] = useState(false);
   const [floatingVisible, setFloatingVisible] = useState(false);
   const originalHeaderRef = useRef<HTMLElement>(null);
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const expertContactHref = resolveExpertContactHref(pathname, searchParams.get('studentCount'));
+  const selectedStudentCount = Number(searchParams.get('studentCount'));
+  const headerCtaIsSpecialist = pathname === '/precos' && Number.isSafeInteger(selectedStudentCount) && selectedStudentCount > 500;
+  const headerCtaHref = headerCtaIsSpecialist || !selfServiceEnabled ? expertContactHref : '/precos';
+  const headerCtaLabel = headerCtaIsSpecialist || !selfServiceEnabled ? 'Fale com a Alusa' : 'Teste grátis por 14 dias';
 
   useEffect(() => {
     const originalHeader = originalHeaderRef.current;
@@ -72,6 +79,8 @@ export function SiteHeader() {
       '/direitos-lgpd',
       '/direitos-lgpd/solicitar',
     ].includes(pathname || '');
+  const isExpertContactPage = pathname === '/get-started';
+  const showHeaderNavigation = !isLegalPage && !isExpertContactPage;
 
   const headerContent = (
     <>
@@ -87,10 +96,10 @@ export function SiteHeader() {
           className="site-site-logo flex items-center gap-3 font-display text-xl font-bold tracking-tight text-white hover:opacity-90 transition-opacity"
           aria-label="Alusa"
         >
-          <Logo variant="purple" className="h-7 w-auto" />
+          <Logo variant={isExpertContactPage ? 'offWhite' : 'purple'} className="h-7 w-auto" />
         </Link>
 
-        {!isLegalPage && (
+        {showHeaderNavigation && (
             <nav className="site-site-nav hidden items-center gap-8 lg:flex" aria-label="Principal">
             {primaryNavigation.map((item) => (
               <PrimaryNavItem
@@ -102,25 +111,25 @@ export function SiteHeader() {
           </nav>
         )}
 
-        {!isLegalPage && (
+        {showHeaderNavigation && (
           <div className="site-site-actions hidden items-center gap-2 lg:flex">
             <ButtonLink href={appLoginUrl} variant="ghost" tone="dark" showArrow={false} className="site-header-login text-white">
               Entrar
             </ButtonLink>
             <ButtonLink
-              href="/lista-de-espera"
+              href={headerCtaHref}
               variant="primary"
               tone="dark"
-              event="hero_cta_clicked"
+              event={headerCtaIsSpecialist ? 'sales_cta_clicked' : 'hero_cta_clicked'}
               showArrow={false}
               className="site-header-signup bg-white text-[var(--alusa-purple-dark)] shadow-sm"
             >
-              Entre na lista de espera
+              {headerCtaLabel}
             </ButtonLink>
           </div>
         )}
 
-        {!isLegalPage && (
+        {showHeaderNavigation && (
           <button
             type="button"
             className="site-menu-button grid h-10 w-10 place-items-center rounded-lg border border-white/20 text-white lg:hidden"
@@ -138,19 +147,20 @@ export function SiteHeader() {
 
   return (
     <>
-      <header ref={originalHeaderRef} className="site-site-header site-original-header">
+      <header ref={originalHeaderRef} className={cn('site-site-header site-original-header', isExpertContactPage && 'site-expert-contact-header')}>
         {headerContent}
       </header>
       <header
         inert={!floatingVisible ? true : undefined}
         className={cn(
           'site-site-header site-floating-header',
+          isExpertContactPage && 'site-expert-contact-header',
           floatingVisible && 'site-floating-header--visible',
         )}
       >
         {headerContent}
       </header>
-      {!isLegalPage && (
+      {showHeaderNavigation && (
         <div className={cn('site-mobile-menu border-t border-white/10 bg-[var(--alusa-purple-dark)] lg:hidden', open ? 'site-mobile-menu--open' : 'site-mobile-menu--closed')}>
           <nav className="site-mobile-nav mx-auto grid max-w-7xl gap-1 px-6 py-4" aria-label="Principal mobile">
             {primaryNavigation.map((item) => (
@@ -165,8 +175,8 @@ export function SiteHeader() {
               <ButtonLink href={appLoginUrl} variant="secondary" tone="dark" showArrow={false}>
                 Entrar
               </ButtonLink>
-              <ButtonLink href="/lista-de-espera" variant="primary" tone="dark" event="hero_cta_clicked" showArrow={false}>
-                Entre na lista de espera
+              <ButtonLink href={headerCtaHref} variant="primary" tone="dark" event={headerCtaIsSpecialist ? 'sales_cta_clicked' : 'hero_cta_clicked'} showArrow={false}>
+                {headerCtaLabel}
               </ButtonLink>
             </div>
           </nav>

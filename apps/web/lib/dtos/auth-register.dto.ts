@@ -56,6 +56,7 @@ export const authRegisterInputSchema = z.object({
   nome: z.string().min(2),
   email: z.string().trim().email().transform((value) => value.toLowerCase()),
   financeIntegrationMode: financeIntegrationModeSchema.optional().default('WHITELABEL_BAAS'),
+  onboardingStudentCount: z.number().int().min(1).max(2_147_483_647).optional(),
   birthDate: z
     .string()
     .min(1)

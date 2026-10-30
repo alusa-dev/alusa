@@ -113,6 +113,12 @@ importers:
       '@alusa/observability':
         specifier: workspace:*
         version: link:../../packages/observability
+      '@alusa/platform-billing':
+        specifier: workspace:*
+        version: link:../../packages/platform-billing
+      '@alusa/stripe':
+        specifier: workspace:*
+        version: link:../../packages/stripe
       '@alusa/ui':
         specifier: workspace:*
         version: link:../../packages/ui

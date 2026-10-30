@@ -177,16 +177,15 @@ describe('RegisterForm', () => {
     });
   });
 
-  it('envia financeIntegrationMode externo quando o usuario seleciona conta existente do Asaas', async () => {
+  it('oculta a escolha de integração e envia a conta Asaas existente quando o rollout está ativo', async () => {
     const { default: RegisterForm } = await import('@/app/(auth)/register/RegisterForm');
 
     render(<RegisterForm enableExternalAsaasOnboarding />);
+    expect(screen.queryByTestId('register-finance-integration-mode')).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByTestId('register-nome-first'), { target: { value: 'Elaine' } });
     fireEvent.change(screen.getByTestId('register-nome-last'), { target: { value: 'Costa' } });
     fireEvent.change(screen.getByTestId('register-email'), { target: { value: 'elaine.costa@example.com' } });
-    fireEvent.click(screen.getByTestId('register-finance-integration-mode'));
-    fireEvent.click(screen.getByRole('option', { name: /Já tenho uma conta no Asaas/i }));
     fireEvent.change(screen.getByTestId('register-senha'), { target: { value: 'StrongPass123!' } });
     fireEvent.change(screen.getByTestId('register-senha-confirmar'), { target: { value: 'StrongPass123!' } });
     fireEvent.click(screen.getByTestId('register-termos-checkbox'));
@@ -202,5 +201,25 @@ describe('RegisterForm', () => {
     const payload = JSON.parse(String(requestInit.body));
 
     expect(payload.financeIntegrationMode).toBe('EXTERNAL_ASAAS_ACCOUNT');
+  });
+
+  it('não envia cadastro BaaS oculto quando o onboarding de conta Asaas está indisponível', async () => {
+    const { default: RegisterForm } = await import('@/app/(auth)/register/RegisterForm');
+
+    render(<RegisterForm />);
+    fireEvent.change(screen.getByTestId('register-nome-first'), { target: { value: 'Elaine' } });
+    fireEvent.change(screen.getByTestId('register-nome-last'), { target: { value: 'Costa' } });
+    fireEvent.change(screen.getByTestId('register-email'), { target: { value: 'elaine.costa@example.com' } });
+    fireEvent.change(screen.getByTestId('register-senha'), { target: { value: 'StrongPass123!' } });
+    fireEvent.change(screen.getByTestId('register-senha-confirmar'), { target: { value: 'StrongPass123!' } });
+    fireEvent.click(screen.getByTestId('register-termos-checkbox'));
+    fireEvent.click(await screen.findByTestId('legal-acceptance-inner-checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: /Aceitar e continuar/i }));
+    fireEvent.click(screen.getByTestId('register-submit'));
+
+    expect(await screen.findByTestId('register-error')).toHaveTextContent(
+      'O cadastro com conta Asaas existente ainda não está disponível.',
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

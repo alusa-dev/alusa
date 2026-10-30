@@ -4,10 +4,12 @@ import { ScrollReveal } from '@/features/site/components/motion/ScrollReveal';
 import { ButtonLink } from '@/features/site/components/ui/ButtonLink';
 import { cn } from '@/features/site/lib/cn';
 import { ProofStrip } from './ProofStrip';
+import { isExternalAsaasOnboardingRolloutEnabled } from '@/lib/feature-flags/external-asaas-onboarding';
 
 const HERO_FIGURE_SRC = '/images/site/hero/hero-section.png?v=202606152320';
 
 export function HeroSection() {
+  const selfServiceEnabled = isExternalAsaasOnboardingRolloutEnabled();
   return (
     <section className="relative overflow-hidden bg-[var(--alusa-purple-dark)] text-white">
       <div
@@ -40,24 +42,27 @@ export function HeroSection() {
           </p>
 
           <div className="mt-10 flex flex-col gap-4 sm:flex-row sm:items-center justify-start">
-            {homePage.hero.ctas.map((cta, i) => (
+            {homePage.hero.ctas.map((cta, i) => {
+              const disabledSelfServiceCta = i === 0 && !selfServiceEnabled;
+              return (
               <ButtonLink
                 key={cta.label}
-                href={'href' in cta ? cta.href : undefined}
+                href={disabledSelfServiceCta ? '/get-started' : 'href' in cta ? cta.href : undefined}
                 sectionId={'sectionId' in cta ? cta.sectionId : undefined}
                 variant={i === 0 ? 'primary' : 'secondary'}
                 tone="dark"
                 event={
-                  'href' in cta && cta.href.startsWith('mailto:') ? 'sales_cta_clicked' : 'hero_cta_clicked'
+                  'href' in cta && cta.href.startsWith('/get-started') ? 'sales_cta_clicked' : 'hero_cta_clicked'
                 }
                 className={cn(
                   'h-12 w-full rounded-full text-sm font-medium sm:w-auto sm:min-w-[12rem]',
                   i === 0 ? 'bg-white text-[var(--alusa-purple-dark)] shadow-none' : 'border border-white/20 text-white'
                 )}
               >
-                {cta.label}
+                {disabledSelfServiceCta ? 'Fale com a Alusa' : cta.label}
               </ButtonLink>
-            ))}
+              );
+            })}
           </div>
         </ScrollReveal>
       </div>

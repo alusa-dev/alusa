@@ -7,6 +7,7 @@ export type {
 export {
   SCHOOL_PRICE_BANDS,
   SCHOOL_PRICE_BAND_RANKS,
+  calculateCustomInvitationMonthlyAmountCents,
   getSchoolPriceBandRank,
   hasBillableEnrollment,
   isSchoolPriceBandCode,

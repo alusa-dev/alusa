@@ -39,14 +39,19 @@ export async function POST(request: Request) {
     const status = mobileAuthErrorStatus(error);
     const message = error instanceof MobileAuthError && error.code === 'INVALID_INPUT'
       ? 'Informe um e-mail e uma senha válidos.'
-      : 'E-mail ou senha inválidos.';
+      : error instanceof MobileAuthError && error.code === 'EMAIL_NOT_VERIFIED'
+        ? 'Confirme seu e-mail antes de entrar.'
+        : 'E-mail ou senha inválidos.';
+    const code = error instanceof MobileAuthError && error.code === 'EMAIL_NOT_VERIFIED'
+      ? 'EMAIL_NOT_VERIFIED'
+      : status === 400 ? 'VALIDATION_ERROR' : 'UNAUTHORIZED';
 
     if (status >= 500) {
       logApiOperationalEvent({ severity: 'error', eventName: 'api.mobile_auth.request.failed', route: '/api/mobile/auth/login', method: 'POST', requestId: getRequestId(request), error });
     }
 
     return NextResponse.json(
-      { error: { code: status === 400 ? 'VALIDATION_ERROR' : 'UNAUTHORIZED', message } },
+      { error: { code, message } },
       { status, headers: { 'Cache-Control': 'no-store' } },
     );
   }

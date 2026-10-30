@@ -19,7 +19,7 @@ export const homePage = {
     description:
       'A Alusa unifica operação acadêmica e financeira para sua equipe ganhar velocidade, previsibilidade e mais controle no dia a dia.',
     ctas: [
-      { label: 'Entre na lista de espera', href: '/lista-de-espera', variant: 'primary' },
+      { label: 'Teste grátis por 14 dias', href: '/auth/register', variant: 'primary' },
       { label: 'Conhecer plataforma', sectionId: 'modulos', variant: 'secondary' }
     ]
   },

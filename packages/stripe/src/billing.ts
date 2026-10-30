@@ -33,6 +33,7 @@ export interface StripeBillingCustomerResult {
 export interface CreateStripeSubscriptionCheckoutSessionInput {
   customerId: string;
   priceId: string;
+  quantity?: number;
   successUrl: string;
   cancelUrl: string;
   clientReferenceId: string;
@@ -61,6 +62,7 @@ export interface StripeSubscriptionCheckoutSessionResult {
 export interface CreateStripeTrialSubscriptionWithoutPaymentMethodInput {
   customerId: string;
   priceId: string;
+  quantity?: number;
   metadata: Record<string, string>;
   trialDays: number;
   idempotencyKey?: string;
@@ -189,7 +191,7 @@ export async function createStripeSubscriptionCheckoutSession(
     {
       mode: 'subscription',
       customer: input.customerId,
-      line_items: [{ price: input.priceId, quantity: 1 }],
+      line_items: [{ price: input.priceId, quantity: input.quantity ?? 1 }],
       success_url: input.successUrl,
       cancel_url: input.cancelUrl,
       client_reference_id: input.clientReferenceId,
@@ -324,7 +326,7 @@ export async function createStripeTrialSubscriptionWithoutPaymentMethod(
   const subscription = await client.subscriptions.create(
     {
       customer: input.customerId,
-      items: [{ price: input.priceId, quantity: 1 }],
+      items: [{ price: input.priceId, quantity: input.quantity ?? 1 }],
       metadata: input.metadata,
       trial_period_days: input.trialDays,
       trial_settings: {
@@ -364,6 +366,58 @@ export async function retrieveStripeSubscription(
 ): Promise<StripeSubscriptionRecord> {
   const subscription = await client.subscriptions.retrieve(subscriptionId);
   return toSubscriptionRecord(subscription);
+}
+
+export type StripeSubscriptionQuantityState = {
+  id: string;
+  customerId: string | null;
+  status: Stripe.Subscription.Status;
+  livemode: boolean;
+  metadata: Record<string, string>;
+  itemsComplete: boolean;
+  items: Array<{ id: string; priceId: string | null; quantity: number | null; metadata: Record<string, string> }>;
+};
+
+export async function retrieveStripeSubscriptionQuantityState(
+  client: Stripe,
+  subscriptionId: string,
+): Promise<StripeSubscriptionQuantityState> {
+  const subscription = await client.subscriptions.retrieve(subscriptionId);
+  return {
+    id: subscription.id,
+    customerId: typeof subscription.customer === 'string' ? subscription.customer : subscription.customer?.id ?? null,
+    status: subscription.status,
+    livemode: subscription.livemode,
+    metadata: subscription.metadata ?? {},
+    itemsComplete: !subscription.items.has_more,
+    items: subscription.items.data.map((item) => ({
+      id: item.id,
+      priceId: typeof item.price === 'string' ? item.price : item.price.id,
+      quantity: item.quantity ?? null,
+      metadata: item.metadata ?? {},
+    })),
+  };
+}
+
+export async function updateStripeSubscriptionItemQuantity(
+  client: Stripe,
+  input: {
+    subscriptionItemId: string;
+    quantity: number;
+    operationPeriod: string;
+    idempotencyKey: string;
+  },
+): Promise<{ id: string; quantity: number | null }> {
+  const updated = await client.subscriptionItems.update(
+    input.subscriptionItemId,
+    {
+      quantity: input.quantity,
+      proration_behavior: 'none',
+      metadata: { alusaQuantitySyncPeriod: input.operationPeriod },
+    },
+    buildRequestOptions(input.idempotencyKey),
+  );
+  return { id: updated.id, quantity: updated.quantity ?? null };
 }
 
 export async function cancelStripeSubscription(

@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@alusa/observability": "workspace:*",
+    "@alusa/stripe": "workspace:*",
+    "@alusa/platform-billing": "workspace:*",
     "@alusa/admin-auth": "workspace:*",
     "@alusa/database": "workspace:*",
     "@alusa/finance": "workspace:*",

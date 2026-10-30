@@ -24,15 +24,16 @@ vi.mock('@/app/(auth)/register/SignOutForInviteButton', () => ({ default: 'SignO
 
 import RegisterPage from '@/app/(auth)/register/page';
 
-describe('public register page during assisted pilot', () => {
+describe('public register page', () => {
   afterEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
   });
 
-  it('redirects unaffiliated public signup to the waitlist', async () => {
-    await expect(RegisterPage({ searchParams: Promise.resolve({}) })).rejects.toThrow('redirect:/lista-de-espera');
-    expect(redirectMock).toHaveBeenCalledWith('/lista-de-espera');
+  it('renders the public self-service registration form without an invitation token', async () => {
+    vi.stubGlobal('React', React);
+    await expect(RegisterPage({ searchParams: Promise.resolve({}) })).resolves.toBeTruthy();
+    expect(redirectMock).not.toHaveBeenCalled();
     expect(inviteFindUniqueMock).not.toHaveBeenCalled();
     expect(getServerSessionMock).not.toHaveBeenCalled();
   });

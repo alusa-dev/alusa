@@ -160,8 +160,24 @@ describe('auth middleware', () => {
     expect(await response.json()).toEqual({ error: 'Unauthorized' });
   });
 
+  it('mantém confirmação e reenvio de e-mail acessíveis sem sessão autenticada', async () => {
+    for (const pathname of ['/api/auth/verify-email', '/api/auth/verify-email/resend']) {
+      const response = await proxy(
+        new NextRequest(`http://localhost:3000${pathname}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('location')).toBeNull();
+    }
+
+    expect(getTokenMock).not.toHaveBeenCalled();
+  });
+
   it('permite API autenticada comum com sessão válida', async () => {
-    getTokenMock.mockResolvedValueOnce({ id: 'user_1', contaId: 'conta_1' });
+    getTokenMock.mockResolvedValueOnce({ id: 'user_1', contaId: 'conta_1', emailVerified: true });
 
     const response = await proxy(new NextRequest('http://localhost:3000/api/salas?contaId=conta_1'));
 
@@ -169,9 +185,23 @@ describe('auth middleware', () => {
     expect(response.headers.get('location')).toBeNull();
   });
 
+  it('bloqueia APIs tenant autenticadas para uma sessão com e-mail não verificado', async () => {
+    getTokenMock.mockResolvedValueOnce({
+      id: 'user_1', contaId: 'conta_1', role: 'ADMIN', emailVerified: false,
+    });
+
+    const response = await proxy(new NextRequest('http://localhost:3000/api/salas'));
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: 'E-mail não verificado',
+      code: 'EMAIL_NOT_VERIFIED',
+    });
+  });
+
   it('preserva API de cobrança autenticada para RECEPCAO quando o handler define a operação permitida', async () => {
     getTokenMock.mockResolvedValueOnce({
-      id: 'user_1', contaId: 'conta_1', role: 'RECEPCAO',
+      id: 'user_1', contaId: 'conta_1', role: 'RECEPCAO', emailVerified: true,
     });
 
     const response = await proxy(new NextRequest('http://localhost:3000/api/cobrancas/cob-1'));
@@ -181,7 +211,7 @@ describe('auth middleware', () => {
 
   it('permite API financeira para papel FINANCEIRO', async () => {
     getTokenMock.mockResolvedValueOnce({
-      id: 'user_1', contaId: 'conta_1', role: 'FINANCEIRO',
+      id: 'user_1', contaId: 'conta_1', role: 'FINANCEIRO', emailVerified: true,
     });
 
     const response = await proxy(new NextRequest('http://localhost:3000/api/financeiro/kpis'));
@@ -191,7 +221,7 @@ describe('auth middleware', () => {
 
   it('bloqueia API administrativa para papel financeiro sem privilégio de admin', async () => {
     getTokenMock.mockResolvedValueOnce({
-      id: 'user_1', contaId: 'conta_1', role: 'FINANCEIRO',
+      id: 'user_1', contaId: 'conta_1', role: 'FINANCEIRO', emailVerified: true,
     });
 
     const response = await proxy(new NextRequest('http://localhost:3000/api/admin/webhooks'));

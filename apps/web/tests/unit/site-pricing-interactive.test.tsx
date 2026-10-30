@@ -1,7 +1,9 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PricingInteractive } from '@/features/site/components/pricing/PricingInteractive';
+
+vi.mock('next/navigation', () => ({ useSearchParams: () => new URLSearchParams() }));
 
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
@@ -12,7 +14,10 @@ Object.defineProperty(window, 'matchMedia', {
   }),
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  window.history.replaceState({}, '', '/');
+});
 
 function expectMonthlyPrice(amount: string) {
   expect(screen.getByText((_, element) => element?.getAttribute('aria-live') === 'polite')).toHaveTextContent(
@@ -24,16 +29,19 @@ function expectMonthlyPrice(amount: string) {
   );
 }
 
+function expectPricingLinks(name: string, href: string) {
+  const links = screen.getAllByRole('link', { name });
+  expect(links.length).toBeGreaterThan(0);
+  links.forEach((link) => expect(link).toHaveAttribute('href', href));
+}
+
 describe('PricingInteractive', () => {
   it('updates the monthly price and selected table row from the numeric input', () => {
     render(<PricingInteractive />);
     const input = screen.getByLabelText('Quantos alunos ativos pagantes sua escola tem?');
     expectMonthlyPrice('419,00');
     expect(input).toHaveValue(165);
-    expect(screen.getByRole('link', { name: 'Entrar na lista de espera' })).toHaveAttribute(
-      'href',
-      '/lista-de-espera',
-    );
+    expectPricingLinks('Teste grátis por 14 dias', '/auth/register?studentCount=165');
     input.focus();
     fireEvent.change(input, { target: { value: '' } });
     expect((input as HTMLInputElement).value).toBe('');
@@ -48,33 +56,40 @@ describe('PricingInteractive', () => {
     );
   });
 
-  it('keeps 500 students self-service and directs 501+ to a specialist', () => {
+  it('offers direct signup through 500 students and specialist contact above 500', () => {
+    window.history.replaceState({}, '', '/precos');
     render(<PricingInteractive />);
-    const range = screen.getByRole('slider', { name: 'Quantidade de alunos, de 1 a 500' });
+    const range = screen.getByRole('slider', { name: 'Quantidade de alunos' });
 
     fireEvent.change(range, { target: { value: '499' } });
-    expect(screen.getByRole('link', { name: 'Entrar na lista de espera' })).toHaveAttribute('href', '/lista-de-espera');
+    expectPricingLinks('Teste grátis por 14 dias', '/auth/register?studentCount=499');
 
     fireEvent.change(range, { target: { value: '500' } });
     expectMonthlyPrice('649,00');
+    expectPricingLinks('Teste grátis por 14 dias', '/auth/register?studentCount=500');
+    expect(new URL(window.location.href).searchParams.get('studentCount')).toBe('500');
     expect(screen.getByRole('row', { name: /401 a 500 alunos/ })).toHaveAttribute(
       'aria-current',
       'true',
     );
-    expect(screen.getByRole('link', { name: 'Entrar na lista de espera' })).toHaveAttribute('href', '/lista-de-espera');
+
+    expect(screen.getByText('Mais de 500 alunos', { selector: '.pricing-range-labels span' })).toBeInTheDocument();
+    fireEvent.change(range, { target: { value: '501' } });
+    expect(range).toHaveValue('501');
+    expect(range).toHaveAttribute('aria-valuetext', 'Mais de 500 alunos');
+    expectPricingLinks('Fale com a Alusa', '/get-started?studentCount=501');
+    expect(new URL(window.location.href).searchParams.get('studentCount')).toBe('501');
+    expect(screen.getByRole('row', { name: /Mais de 500 alunos/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    );
 
     fireEvent.change(screen.getByLabelText('Quantos alunos ativos pagantes sua escola tem?'), { target: { value: '501' } });
     expect(screen.getAllByText('Condição personalizada')).toHaveLength(2);
-    expect(screen.getByRole('link', { name: 'Conversar com um especialista' })).toHaveAttribute(
-      'href',
-      'mailto:contato@alusa.app?subject=Plano%20para%20escola%20com%20mais%20de%20500%20alunos',
-    );
+    expectPricingLinks('Fale com a Alusa', '/get-started?studentCount=501');
 
     fireEvent.change(range, { target: { value: '499' } });
-    expect(screen.getByRole('link', { name: 'Entrar na lista de espera' })).toHaveAttribute(
-      'href',
-      '/lista-de-espera',
-    );
+    expectPricingLinks('Teste grátis por 14 dias', '/auth/register?studentCount=499');
   });
 
   it('selects the boundary tiers at 1 and 26 students', () => {

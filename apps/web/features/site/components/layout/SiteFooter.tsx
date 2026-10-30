@@ -8,6 +8,7 @@ import { isSiteSectionNavItem, siteNavItemKey } from '@/features/site/lib/nav-it
 import type { SiteNavItem } from '@/features/site/lib/site-dtos';
 import { VerticalGridLines } from '@/features/site/components/layout/VerticalGridLines';
 import { AsaasSeal } from '@/components/shared/AsaasSeal';
+import { ExpertContactLink } from '@/features/site/components/navigation/ExpertContactLink';
 
 function FooterLink({ link }: { link: SiteNavItem }) {
   if (isSiteSectionNavItem(link)) {
@@ -19,6 +20,14 @@ function FooterLink({ link }: { link: SiteNavItem }) {
       >
         {link.label}
       </SiteSectionLink>
+    );
+  }
+
+  if (link.href === '/get-started') {
+    return (
+      <ExpertContactLink className="text-sm font-medium text-white/68 transition-colors hover:text-white">
+        {link.label}
+      </ExpertContactLink>
     );
   }
 

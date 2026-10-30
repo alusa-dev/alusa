@@ -280,6 +280,13 @@ async function handleApiRequest(req: NextRequest): Promise<NextResponse | null> 
       );
     }
 
+    if (token.emailVerified !== true) {
+      return NextResponse.json(
+        { error: 'E-mail não verificado', code: 'EMAIL_NOT_VERIFIED' },
+        { status: 403, headers: { 'cache-control': 'no-store' } },
+      );
+    }
+
     if (!hasRouteRole(protection, (token as { role?: unknown }).role)) {
       return NextResponse.json(
         { error: 'Forbidden' },

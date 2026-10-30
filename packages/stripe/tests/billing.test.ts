@@ -16,9 +16,32 @@ import {
   retrieveStripeCheckoutSession,
   retrieveStripeDefaultPaymentMethod,
   scheduleStripeSubscriptionPlanChange,
+  retrieveStripeSubscriptionQuantityState,
+  updateStripeSubscriptionItemQuantity,
 } from '../src';
 
 describe('@alusa/stripe billing operations', () => {
+  it('retrieves subscription item price/quantity and updates with stable no-proration options', async () => {
+    const retrieve = vi.fn(async () => ({
+      id: 'sub_1', customer: 'cus_1', status: 'active', livemode: false, metadata: { invitationId: 'invite_1' },
+      items: { has_more: false, data: [{ id: 'si_1', price: { id: 'price_1' }, quantity: 44, metadata: {} }] },
+    }));
+    const update = vi.fn(async () => ({ id: 'si_1', quantity: 51 }));
+    const client = { subscriptions: { retrieve }, subscriptionItems: { update } };
+
+    await expect(retrieveStripeSubscriptionQuantityState(client as never, 'sub_1')).resolves.toEqual({
+      id: 'sub_1', customerId: 'cus_1', status: 'active', livemode: false,
+      metadata: { invitationId: 'invite_1' }, itemsComplete: true,
+      items: [{ id: 'si_1', priceId: 'price_1', quantity: 44, metadata: {} }],
+    });
+    await expect(updateStripeSubscriptionItemQuantity(client as never, {
+      subscriptionItemId: 'si_1', quantity: 51, operationPeriod: '2026-10', idempotencyKey: 'custom-qty-key',
+    })).resolves.toEqual({ id: 'si_1', quantity: 51 });
+    expect(update).toHaveBeenCalledWith('si_1', {
+      quantity: 51, proration_behavior: 'none', metadata: { alusaQuantitySyncPeriod: '2026-10' },
+    }, { idempotencyKey: 'custom-qty-key' });
+  });
+
   it('paginates Checkout Session reconciliation by customer and created lower bound', async () => {
     const list = vi.fn()
       .mockResolvedValueOnce({ data: [{ id: 'cs_page_1' }], has_more: true })
@@ -253,6 +276,7 @@ describe('@alusa/stripe billing operations', () => {
     const result = await createStripeTrialSubscriptionWithoutPaymentMethod(client as never, {
       customerId: 'cus_test_1',
       priceId: 'price_premium_test',
+      quantity: 40,
       metadata: { contaId: 'conta_1', planCode: 'PREMIUM', billingContext: 'platform' },
       trialDays: 14,
       idempotencyKey: 'idem_trial',
@@ -266,7 +290,7 @@ describe('@alusa/stripe billing operations', () => {
     expect(client.subscriptions.create).toHaveBeenCalledWith(
       expect.objectContaining({
         customer: 'cus_test_1',
-        items: [{ price: 'price_premium_test', quantity: 1 }],
+        items: [{ price: 'price_premium_test', quantity: 40 }],
         trial_period_days: 14,
         trial_settings: {
           end_behavior: {
@@ -306,6 +330,7 @@ describe('@alusa/stripe billing operations', () => {
     const result = await createStripeSubscriptionCheckoutSession(client as never, {
       customerId: 'cus_test_1',
       priceId: 'price_starter_test',
+      quantity: 40,
       successUrl: 'https://app.alusa.test/success',
       cancelUrl: 'https://app.alusa.test/cancel',
       clientReferenceId: 'conta_1',
@@ -319,7 +344,7 @@ describe('@alusa/stripe billing operations', () => {
       expect.objectContaining({
         mode: 'subscription',
         customer: 'cus_test_1',
-        line_items: [{ price: 'price_starter_test', quantity: 1 }],
+        line_items: [{ price: 'price_starter_test', quantity: 40 }],
         payment_method_collection: 'always',
         saved_payment_method_options: {
           allow_redisplay_filters: ['always', 'limited'],

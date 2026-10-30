@@ -26,6 +26,11 @@ import { isValidCpfDigits, normalizeCpfCnpjDigits } from '@alusa/shared/validato
 
 export const REQUIRES_SCHOOL_DATA = false;
 
+// BaaS signup stays available in the form model and selector for future
+// reactivation after homologation. Until then, public signup uses the school's
+// existing Asaas account whenever that onboarding rollout is enabled.
+const SHOW_FINANCE_INTEGRATION_MODE_SELECTOR = false;
+
 // Schema condicional por modo
 const baseSchema = z.object({
   firstName: z.string().min(2, 'Informe o nome'),
@@ -92,9 +97,10 @@ type RegisterMode = 'first' | 'invite';
 interface RegisterFormProps {
   inviteData?: InviteData;
   enableExternalAsaasOnboarding?: boolean;
+  onboardingStudentCount?: number;
 }
 
-export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding = false }: RegisterFormProps) {
+export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding = false, onboardingStudentCount }: RegisterFormProps) {
   const mode: RegisterMode = inviteData ? 'invite' : 'first';
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
@@ -109,7 +115,9 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
     mode: 'onSubmit',
     defaultValues: {
       email: inviteData?.email || '',
-      financeIntegrationMode: 'WHITELABEL_BAAS',
+      financeIntegrationMode: enableExternalAsaasOnboarding
+        ? 'EXTERNAL_ASAAS_ACCOUNT'
+        : 'WHITELABEL_BAAS',
       senha: '',
       confirmarSenha: '',
       termos: false,
@@ -125,7 +133,17 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
 
   // Convites dão acesso a uma conta já configurada; somente o primeiro cadastro
   // deve iniciar o onboarding financeiro da nova escola.
-  const targetAfterVerification = mode === 'first' ? '/finance/wizard' : '/dashboard';
+  const validOnboardingStudentCount = Number.isSafeInteger(onboardingStudentCount)
+    && onboardingStudentCount !== undefined
+    && onboardingStudentCount >= 1
+    && onboardingStudentCount <= 2_147_483_647
+    ? onboardingStudentCount
+    : null;
+  const targetAfterVerification = mode === 'first'
+    ? validOnboardingStudentCount
+      ? `/finance/wizard?studentCount=${validOnboardingStudentCount}`
+      : '/finance/wizard'
+    : '/dashboard';
   const postRegisterRedirect = `/auth/confirm-email?callbackUrl=${encodeURIComponent(targetAfterVerification)}`;
 
   /* helpers removed */
@@ -133,6 +151,12 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
 
   async function onSubmit(data: FormValues) {
     setGlobalError(null);
+
+    if (mode === 'first' && !enableExternalAsaasOnboarding) {
+      setGlobalError('O cadastro com conta Asaas existente ainda não está disponível. Fale com a Alusa para continuar.');
+      return;
+    }
+
     const escolaNome = `${data.firstName} ${data.lastName}`.trim();
 
     try {
@@ -145,6 +169,7 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
         senha: data.senha,
         escolaNome,
         financeIntegrationMode: mode === 'first' ? data.financeIntegrationMode : 'WHITELABEL_BAAS',
+        ...(mode === 'first' && onboardingStudentCount ? { onboardingStudentCount } : {}),
         legalAcceptance: {
           accepted: true,
           locale: 'pt-BR',
@@ -425,7 +450,7 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
               </div>
             </div>
           ) : null}
-          {mode === 'first' && enableExternalAsaasOnboarding ? (
+          {mode === 'first' && enableExternalAsaasOnboarding && SHOW_FINANCE_INTEGRATION_MODE_SELECTOR ? (
             <div className="w-full">
               <Controller
                 control={control}

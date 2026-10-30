@@ -6,6 +6,8 @@ describe('isPublicApiPath', () => {
   it('identifica rotas de autenticação', () => {
     expect(isPublicApiPath('/api/auth/login/validate')).toBe(true);
     expect(isPublicApiPath('/api/auth/callback/credentials')).toBe(true);
+    expect(isPublicApiPath('/api/auth/verify-email')).toBe(true);
+    expect(isPublicApiPath('/api/auth/verify-email/resend')).toBe(true);
   });
 
   it('identifica webhooks e jobs', () => {

@@ -296,7 +296,7 @@ async function reconcileOldIndeterminateSetup(input: {
 
   let sessionId = candidate.knownSessionId ?? null;
   let scanCount = 0;
-  let createdAfter = new Date(candidate.createdAt.getTime() - 60_000);
+  const createdAfter = new Date(candidate.createdAt.getTime() - 60_000);
   if (!sessionId) {
     let listing: Awaited<ReturnType<typeof listStripeCheckoutSessionsForCustomerSince>>;
     try {

@@ -8,6 +8,8 @@
       "@/*": ["./*"],
       "@alusa/observability": ["../../packages/observability/src/index.ts"],
       "@alusa/observability/*": ["../../packages/observability/src/*"],
+      "@alusa/stripe": ["../../packages/stripe/src/index.ts"],
+      "@alusa/stripe/*": ["../../packages/stripe/src/*"],
       "@alusa/admin-auth": ["../../packages/admin-auth/src/index.ts"],
       "@alusa/admin-auth/*": ["../../packages/admin-auth/src/*"],
       "@alusa/database": ["../../packages/database/src/index.ts"],

@@ -9,13 +9,16 @@ import AcceptInviteButton from './AcceptInviteButton';
 import SignOutForInviteButton from './SignOutForInviteButton';
 
 interface RegisterPageProps {
-  searchParams: Promise<{ token?: string; next?: string }>;
+  searchParams: Promise<{ token?: string; next?: string; studentCount?: string }>;
 }
 
 export default async function RegisterPage({ searchParams }: RegisterPageProps) {
   const params = await searchParams;
   const token = params.token;
-  if (!token) redirect('/lista-de-espera');
+  const requestedStudentCount = Number(params.studentCount);
+  const studentCount = Number.isSafeInteger(requestedStudentCount) && requestedStudentCount >= 1 && requestedStudentCount <= 2_147_483_647
+    ? requestedStudentCount
+    : undefined;
 
   const enableExternalAsaasOnboarding = isExternalAsaasOnboardingRolloutEnabled();
 
@@ -91,4 +94,26 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
     );
   }
 
+  // Public self-service signup creates the school owner account; the existing
+  // wizard starts the 14-day trial only after the school finishes setup.
+  if (!enableExternalAsaasOnboarding) {
+    const contactHref = studentCount ? `/get-started?studentCount=${studentCount}` : '/get-started';
+    return (
+      <AuthPageContainer>
+        <main className="flex min-h-svh items-center justify-center px-4 py-8">
+          <div className="w-full max-w-lg rounded-2xl border bg-background p-6 text-center shadow-sm">
+            <h1 className="text-xl font-semibold">Vamos conversar sobre a sua escola</h1>
+            <p className="mt-2 text-sm text-muted-foreground">Nossa equipe ajuda você a iniciar o cadastro e conectar o financeiro.</p>
+            <a className="mt-6 inline-flex h-11 items-center justify-center rounded-md bg-[#55298a] px-5 text-sm font-semibold text-white" href={contactHref}>Fale com a Alusa</a>
+          </div>
+        </main>
+      </AuthPageContainer>
+    );
+  }
+
+  return (
+    <AuthPageContainer>
+      <RegisterForm enableExternalAsaasOnboarding={enableExternalAsaasOnboarding} onboardingStudentCount={studentCount} />
+    </AuthPageContainer>
+  );
 }

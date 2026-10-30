@@ -37,6 +37,20 @@ export function resolveSchoolCommercialTarget(studentCount: number): SchoolComme
   return band ? { kind: 'SELF_SERVICE', band } : null;
 }
 
+/** Monthly school contract amount: base fee plus the per-student rate above the included count. */
+export function calculateCustomInvitationMonthlyAmountCents(input: {
+  baseMonthlyAmountCents: number;
+  includedStudentCount: number;
+  monthlyPerStudentOverageCents: number;
+  studentCount: number;
+}): number | null {
+  const values = [input.baseMonthlyAmountCents, input.includedStudentCount, input.monthlyPerStudentOverageCents, input.studentCount];
+  if (!values.every(Number.isSafeInteger) || input.baseMonthlyAmountCents < 1 || input.includedStudentCount < 1 ||
+    input.monthlyPerStudentOverageCents < 0 || input.studentCount < 1) return null;
+  const amount = input.baseMonthlyAmountCents + Math.max(0, input.studentCount - input.includedStudentCount) * input.monthlyPerStudentOverageCents;
+  return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
+}
+
 /** Do not change a customer's recurring price until three consecutive closes agree. */
 export function shouldApplySchoolPriceBand(input: {
   currentBand: SchoolPriceBandCode | 'CUSTOM' | null;

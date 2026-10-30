@@ -673,6 +673,14 @@ export function ExternalAsaasOnboarding({ variant = 'page' }: ExternalAsaasOnboa
             Não criamos cliente financeiro nem cobrança aqui. Esse passo apenas conecta a conta e garante o webhook oficial do Asaas.
           </div>
           <div className="flex flex-col gap-3 sm:flex-row">
+            {apiKeyStatus === 'CONNECTED' ? (
+              <Link
+                href="/finance/wizard"
+                className="inline-flex h-12 items-center justify-center rounded-xl bg-[#55298a] px-5 text-sm font-semibold text-white transition hover:bg-[#4a2379]"
+              >
+                Voltar ao wizard e continuar
+              </Link>
+            ) : null}
             {status === 'READY' ? (
               <Link
                 href="/dashboard"

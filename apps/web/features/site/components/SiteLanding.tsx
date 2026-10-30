@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { ModalityCarousel } from '@/features/site/components/ModalityCarousel';
+import { isExternalAsaasOnboardingRolloutEnabled } from '@/lib/feature-flags/external-asaas-onboarding';
 
 const SITE_ASSET_VERSION = '20260901';
 const DASHBOARD_IMAGE = `/images/site/dashboard/Dashboard.webp?v=${SITE_ASSET_VERSION}`;
@@ -26,6 +27,7 @@ function PillLink({
 }
 
 export function SiteLanding() {
+  const selfServiceEnabled = isExternalAsaasOnboardingRolloutEnabled();
   return (
     <div className="site-landing">
       <section className="site-hero">
@@ -37,8 +39,10 @@ export function SiteLanding() {
               {' '}mais simples de administrar.
             </h1>
             <div className="site-hero-actions">
-              <PillLink href="#modulos" variant="primary">Conhecer a Alusa</PillLink>
-              <PillLink href="/lista-de-espera" variant="secondary">Entre na lista de espera</PillLink>
+              <PillLink href={selfServiceEnabled ? '/precos' : '/get-started'} variant="primary">
+                {selfServiceEnabled ? 'Teste grátis por 14 dias' : 'Fale com a Alusa'}
+              </PillLink>
+              <PillLink href="#modulos" variant="secondary">Conhecer a Alusa</PillLink>
             </div>
           </div>
 

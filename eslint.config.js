@@ -24,6 +24,7 @@ export default [
       '**/.vercel/**',
       '**/storybook-static/**',
       '**/next-env.d.ts',
+      'apps/web/public/amagiadouniverso/*.js',
     ],
   },
   {

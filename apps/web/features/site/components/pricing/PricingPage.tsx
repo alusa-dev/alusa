@@ -1,7 +1,10 @@
 import Link from 'next/link';
+import { Suspense } from 'react';
 import { Check } from '@/features/site/components/icons/icons';
 import { PricingInteractive } from '@/features/site/components/pricing/PricingInteractive';
 import { PricingReveal } from '@/features/site/components/pricing/PricingReveal';
+import { ExpertContactLink } from '@/features/site/components/navigation/ExpertContactLink';
+import { isExternalAsaasOnboardingRolloutEnabled } from '@/lib/feature-flags/external-asaas-onboarding';
 
 const features = [
   'Gestão de alunos e responsáveis',
@@ -99,7 +102,9 @@ const questions = [
 
 export function PricingPage() {
   return (
+    <Suspense fallback={null}>
     <PricingInteractive
+      selfServiceEnabled={isExternalAsaasOnboardingRolloutEnabled()}
       beforeTiers={
         <section
           className="pricing-section pricing-included pricing-rail-section"
@@ -140,12 +145,9 @@ export function PricingPage() {
                       Reunimos respostas para ajudar sua escola a entender a mensalidade, as faixas e
                       o que está incluído.
                     </p>
-                    <a
-                      className="site-pill button-primary pricing-faq-contact"
-                      href="mailto:contato@alusa.app"
-                    >
-                      Falar com a Alusa
-                    </a>
+                    <Suspense fallback={<a className="site-pill button-primary pricing-faq-contact" href="/get-started">Fale com um especialista</a>}>
+                      <ExpertContactLink className="site-pill button-primary pricing-faq-contact">Fale com um especialista</ExpertContactLink>
+                    </Suspense>
                   </div>
                   <div className="pricing-faq-list">
                     {questions.map(({ question, answer }) => (
@@ -174,12 +176,9 @@ export function PricingPage() {
                   <br className="pricing-final-cta-break" /> sobre uma condição personalizada.
                 </p>
                 <div className="pricing-cta-actions">
-                  <Link className="site-pill button-primary" href="/lista-de-espera">
-                    Entrar na lista de espera
-                  </Link>
-                  <a className="site-pill button-secondary" href="mailto:contato@alusa.app">
-                    Fale com um especialista
-                  </a>
+                  <Suspense fallback={<a className="site-pill button-primary" href="/get-started">Fale com um especialista</a>}>
+                    <ExpertContactLink className="site-pill button-primary">Fale com um especialista</ExpertContactLink>
+                  </Suspense>
                 </div>
               </div>
             </PricingReveal>
@@ -187,5 +186,6 @@ export function PricingPage() {
         </>
       }
     />
+    </Suspense>
   );
 }

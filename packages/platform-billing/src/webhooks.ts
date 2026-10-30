@@ -2,7 +2,7 @@ import type { StripeWebhookEvent } from '@alusa/stripe';
 import { createDefaultPlatformBillingStripeGateway } from './stripe-gateway';
 import { computeGracePeriodEnd } from './access-policy';
 import { PlatformBillingError } from './errors';
-import { resolvePlanCodeFromStripePriceId, resolveStripePriceId } from './price-mapping';
+import { isStripePriceId, resolvePlanCodeFromStripePriceId, resolveStripePriceId } from './price-mapping';
 import { isPlatformPlanCode } from './plans';
 import type { PlatformPlanCode } from './plans';
 import type {
@@ -233,11 +233,7 @@ async function processCheckoutCompleted(
     const defaultGateway = createDefaultPlatformBillingStripeGateway(input.envSource);
     const gateway = input.stripeGateway ?? defaultGateway;
     const remoteCheckout = await (gateway.retrieveCheckoutSession ?? defaultGateway.retrieveCheckoutSession)(localCheckout.stripeCheckoutSessionId);
-    const resolvedPriceId = resolveStripePriceId({
-      planCode: localCheckout.planCode,
-      environment: input.environment,
-      source: input.envSource,
-    });
+    const resolvedPriceId = resolveKnownPriceId(localCheckout.planCode, input.environment, input.envSource, localCheckout.stripePriceId);
     const checkoutMatches = localCheckout.contaId === contaId &&
       localCheckout.billingAccountId === account.id &&
       localCheckout.environment === input.environment &&
@@ -474,7 +470,11 @@ async function processSubscriptionEvent(
   }
 
   const statePriceId = readSubscriptionPriceId(subscriptionState);
-  const planCode = statePriceId ? resolvePlanCodeSafely(statePriceId, input) : account.planCode;
+  const planCode = statePriceId ? resolvePlanCodeSafely(statePriceId, input, account) : account.planCode;
+  if (readMetadata(subscriptionState).planCode === 'CUSTOM' &&
+    (!planCode || (account.planCode !== 'CUSTOM' && account.pendingPlanCode !== 'CUSTOM') || account.stripePriceId !== statePriceId)) {
+    throw new PlatformBillingError('Custom subscription Price does not match its persisted invitation condition.', 'PLATFORM_BILLING_WEBHOOK_INVALID');
+  }
   const status = mapSubscriptionStatus(readString(subscriptionState.status));
   const hasUnpaidReactivationLineage = account.pendingChangeType === 'REACTIVATE' || metadata.flow === 'reactivation';
   const waitingForFirstPaidInvoice = status === 'ACTIVE' &&
@@ -538,11 +538,7 @@ async function processSubscriptionEvent(
   const hasCanonicalPendingUpdate = Boolean(subscriptionState.pending_update);
   const confirmsPendingPlanApplied = Boolean(
     pendingPlanCode && account.pendingChangeType !== 'REACTIVATE' && shouldCommitPlan
-    && planCode === pendingPlanCode && statePriceId === resolveStripePriceId({
-      planCode: pendingPlanCode,
-      environment: input.environment,
-      source: input.envSource,
-    }),
+    && planCode === pendingPlanCode && statePriceId === resolveKnownPriceId(pendingPlanCode, input.environment, input.envSource, account.stripePriceId),
   );
   const confirmsPendingUpdateExpired = Boolean(
     pendingUpdateExpired && pendingPlanCode
@@ -565,11 +561,7 @@ async function processSubscriptionEvent(
         billingAccountId: account.id,
         environment: input.environment,
         stripeSubscriptionId: subscriptionId,
-        stripePriceId: resolveStripePriceId({
-          planCode: pendingPlanCode,
-          environment: input.environment,
-          source: input.envSource,
-        }),
+        stripePriceId: resolveKnownPriceId(pendingPlanCode, input.environment, input.envSource, account.stripePriceId),
         toPlanCode: pendingPlanCode,
         type: pendingChangeType,
         applied: confirmsPendingPlanApplied,
@@ -693,7 +685,10 @@ async function processInvoiceEvent(
     throw new PlatformBillingError('Stripe invoice contains multiple distinct non-proration prices.', 'PLATFORM_BILLING_WEBHOOK_INVALID', { invoiceId });
   }
   const priceId = invoicePrice.priceId ?? account.stripePriceId;
-  const planCode = priceId ? resolvePlanCodeSafely(priceId, input) : account.planCode;
+  if (account.planCode === 'CUSTOM' && priceId !== account.stripePriceId) {
+    throw new PlatformBillingError('Custom invoice Price does not match the persisted invitation condition.', 'PLATFORM_BILLING_WEBHOOK_INVALID');
+  }
+  const planCode = priceId ? resolvePlanCodeSafely(priceId, input, account) : account.planCode;
   const isPaymentFailedEvent = input.event.type === 'invoice.payment_failed' || input.event.type === 'invoice.payment_action_required';
   const isPaymentPaidEvent = input.event.type === 'invoice.paid' || input.event.type === 'invoice.payment_succeeded' ||
     options.verifiedCanonicalPaidInvoice === true;
@@ -1101,7 +1096,7 @@ async function validateReactivationCheckoutLineage(input: {
     checkout.stripeCustomerId !== input.customerId || checkout.idempotencyKey !== idempotencyKey ||
     (checkout.status !== 'CREATED' && checkout.status !== 'COMPLETED') ||
     checkout.planCode !== input.metadata.planCode || checkout.stripePriceId !== input.priceId ||
-    resolveStripePriceId({ planCode: checkout.planCode, environment: input.environment, source: input.source }) !== input.priceId ||
+    resolveKnownPriceId(checkout.planCode, input.environment, input.source, checkout.stripePriceId) !== input.priceId ||
     readCheckoutCancelRequestKey(checkout.cancelUrl) !== idempotencyKey) {
     throw new PlatformBillingError('Reactivation lineage does not match the persisted tenant Checkout.', 'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED');
   }
@@ -1149,7 +1144,7 @@ async function validatePaidSubscriptionCheckoutLineage(input: {
   if (!checkout || checkout.billingAccountId !== input.account.id || checkout.stripeCustomerId !== input.customerId ||
     checkout.idempotencyKey !== idempotencyKey || (checkout.status !== 'CREATED' && checkout.status !== 'COMPLETED') ||
     checkout.planCode !== input.metadata.planCode || checkout.stripePriceId !== input.priceId ||
-    resolveStripePriceId({ planCode: checkout.planCode, environment: input.environment, source: input.source }) !== input.priceId ||
+    resolveKnownPriceId(checkout.planCode, input.environment, input.source, checkout.stripePriceId) !== input.priceId ||
     readCheckoutCancelRequestKey(checkout.cancelUrl) !== idempotencyKey) {
     throw new PlatformBillingError('Paid subscription does not match the persisted tenant Checkout.', 'PLATFORM_BILLING_WEBHOOK_PROCESSING_FAILED');
   }
@@ -1178,11 +1173,12 @@ async function cancelSupersededPausedTrialSubscriptions(input: {
   gateway: Pick<PlatformBillingStripeGateway, 'listCustomerSubscriptions' | 'cancelSubscription'>;
 }): Promise<void> {
   const customerId = input.account.stripeCustomerId;
-  const configuredOldPriceId = resolveStripePriceId({
-    planCode: input.oldPlanCode,
-    environment: input.environment,
-    source: input.source,
-  });
+  const configuredOldPriceId = resolveKnownPriceId(
+    input.oldPlanCode,
+    input.environment,
+    input.source,
+    input.account.stripePriceId,
+  );
   if (!customerId || !input.newPlanCode || !input.newPriceId ||
     !input.oldSubscriptionId || input.oldSubscriptionId === input.newSubscriptionId ||
     configuredOldPriceId !== input.oldPriceId) {
@@ -1331,9 +1327,20 @@ function shouldCommitPlanFromSubscriptionStatus(status: PlatformBillingAccountSt
   return status === 'ACTIVE' || status === 'TRIALING' || status === 'PAST_DUE' || status === 'UNPAID' || status === 'PAUSED';
 }
 
+function resolveKnownPriceId(
+  planCode: PlatformPlanCode,
+  environment: PlatformBillingEnvironment,
+  source?: Record<string, string | undefined>,
+  customPriceId?: string | null,
+) {
+  if (planCode === 'CUSTOM' && isStripePriceId(customPriceId)) return customPriceId;
+  return resolveStripePriceId({ planCode, environment, source });
+}
+
 function resolvePlanCodeSafely(
   priceId: string,
   input: ProcessPlatformBillingWebhookInput,
+  account?: PlatformBillingAccountRecord,
 ): PlatformPlanCode | null {
   try {
     return resolvePlanCodeFromStripePriceId(priceId, {
@@ -1341,6 +1348,7 @@ function resolvePlanCodeSafely(
       STRIPE_ENVIRONMENT: input.environment,
     }).planCode;
   } catch {
+    if ((account?.planCode === 'CUSTOM' || account?.pendingPlanCode === 'CUSTOM') && account.stripePriceId === priceId) return 'CUSTOM';
     return null;
   }
 }

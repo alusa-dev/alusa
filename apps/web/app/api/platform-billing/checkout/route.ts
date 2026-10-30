@@ -16,6 +16,7 @@ import {
   resolvePlatformBillingActor,
 } from '@/src/server/platform-billing/platform-billing-server';
 import { resolveTenantPlatformBillingCheckoutPlan } from '@/src/server/platform-billing/checkout-commercial-resolution';
+import { resolveAcceptedInvitationBillingSelection } from '@/src/server/platform-billing/accepted-invitation-billing-selection';
 
 const checkoutSchema = z.object({
   idempotencyKey: z.string().trim().min(1).max(128).optional(),
@@ -71,6 +72,9 @@ export async function POST(req: NextRequest) {
     const forbidden = assertCanManagePlatformBilling(actor.canManagePlatformBilling);
     if (forbidden) return forbidden;
 
+    // Serialize support condition revisions against Checkout creation.
+    await tx.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "PlatformSchoolInvitation" WHERE "acceptedContaId" = ${contaId} AND "status" = 'ACCEPTED' FOR UPDATE`;
+
     const environment = resolvePlatformBillingEnvironment();
     const commercialPlan = await resolveTenantPlatformBillingCheckoutPlan({
       tx,
@@ -96,6 +100,23 @@ export async function POST(req: NextRequest) {
           activeStudents: commercialPlan.studentCount,
         }, { status: 422 });
     }
+    const invitationSelection = await resolveAcceptedInvitationBillingSelection({
+      tx,
+      contaId,
+      fallbackStudentCount: commercialPlan.studentCount,
+    });
+    if (invitationSelection.kind === 'ACCEPTANCE_REQUIRED') {
+      return NextResponse.json({
+        error: 'INVITATION_CONDITION_ACCEPTANCE_REQUIRED',
+        currentVersion: invitationSelection.currentVersion,
+        selectedStudentCount: invitationSelection.selectedStudentCount,
+      }, { status: 409 });
+    }
+    const invitation = invitationSelection.kind === 'ACCEPTED' ? invitationSelection.invitation : null;
+    const selectedStudentCount = invitationSelection.selectedStudentCount;
+    if (invitationSelection.kind === 'ACCEPTED' && invitationSelection.selectedPlanCode !== commercialPlan.planCode) {
+      return NextResponse.json({ error: 'INVITATION_CONDITION_SELECTION_MISMATCH' }, { status: 409 });
+    }
     const { planCode, currentBand } = commercialPlan;
 
     const origin = new URL(req.url).origin;
@@ -110,6 +131,9 @@ export async function POST(req: NextRequest) {
           contaName: actor.conta?.nome ?? 'Conta Alusa',
           billingEmail: actor.user?.email ?? undefined,
           planCode,
+          stripePriceId: commercialPlan.stripePriceId,
+          invitationId: invitation?.id,
+          quantity: invitation?.conditionType === 'CUSTOM' && invitation.stripeProductId ? selectedStudentCount : undefined,
           successUrl: `${origin}/conta/plano-faturamento?checkout=success`,
           cancelUrl: cancelUrl.toString(),
           actorUserId: userId,

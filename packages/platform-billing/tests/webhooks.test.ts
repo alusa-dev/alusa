@@ -56,6 +56,37 @@ describe('@alusa/platform-billing webhooks', () => {
     expect(store.accounts).toEqual(before);
   });
 
+  it('accepts a custom invitation Price only when it matches the account bound Price', async () => {
+    const custom = 'price_custom_invitation';
+    const store = createMemoryStore([buildAccount({
+      status: 'TRIALING', accessStatus: 'ACTIVE', planCode: 'CUSTOM', stripeCustomerId: 'cus_custom',
+      stripeSubscriptionId: 'sub_custom', stripePriceId: custom,
+    })]);
+    await processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_custom_trial_update', 'customer.subscription.updated', {
+        id: 'sub_custom', customer: 'cus_custom', status: 'trialing', cancel_at_period_end: false,
+        metadata: { contaId: 'conta_1', billingContext: 'platform', planCode: 'CUSTOM', conditionType: 'custom' },
+        items: { data: [{ price: { id: custom } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, store);
+    expect(store.accounts[0]).toMatchObject({ planCode: 'CUSTOM', stripePriceId: custom, status: 'TRIALING', accessStatus: 'ACTIVE' });
+
+    const unrelated = createMemoryStore([buildAccount({
+      status: 'TRIALING', accessStatus: 'ACTIVE', planCode: 'CUSTOM', stripeCustomerId: 'cus_custom',
+      stripeSubscriptionId: 'sub_custom', stripePriceId: custom,
+    })]);
+    await expect(processPlatformBillingWebhookEvent({
+      event: stripeEvent('evt_custom_wrong_price', 'customer.subscription.updated', {
+        id: 'sub_custom', customer: 'cus_custom', status: 'trialing', cancel_at_period_end: false,
+        metadata: { contaId: 'conta_1', billingContext: 'platform', planCode: 'CUSTOM' },
+        items: { data: [{ price: { id: 'price_other_custom' } }] },
+      }),
+      environment: 'TEST', envSource,
+    }, unrelated)).rejects.toMatchObject({ code: 'PLATFORM_BILLING_WEBHOOK_INVALID' });
+    expect(unrelated.accounts[0]?.stripePriceId).toBe(custom);
+  });
+
   it('rejects cross-Conta checkout metadata without changing either account', async () => {
     const store = createMemoryStore([
       buildAccount({ id: 'pba_a', contaId: 'conta_a', status: 'PAST_DUE', accessStatus: 'RESTRICTED', stripeCustomerId: 'cus_a', stripeSubscriptionId: 'sub_a' }),

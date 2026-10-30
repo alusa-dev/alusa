@@ -46,9 +46,14 @@ export async function POST(request: Request) {
     const status = mobileAuthErrorStatus(error);
     const message = error instanceof MobileAuthError && error.code === 'INVALID_INPUT'
       ? 'Refresh token inválido.'
-      : 'Sessão expirada. Faça login novamente.';
+      : error instanceof MobileAuthError && error.code === 'EMAIL_NOT_VERIFIED'
+        ? 'Confirme seu e-mail antes de continuar.'
+        : 'Sessão expirada. Faça login novamente.';
+    const code = error instanceof MobileAuthError && error.code === 'EMAIL_NOT_VERIFIED'
+      ? 'EMAIL_NOT_VERIFIED'
+      : status === 400 ? 'VALIDATION_ERROR' : 'UNAUTHORIZED';
     return NextResponse.json(
-      { error: { code: status === 400 ? 'VALIDATION_ERROR' : 'UNAUTHORIZED', message } },
+      { error: { code, message } },
       { status, headers: { 'Cache-Control': 'no-store' } },
     );
   }

@@ -44,6 +44,7 @@ export class MobileAuthError extends Error {
     public readonly code:
       | 'INVALID_INPUT'
       | 'INVALID_CREDENTIALS'
+      | 'EMAIL_NOT_VERIFIED'
       | 'ACCOUNT_UNAVAILABLE'
       | 'SESSION_REVOKED',
   ) {
@@ -204,6 +205,7 @@ export async function loginMobile(
         : 'INVALID_CREDENTIALS',
     );
   }
+  if (!result.user.emailVerifiedAt) throw new MobileAuthError('EMAIL_NOT_VERIFIED');
 
   const memberships = await loadMemberships(result.user.id, result.user.contaId ?? '', result.user.role);
   const active = selectMembership(memberships, parsed.data.contaId);
@@ -279,6 +281,7 @@ export async function refreshMobileSession(
     sessionVersion: oldSession.user.sessionVersion,
   });
   if (!access.ok) throw new MobileAuthError('SESSION_REVOKED');
+  if (!access.emailVerified) throw new MobileAuthError('EMAIL_NOT_VERIFIED');
 
   const memberships = await loadMemberships(oldSession.user.id, oldSession.user.contaId, oldSession.user.role);
   const active = selectMembership(memberships, parsed.data.contaId ?? access.contaId);
@@ -356,7 +359,7 @@ export async function verifyMobileAccessToken(token: string) {
     ) return null;
 
     const access = await resolveSessionAccess({ userId, contaId, sessionVersion });
-    if (!access.ok || access.contaId !== contaId) return null;
+    if (!access.ok || access.contaId !== contaId || !access.emailVerified) return null;
 
     await prisma.mobileAuthSession.update({ where: { id: sessionId }, data: { lastUsedAt: new Date() } });
     return { userId, sessionId, sessionVersion, contaId, role: access.role };
@@ -368,5 +371,6 @@ export async function verifyMobileAccessToken(token: string) {
 export function mobileAuthErrorStatus(error: unknown) {
   if (!(error instanceof MobileAuthError)) return 500;
   if (error.code === 'INVALID_INPUT') return 400;
+  if (error.code === 'EMAIL_NOT_VERIFIED') return 403;
   return 401;
 }

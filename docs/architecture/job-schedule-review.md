@@ -1,12 +1,12 @@
 # Revisão do catálogo de jobs agendados
 
-Revisão estática de 19/10/2026, baseada em [`job-ownership.json`](./job-ownership.json),
-[`apps/web/vercel.json`](../../apps/web/vercel.json), nos 37 schedules do manifest e
-nos entrypoints chamados pelas respectivas rotas. O catálogo contém **37
-schedules e 36 rotas únicas**; `rebuild-billing-read-models` é chamado por dois
+Revisão estática de 30/10/2026, baseada em [`job-ownership.json`](./job-ownership.json),
+[`apps/web/vercel.json`](../../apps/web/vercel.json), nos 39 schedules do manifest e
+nos entrypoints chamados pelas respectivas rotas. O catálogo contém **39
+schedules e 38 rotas únicas**; `rebuild-billing-read-models` é chamado por dois
 schedules distintos, descritos em linhas separadas abaixo.
 
-<!-- cron-counts: schedules=37 unique-routes=36 -->
+<!-- cron-counts: schedules=39 unique-routes=38 -->
 
 Os limites abaixo são os parâmetros de cada chamada Vercel e o `maxDuration`
 declarado pela rota; `maxDuration` é um limite de runtime, não um SLA. O SLA de
@@ -57,6 +57,8 @@ os demais parâmetros permanecem descritivos do manifest vigente.
 | `rematriculas-run` | `*/5 * * * *` · `maxAccounts=25`, `limit=25` · runtime 300s · [rota](../../apps/web/app/api/jobs/rematriculas/run/route.ts) | `domain` · rematrícula com efeitos financeiros. Serviços `activateRenewalProcessesFromJob`, `materializeRenewalContractsFromJob`, `provisionFutureFinancialAgreementsFromJob`, `processRenewalOutboxFromJob`; fontes `RematriculaOutbox`, `ContratoFuturo`, `AcordoFinanceiroFuturo`, `Matricula`. | `CRITICAL_FINANCE` · até 25 contas e 25 por conta; etapas sequenciais por conta · grupo `rematriculas`. | `idempotent-backoff`. Sem contratos/agreements/outbox/ativações elegíveis, no-op. Estado `REQUIRES_ATTENTION` é pendência de negócio, não falha técnica. SLA não definido. |
 | `whatsapp` | `*/5 * * * *` · `outboxLimit=50`, `webhookLimit=100` · runtime 60s · [rota](../../apps/web/app/api/jobs/whatsapp/route.ts) | `whatsapp` · webhooks/outbox e notificações de contratos/eventos. `drainWhatsAppWebhooks`, `drainWhatsAppOutbox`, `drainContractWhatsAppNotifications`, `drainEventTicketWhatsAppNotifications`; modelos `WhatsAppWebhookEvent`, `WhatsAppOutboundJob`, `ContractWhatsAppNotification`, `EventTicketWhatsAppNotification`. | `NOTIFICATION` · limites 50/100 e drains específicos · grupo `whatsapp`. | `idempotent-backoff`. Sem eventos/outbox notificáveis, no-op. SLA de entrega não definido. |
 | `cleanup-upload-reservations` | `*/10 * * * *` · sem limite no manifest; serviço busca tenants e processa reservas elegíveis · runtime 60s · [rota](../../apps/web/app/api/jobs/cleanup-upload-reservations/route.ts) | `uploads` · limpeza de uploads temporários/expirados. `listTenantIdsForUploadCleanup`, `TenantUploadReservation`, `deleteStorageObject`, `releaseTenantUpload`; escopo por tenant. | `MAINTENANCE` · lote interno por tenant · grupo `upload-cleanup`. | `bounded-backoff`. Sem reservas pendentes/expiradas ou objetos a limpar, no-op. SLA de retenção não definido. |
+| `expire-expert-contact-pii` | `15 3 * * *` · runtime 30s · [rota](../../apps/web/app/api/jobs/expire-expert-contact-pii/route.ts) | `privacy` · retenção de dados dos contatos públicos. `redactExpiredExpertContactLeadPii`; atualiza leads elegíveis na outbox de contatos especialistas. | `MAINTENANCE` · grupo `expert-contact-retention`. | `bounded-backoff`. Sem dados vencidos, no-op. SLA de retenção segue a política do serviço. |
+| `process-hubspot-account-created-outbox` | `* * * * *` · lote 1 · runtime 60s · [rota](../../apps/web/app/api/jobs/process-hubspot-account-created-outbox/route.ts) | `public-integrations` · entrega de novas contas ao HubSpot via `drainHubSpotAccountCreatedOutbox` e `HubSpotAccountCreatedOutbox`; claim por lease. | `INTEGRATION` · grupo `hubspot-account-created`. | `lease-and-retry`. Sem linha elegível ou com integração desabilitada, no-op; lease/token impedem claim expirado de finalizar trabalho assumido por outro worker. SLA de entrega não definido. |
 
 ## Grupos de exclusão e locks verificados
 

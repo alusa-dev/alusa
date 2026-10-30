@@ -6,11 +6,12 @@ import { cn } from '@/lib/utils';
 /** Proporção do wordmark exportado (1734.07 × 527.81). */
 export const BRAND_WORDMARK_ASPECT = 1734.07 / 527.81;
 
-export type BrandWordmarkVariant = 'purple' | 'white';
+export type BrandWordmarkVariant = 'purple' | 'white' | 'offWhite';
 
 const WORDMARK_SRC: Record<BrandWordmarkVariant, string> = {
   purple: '/brand/logo-dark.svg',
   white: '/brand/logo-light.svg',
+  offWhite: '/brand/logo-off-white.svg',
 };
 
 type BrandWordmarkProps = Omit<ImgHTMLAttributes<HTMLImageElement>, 'src' | 'alt'> & {

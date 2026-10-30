@@ -41,6 +41,9 @@ vi.mock('@/src/server/platform-billing/platform-billing-server', () => ({
 vi.mock('@/src/server/platform-billing/plan-change-actions', () => ({
   scheduleStablePlatformPriceBandTransition: vi.fn(),
 }));
+vi.mock('@/src/server/platform-billing/custom-quantity-sync', () => ({
+  syncCustomSubscriptionQuantityForMonthlyClose: vi.fn(async () => []),
+}));
 
 import { capturePlatformBillingMonthlySnapshots } from '@/src/server/platform-billing/monthly-snapshots';
 import { countActivePlatformBillingStudents, PlatformBillingHistoricalCountInconclusive } from '@/src/server/platform-billing/platform-billing-server';

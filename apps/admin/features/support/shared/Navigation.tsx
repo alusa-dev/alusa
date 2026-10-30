@@ -10,7 +10,16 @@ type NavigationGroup = { label: string; items: NavigationItem[] };
 const navigationGroups: NavigationGroup[] = [
   {
     label: 'Gestão',
-    items: [{ href: '/contas', label: 'Contas', description: 'Escolas e organizações da plataforma' }],
+    items: [
+      { href: '/contas', label: 'Contas', description: 'Escolas e organizações da plataforma' },
+    ],
+  },
+  {
+    label: 'Convites',
+    items: [
+      { href: '/convites/novo', label: 'Convidar escolas', description: 'Criar convite comercial para uma escola' },
+      { href: '/convites', label: 'Gestão de convites', description: 'Consultar e acompanhar convites enviados' },
+    ],
   },
   {
     label: 'Integrações',

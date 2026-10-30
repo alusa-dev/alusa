@@ -2357,8 +2357,8 @@ export const legalPages = {
   suboperadores: {
     slug: 'suboperadores',
     title: 'Política de Suboperadores',
-    version: LEGAL_DOCUMENT_VERSION,
-    updatedAt,
+    version: '2026-10-29',
+    updatedAt: '29 de outubro de 2026',
     intro:
       'Esta Política de Suboperadores explica quais terceiros podem apoiar a Alusa no fornecimento da plataforma, quais atividades eles realizam, quais categorias de dados podem ser envolvidas, quais medidas de governança são adotadas e como mudanças relevantes na lista de suboperadores são comunicadas.',
     sections: [
@@ -2420,6 +2420,7 @@ export const legalPages = {
             ['Vercel', 'Hospedagem, infraestrutura de aplicação, deploy, entrega de conteúdo e operação técnica do site e/ou aplicação', 'Dados técnicos, IPs, user-agent, metadados de requisição, logs técnicos e dados processados pela aplicação conforme configuração', 'Conforme contrato, configuração técnica e infraestrutura do fornecedor', 'Ativo'],
             ['Sentry', 'Observabilidade, monitoramento de erros, performance, diagnóstico técnico e estabilidade da aplicação', 'Eventos técnicos sanitizados, logs de erro, metadados de ambiente, rotas, stack traces e dados técnicos minimizados', 'Conforme contrato e configuração técnica do fornecedor', 'Ativo'],
             ['Resend / provedor de e-mail transacional', 'Envio de e-mails transacionais, operacionais, autenticação, segurança, confirmação de conta, notificações e comunicações necessárias', 'Nome, e-mail, conteúdo transacional, metadados de entrega, status de envio e logs técnicos relacionados', 'Conforme contrato, configuração técnica e infraestrutura do fornecedor', 'Ativo'],
+            ['HubSpot', 'Recebimento e organização de solicitações de contato comercial enviadas pelo formulário público da Alusa', 'Nome, e-mail, escola ou instituição, telefone, tipo de instituição, faixa estimada de alunos e dados da solicitação', 'Não informada nesta Política', 'Condicionado à configuração da integração'],
           ],
         },
       },
@@ -2454,6 +2455,14 @@ export const legalPages = {
           'A Alusa poderá utilizar Resend ou outro provedor de e-mail transacional para envio de comunicações necessárias à operação da plataforma, incluindo: confirmação de e-mail; redefinição de senha; convites de usuários; alertas de segurança; notificações operacionais; comunicações sobre conta; avisos relacionados a privacidade ou documentos legais; e-mails transacionais ligados a funcionalidades da plataforma; comunicações de suporte ou atendimento, quando aplicável.',
           'Os dados tratados por esse provedor podem incluir nome, e-mail, assunto, conteúdo da mensagem, identificadores de envio, status de entrega, logs técnicos, horários de envio, rejeições, aberturas ou cliques, quando esses recursos forem habilitados e compatíveis com a finalidade.',
           'Comunicações estritamente necessárias à execução do serviço, autenticação, segurança, cobrança, suporte e cumprimento legal podem ser enviadas independentemente de consentimento para marketing. Comunicações promocionais, quando existirem, observarão a base legal aplicável e mecanismos de descadastro quando exigidos.',
+        ],
+      },
+      {
+        title: '10.1 HubSpot',
+        body: [
+          'Quando a integração estiver habilitada, o HubSpot poderá receber e organizar solicitações enviadas pelo formulário público de contato comercial da Alusa.',
+          'Os dados enviados se limitam aos campos preenchidos no formulário, como nome, e-mail, escola ou instituição, telefone, tipo de instituição e faixa estimada de alunos. A Alusa não envia para esse fluxo dados acadêmicos ou financeiros de alunos.',
+          'A localização do tratamento não é especificada nesta Política. Consulte os termos e informações de privacidade do fornecedor para detalhes aplicáveis ao serviço.',
         ],
       },
       {

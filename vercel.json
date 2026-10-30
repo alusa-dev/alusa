@@ -149,6 +149,14 @@
     {
       "path": "/api/jobs/cleanup-upload-reservations",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/jobs/expire-expert-contact-pii",
+      "schedule": "15 3 * * *"
+    },
+    {
+      "path": "/api/jobs/process-hubspot-account-created-outbox",
+      "schedule": "* * * * *"
     }
   ]
 }

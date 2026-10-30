@@ -9,6 +9,7 @@ import { prisma as defaultPrisma } from '@/lib/prisma';
 import { logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { countActivePlatformBillingStudents, PlatformBillingHistoricalCountInconclusive, resolvePlatformBillingEnvironment } from './platform-billing-server';
 import { scheduleStablePlatformPriceBandTransition } from './plan-change-actions';
+import { syncCustomSubscriptionQuantityForMonthlyClose } from './custom-quantity-sync';
 
 const MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
 const MONTHLY_RECOVERY_RETRY_COOLDOWN_MS = 60 * 60 * 1000;
@@ -107,6 +108,7 @@ export async function capturePlatformBillingMonthlySnapshots(input: {
     if (!close.canCapture) {
       // Recovery records the original month only. It never evaluates a price
       // transition; the regular monthly close owns that decision.
+      await retryCustomQuantitySync({ contaId: conta.id, environment, periodStart, now });
       continue;
     }
     const result = await runWithTenant(conta.id, async (tx) => {
@@ -185,7 +187,7 @@ export async function capturePlatformBillingMonthlySnapshots(input: {
         take: 3,
         select: { periodStart: true, candidateBand: true },
       });
-      const stableBand = resolveStableSchoolPriceBand({
+      const stableBand = billingAccount?.planCode === 'CUSTOM' ? null : resolveStableSchoolPriceBand({
         currentBand: billingAccount?.planCode && isSchoolBand(billingAccount.planCode)
           ? billingAccount.planCode
           : null,
@@ -255,6 +257,7 @@ export async function capturePlatformBillingMonthlySnapshots(input: {
         stableBand,
       };
     });
+    await retryCustomQuantitySync({ contaId: conta.id, environment, periodStart, now });
     if (result.inserted) captured += 1;
     if (result.specialistReady) readyForSpecialist += 1;
     if (result.specialistNoticeCreated) specialistNoticesCreated += 1;
@@ -294,6 +297,28 @@ export async function capturePlatformBillingMonthlySnapshots(input: {
   }
 
   return { checked, captured, recovered, readyForSpecialist, transitionsScheduled, specialistNoticesCreated, inconclusive };
+}
+
+async function retryCustomQuantitySync(input: {
+  contaId: string;
+  environment: PlatformBillingEnvironment;
+  periodStart: Date;
+  now: Date;
+}) {
+  try {
+    await syncCustomSubscriptionQuantityForMonthlyClose(input);
+  } catch (error) {
+    // The monthly snapshot is already durable. Quantity sync has its own
+    // persisted retry state and must not rewrite the close as inconclusive.
+    logApiOperationalEvent({
+      severity: 'error',
+      eventName: 'job.platform_billing.custom_quantity_sync.failed',
+      route: '/api/jobs/platform-billing-maintenance',
+      method: 'JOB',
+      requestId: `${input.environment}:${input.contaId}:${input.periodStart.toISOString().slice(0, 10)}`,
+      error,
+    });
+  }
 }
 
 async function recoverOpenMonthlyCloseIssues(input: {

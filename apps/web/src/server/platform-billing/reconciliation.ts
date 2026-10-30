@@ -272,7 +272,9 @@ export async function reconcilePlatformBilling(input: {
             issues += 1;
           }
         } catch {
-          await upsertIssue(db, {
+          if ((account.planCode === 'CUSTOM' || account.pendingPlanCode === 'CUSTOM') && account.stripePriceId === subscription.priceId) {
+            resolvedPlanCode = 'CUSTOM';
+          } else await upsertIssue(db, {
             contaId: account.contaId,
             billingAccountId: account.id,
             environment,
@@ -514,11 +516,13 @@ export async function correctAccountFromStripeSubscription(
       input.account.pendingChangeType === 'DOWNGRADE') &&
     input.account.pendingPlanCode &&
     input.account.pendingPlanCode === planCode &&
-    input.subscription.priceId === resolveStripePriceId({
-      planCode: input.account.pendingPlanCode as PublicPlatformPlanCode,
-      environment: input.environment,
-      source: process.env,
-    }) &&
+    input.subscription.priceId === (input.account.pendingPlanCode === 'CUSTOM'
+      ? input.account.stripePriceId
+      : resolveStripePriceId({
+          planCode: input.account.pendingPlanCode as PublicPlatformPlanCode,
+          environment: input.environment,
+          source: process.env,
+        })) &&
     (desiredStatus === 'ACTIVE' ||
       desiredStatus === 'TRIALING' ||
       desiredStatus === 'PAST_DUE' ||

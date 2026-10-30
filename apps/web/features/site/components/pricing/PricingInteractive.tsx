@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { SlidingNumber } from '@/components/core/sliding-number';
 import { PricingReveal } from '@/features/site/components/pricing/PricingReveal';
 import { getSchoolPricingTier, SCHOOL_PRICING_TIERS } from '@/lib/school-pricing-ui';
@@ -26,16 +27,38 @@ function simulatorMoney(value: number) {
 export function PricingInteractive({
   beforeTiers,
   afterTiers,
+  selfServiceEnabled = true,
 }: {
   beforeTiers?: ReactNode;
   afterTiers?: ReactNode;
+  selfServiceEnabled?: boolean;
 }) {
-  const [students, setStudents] = useState(165);
-  const [studentDraft, setStudentDraft] = useState('165');
+  const searchParams = useSearchParams();
+  const requestedCount = Number(searchParams.get('studentCount'));
+  const initialCount = Number.isSafeInteger(requestedCount) && requestedCount >= 1 ? requestedCount : 165;
+  const [students, setStudents] = useState(initialCount);
+  const [studentDraft, setStudentDraft] = useState(String(initialCount));
   const selectedTier = getSchoolPricingTier(students);
   const needsSpecialist = students > 500;
+  const rangeValue = Math.min(students, 501);
   const selectedPrice = selectedTier?.price ?? 0;
   const formattedPrice = simulatorMoney(selectedPrice);
+  const parsedDraftCount = Number(studentDraft);
+  const contactStudentCount = Number.isSafeInteger(parsedDraftCount) && parsedDraftCount >= 1 ? parsedDraftCount : students;
+  const expertContactHref = `/get-started?studentCount=${contactStudentCount}`;
+  const pricingCtaHref = needsSpecialist || !selfServiceEnabled
+    ? expertContactHref
+    : `/auth/register?studentCount=${contactStudentCount}`;
+  const pricingCtaLabel = needsSpecialist || !selfServiceEnabled
+    ? 'Fale com a Alusa'
+    : 'Teste grátis por 14 dias';
+
+  useEffect(() => {
+    if (window.location.pathname !== '/precos') return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('studentCount', String(contactStudentCount));
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [contactStudentCount]);
 
   function updateStudentDraft(value: string) {
     if (!/^\d*$/.test(value)) return;
@@ -101,18 +124,19 @@ export function PricingInteractive({
                 className="pricing-range"
                 type="range"
                 min={1}
-                max={500}
+                max={501}
                 step={1}
-                value={Math.min(students, 500)}
+                value={rangeValue}
                 style={{
-                  '--pricing-range-progress': `${((Math.min(students, 500) - 1) / 499) * 100}%`,
+                  '--pricing-range-progress': `${((rangeValue - 1) / 500) * 100}%`,
                 } as CSSProperties}
                 onChange={(event) => updateFromRange(event.currentTarget.value)}
-                aria-label="Quantidade de alunos, de 1 a 500"
+                aria-label="Quantidade de alunos"
+                aria-valuetext={needsSpecialist ? 'Mais de 500 alunos' : `${students} alunos`}
               />
               <p id="pricing-count-help" className="pricing-range-labels">
                 <span>1 aluno</span>
-                <span>500 alunos</span>
+                <span>Mais de 500 alunos</span>
               </p>
               {studentDraft !== '' &&
                 (!Number.isInteger(Number(studentDraft)) ||
@@ -126,7 +150,7 @@ export function PricingInteractive({
             <div className="pricing-result">
               <span className="pricing-result-label">{needsSpecialist ? 'Mais de 500 alunos' : selectedTier?.label}</span>
               {needsSpecialist ? (
-                <strong>Condição personalizada</strong>
+                <strong className="pricing-result-custom">Condição personalizada</strong>
               ) : (
                 <strong aria-hidden="true">
                   <span className="pricing-result-currency">R$</span>
@@ -144,13 +168,9 @@ export function PricingInteractive({
               </p>
               <a
                 className="site-pill button-primary pricing-result-action"
-                href={
-                  needsSpecialist
-                    ? 'mailto:contato@alusa.app?subject=Plano%20para%20escola%20com%20mais%20de%20500%20alunos'
-                    : '/lista-de-espera'
-                }
+                href={pricingCtaHref}
               >
-                {needsSpecialist ? 'Conversar com um especialista' : 'Entrar na lista de espera'}
+                {pricingCtaLabel}
               </a>
             </div>
           </section>
@@ -188,9 +208,9 @@ export function PricingInteractive({
                 </div>
                 <a
                   className="site-pill button-primary pricing-tier-contact-button"
-                  href="mailto:contato@alusa.app?subject=Plano%20para%20escola%20com%20500%20alunos"
+                  href={pricingCtaHref}
                 >
-                  Fale com um especialista
+                  {pricingCtaLabel}
                 </a>
               </div>
             </div>
@@ -222,7 +242,10 @@ export function PricingInteractive({
                       </tr>
                     );
                   })}
-                  <tr>
+                  <tr
+                    className={needsSpecialist ? 'is-selected' : undefined}
+                    aria-current={needsSpecialist ? 'true' : undefined}
+                  >
                     <th scope="row">Mais de 500 alunos</th>
                     <td>Condição personalizada</td>
                   </tr>

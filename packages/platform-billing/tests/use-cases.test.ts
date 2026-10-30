@@ -962,6 +962,23 @@ describe('@alusa/platform-billing use cases', () => {
     expect(store.accounts[0]?.pendingPlanCode).toBe('BAND_001_025');
   });
 
+  it('creates Checkout with the fixed custom invitation Price without mapping it to a public band', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    const input = checkoutInputWithKey('idem_custom_checkout', {
+      planCode: 'CUSTOM', stripePriceId: 'price_custom_123', invitationId: 'invitation_123', quantity: 40,
+    });
+    const result = await createPlatformBillingCheckoutSession(input, { store, stripeGateway });
+    expect(result.reused).toBe(false);
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledWith(expect.objectContaining({
+      priceId: 'price_custom_123', trialDays: null,
+      quantity: 40,
+      metadata: expect.objectContaining({ planCode: 'CUSTOM', conditionType: 'custom', invitationId: 'invitation_123', studentCount: '40' }),
+    }));
+    expect(store.accounts[0]?.pendingPlanCode).toBe('CUSTOM');
+    expect(store.checkoutSessions[0]).toMatchObject({ planCode: 'CUSTOM', stripePriceId: 'price_custom_123' });
+  });
+
   it('nao reaplica trial quando conta ja teve assinatura Stripe', async () => {
     const store = createMemoryStore([
       {
@@ -1886,6 +1903,36 @@ describe('@alusa/platform-billing use cases', () => {
       .toEqual(['alusa:TEST:conta_1:checkout:idem_1', 'alusa:TEST:conta_1:checkout:idem_1']);
   });
 
+  it('recovers an ambiguous custom Checkout with the same key and preserves its Price and condition', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.createCheckoutSession = vi.fn()
+      .mockRejectedValueOnce(new Error('timeout after Stripe may have created Checkout'))
+      .mockResolvedValueOnce({ id: 'cs_custom_recovered', url: 'https://checkout.stripe.test/custom', expiresAt: new Date('2026-06-28T12:00:00.000Z') });
+    const customInput = (idempotencyKey: string) => checkoutInputWithKey(idempotencyKey, {
+      planCode: 'CUSTOM', stripePriceId: 'price_custom_123', invitationId: 'invitation_123',
+      cancelUrl: `https://app.alusa.test/billing/cancel?studentCount=75&checkoutRequestKey=${idempotencyKey}`,
+    });
+
+    await expect(createPlatformBillingCheckoutSession(customInput('custom-checkout-recovery'), { store, stripeGateway }))
+      .rejects.toThrow('timeout after Stripe may have created Checkout');
+    await expect(createPlatformBillingCheckoutSession(customInput('custom-checkout-distinct'), { store, stripeGateway }))
+      .rejects.toMatchObject({ code: 'PLATFORM_BILLING_CHECKOUT_IN_PROGRESS' });
+    const result = await createPlatformBillingCheckoutSession(customInput('custom-checkout-recovery'), { store, stripeGateway });
+
+    expect(result).toMatchObject({ checkoutSessionId: 'cs_custom_recovered', reused: false });
+    expect(stripeGateway.createCheckoutSession).toHaveBeenCalledTimes(2);
+    expect(stripeGateway.createCheckoutSession.mock.calls.map(([args]) => args)).toEqual([
+      expect.objectContaining({ priceId: 'price_custom_123', metadata: expect.objectContaining({ planCode: 'CUSTOM', invitationId: 'invitation_123', conditionType: 'custom' }) }),
+      expect.objectContaining({ priceId: 'price_custom_123', metadata: expect.objectContaining({ planCode: 'CUSTOM', invitationId: 'invitation_123', conditionType: 'custom' }) }),
+    ]);
+    expect(new Set(stripeGateway.createCheckoutSession.mock.calls.map(([args]) => args.idempotencyKey)).size).toBe(1);
+    expect(store.checkoutSessions).toHaveLength(1);
+    expect(store.checkoutSessions[0]).toMatchObject({ planCode: 'CUSTOM', stripePriceId: 'price_custom_123', idempotencyKey: 'custom-checkout-recovery' });
+    expect(store.accounts).toHaveLength(1);
+    expect(store.accounts[0]?.pendingPlanCode).toBe('CUSTOM');
+  });
+
   it('bloqueia chave diferente enquanto claim vivo e falha fechado após expiração do request Stripe', async () => {
     const store = createMemoryStore();
     const stripeGateway = createStripeGatewayMock();
@@ -1992,6 +2039,61 @@ describe('@alusa/platform-billing use cases', () => {
       stripePriceId: 'price_premium_test',
     });
     expect(store.auditLogs[0]?.action).toBe('PLATFORM_BILLING_TRIAL_WITHOUT_PAYMENT_METHOD_CREATED');
+  });
+
+  it('uses the accepted invitation Price and trial duration for a custom trial', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    const result = await createPlatformBillingTrialWithoutPaymentMethod({
+      contaId: 'conta_1', contaName: 'Escola Alusa', planCode: 'CUSTOM',
+      stripePriceId: 'price_custom_123', invitationId: 'invitation_123', quantity: 40, trialDays: 21,
+      idempotencyKey: 'idem_custom_trial', envSource,
+    }, { store, stripeGateway });
+
+    expect(result.reused).toBe(false);
+    expect(stripeGateway.createTrialSubscriptionWithoutPaymentMethod).toHaveBeenCalledWith(expect.objectContaining({
+      priceId: 'price_custom_123', quantity: 40, trialDays: 21,
+      metadata: expect.objectContaining({ planCode: 'CUSTOM', invitationId: 'invitation_123', conditionType: 'custom', studentCount: '40' }),
+    }));
+    expect(store.accounts[0]).toMatchObject({ planCode: 'CUSTOM', stripePriceId: 'price_custom_123', trialEndsAt: expect.any(Date) });
+  });
+
+  it('recovers an ambiguous custom trial with the same key, Price, invitation and single subscription', async () => {
+    const store = createMemoryStore();
+    const stripeGateway = createStripeGatewayMock();
+    stripeGateway.createTrialSubscriptionWithoutPaymentMethod = vi.fn()
+      .mockRejectedValueOnce(new Error('timeout after Stripe may have created subscription'))
+      .mockResolvedValueOnce({
+        id: 'sub_custom_recovered', customerId: 'cus_test_1', status: 'trialing', priceId: 'price_custom_123',
+        currentPeriodEnd: new Date('2026-07-15T00:00:00.000Z'), cancelAtPeriodEnd: false,
+        trialEndsAt: new Date('2026-07-15T00:00:00.000Z'), pendingUpdateId: null,
+      });
+    const request = (idempotencyKey: string) => createPlatformBillingTrialWithoutPaymentMethod({
+      contaId: 'conta_1', contaName: 'Escola Alusa', planCode: 'CUSTOM', stripePriceId: 'price_custom_123',
+      invitationId: 'invitation_123', quantity: 40, trialDays: 30, idempotencyKey, envSource,
+    }, { store, stripeGateway });
+
+    await expect(request('custom-trial-recovery')).rejects.toThrow('timeout after Stripe may have created subscription');
+    await expect(request('custom-trial-distinct')).rejects.toMatchObject({ code: 'PLATFORM_BILLING_RECONCILIATION_FAILED' });
+    const result = await request('custom-trial-recovery');
+
+    expect(result).toMatchObject({ stripeSubscriptionId: 'sub_custom_recovered', reused: false });
+    expect(stripeGateway.createTrialSubscriptionWithoutPaymentMethod).toHaveBeenCalledTimes(2);
+    expect(stripeGateway.createTrialSubscriptionWithoutPaymentMethod.mock.calls.map(([args]) => args)).toEqual([
+      expect.objectContaining({ priceId: 'price_custom_123', quantity: 40, trialDays: 30, metadata: expect.objectContaining({ planCode: 'CUSTOM', conditionType: 'custom', invitationId: 'invitation_123', studentCount: '40' }) }),
+      expect.objectContaining({ priceId: 'price_custom_123', quantity: 40, trialDays: 30, metadata: expect.objectContaining({ planCode: 'CUSTOM', conditionType: 'custom', invitationId: 'invitation_123', studentCount: '40' }) }),
+    ]);
+    expect(new Set(stripeGateway.createTrialSubscriptionWithoutPaymentMethod.mock.calls.map(([args]) => args.idempotencyKey)).size).toBe(1);
+    expect(store.accounts).toHaveLength(1);
+    expect(store.accounts[0]).toMatchObject({ planCode: 'CUSTOM', stripePriceId: 'price_custom_123', stripeSubscriptionId: 'sub_custom_recovered' });
+    expect(store.auditLogs.filter((entry) => entry.action === 'PLATFORM_BILLING_TRIAL_WITHOUT_PAYMENT_METHOD_CREATED')).toHaveLength(1);
+  });
+
+  it('rejects custom trial requests that lack a bound invitation', async () => {
+    await expect(createPlatformBillingTrialWithoutPaymentMethod({
+      contaId: 'conta_1', contaName: 'Escola Alusa', planCode: 'CUSTOM',
+      stripePriceId: 'price_custom_123', trialDays: 14, idempotencyKey: 'idem_custom_without_invitation', envSource,
+    }, { store: createMemoryStore(), stripeGateway: createStripeGatewayMock() })).rejects.toMatchObject({ code: 'PLATFORM_BILLING_INPUT_INVALID' });
   });
 
   it('keeps ambiguous trial creation fenced for same-key recovery and rejects a distinct key', async () => {

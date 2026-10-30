@@ -13,7 +13,7 @@ import type {
   StripeSubscriptionCheckoutSessionResult,
   ScheduleStripeSubscriptionPlanChangeInput,
 } from '@alusa/stripe';
-import type { PlatformPlanCode, PublicPlatformPlanCode } from './plans';
+import type { PlatformPlanCode } from './plans';
 
 export type PlatformBillingEnvironment = StripeEnvironment;
 
@@ -121,7 +121,7 @@ export interface PlatformBillingCheckoutSessionRecord {
   contaId: string;
   billingAccountId: string;
   environment: PlatformBillingEnvironment;
-  planCode: PublicPlatformPlanCode;
+  planCode: PlatformPlanCode;
   stripeCheckoutSessionId: string;
   stripeCustomerId: string;
   stripePriceId: string;
@@ -206,7 +206,7 @@ export interface AttachPlatformBillingCustomerInput {
 
 export interface MarkPlatformBillingCheckoutPendingInput {
   accountId: string;
-  planCode: PublicPlatformPlanCode;
+  planCode: PlatformPlanCode;
   stripePriceId: string;
   pendingChangeType?: PlatformBillingPlanChangeType | null;
   idempotencyKey: string;
@@ -216,7 +216,7 @@ export interface CreatePlatformBillingCheckoutSessionRecordInput {
   contaId: string;
   billingAccountId: string;
   environment: PlatformBillingEnvironment;
-  planCode: PublicPlatformPlanCode;
+  planCode: PlatformPlanCode;
   stripeCheckoutSessionId: string;
   stripeCustomerId: string;
   stripePriceId: string;

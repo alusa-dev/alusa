@@ -9,6 +9,7 @@ const EMAIL_CATEGORIES = [
   'platform_billing',
   'contract_signature_otp',
   'password_change_otp',
+  'sales_contact',
 ] as const;
 
 export type EmailCategory = (typeof EMAIL_CATEGORIES)[number];
