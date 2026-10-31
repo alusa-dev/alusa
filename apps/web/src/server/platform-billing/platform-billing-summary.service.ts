@@ -49,6 +49,7 @@ export async function getPlatformBillingSummary(params: {
     activeStudents,
     planChanges,
     issues,
+    monthlyCloseIssues,
     latestWebhook,
     webhookStats,
     latestReconciliation,
@@ -82,6 +83,7 @@ export async function getPlatformBillingSummary(params: {
         contaId: params.contaId,
         environment: params.environment,
         status: 'OPEN',
+        code: { not: 'MONTHLY_CLOSE_INCONCLUSIVE' },
       },
       orderBy: [{ severity: 'desc' }, { detectedAt: 'desc' }],
       take: 5,
@@ -92,6 +94,27 @@ export async function getPlatformBillingSummary(params: {
         title: true,
         message: true,
         detectedAt: true,
+        ignoredAt: true,
+        details: true,
+      },
+    }),
+    params.tx.platformBillingIssue.findMany({
+      where: {
+        contaId: params.contaId,
+        environment: params.environment,
+        status: 'OPEN',
+        code: 'MONTHLY_CLOSE_INCONCLUSIVE',
+      },
+      orderBy: { detectedAt: 'desc' },
+      select: {
+        id: true,
+        severity: true,
+        code: true,
+        title: true,
+        message: true,
+        detectedAt: true,
+        ignoredAt: true,
+        details: true,
       },
     }),
     params.tx.platformBillingWebhookEvent.findFirst({
@@ -202,13 +225,21 @@ export async function getPlatformBillingSummary(params: {
       requestedAt: change.requestedAt.toISOString(),
       lastError: change.lastError ? change.lastError.slice(0, 500) : null,
     })),
-    issues: issues.map((issue) => ({
+    issues: [...issues, ...monthlyCloseIssues].map((issue) => ({
       id: issue.id,
       severity: issue.severity,
       code: issue.code,
       title: issue.title,
       message: issue.message,
       detectedAt: issue.detectedAt.toISOString(),
+      ignoredAt: issue.ignoredAt?.toISOString() ?? null,
+      periodStart:
+        issue.code === 'MONTHLY_CLOSE_INCONCLUSIVE' &&
+        issue.details && typeof issue.details === 'object' &&
+        !Array.isArray(issue.details) &&
+        typeof (issue.details as Record<string, unknown>).periodStart === 'string'
+          ? (issue.details as Record<string, string>).periodStart
+          : null,
     })),
   };
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { CheckoutResumePopup } from './CheckoutResumePopup';
 import { MonthlyCloseInconclusiveNotice } from './MonthlyCloseInconclusiveNotice';
 import { usePlatformBilling } from '@/features/platform-billing/PlatformBillingContext';

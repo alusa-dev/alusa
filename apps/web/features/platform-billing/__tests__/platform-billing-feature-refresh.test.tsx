@@ -138,7 +138,7 @@ function billingSummary(contaName = 'Escola Alusa', cancelAtPeriodEnd = false) {
   };
 }
 
-function monthlyCloseSummary(accountId: string, tenantId: string) {
+function monthlyCloseSummary(accountId: string, tenantId: string, ignoredAt: string | null = null) {
   const summary = billingSummary();
   summary.account.id = accountId;
   summary.access.accountId = accountId;
@@ -149,9 +149,11 @@ function monthlyCloseSummary(accountId: string, tenantId: string) {
       id: `monthly-close-${tenantId}`,
       severity: 'WARNING' as const,
       code: 'MONTHLY_CLOSE_INCONCLUSIVE',
-      title: 'Sua mensalidade atual foi mantida',
+      title: 'Fechamento comercial mensal inconclusivo',
       message: 'Fechamento mensal inconclusivo.',
       detectedAt: generatedAt,
+      ignoredAt,
+      periodStart: '2030-04-01',
     }],
   };
 }
@@ -246,9 +248,8 @@ afterEach(() => {
 });
 
 describe('monthly close notice in authenticated app shell', () => {
-  const noticeTitle = 'Sua mensalidade atual foi mantida';
-  const storageKey = (userId = 'user-1') =>
-    `alusa:platform-billing:session-notice:v1:monthly-close-inconclusive:${userId}`;
+  const noticeTitle = 'Fechamento de abril de 2030 inconclusivo';
+  const acknowledgeUrl = '/api/platform-billing/issues/monthly-close-inconclusive/acknowledge';
 
   function renderGlobalBillingModal() {
     return render(
@@ -261,10 +262,12 @@ describe('monthly close notice in authenticated app shell', () => {
     );
   }
 
-  it('shows outside the billing page only once during the browser session', async () => {
+  it('shows one toast per unacknowledged issue and persists acknowledgement only after dismissal', async () => {
     window.sessionStorage.clear();
     window.history.replaceState({}, '', '/dashboard');
-    const fetchMock = vi.fn().mockResolvedValue(response(monthlyCloseSummary('billing-account-A', 'tenant-A')));
+    const fetchMock = vi.fn((url: string) => url === '/api/platform-billing/summary'
+      ? Promise.resolve(response(monthlyCloseSummary('billing-account-A', 'tenant-A')))
+      : Promise.resolve(response({ acknowledged: true })));
     vi.stubGlobal('fetch', fetchMock);
 
     renderGlobalBillingModal();
@@ -272,11 +275,14 @@ describe('monthly close notice in authenticated app shell', () => {
     expect(await screen.findByText(noticeTitle)).toBeInTheDocument();
     expect(window.location.pathname).toBe('/dashboard');
     expect(fetchMock.mock.calls.filter(([url]) => url === '/api/platform-billing/summary')).toHaveLength(1);
-    await waitFor(() => expect(window.sessionStorage.getItem(storageKey())).toBe('1'));
+    expect(fetchMock.mock.calls.some(([url]) => url === acknowledgeUrl)).toBe(false);
 
     fireEvent.click(screen.getByRole('button', { name: 'Fechar aviso' }));
     await waitFor(() => expect(screen.queryByText(noticeTitle)).not.toBeInTheDocument());
-    expect(window.sessionStorage.getItem(storageKey())).toBe('1');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(acknowledgeUrl, expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ issueId: 'monthly-close-tenant-A' }),
+    })));
 
     cleanup();
     fetchMock.mockClear();
@@ -287,49 +293,40 @@ describe('monthly close notice in authenticated app shell', () => {
     window.history.replaceState({}, '', '/');
   });
 
-  it('marks the session as shown when Ver alunos is activated', async () => {
+  it('acknowledges the issue and opens billing details from the CTA', async () => {
     window.sessionStorage.clear();
-    const fetchMock = vi.fn().mockResolvedValue(response(monthlyCloseSummary('billing-account-CTA', 'tenant-CTA')));
+    const fetchMock = vi.fn((url: string) => url === '/api/platform-billing/summary'
+      ? Promise.resolve(response(monthlyCloseSummary('billing-account-CTA', 'tenant-CTA')))
+      : Promise.resolve(response({ acknowledged: true })));
     vi.stubGlobal('fetch', fetchMock);
     renderGlobalBillingModal();
 
     expect(await screen.findByText(noticeTitle)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Ver alunos' }));
-    await waitFor(() => expect(window.sessionStorage.getItem(storageKey())).toBe('1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Ver faturamento' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(acknowledgeUrl, expect.anything()));
     await waitFor(() => expect(screen.queryByText(noticeTitle)).not.toBeInTheDocument());
   });
 
-  it('does not show again after switching accounts in the same session and hides after logout', async () => {
+  it('does not toast an issue acknowledged server-side after a fresh session', async () => {
     window.sessionStorage.clear();
-    const tenantA = monthlyCloseSummary('billing-account-A', 'tenant-A');
-    const tenantB = monthlyCloseSummary('billing-account-B', 'tenant-B');
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(response(tenantA))
-      .mockResolvedValueOnce(response(tenantB));
+    const fetchMock = vi.fn().mockResolvedValue(response(monthlyCloseSummary('billing-account-A', 'tenant-A', generatedAt)));
     vi.stubGlobal('fetch', fetchMock);
-    const view = renderGlobalBillingModal();
+    renderGlobalBillingModal();
 
-    expect(await screen.findByText(noticeTitle)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Fechar aviso' }));
-    await waitFor(() => expect(window.sessionStorage.getItem(storageKey())).toBe('1'));
-    await waitFor(() => expect(screen.queryByText(noticeTitle)).not.toBeInTheDocument());
-
-    fireEvent.click(screen.getByRole('button', { name: 'Atualizar faturamento' }));
     await waitFor(() => expect(screen.getByTestId('billing-probe')).toHaveTextContent('Escola Alusa:false'));
     expect(screen.queryByText(noticeTitle)).not.toBeInTheDocument();
-    expect(window.sessionStorage.getItem(storageKey())).toBe('1');
+    expect(fetchMock.mock.calls.some(([url]) => url === acknowledgeUrl)).toBe(false);
+  });
 
-    sessionState.data = { user: null };
-    sessionState.status = 'unauthenticated';
-    view.rerender(
-      <PlatformBillingProvider>
-        <>
-          <BillingProbe />
-          <PlatformBillingPersistentModal />
-        </>
-      </PlatformBillingProvider>,
-    );
-    await waitFor(() => expect(screen.queryByText(noticeTitle)).not.toBeInTheDocument());
+  it('keeps the open occurrence visible in billing with competence and unconfirmed wording', async () => {
+    const summary = monthlyCloseSummary('billing-account-panel', 'tenant-panel');
+    const fetchMock = vi.fn().mockResolvedValue(response(summary));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<PlatformBillingProvider><PlatformBillingFeature /></PlatformBillingProvider>);
+
+    expect(await screen.findByText('Fechamento de abril de 2030 inconclusivo')).toBeInTheDocument();
+    expect(screen.getByText(/não teve fechamento confirmado/)).toBeInTheDocument();
+    expect(screen.queryByText(/fechamento mensal confirmado/i)).not.toBeInTheDocument();
   });
 });
 

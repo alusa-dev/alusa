@@ -213,6 +213,8 @@ export const platformBillingSummaryDTOSchema = z.object({
       title: z.string().min(1),
       message: z.string().min(1),
       detectedAt: z.string().datetime(),
+      ignoredAt: z.string().datetime().nullable(),
+      periodStart: z.string().date().nullable(),
     }),
   ),
 });

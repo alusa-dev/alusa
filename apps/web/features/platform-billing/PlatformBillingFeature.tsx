@@ -349,6 +349,7 @@ export function PlatformBillingFeature({ checkoutState, setupState }: { checkout
     : paymentMethod.status === 'present' ? 'Alterar pagamento' : 'Cadastrar pagamento';
   const cancellationNotice = getCancellationNotice(summary?.account ?? null);
   const trialEndingNotice = getTrialEndingNotice(summary?.account ?? null, currentPlan);
+  const monthlyCloseIssues = summary?.issues.filter((issue) => issue.code === 'MONTHLY_CLOSE_INCONCLUSIVE') ?? [];
   const otherBillingIssues = summary?.issues.filter((issue) => issue.code !== 'MONTHLY_CLOSE_INCONCLUSIVE') ?? [];
   const canStartSelfServiceFlow = (!hasManageableSubscription || trialExpired) && commercialTarget?.kind === 'SELF_SERVICE';
 
@@ -546,6 +547,12 @@ export function PlatformBillingFeature({ checkoutState, setupState }: { checkout
           showIcon
         >
           {issue.message}
+        </InfoCallout>
+      ))}
+
+      {monthlyCloseIssues.map((issue) => (
+        <InfoCallout key={issue.id} variant="info" size="sm" title={`Fechamento de ${formatCompetence(issue.periodStart)} inconclusivo`} showIcon>
+          A competência {formatCompetence(issue.periodStart)} não teve fechamento confirmado. A faixa vigente foi mantida e nenhuma alteração automática foi aplicada.
         </InfoCallout>
       ))}
 
@@ -1166,6 +1173,14 @@ function getPaymentMethodDescription(paymentMethod: PaymentMethodSummary) {
 function formatCardExpiry(month: number | null, year: number | null) {
   if (!month || !year) return null;
   return `${String(month).padStart(2, '0')}/${year}`;
+}
+
+function formatCompetence(value: string | null) {
+  if (!value) return 'competência mensal';
+  const [year, month] = value.split('-').map(Number);
+  if (!year || !month) return 'competência mensal';
+  return new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+    .format(new Date(Date.UTC(year, month - 1, 1)));
 }
 
 function formatDate(value: string | null) {

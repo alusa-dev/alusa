@@ -1,89 +1,66 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-
+import React, { useState } from 'react';
 import { CheckoutResumePopup } from './CheckoutResumePopup';
 import { usePlatformBilling } from '@/features/platform-billing/PlatformBillingContext';
 
-const SESSION_NOTICE_VERSION = 'v1';
-
 export function MonthlyCloseInconclusiveNotice({ suppressed = false }: { suppressed?: boolean }) {
-  const { summary, loading, userId } = usePlatformBilling();
-  const tenantId = summary?.health.contaId ?? null;
-  const storageKey = tenantId && userId
-    ? `alusa:platform-billing:session-notice:${SESSION_NOTICE_VERSION}:monthly-close-inconclusive:${userId}`
-    : null;
-  const [readyStorageKey, setReadyStorageKey] = useState<string | null>(null);
-  const [dismissedStorageKey, setDismissedStorageKey] = useState<string | null>(null);
-  const currentUserIdRef = useRef(userId);
-  const sessionChanged = currentUserIdRef.current !== userId;
-  if (sessionChanged) currentUserIdRef.current = userId;
-
-  useEffect(() => {
-    if (!storageKey) {
-      setReadyStorageKey(null);
-      return;
-    }
-
-    let wasDismissed = false;
-    try {
-      wasDismissed = window.sessionStorage.getItem(storageKey) === '1';
-    } catch {
-      // In-memory state still prevents the notice from returning while mounted.
-    }
-    setDismissedStorageKey(wasDismissed ? storageKey : null);
-    setReadyStorageKey(storageKey);
-  }, [storageKey]);
-
-  const hasInconclusiveMonthlyClose = summary?.issues.some(
-    (issue) => issue.code === 'MONTHLY_CLOSE_INCONCLUSIVE',
-  ) ?? false;
-  const isVisible = Boolean(
-    hasInconclusiveMonthlyClose &&
-    storageKey &&
-    readyStorageKey === storageKey &&
-    dismissedStorageKey !== storageKey &&
-    !loading &&
-    !sessionChanged &&
-    !suppressed,
-  );
-
-  useEffect(() => {
-    if (!isVisible || !storageKey) return;
-    try {
-      // Mark on first display so a reload or remount cannot show it twice
-      // during the same browser tab session.
-      window.sessionStorage.setItem(storageKey, '1');
-    } catch {
-      // In-memory state still keeps it to one display while this shell is mounted.
-    }
-  }, [isVisible, storageKey]);
-
-  function dismissForSession() {
-    if (!storageKey) return;
-    try {
-      window.sessionStorage.setItem(storageKey, '1');
-    } catch {
-      // In-memory state still prevents the notice from returning while mounted.
-    }
-    setDismissedStorageKey(storageKey);
+  const { summary, loading } = usePlatformBilling();
+  const issue = summary?.issues.find(
+    (entry) => entry.code === 'MONTHLY_CLOSE_INCONCLUSIVE' && entry.ignoredAt === null,
+  ) ?? null;
+  const [dismissedIssueId, setDismissedIssueId] = useState<string | null>(null);
+  const storageKey = issue ? `alusa:platform-billing:monthly-close-dismissed:${issue.id}` : null;
+  let dismissedInSession = false;
+  if (storageKey) {
+    try { dismissedInSession = window.sessionStorage.getItem(storageKey) === '1'; } catch { /* keep in-memory behavior */ }
   }
 
-  if (!isVisible) return null;
+  const acknowledge = async (issueId: string) => {
+    try {
+      await fetch('/api/platform-billing/issues/monthly-close-inconclusive/acknowledge', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ issueId }),
+      });
+    } catch {
+      // The billing area still shows the open occurrence if confirmation is unavailable.
+    }
+  };
+
+  const isVisible = Boolean(
+    issue && dismissedIssueId !== issue.id && !dismissedInSession && !loading && !suppressed,
+  );
+  if (!isVisible || !issue) return null;
+
+  const competence = formatCompetence(issue.periodStart);
+  const dismiss = () => {
+    setDismissedIssueId(issue.id);
+    try { if (storageKey) window.sessionStorage.setItem(storageKey, '1'); } catch { /* confirmation is still sent to the server */ }
+    void acknowledge(issue.id);
+  };
 
   return (
     <CheckoutResumePopup
       placement="top-right"
       autoDismissMs={null}
       loading={false}
-      title="Sua mensalidade atual foi mantida"
-      description="O fechamento mensal mais recente não pôde ser confirmado. Mantenha os alunos e as matrículas atualizados para que os próximos fechamentos reflitam a realidade da escola."
-      actionLabel="Ver alunos"
-      onDismiss={dismissForSession}
+      title={`Fechamento de ${competence} inconclusivo`}
+      description={`A competência ${competence} não teve fechamento confirmado. A faixa vigente foi mantida e nenhuma alteração automática foi aplicada.`}
+      actionLabel="Ver faturamento"
+      onDismiss={dismiss}
       onResume={() => {
-        dismissForSession();
-        window.location.assign('/students');
+        dismiss();
+        window.location.assign('/account/billing-plan');
       }}
     />
   );
+}
+
+function formatCompetence(value: string | null): string {
+  if (!value) return 'mensal';
+  const [year, month] = value.split('-').map(Number);
+  if (!year || !month) return 'mensal';
+  return new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric', timeZone: 'UTC' })
+    .format(new Date(Date.UTC(year, month - 1, 1)));
 }

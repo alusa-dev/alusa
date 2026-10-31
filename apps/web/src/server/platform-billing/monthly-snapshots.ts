@@ -541,6 +541,7 @@ async function recordInconclusiveClose(input: {
       update: {
         status: 'OPEN',
         resolvedAt: null,
+        ignoredAt: null,
         details: {
           ...details,
         },
