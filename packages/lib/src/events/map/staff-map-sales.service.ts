@@ -20,6 +20,7 @@ import { enqueueEventTicketWhatsAppNotification, EVENT_TICKET_WHATSAPP_CONSENT_V
 import { createCheckInCode, toCheckInCode } from './ticket-code';
 import { assertEventTicketSalesOpen, EventsError, type EventsContext } from '../events.service';
 import type { CreateTicketSaleInput } from '../events.schema';
+import { markEventTicketUsed } from '../ticket-checkin.service';
 import { eventMapDateToLocalDateTime, eventMapLocalDateTimeToDate } from './event-map.schema';
 
 type DbClient = Prisma.TransactionClient | typeof prisma;
@@ -601,6 +602,9 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
     if (!['PENDING', 'PAID', 'COMPLIMENTARY'].includes(saleStatus)) {
       throw new EventsError('STATUS_VENDA_INVALIDO', 'Use pendente, pago ou cortesia ao criar venda.', 422);
     }
+    if (input.confirmEntryNow && saleStatus === 'PENDING') {
+      throw new EventsError('VENDA_NAO_CONFIRMADA', 'A entrada só pode ser confirmada para vendas pagas ou cortesia.', 409);
+    }
 
     await assertEventScopedTicketSaleLinks(tx, ctx.contaId, input.eventId, {
       alunoId: input.alunoId,
@@ -701,7 +705,7 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
           },
         });
 
-        await tx.eventTicket.create({
+        const ticket = await tx.eventTicket.create({
           data: {
             contaId: ctx.contaId,
             eventId: input.eventId,
@@ -710,7 +714,15 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
             ticketCode: createPublicToken('ticket').toUpperCase(),
             checkInCode: createCheckInCode(),
           },
+          select: { ticketCode: true },
         });
+        if (input.confirmEntryNow) {
+          await markEventTicketUsed(ctx.contaId, input.eventId, ticket.ticketCode, ctx.userId, {
+            requireSeat: true,
+            auditAction: 'events.map.ticket.check_in',
+            tx,
+          });
+        }
       }
 
       const sold = await tx.eventTicketSale.aggregate({
@@ -739,7 +751,7 @@ export async function createSeatedTicketSale(ctx: EventsContext, input: CreateTi
           include: {
             event: { select: { name: true, startsAt: true, locationName: true, locationAddress: true } },
             lot: { select: { name: true } },
-            tickets: { where: { status: 'VALID' }, select: { id: true } },
+            tickets: { where: { status: { in: ['VALID', 'USED'] } }, select: { id: true } },
             saleSeats: {
               take: 1,
               include: { publicSeat: { include: { map: { select: { name: true, startsAt: true, startsAtLocal: true, locationName: true, locationAddress: true } } } } },
@@ -801,7 +813,7 @@ async function getStaffSaleTicketsByAccess(saleId: string, accessToken?: string,
           },
         },
       },
-      tickets: { where: { status: 'VALID' }, select: { id: true, ticketCode: true, checkInCode: true, status: true }, orderBy: { createdAt: 'asc' } },
+      tickets: { where: { status: { in: ['VALID', 'USED'] } }, select: { id: true, ticketCode: true, checkInCode: true, status: true }, orderBy: { createdAt: 'asc' } },
       event: { select: { id: true, contaId: true, name: true, startsAt: true, locationName: true, locationAddress: true, ticketArtworkUrl: true, ticketArtworkStorageKey: true } },
       lot: { select: { name: true } },
     },
@@ -825,7 +837,7 @@ async function getStaffSaleTicketsByAccess(saleId: string, accessToken?: string,
   });
 
   const printableSeats = saleSeats.filter(
-    (seat) => seat.ticket?.ticketCode && seat.ticket.status === 'VALID',
+    (seat) => seat.ticket?.ticketCode && ['VALID', 'USED'].includes(seat.ticket.status),
   );
   const firstPublicSeat = saleSeats[0]?.publicSeat ?? null;
   const session = firstPublicSeat?.map ?? null;

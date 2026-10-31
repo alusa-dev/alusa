@@ -184,6 +184,7 @@ export const createTicketSaleSchema = z
     soldAt: optionalDate,
     notes: optionalText,
     holdToken: z.preprocess(emptyToUndefined, z.string().trim().min(1).optional()),
+    confirmEntryNow: z.boolean().optional(),
   })
   .superRefine((input, ctx) => {
     if (input.holdToken) return;

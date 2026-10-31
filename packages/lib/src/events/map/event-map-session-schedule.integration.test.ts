@@ -8,6 +8,7 @@ import { getPublicEventMapOrderStatus } from './public-event-map-order-status.se
 import { createSeatedTicketSale, getPublicStaffSaleTickets, getStaffEventMapSalesView, reserveStaffEventMapSeats } from './staff-map-sales.service';
 import { updateTicketLot } from '../events.service';
 import { cancelPublicEventMapOrder } from './event-map-order-operations';
+import { listEventTicketCheckIns } from '../ticket-checkin.service';
 
 const validLocal = '2026-11-14T20:00';
 const ctx = (contaId: string, userId: string) => ({ contaId, userId });
@@ -785,6 +786,156 @@ describe('event map purchase schedule snapshots', () => {
     }
   });
 
+  it('confirms every seated staff ticket in the sale transaction and records its operator', async () => {
+    const fixture = await createFixture({ startsAtLocal: validLocal, lot: true });
+    try {
+      const secondSeat = await prisma.eventMapPublicSeat.create({
+        data: {
+          contaId: fixture.conta.id,
+          eventId: fixture.event.id,
+          eventMapId: fixture.map.id,
+          versionId: fixture.version.id,
+          originalSeatId: `second-${randomUUID()}`,
+          sectionName: 'Pista',
+          lotId: fixture.lot!.id,
+          lotName: fixture.lot!.name,
+          unitPrice: 20,
+          technicalCode: `B-${randomUUID()}`,
+          displayLabel: 'A2',
+          status: 'AVAILABLE',
+          x: 20,
+          y: 10,
+        },
+      });
+      const reservation = await reserveStaffEventMapSeats(ctx(fixture.conta.id, fixture.user.id), fixture.event.id, fixture.map.id, { seatIds: [fixture.seat.id, secondSeat.id] });
+      const sale = await createSeatedTicketSale(ctx(fixture.conta.id, fixture.user.id), {
+        eventId: fixture.event.id,
+        buyerName: 'Comprador Teste',
+        paymentMethod: 'CASH',
+        status: 'PAID',
+        holdToken: reservation.holdToken,
+        confirmEntryNow: true,
+      });
+      await expect(createSeatedTicketSale(ctx(fixture.conta.id, fixture.user.id), {
+        eventId: fixture.event.id,
+        buyerName: 'Comprador Teste',
+        paymentMethod: 'CASH',
+        status: 'PAID',
+        holdToken: reservation.holdToken,
+        confirmEntryNow: true,
+      })).rejects.toMatchObject({ code: 'RESERVA_INVALIDA', status: 409 });
+
+      const tickets = await prisma.eventTicket.findMany({ where: { contaId: fixture.conta.id, eventId: fixture.event.id } });
+      expect(tickets).toHaveLength(2);
+      expect(await prisma.eventTicketSale.count({ where: { contaId: fixture.conta.id, eventId: fixture.event.id } })).toBe(1);
+      const financialEntry = await prisma.eventFinancialEntry.findFirstOrThrow({ where: { contaId: fixture.conta.id, eventId: fixture.event.id } });
+      expect(financialEntry.status).toBe('RECEIVED');
+      expect(financialEntry.actualAmount?.toNumber()).toBe(40);
+      expect(tickets.every((ticket) => ticket.status === 'USED' && ticket.usedAt instanceof Date)).toBe(true);
+      const audits = await prisma.eventAudit.findMany({ where: { contaId: fixture.conta.id, eventId: fixture.event.id, entityType: 'EventTicket', entityId: { in: tickets.map((ticket) => ticket.id) } } });
+      expect(audits).toHaveLength(2);
+      expect(audits.every((audit) => audit.action === 'events.map.ticket.check_in' && audit.actorUserId === fixture.user.id)).toBe(true);
+      expect(await listEventTicketCheckIns(fixture.conta.id, fixture.event.id)).toMatchObject({ total: 2, items: expect.arrayContaining([expect.objectContaining({ buyerName: 'Comprador Teste', operatorName: 'Schedule User' })]) });
+      expect((await getPublicStaffSaleTickets(sale.primarySaleId, (await prisma.eventTicketSale.findFirstOrThrow({ where: { id: sale.primarySaleId, contaId: fixture.conta.id } })).accessToken!)).items[0]?.ticketStatus).toBe('USED');
+    } finally {
+      await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
+  it('rejects immediate check-in for a pending seated sale without consuming the reservation', async () => {
+    const fixture = await createFixture({ startsAtLocal: validLocal, lot: true });
+    try {
+      const reservation = await reserveStaffEventMapSeats(ctx(fixture.conta.id, fixture.user.id), fixture.event.id, fixture.map.id, { seatIds: [fixture.seat.id] });
+      await expect(createSeatedTicketSale(ctx(fixture.conta.id, fixture.user.id), {
+        eventId: fixture.event.id,
+        buyerName: 'Comprador Teste',
+        paymentMethod: 'MANUAL_PIX',
+        status: 'PENDING',
+        holdToken: reservation.holdToken,
+        confirmEntryNow: true,
+      })).rejects.toMatchObject({ code: 'VENDA_NAO_CONFIRMADA', status: 409 });
+      expect(await prisma.eventTicketSale.count({ where: { contaId: fixture.conta.id } })).toBe(0);
+      expect(await prisma.eventTicket.count({ where: { contaId: fixture.conta.id } })).toBe(0);
+      expect((await prisma.eventMapReservation.findUniqueOrThrow({ where: { id: reservation.reservationId } })).status).toBe('HELD');
+      expect((await prisma.eventMapPublicSeat.findUniqueOrThrow({ where: { id: fixture.seat.id } })).status).toBe('HELD');
+    } finally {
+      await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
+  it('rolls back the entire sale when a later seated ticket fails during check-in', async () => {
+    const fixture = await createFixture({ startsAtLocal: validLocal, lot: true });
+    const suffix = randomUUID().replaceAll('-', '');
+    const functionName = `test_fail_second_ticket_checkin_${suffix}`;
+    const triggerName = `test_fail_second_ticket_checkin_${suffix}`;
+    let functionInstalled = false;
+    let triggerInstalled = false;
+    try {
+      const secondSeat = await prisma.eventMapPublicSeat.create({
+        data: {
+          contaId: fixture.conta.id,
+          eventId: fixture.event.id,
+          eventMapId: fixture.map.id,
+          versionId: fixture.version.id,
+          originalSeatId: `rollback-${randomUUID()}`,
+          sectionName: 'Pista',
+          lotId: fixture.lot!.id,
+          lotName: fixture.lot!.name,
+          unitPrice: 20,
+          technicalCode: `R-${randomUUID()}`,
+          displayLabel: 'A2',
+          status: 'AVAILABLE',
+          x: 20,
+          y: 10,
+        },
+      });
+      const reservation = await reserveStaffEventMapSeats(ctx(fixture.conta.id, fixture.user.id), fixture.event.id, fixture.map.id, { seatIds: [fixture.seat.id, secondSeat.id] });
+
+      await prisma.$executeRawUnsafe(`
+        CREATE FUNCTION "${functionName}"() RETURNS trigger LANGUAGE plpgsql AS $test$
+        BEGIN
+          IF NEW.status = 'USED'
+            AND NEW."eventId" = '${fixture.event.id.replaceAll("'", "''")}'
+            AND (SELECT COUNT(*) FROM "EventTicket" WHERE "eventId" = NEW."eventId" AND status = 'USED') > 1
+          THEN
+            RAISE EXCEPTION 'forced second check-in failure';
+          END IF;
+          RETURN NEW;
+        END;
+        $test$
+      `);
+      functionInstalled = true;
+      await prisma.$executeRawUnsafe(`
+        CREATE TRIGGER "${triggerName}" AFTER UPDATE OF status ON "EventTicket"
+        FOR EACH ROW EXECUTE FUNCTION "${functionName}"()
+      `);
+      triggerInstalled = true;
+
+      await expect(createSeatedTicketSale(ctx(fixture.conta.id, fixture.user.id), {
+        eventId: fixture.event.id,
+        buyerName: 'Comprador Teste',
+        paymentMethod: 'CASH',
+        status: 'PAID',
+        holdToken: reservation.holdToken,
+        confirmEntryNow: true,
+      })).rejects.toThrow('forced second check-in failure');
+
+      expect(await prisma.eventTicketSale.count({ where: { contaId: fixture.conta.id, eventId: fixture.event.id } })).toBe(0);
+      expect(await prisma.eventFinancialEntry.count({ where: { contaId: fixture.conta.id, eventId: fixture.event.id } })).toBe(0);
+      expect(await prisma.eventTicket.count({ where: { contaId: fixture.conta.id, eventId: fixture.event.id } })).toBe(0);
+      expect(await prisma.eventAudit.count({ where: { contaId: fixture.conta.id, eventId: fixture.event.id, entityType: 'EventTicket' } })).toBe(0);
+      expect(await prisma.auditLog.count({ where: { contaId: fixture.conta.id, action: 'events.map.ticket.check_in' } })).toBe(0);
+      expect((await prisma.eventMapReservation.findUniqueOrThrow({ where: { id: reservation.reservationId } })).status).toBe('HELD');
+      expect(await prisma.eventMapPublicSeat.count({ where: { contaId: fixture.conta.id, id: { in: [fixture.seat.id, secondSeat.id] }, status: 'HELD' } })).toBe(2);
+    } finally {
+      if (triggerInstalled) await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS "${triggerName}" ON "EventTicket"`);
+      if (functionInstalled) {
+        await prisma.$executeRawUnsafe(`DROP FUNCTION IF EXISTS "${functionName}"()`);
+      }
+      await prisma.conta.deleteMany({ where: { id: fixture.conta.id } });
+    }
+  });
+
   it('lets a valid short staff hold finish after its lot sale window closes', async () => {
     const fixture = await createFixture({
       lot: true,
@@ -829,6 +980,7 @@ describe('event map purchase schedule snapshots', () => {
         paymentMethod: 'COMPLIMENTARY',
         status: 'COMPLIMENTARY',
         holdToken: reservation.holdToken,
+        confirmEntryNow: true,
       })).rejects.toMatchObject({ code: 'RESERVA_INVALIDA', status: 409 });
 
       expect(await prisma.eventMapReservation.findUniqueOrThrow({ where: { id: reservation.id } })).toMatchObject({ status: beforeReservation.status, consumedAt: null });

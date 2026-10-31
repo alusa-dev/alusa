@@ -32,6 +32,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from '@/components/ui/toast';
@@ -85,6 +86,7 @@ export function SaleFormDialog({
   const [discardAlertOpen, setDiscardAlertOpen] = useState(false);
   const [formKey, setFormKey] = useState(0);
   const [buyerPhone, setBuyerPhone] = useState('');
+  const [confirmEntryNow, setConfirmEntryNow] = useState(false);
   const [seatSelection, setSeatSelection] = useState<SeatSelectionState>(null);
   const [selectedMapId, setSelectedMapId] = useState(() => (publishedMaps.length === 1 ? publishedMaps[0]!.id : ''));
 
@@ -104,12 +106,19 @@ export function SaleFormDialog({
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.sales(eventId) }),
+        queryClient.invalidateQueries({ queryKey: ['events', 'check-ins', eventId] }),
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.lots(eventId) }),
         queryClient.invalidateQueries({ queryKey: eventQueryKeys.event(eventId) }),
       ]);
-      toast.success({ title: 'Venda registrada', description: 'A venda de ingressos foi registrada com sucesso.' });
+      toast.success({
+        title: 'Venda registrada',
+        description: mutation.variables?.confirmEntryNow
+          ? 'A venda foi registrada e as entradas foram confirmadas.'
+          : 'A venda de ingressos foi registrada com sucesso.',
+      });
       setSeatSelection(null);
       setBuyerPhone('');
+      setConfirmEntryNow(false);
       setPickerOpen(false);
       setFormKey((key) => key + 1);
       setOpen(false);
@@ -146,6 +155,7 @@ export function SaleFormDialog({
         responsavelId: nullableString(formData, 'responsavelId'),
         paymentMethod: nullableString(formData, 'paymentMethod'),
         status: nullableString(formData, 'status'),
+        confirmEntryNow,
         soldAt: datetimeValue(formData, 'soldAt'),
         notes: nullableString(formData, 'notes'),
       });
@@ -226,6 +236,7 @@ export function SaleFormDialog({
     setPickerOpen(false);
     setDiscardAlertOpen(false);
     setBuyerPhone('');
+    setConfirmEntryNow(false);
     setFormKey((key) => key + 1);
     setOpen(false);
     if (holdToken) {
@@ -475,6 +486,9 @@ export function SaleFormDialog({
                       }))}
                     />
                   </Field>
+                  <Field label="Data da venda">
+                    <DateTimeField name="soldAt" defaultValue={getRoundedNowISOString()} inputClassName={wizardFieldInputClass} timeSelectClassName={wizardFieldInputClass} />
+                  </Field>
                   <Field label="Status">
                     <NativeSelect
                       name="status"
@@ -486,9 +500,12 @@ export function SaleFormDialog({
                       }))}
                     />
                   </Field>
-                  <Field label="Data da venda">
-                    <DateTimeField name="soldAt" defaultValue={getRoundedNowISOString()} inputClassName={wizardFieldInputClass} timeSelectClassName={wizardFieldInputClass} />
-                  </Field>
+                  {isSeatedSale ? (
+                    <label className="flex items-center gap-2 text-sm text-slate-700 sm:col-span-2">
+                      <Checkbox checked={confirmEntryNow} onCheckedChange={setConfirmEntryNow} />
+                      <span>Deseja confirmar a entrada agora?</span>
+                    </label>
+                  ) : null}
                 </div>
                 <Field label="Observações">
                   <Textarea name="notes" className={wizardTextareaFieldClass} />
