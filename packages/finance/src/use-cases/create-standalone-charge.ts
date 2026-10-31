@@ -4,6 +4,7 @@ import type { Result } from '@alusa/shared';
 import { err, ok } from '@alusa/shared';
 import { AsaasHttpError, type BillingType, createSubscription } from '@alusa/asaas';
 import { resolvePayer } from '@alusa/domain';
+import { selectFinancialResponsible } from '../services/select-financial-responsible';
 import crypto from 'crypto';
 
 import { createAsaasPayment } from './create-payment';
@@ -486,13 +487,14 @@ async function resolveStandaloneChargePayer(
         dataNasc: true,
         responsaveis: {
           where: {
+            contaId: input.contaId,
+            responsavel: { contaId: input.contaId },
             OR: [
               { responsavel: { financeiro: true } },
               { tipoVinculo: { in: ['FINANCEIRO', 'PRINCIPAL'] } },
             ],
           },
-          select: { responsavelId: true },
-          take: 1,
+          select: { responsavelId: true, tipoVinculo: true, responsavel: { select: { financeiro: true } } },
         },
       },
     });
@@ -502,7 +504,11 @@ async function resolveStandaloneChargePayer(
     const resolved = resolvePayer({
       alunoId: aluno.id,
       alunoDataNasc: aluno.dataNasc,
-      responsavelFinanceiroId: aluno.responsaveis[0]?.responsavelId ?? null,
+      responsavelFinanceiroId: selectFinancialResponsible(aluno.responsaveis.map((link) => ({
+        responsavelId: link.responsavelId,
+        tipoVinculo: link.tipoVinculo,
+        financeiro: link.responsavel.financeiro,
+      })))?.responsavelId ?? null,
     });
 
     if (!resolved.success) {

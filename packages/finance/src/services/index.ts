@@ -1,4 +1,6 @@
 export { resolvePayerService, resolvePayerFromAluno, resolvePayerFromMatricula, resolvePayerWithCustomer } from './resolve-payer.service';
+export { selectFinancialResponsible } from './select-financial-responsible';
+export type { FinancialResponsibleLink } from './select-financial-responsible';
 export type { ResolvePayerFromAlunoInput, ResolvePayerFromMatriculaInput, ResolvePayerOutput, ResolvePayerErrorCode } from './resolve-payer.service';
 
 // Asaas Sync Service

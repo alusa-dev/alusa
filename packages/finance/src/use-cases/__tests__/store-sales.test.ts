@@ -576,6 +576,7 @@ describe('store-sales', () => {
     state.financialTransactions.length = 0;
     state.installmentPlans.clear();
     vi.clearAllMocks();
+    state.prisma.aluno.findFirst.mockImplementation(async () => null);
   });
 
   it('classifica pendências operacionais sem cruzar o tenant', async () => {
@@ -674,6 +675,80 @@ describe('store-sales', () => {
     expect(result.changeGiven).toBe(30);
     const inventory = await import('../store-inventory');
     expect(inventory.applySaleInventoryOnCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows cash sale for a minor without a responsible but rejects charge before sale or stock writes', async () => {
+    state.products.set('prod-minor', {
+      id: 'prod-minor', contaId: 'conta-1', name: 'Material',
+      price: new Prisma.Decimal('30.00'), stock: 4, hasVariants: false,
+    });
+    state.inventoryBalances.set('prod-minor', {
+      productId: 'prod-minor', variantId: null, onHand: 4, reserved: 0,
+      averageCost: new Prisma.Decimal('12.00'),
+    });
+    const minor = {
+      id: 'student-minor', nome: 'Aluno Menor', dataNasc: new Date('2015-01-01'), responsaveis: [],
+    };
+    state.prisma.aluno.findFirst.mockResolvedValue(minor);
+
+    const cashSale = await createStoreSale({
+      contaId: 'conta-1', operatorId: 'user-1', uiRequestId: 'minor-cash-sale',
+      customer: { type: 'ALUNO', alunoId: 'student-minor' },
+      items: [{ productId: 'prod-minor', quantity: 1 }],
+      finalization: { type: 'RECEBIMENTO_PRESENCIAL', paymentMethod: 'PIX_PRESENCIAL' },
+    });
+    expect(cashSale.status).toBe('CONCLUIDA');
+    expect(cashSale.customer.type).toBe('ALUNO');
+    expect(state.prisma.sale.create).toHaveBeenCalledTimes(1);
+    const inventory = await import('../store-inventory');
+    expect(inventory.applySaleInventoryOnCreate).toHaveBeenCalledTimes(1);
+
+    state.prisma.aluno.findFirst.mockResolvedValue(minor);
+    await expect(createStoreSale({
+      contaId: 'conta-1', operatorId: 'user-1', uiRequestId: 'minor-charge-sale',
+      customer: { type: 'ALUNO', alunoId: 'student-minor' },
+      items: [{ productId: 'prod-minor', quantity: 1 }],
+      finalization: { type: 'COBRANCA', dueDate: '2099-01-01', billingType: 'PIX' },
+    })).rejects.toMatchObject<Partial<StoreSaleError>>({
+      code: 'RESPONSAVEL_OBRIGATORIO_MENOR', status: 422,
+    });
+    expect(state.prisma.sale.create).toHaveBeenCalledTimes(1);
+    expect(inventory.applySaleInventoryOnCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the same explicit FINANCEIRO responsible for sale charge creation despite a global-finance PRINCIPAL link', async () => {
+    state.products.set('prod-payer', {
+      id: 'prod-payer', contaId: 'conta-1', name: 'Uniforme',
+      price: new Prisma.Decimal('30.00'), stock: 4, hasVariants: false,
+    });
+    state.inventoryBalances.set('prod-payer', {
+      productId: 'prod-payer', variantId: null, onHand: 4, reserved: 0,
+      averageCost: new Prisma.Decimal('12.00'),
+    });
+    state.prisma.aluno.findFirst.mockResolvedValueOnce({
+      id: 'student-payer', nome: 'Aluno', dataNasc: new Date('2015-01-01'),
+      responsaveis: [
+        { responsavelId: 'parent-principal', tipoVinculo: 'PRINCIPAL', responsavel: { id: 'parent-principal', nome: 'Principal', financeiro: true } },
+        { responsavelId: 'parent-explicit', tipoVinculo: 'FINANCEIRO', responsavel: { id: 'parent-explicit', nome: 'Financeiro', financeiro: false } },
+      ],
+    });
+    const { createStandaloneCharge } = await import('../create-standalone-charge');
+    vi.mocked(createStandaloneCharge).mockResolvedValueOnce({
+      success: true,
+      data: { chargeId: 'charge-parent', asaasPaymentId: 'pay-parent', externalReference: 'external', status: 'OPEN' },
+    });
+
+    const sale = await createStoreSale({
+      contaId: 'conta-1', operatorId: 'user-1', uiRequestId: 'sale-explicit-payer',
+      customer: { type: 'ALUNO', alunoId: 'student-payer', responsavelId: 'parent-explicit' },
+      items: [{ productId: 'prod-payer', quantity: 1 }],
+      finalization: { type: 'COBRANCA', dueDate: '2099-01-01', billingType: 'PIX' },
+    });
+
+    expect(sale.customer.responsavelId).toBe('parent-explicit');
+    expect(createStandaloneCharge).toHaveBeenCalledWith(expect.objectContaining({
+      payer: { type: 'aluno', alunoId: 'student-payer' },
+    }));
   });
 
   it('rejeita o mesmo uiRequestId quando o payload da venda muda', async () => {

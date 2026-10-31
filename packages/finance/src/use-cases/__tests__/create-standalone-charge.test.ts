@@ -440,7 +440,10 @@ describe('createStandaloneCharge', () => {
         id: 'aluno-1',
         nome: 'Keison Alencar',
         dataNasc: new Date('2015-01-01'), // menor de idade
-        responsaveis: [{ responsavelId: 'resp-1' }],
+        responsaveis: [
+          { responsavelId: 'resp-principal', tipoVinculo: 'PRINCIPAL', responsavel: { id: 'resp-principal', financeiro: true } },
+          { responsavelId: 'resp-1', tipoVinculo: 'FINANCEIRO', responsavel: { id: 'resp-1', financeiro: false } },
+        ],
       } as never);
 
       vi.mocked(prisma.responsavel.findFirst).mockResolvedValueOnce({
@@ -479,6 +482,14 @@ describe('createStandaloneCharge', () => {
         contaId: 'conta-1',
         payer: { type: 'RESPONSAVEL', id: 'resp-1' },
       });
+      expect(prisma.aluno.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 'aluno-1', contaId: 'conta-1' },
+        select: expect.objectContaining({
+          responsaveis: expect.objectContaining({ where: expect.objectContaining({
+            contaId: 'conta-1', responsavel: { contaId: 'conta-1' },
+          }) }),
+        }),
+      }));
 
       expect(prisma.charge.create).toHaveBeenCalledWith(
         expect.objectContaining({

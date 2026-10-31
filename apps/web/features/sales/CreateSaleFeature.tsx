@@ -600,6 +600,20 @@ export function CreateSaleFeature() {
       return;
     }
 
+    if (
+      finalizationType === 'COBRANCA' &&
+      customerMode === 'REGISTRADO' &&
+      selectedPayer?.type === 'aluno' &&
+      selectedPayer.isMinor &&
+      !selectedPayer.hasResponsible
+    ) {
+      toast.warning({
+        title: 'Responsável financeiro obrigatório',
+        description: 'Cadastre um responsável financeiro para gerar cobrança para este aluno menor de idade.',
+      });
+      return;
+    }
+
     let customer: CreateSaleRequest['customer'];
     if (customerMode === 'REGISTRADO') {
       if (!selectedPayer) {
@@ -1588,7 +1602,10 @@ export function CreateSaleFeature() {
                           <SelectItem value="RECEBIMENTO_PRESENCIAL">
                             {SALE_FINALIZATION_LABELS.RECEBIMENTO_PRESENCIAL}
                           </SelectItem>
-                          <SelectItem value="COBRANCA">
+                          <SelectItem
+                            value="COBRANCA"
+                            disabled={customerMode === 'REGISTRADO' && selectedPayer?.type === 'aluno' && selectedPayer.isMinor && !selectedPayer.hasResponsible}
+                          >
                             {SALE_FINALIZATION_LABELS.COBRANCA}
                           </SelectItem>
                         </SelectContent>

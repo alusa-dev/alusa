@@ -1856,6 +1856,8 @@ export {
   shouldThrottleFetch,
   asaasSyncFlags,
 } from './services';
+export { selectFinancialResponsible } from './services';
+export type { FinancialResponsibleLink } from './services';
 export type {
   ResolvePayerFromAlunoInput,
   ResolvePayerFromMatriculaInput,

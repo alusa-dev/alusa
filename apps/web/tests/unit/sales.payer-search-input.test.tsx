@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FinancePayerCandidateDTO } from '@/features/finance/dtos';
@@ -51,11 +51,11 @@ describe('PayerSearchInput sales display', () => {
     expect(screen.getByText('Alunos')).toBeInTheDocument();
     expect(screen.getByText('Responsável financeiro: Bryan de Alencar Bezerra')).toBeInTheDocument();
     expect(screen.queryByText(/CPF:/)).not.toBeInTheDocument();
-    expect(screen.getByRole('list')).toHaveClass('divide-y', 'divide-gray-100');
+    expect(screen.getByRole('listbox')).toHaveClass('divide-y', 'divide-gray-100');
 
     const selectedSearch = { ...search, selectedPayer: candidate, searchOpen: false };
     rerender(<PayerSearchInput search={selectedSearch} salesDisplay />);
-    expect(screen.getByRole('textbox')).toHaveValue('Maria Nevez e Nicole Bezerra');
+    expect(screen.getByRole('combobox')).toHaveValue('Maria Nevez e Nicole Bezerra');
 
     const singleStudent: FinancePayerCandidateDTO = {
       ...candidate,
@@ -79,7 +79,7 @@ describe('PayerSearchInput sales display', () => {
     expect(screen.getByText('Maria Eduarda Nevez')).toBeInTheDocument();
 
     rerender(<PayerSearchInput search={{ ...search, selectedPayer: singleStudent, searchOpen: false }} salesDisplay />);
-    expect(screen.getByRole('textbox')).toHaveValue('Maria Eduarda Nevez');
+    expect(screen.getByRole('combobox')).toHaveValue('Maria Eduarda Nevez');
 
     const singleStudentResponsible: FinancePayerCandidateDTO = {
       ...candidate,
@@ -119,5 +119,48 @@ describe('PayerSearchInput sales display', () => {
     expect(screen.getByText('Bryan de Alencar Bezerra')).toBeInTheDocument();
     expect(screen.getByText('Responsável financeiro')).toBeInTheDocument();
     expect(screen.getByText(/Cadastro financeiro incompleto/)).toBeInTheDocument();
+  });
+
+  it('supports keyboard navigation and selection in the combobox', () => {
+    const candidate: FinancePayerCandidateDTO = {
+      id: 'student-keyboard', name: 'Maria Silva', type: 'aluno', isMinor: false,
+      hasResponsible: false, responsibleId: null, responsibleName: null,
+      payerResolved: { type: 'aluno', id: 'student-keyboard', name: 'Maria Silva', hasAsaasCustomerId: false },
+      financialStatus: 'INCOMPLETE',
+    };
+    const search: PayerSearchState = {
+      searchQuery: 'Maria', setSearchQuery: vi.fn(), searchResults: [candidate], searching: false,
+      searchOpen: true, setSearchOpen: vi.fn(), selectedPayer: null,
+      handleSelectPayer: vi.fn(), clearSelection: vi.fn(),
+    };
+    render(<PayerSearchInput search={search} salesDisplay />);
+    const input = screen.getByRole('combobox');
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(input.getAttribute('aria-activedescendant')).toMatch(/^payer-option-.*-option-0$/);
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(search.handleSelectPayer).toHaveBeenCalledWith(candidate);
+  });
+
+  it('explains that a minor without a responsible may complete a cash sale', () => {
+    const customer: FinancePayerCandidateDTO = {
+      id: 'minor-cash', name: 'Aluno Menor', type: 'aluno', isMinor: true,
+      hasResponsible: false, responsibleId: null, responsibleName: null,
+      payerResolved: { type: 'aluno', id: 'minor-cash', name: 'Aluno Menor', hasAsaasCustomerId: false },
+      financialStatus: 'INCOMPLETE',
+    };
+    render(<SelectedSaleCustomerSummary customer={customer} />);
+    expect(screen.getByText(/Venda à vista permitida/)).toBeInTheDocument();
+    expect(screen.getByText(/cadastre um responsável financeiro/)).toBeInTheDocument();
+  });
+
+  it('shows the pending state during debounce instead of a false empty result', () => {
+    const search: PayerSearchState = {
+      searchQuery: 'Maria', setSearchQuery: vi.fn(), searchResults: [], searching: true,
+      searchOpen: true, setSearchOpen: vi.fn(), selectedPayer: null,
+      handleSelectPayer: vi.fn(), clearSelection: vi.fn(),
+    };
+    render(<PayerSearchInput search={search} />);
+    expect(screen.getByText('Buscando...')).toBeInTheDocument();
+    expect(screen.queryByText('Nenhum resultado')).not.toBeInTheDocument();
   });
 });

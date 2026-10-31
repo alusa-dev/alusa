@@ -2,6 +2,7 @@ import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import type { BillingType } from '@alusa/asaas';
 import { prisma } from '@alusa/database';
 import { isValidCpfCnpjDigits } from '@alusa/shared/validators/cpf-cnpj';
+import { isMenorDeIdade } from '@alusa/domain';
 import {
   Prisma,
   ChargeStatus,
@@ -19,6 +20,7 @@ import {
 } from '@alusa/lib/services/product-variant-rules';
 
 import { hashPayload, isPrismaUniqueViolation } from '../core';
+import { selectFinancialResponsible } from '../services/select-financial-responsible';
 import { auditLogService } from '../foundation/audit-log.service';
 import { deleteInstallmentPayments, deletePayment } from './asaas-ops';
 import { createStandaloneCharge } from './create-standalone-charge';
@@ -301,12 +303,14 @@ type PreparedCustomer =
       responsavelId: string | null;
       responsavelName: string | null;
       displayName: string;
+      isMinor?: boolean;
     }
   | {
       type: 'RESPONSAVEL';
       responsavelId: string;
       responsavelName: string;
       displayName: string;
+      isMinor?: boolean;
     }
   | {
       type: 'AVULSO';
@@ -316,6 +320,7 @@ type PreparedCustomer =
       walkInPhone: string | null;
       walkInNotes: string | null;
       saveAsCustomer: boolean;
+      isMinor?: boolean;
     };
 
 type PreparedChargeConfig = {
@@ -1243,6 +1248,7 @@ async function prepareCustomer(
       walkInPhone: normalizeText(input.phone),
       walkInNotes: normalizeText(input.notes),
       saveAsCustomer: input.saveCustomer === true,
+      isMinor: false,
     };
   }
 
@@ -1265,6 +1271,7 @@ async function prepareCustomer(
       responsavelId: responsavel.id,
       responsavelName: responsavel.nome,
       displayName: responsavel.nome,
+      isMinor: false,
     };
   }
 
@@ -1273,13 +1280,24 @@ async function prepareCustomer(
     select: {
       id: true,
       nome: true,
+      dataNasc: true,
       responsaveis: {
+        where: {
+          contaId,
+          responsavel: { contaId },
+          OR: [
+            { responsavel: { financeiro: true } },
+            { tipoVinculo: { in: ['FINANCEIRO', 'PRINCIPAL'] } },
+          ],
+        },
         select: {
           responsavelId: true,
+          tipoVinculo: true,
           responsavel: {
             select: {
               id: true,
               nome: true,
+              financeiro: true,
             },
           },
         },
@@ -1291,9 +1309,13 @@ async function prepareCustomer(
     throw new StoreSaleError('ALUNO_NAO_ENCONTRADO', 'Aluno não encontrado.', 404);
   }
 
-  const matchedResponsavel = input.responsavelId
-    ? (aluno.responsaveis.find((relation) => relation.responsavelId === input.responsavelId)
-        ?.responsavel ?? null)
+  const selectedLink = selectFinancialResponsible(aluno.responsaveis.map((relation) => ({
+    responsavelId: relation.responsavelId,
+    tipoVinculo: relation.tipoVinculo,
+    financeiro: relation.responsavel.financeiro,
+  })));
+  const matchedResponsavel = selectedLink
+    ? aluno.responsaveis.find((relation) => relation.responsavelId === selectedLink.responsavelId)?.responsavel ?? null
     : null;
 
   return {
@@ -1303,6 +1325,7 @@ async function prepareCustomer(
     responsavelId: matchedResponsavel?.id ?? null,
     responsavelName: matchedResponsavel?.nome ?? null,
     displayName: aluno.nome,
+    isMinor: isMenorDeIdade(aluno.dataNasc),
   };
 }
 
@@ -1503,6 +1526,18 @@ async function prepareSaleContext(input: CreateStoreSaleInput): Promise<Prepared
   }
 
   const customer = await prepareCustomer(input.customer, input.contaId);
+  if (
+    input.finalization.type === 'COBRANCA' &&
+    customer.type === 'ALUNO' &&
+    customer.isMinor &&
+    !customer.responsavelId
+  ) {
+    throw new StoreSaleError(
+      'RESPONSAVEL_OBRIGATORIO_MENOR',
+      'Cadastre um responsável financeiro para gerar cobrança para aluno menor de idade.',
+      422,
+    );
+  }
   if (
     customer.type === 'AVULSO' &&
     (customer.saveAsCustomer || input.finalization.type === 'COBRANCA')

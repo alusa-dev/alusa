@@ -22,14 +22,16 @@ export function SelectedSaleCustomerSummary({ customer }: SelectedSaleCustomerSu
       </div>
 
       <div className="border-t border-slate-200 pt-3">
-        <p className="text-xs font-medium text-slate-500">Cobrança em nome de</p>
+        <p className="text-xs font-medium text-slate-500">{customer.isMinor && !customer.hasResponsible ? 'Cliente da venda' : 'Cobrança em nome de'}</p>
         <p className="mt-0.5 font-medium text-slate-800">{customer.payerResolved.name}</p>
         <p className="text-xs text-slate-500">{payerTypeLabel}</p>
       </div>
 
       {customer.financialStatus === 'INCOMPLETE' ? (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          Cadastro financeiro incompleto. Para gerar cobrança, complete os dados do pagador no cadastro.
+          {customer.isMinor && !customer.hasResponsible
+            ? 'Venda à vista permitida. Para gerar uma cobrança, cadastre um responsável financeiro para este aluno.'
+            : 'Cadastro financeiro incompleto. Para gerar cobrança, complete os dados do pagador no cadastro.'}
         </p>
       ) : null}
     </div>

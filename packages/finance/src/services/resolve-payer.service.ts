@@ -3,6 +3,7 @@ import { resolvePayer } from '@alusa/domain';
 import type { PayerResolvedDTO } from '@alusa/domain';
 import { ensureCustomer } from '../use-cases/ensure-customer';
 import { findCustomerForPayer } from '../customer/customer-identity';
+import { selectFinancialResponsible } from './select-financial-responsible';
 
 /**
  * ResolvePayerService — Serviço único de resolução de pagador
@@ -62,6 +63,8 @@ export async function resolvePayerFromAluno(
         asaasCustomerId: true,
         responsaveis: {
           where: {
+            contaId: input.contaId,
+            responsavel: { contaId: input.contaId },
             OR: [
               { responsavel: { financeiro: true } },
               { tipoVinculo: { in: ['FINANCEIRO', 'PRINCIPAL'] } },
@@ -69,9 +72,9 @@ export async function resolvePayerFromAluno(
           },
           select: {
             responsavelId: true,
-            responsavel: { select: { id: true, asaasCustomerId: true } },
+            tipoVinculo: true,
+            responsavel: { select: { id: true, asaasCustomerId: true, financeiro: true } },
           },
-          take: 1,
         },
       },
     });
@@ -82,7 +85,11 @@ export async function resolvePayerFromAluno(
 
     alunoDataNasc = aluno.dataNasc;
     if (responsavelFinanceiroId === undefined) {
-      responsavelFinanceiroId = aluno.responsaveis[0]?.responsavelId ?? null;
+      responsavelFinanceiroId = selectFinancialResponsible(aluno.responsaveis.map((link) => ({
+        responsavelId: link.responsavelId,
+        tipoVinculo: link.tipoVinculo,
+        financeiro: link.responsavel.financeiro,
+      })))?.responsavelId ?? null;
     }
   }
 

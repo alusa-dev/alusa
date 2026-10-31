@@ -13,6 +13,7 @@ const mockResponsavelFindMany = vi.hoisted(() => vi.fn());
 const mockCustomerFindUnique = vi.hoisted(() => vi.fn());
 const mockCustomerPayerFindUnique = vi.hoisted(() => vi.fn());
 const mockFindCustomerForPayer = vi.hoisted(() => vi.fn());
+const mockQueryRaw = vi.hoisted(() => vi.fn());
 
 vi.mock('next-auth', () => ({
   getServerSession: mockGetServerSession,
@@ -21,6 +22,7 @@ vi.mock('next-auth', () => ({
 vi.mock('@alusa/database', () => ({
   loadAsaasCredentials: vi.fn(),
   prisma: {
+    $queryRaw: mockQueryRaw,
     aluno: { findMany: mockAlunoFindMany },
     responsavel: { findMany: mockResponsavelFindMany },
     customer: { findUnique: mockCustomerFindUnique },
@@ -28,7 +30,10 @@ vi.mock('@alusa/database', () => ({
   },
 }));
 
-vi.mock('@alusa/finance', () => ({ findCustomerForPayer: mockFindCustomerForPayer }));
+vi.mock('@alusa/finance', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@alusa/finance')>();
+  return { ...actual, findCustomerForPayer: mockFindCustomerForPayer };
+});
 
 import { GET } from '@/app/api/finance/payers/search/route';
 
@@ -36,6 +41,13 @@ describe('GET /api/finance/payers/search', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFindCustomerForPayer.mockResolvedValue(null);
+    mockQueryRaw.mockImplementation((query: { sql?: string; 0?: string }) => {
+      const isResponsibleQuery = query?.sql?.includes('SELECT r."id"') ?? query?.[0]?.includes('SELECT r."id"');
+      return Promise.resolve((isResponsibleQuery
+        ? ['resp-1', 'resp-2', 'resp-bryan', 'resp-single', 'resp-vera']
+        : ['aluno-1', 'aluno-2', 'aluno-adulto', 'aluno-menor', 'aluno-nicole', 'aluno-pedro', 'aluno-single']
+      ).map((id) => ({ id })));
+    });
   });
 
   it('retorna 401 quando não autenticado', async () => {
@@ -44,6 +56,22 @@ describe('GET /api/finance/payers/search', () => {
     const response = await GET(new NextRequest('http://localhost/api/finance/payers/search?q=br'));
 
     expect(response.status).toBe(401);
+  });
+
+  it('usa busca SQL normalizada e rankeada com contaId, sem criar filtro de CPF vazio', async () => {
+    mockGetServerSession.mockResolvedValueOnce({ user: { id: 'u1', contaId: 'conta-a', role: 'FINANCEIRO' } });
+    mockAlunoFindMany.mockResolvedValueOnce([]);
+    mockResponsavelFindMany.mockResolvedValueOnce([]);
+
+    const response = await GET(new NextRequest('http://localhost/api/finance/payers/search?q=Émilia%20Silva'));
+    const sql = mockQueryRaw.mock.calls[0][0] as { sql: string; values: unknown[] };
+    const statement = sql.sql;
+
+    expect(response.status).toBe(200);
+    expect(statement).toContain('translate(lower(a."nome")');
+    expect(statement).toContain('ORDER BY CASE WHEN');
+    expect(statement).toContain('a."contaId"');
+    expect(statement).toContain("? <> '' AND strpos(regexp_replace");
   });
 
   it('busca aluno menor pelo responsável e retorna apenas o responsável financeiro', async () => {
@@ -57,11 +85,13 @@ describe('GET /api/finance/payers/search', () => {
         asaasCustomerId: null,
         responsaveis: [
           {
+            tipoVinculo: 'FINANCEIRO',
             responsavel: {
               id: 'resp-1',
               nome: 'Bryan de Alencar Bezerra',
               cpf: '04410435264',
               asaasCustomerId: 'cus_resp_1',
+              financeiro: false,
             },
           },
         ],
@@ -106,11 +136,13 @@ describe('GET /api/finance/payers/search', () => {
         asaasCustomerId: null,
         responsaveis: [
           {
+            tipoVinculo: 'FINANCEIRO',
             responsavel: {
               id: 'resp-1',
               nome: 'Bryan de Alencar Bezerra',
               cpf: '04410435264',
               asaasCustomerId: 'cus_resp_1',
+              financeiro: false,
             },
           },
         ],
@@ -171,11 +203,13 @@ describe('GET /api/finance/payers/search', () => {
         asaasCustomerId: 'cus_bryan',
         responsaveis: [
           {
+            tipoVinculo: 'FINANCEIRO',
             responsavel: {
               id: 'resp-vera',
               nome: 'Vera Lúcia Gomes de Alencar',
               cpf: '11122233344',
               asaasCustomerId: 'cus_vera',
+              financeiro: false,
             },
           },
         ],
@@ -188,11 +222,13 @@ describe('GET /api/finance/payers/search', () => {
         asaasCustomerId: null,
         responsaveis: [
           {
+            tipoVinculo: 'FINANCEIRO',
             responsavel: {
               id: 'resp-vera',
               nome: 'Vera Lúcia Gomes de Alencar',
               cpf: '11122233344',
               asaasCustomerId: 'cus_vera',
+              financeiro: false,
             },
           },
         ],
@@ -232,12 +268,12 @@ describe('GET /api/finance/payers/search', () => {
       {
         id: 'aluno-nicole', nome: 'Maria Eduarda Nevez', cpf: null,
         dataNasc: new Date('2014-05-10T00:00:00.000Z'), asaasCustomerId: null,
-        responsaveis: [{ responsavel: respBryan }],
+        responsaveis: [{ tipoVinculo: 'FINANCEIRO', responsavel: { ...respBryan, financeiro: false } }],
       },
       {
         id: 'aluno-pedro', nome: 'Nicole da Silva Bezerra', cpf: null,
         dataNasc: new Date('2015-05-10T00:00:00.000Z'), asaasCustomerId: null,
-        responsaveis: [{ responsavel: respBryan }],
+        responsaveis: [{ tipoVinculo: 'FINANCEIRO', responsavel: { ...respBryan, financeiro: false } }],
       },
     ]);
     mockResponsavelFindMany.mockResolvedValueOnce([respBryan]);
@@ -265,7 +301,7 @@ describe('GET /api/finance/payers/search', () => {
       {
         id: 'aluno-single', nome: 'Maria Eduarda Nevez', cpf: null,
         dataNasc: new Date('2014-05-10T00:00:00.000Z'), asaasCustomerId: null,
-        responsaveis: [{ responsavel: responsible }],
+        responsaveis: [{ tipoVinculo: 'FINANCEIRO', responsavel: { ...responsible, financeiro: false } }],
       },
     ]);
     mockResponsavelFindMany.mockResolvedValueOnce([responsible]);
@@ -284,8 +320,9 @@ describe('GET /api/finance/payers/search', () => {
       {
         id: 'aluno-nicole', nome: 'Nicole Bezerra', cpf: null,
         dataNasc: new Date('2014-05-10T00:00:00.000Z'), asaasCustomerId: null,
-        responsaveis: [{ responsavel: {
+        responsaveis: [{ tipoVinculo: 'FINANCEIRO', responsavel: {
           id: 'resp-bryan', nome: 'Bryan de Alencar Bezerra', cpf: null, asaasCustomerId: 'cus-bryan',
+          financeiro: false,
         } }],
       },
     ]);

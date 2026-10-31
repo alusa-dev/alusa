@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { controlClass, labelClass } from '@/lib/finance-form-utils';
 import type { FinancePayerCandidateDTO } from '@/features/finance/dtos';
@@ -13,6 +13,7 @@ export type PayerSearchState = {
   setSearchQuery: (_q: string) => void;
   searchResults: FinancePayerCandidateDTO[];
   searching: boolean;
+  searchError?: boolean;
   searchOpen: boolean;
   setSearchOpen: (_open: boolean) => void;
   selectedPayer: FinancePayerCandidateDTO | null;
@@ -44,6 +45,15 @@ export function PayerSearchInput({
     handleSelectPayer,
     clearSelection,
   } = search;
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const optionId = `payer-option-${useId().replace(/:/g, '')}`;
+  const rootRef = useRef<HTMLDivElement>(null);
+  const visibleOptions = searchOpen && !selectedPayer ? searchResults : [];
+  useEffect(() => setActiveIndex(-1), [searchResults]);
+  useEffect(() => {
+    if (activeIndex < 0 || activeIndex >= visibleOptions.length) return;
+    rootRef.current?.querySelector<HTMLElement>(`#${optionId}-option-${activeIndex}`)?.scrollIntoView?.({ block: 'nearest' });
+  }, [activeIndex, optionId, visibleOptions.length]);
 
   const displayValue = useMemo(() => {
     if (!selectedPayer) return searchQuery;
@@ -55,9 +65,10 @@ export function PayerSearchInput({
   }, [selectedPayer, searchQuery, salesDisplay]);
 
   return (
-    <div className="relative">
-      <label className={labelClass}>{label}</label>
+    <div className="relative" ref={rootRef}>
+      <label className={labelClass} htmlFor={optionId}>{label}</label>
       <Input
+        id={optionId}
         className={
           salesDisplay
             ? 'flex h-11 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-none transition-colors focus-visible:border-[#A94DFF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#A94DFF]/30 focus-visible:ring-offset-0'
@@ -65,27 +76,55 @@ export function PayerSearchInput({
         }
         value={displayValue}
         onChange={(e) => {
+          setActiveIndex(-1);
           clearSelection();
           setSearchQuery(e.target.value);
           setSearchOpen(true);
         }}
         onFocus={() => setSearchOpen(true)}
-        onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
+        onBlur={(event) => {
+          if (event.relatedTarget instanceof Node && rootRef.current?.contains(event.relatedTarget)) return;
+          setSearchOpen(false);
+          setActiveIndex(-1);
+        }}
         placeholder={placeholder}
+        role="combobox"
+        aria-label={label}
+        aria-autocomplete="list"
+        aria-expanded={searchOpen && !selectedPayer}
+        aria-controls={`${optionId}-listbox`}
+        aria-activedescendant={activeIndex >= 0 && activeIndex < visibleOptions.length ? `${optionId}-option-${activeIndex}` : undefined}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') { setSearchOpen(false); setActiveIndex(-1); }
+          if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            if (!searchOpen || selectedPayer) { clearSelection(); setSearchOpen(true); setActiveIndex(0); }
+            else if (searchResults.length) setActiveIndex((i) => (i + 1) % searchResults.length);
+          }
+          if (event.key === 'ArrowUp' && searchOpen && searchResults.length) { event.preventDefault(); setActiveIndex((i) => (i <= 0 ? searchResults.length - 1 : i - 1)); }
+          if (event.key === 'Enter' && searchOpen && !selectedPayer && activeIndex >= 0 && activeIndex < searchResults.length) { event.preventDefault(); handleSelectPayer(searchResults[activeIndex]); setActiveIndex(-1); }
+        }}
       />
 
       {searchOpen && !selectedPayer && (
         <div className="absolute z-20 mt-2 w-full rounded-md border bg-white shadow-lg">
           {searching ? (
             <div className="px-3 py-2 text-xs text-gray-500">Buscando...</div>
+          ) : search.searchError ? (
+            <div role="alert" className="px-3 py-2 text-xs text-red-600">Não foi possível buscar. Tente novamente.</div>
+          ) : searchQuery.trim().length < 2 ? (
+            <div className="px-3 py-2 text-xs text-gray-500">Digite ao menos 2 caracteres para buscar.</div>
           ) : searchResults.length === 0 ? (
             <div className="px-3 py-2 text-xs text-gray-500">Nenhum resultado</div>
           ) : (
-            <ul className="max-h-56 divide-y divide-gray-100 overflow-auto">
-              {searchResults.map((item) => (
+            <ul id={`${optionId}-listbox`} role="listbox" aria-label={label} className="max-h-56 divide-y divide-gray-100 overflow-auto">
+              {searchResults.map((item, index) => (
                 <li
                   key={item.id}
-                  className="cursor-pointer px-3 py-3 text-sm text-gray-700 hover:bg-gray-50"
+                  id={`${optionId}-option-${index}`}
+                  role="option"
+                  aria-selected={activeIndex === index}
+                  className={`cursor-pointer px-3 py-3 text-sm text-gray-700 hover:bg-gray-50 ${activeIndex === index ? 'bg-gray-50' : ''}`}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => handleSelectPayer(item)}
                 >
