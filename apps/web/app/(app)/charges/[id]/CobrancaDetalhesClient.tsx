@@ -1203,6 +1203,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
           ? 'Pagamento estornado; líquido final indisponível.'
           : null;
   const recordedAsaasFee = cobranca.taxaAsaas ?? null;
+  const showAsaasFee = isPago && Boolean(cobranca.asaasPaymentId);
   const canViewAlusaEventTicketReceipt = canViewManualEventTicketSaleReceipt(cobranca);
   const isPendente = chargeActions.canEdit;
   
@@ -1538,7 +1539,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
             </div>
           )}
 
-          {isPago && (cobranca.valorLiquido != null || recordedAsaasFee != null) && (
+          {isPago && (
             <>
               {cobranca.valorLiquido != null && netUnavailableReason === null ? (
                 <div className="space-y-1">
@@ -1576,7 +1577,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
                 <p className="text-xs text-slate-500">{netUnavailableReason}</p>
               ) : null}
 
-              {recordedAsaasFee != null && recordedAsaasFee >= 0 && (
+              {showAsaasFee && recordedAsaasFee != null && recordedAsaasFee >= 0 ? (
                 <div className="space-y-1">
                   <label className={labelClass}>Taxa do Asaas registrada</label>
                   <div className="relative">
@@ -1585,13 +1586,18 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
                     </span>
                     <input
                       type="text"
-                      value={`-${formatBRL(recordedAsaasFee)}`}
+                      value={recordedAsaasFee === 0 ? formatBRL(0) : `-${formatBRL(recordedAsaasFee)}`}
                       disabled
                       className="w-full pl-10 pr-3 py-2 text-sm border border-red-200 bg-red-50 text-red-600 cursor-not-allowed rounded-md text-right"
                     />
                   </div>
                 </div>
-              )}
+              ) : showAsaasFee ? (
+                <div className="space-y-1">
+                  <label className={labelClass}>Taxa do Asaas registrada</label>
+                  <p className="py-2 text-sm text-slate-500">Indisponível</p>
+                </div>
+              ) : null}
             </>
           )}
 

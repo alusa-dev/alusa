@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { getSessionUser } from '@/lib/auth/session';
-import { AsaasEnvError, getPayment, isAsaasEnabled, mapAsaasPaymentStatusToCobranca, resolveAsaasProcessingFee, resolveCobrancaDisplayStatus, resolveLiquidacaoFromAsaasPayment, resolveOperationalChargePayment, mapOperationalStatusToCobrancaDisplay, resolveStandaloneChargeTipo } from '@alusa/finance';
+import { AsaasEnvError, getPayment, isAsaasEnabled, mapAsaasPaymentStatusToCobranca, resolveCobrancaDisplayStatus, resolveLiquidacaoFromAsaasPayment, resolveOperationalChargePayment, mapOperationalStatusToCobrancaDisplay, resolveStandaloneChargeTipo } from '@alusa/finance';
 import type { LiquidacaoStatus, StatusCobranca } from '@prisma/client';
 import { cobrancaDetailResultDTOSchema } from '@/features/finance/operations/charges/dtos';
 import { mapCobrancaDetailResultToDTO } from '@/features/finance/operations/charges/mappers';
@@ -30,9 +30,72 @@ import { isCacheLayerEnabled } from '@/lib/cache/tenant-cache';
 import { privateJson } from '@/lib/private-cache';
 import { logFinanceOperationalEvent } from '@alusa/finance/foundation/operational-log';
 import { parseFirstValidCivilDatePreservingInstant } from '@alusa/finance/mappers/civil-date';
+import { getExtrato } from '@alusa/finance';
 
 const CHARGE_DETAIL_CACHE_SECONDS = 20;
 const CHARGE_DETAIL_STALE_SECONDS = 40;
+
+async function readAsaasLedgerFee(
+  contaId: string,
+  paymentId: string | null | undefined,
+  paymentCreatedAt?: Date | null,
+): Promise<number | null> {
+  if (!paymentId) return null;
+  const now = new Date();
+  const oldestAllowedStart = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+  const start = paymentCreatedAt && paymentCreatedAt > oldestAllowedStart ? paymentCreatedAt : oldestAllowedStart;
+  const coversPaymentLifetime = Boolean(paymentCreatedAt && paymentCreatedAt >= oldestAllowedStart);
+  const startDate = start.toISOString().slice(0, 10);
+  const endDate = now.toISOString().slice(0, 10);
+
+  const ledgerResult = await getExtrato({
+    contaId,
+    query: {
+      startDate,
+      endDate,
+      page: 1,
+      pageSize: 1,
+      sort: 'date',
+      direction: 'desc',
+    },
+  }).catch(() => null);
+  if (!ledgerResult?.success || ledgerResult.data.sync.truncated ||
+      ledgerResult.data.sync.fetchedCount !== ledgerResult.data.sync.officialTotalCount) {
+    return null;
+  }
+  if (!coversPaymentLifetime) return null;
+
+  const syncedAt = new Date(ledgerResult.data.sync.fetchedAt);
+  const persistedWindow = await prisma.financialTransactionSyncWindow.findFirst({
+    where: {
+      contaId,
+      startDate,
+      finishDate: endDate,
+      order: 'desc',
+      syncedAt: {
+        gte: new Date(syncedAt.getTime() - 5_000),
+        lte: syncedAt,
+      },
+      truncated: false,
+      fetchedCount: ledgerResult.data.sync.fetchedCount,
+      officialTotalCount: ledgerResult.data.sync.officialTotalCount,
+    },
+    select: { id: true },
+  });
+  if (!persistedWindow) return null;
+
+  const entries = await prisma.financialTransactionSnapshot.findMany({
+    where: { contaId, paymentId, type: { in: ['PAYMENT_FEE', 'PAYMENT_FEE_REVERSAL'] } },
+    select: { type: true, value: true },
+  });
+  if (entries.length === 0) return 0;
+
+  const signedTotal = entries.reduce((total, entry) => {
+    const value = Math.abs(Number(entry.value));
+    return total + (entry.type === 'PAYMENT_FEE_REVERSAL' ? value : -value);
+  }, 0);
+  return Number(Math.max(0, -signedTotal).toFixed(2));
+}
 
 async function findEventPaymentRulesForCharge(params: {
   contaId: string;
@@ -195,11 +258,7 @@ export async function getCobrancaDetailRoute(_req: NextRequest, { params }: { pa
         const asaasNetValue = remoteAsaasData
           ? toNullableNumber(remoteAsaasData.netValue)
           : toNullableNumber(charge.asaasNetValue);
-        const asaasProcessingFee = resolveAsaasProcessingFee({
-          explicitFee: remoteAsaasData ? null : toNullableNumber(charge.asaasFeeValue),
-          grossValue: asaasGrossValue,
-          netValue: asaasNetValue,
-        });
+        const asaasProcessingFee = await readAsaasLedgerFee(contaId, standaloneAsaasPaymentId, charge.createdAt);
         const participantPaymentRules = await findEventPaymentRulesForCharge({
           contaId,
           chargeId: charge.id,
@@ -399,11 +458,7 @@ export async function getCobrancaDetailRoute(_req: NextRequest, { params }: { pa
                 asaasPaymentId: operationalCharge.asaasPaymentId,
                 valorBruto: eventAsaasGrossValue ?? operationalCharge.value,
                 valorLiquido: eventAsaasNetValue,
-                taxaAsaas: resolveAsaasProcessingFee({
-                  explicitFee: null,
-                  grossValue: eventAsaasGrossValue,
-                  netValue: eventAsaasNetValue,
-                }),
+                taxaAsaas: await readAsaasLedgerFee(contaId, operationalCharge.asaasPaymentId),
                 liquidacaoStatus: effectiveLiquidacaoStatus,
                 displayStatus: eventDisplayStatus,
                 invoiceUrl:
@@ -498,11 +553,11 @@ export async function getCobrancaDetailRoute(_req: NextRequest, { params }: { pa
     const academicAsaasNetValue = remoteAsaasData
       ? toNullableNumber(remoteAsaasData.netValue)
       : toNullableNumber(localAsaasSnapshot.asaasNetValue);
-    const academicAsaasProcessingFee = resolveAsaasProcessingFee({
-      explicitFee: remoteAsaasData ? null : toNullableNumber(localAsaasSnapshot.asaasFeeValue),
-      grossValue: academicAsaasGrossValue,
-      netValue: academicAsaasNetValue,
-    });
+    const academicAsaasProcessingFee = await readAsaasLedgerFee(
+      contaIdForAsaas ?? contaId,
+      academicAsaasPaymentId,
+      cobranca.createdAt,
+    );
     const remotePaymentStatus = getEffectiveRemotePaymentStatus(remoteAsaasData ?? asaasData);
 
     const remoteBillingTypeForForma =
