@@ -8,6 +8,7 @@ const EMAIL_CATEGORIES = [
   'account_reactivation',
   'platform_billing',
   'contract_signature_otp',
+  'contract_signature_link',
   'password_change_otp',
   'sales_contact',
 ] as const;

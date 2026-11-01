@@ -7,7 +7,7 @@ import {
   type CustomerNotificationPreferenceInput,
 } from '@alusa/finance';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
-import { asaasNotificationPreferenceDTOSchema } from '@/features/settings/notifications/asaas/dtos';
+import { asaasNotificationPreferenceDTOSchema, notificationPreferenceArraySchema } from '@/features/settings/notifications/asaas/dtos';
 import { deriveCustomerNotificationChannelDefaults } from '@/features/settings/notifications/asaas/customer-channel-defaults';
 import { apiJsonError } from '@/lib/api/standard-response';
 import { resolveAlunoNotificationCustomer } from '@/src/server/finance/customer-notification-scope.service';
@@ -19,9 +19,7 @@ const allowedRoles = new Set(['ADMIN', 'FINANCEIRO']);
 
 const updateCustomerNotificationsSchema = z.object({
   customerId: z.string().trim().optional(),
-  preferences: z
-    .array(asaasNotificationPreferenceDTOSchema.extend({ id: z.string().trim().optional() }))
-    .min(1),
+  preferences: notificationPreferenceArraySchema(asaasNotificationPreferenceDTOSchema.extend({ id: z.string().trim().optional() }), { singleScheduledOffset: false }),
 });
 
 function json(status: number, body: unknown) {

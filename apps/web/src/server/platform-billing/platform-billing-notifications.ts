@@ -70,13 +70,23 @@ export async function notifyPlatformBillingEvent(input: {
       });
       if (!account) return;
 
+      const plan = account.planCode
+        ? PLATFORM_PLANS[account.planCode as keyof typeof PLATFORM_PLANS]
+        : null;
+      const trialEndDate = account.trialEndsAt
+        ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'long' }).format(account.trialEndsAt)
+        : null;
+      const planTerms = plan && plan.amountCents !== null
+        ? `${plan.name} por ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(plan.amountCents / 100)}/mês`
+        : plan?.name ?? 'o plano escolhido';
+
       await createNotification({
         contaId,
         type: NotificationType.SYSTEM_ATTENTION,
         category: NotificationCategory.SYSTEM,
         severity: NotificationSeverity.CRITICAL,
         title: 'Seu período gratuito terminou',
-        message: 'Seu período de teste acabou. Contrate e confirme o pagamento para liberar as operações de escrita.',
+        message: `Seu período gratuito terminou${trialEndDate ? ` em ${trialEndDate}` : ''}. ${planTerms === 'o plano escolhido' ? 'Escolha um plano e confirme o pagamento' : `O plano ${planTerms} está disponível para contratação`}. Enquanto isso, algumas alterações ficarão indisponíveis.`,
         dedupeKey: `platform-billing:trial-expired:${account.id}`,
         relatedPath: '/account/billing-plan',
         entityType: 'PlatformBillingAccount',
@@ -251,10 +261,10 @@ function mapPlatformBillingEventToNotification(
     return {
       severity: NotificationSeverity.WARNING,
       title: 'Mais de 500 alunos: converse com a Alusa',
-      message: 'Sua escola ultrapassou 500 alunos em três fechamentos mensais consecutivos. O contrato e a operação atuais permanecem durante 30 dias para a negociação. Nenhum preço personalizado será aplicado automaticamente.',
+      message: 'Sua escola ultrapassou 500 alunos em três fechamentos mensais consecutivos. Seu contrato e sua operação atuais permanecem por 30 dias enquanto conversamos sobre as condições adequadas. Nenhum preço personalizado será aplicado automaticamente.',
       email: {
         subject: 'Vamos conversar sobre o crescimento da sua escola',
-        preview: 'Sua escola ultrapassou o limite de contratação self-service.',
+        preview: 'Sua escola ultrapassou o limite de contratação online.',
         actionLabel: 'Falar com um especialista',
       },
     };
@@ -263,8 +273,8 @@ function mapPlatformBillingEventToNotification(
   if (eventType === 'checkout.session.completed') {
     return {
       severity: NotificationSeverity.INFO,
-      title: 'Checkout da assinatura concluído',
-      message: 'Stripe registrou a conclusão do checkout. O estado de pagamento e acesso será sincronizado após validação da assinatura.',
+      title: 'Etapa de contratação concluída',
+      message: 'Recebemos seus dados para contratar o plano. A assinatura ainda aguarda confirmação; acompanhe a situação em Plano e faturamento.',
     };
   }
 
@@ -273,10 +283,10 @@ function mapPlatformBillingEventToNotification(
       severity: NotificationSeverity.INFO,
       title: 'Assinatura criada',
       message:
-        'Stripe registrou uma assinatura para a conta. Consulte o status atual em Plano e faturamento.',
+        'A assinatura do plano foi registrada. Confira a situação do plano e do acesso em Plano e faturamento.',
       email: {
         subject: 'Assinatura criada na Alusa',
-        preview: 'Stripe registrou uma assinatura para a conta.',
+        preview: 'A assinatura foi criada para sua conta.',
         actionLabel: 'Acompanhar assinatura',
       },
     };
@@ -285,11 +295,11 @@ function mapPlatformBillingEventToNotification(
   if (eventType === 'invoice.paid' || eventType === 'invoice.payment_succeeded') {
     return {
       severity: NotificationSeverity.SUCCESS,
-      title: 'Pagamento de fatura confirmado',
-      message: 'Stripe confirmou o pagamento de uma fatura da assinatura. Consulte o status atual em Plano e faturamento.',
+      title: 'Pagamento do plano confirmado',
+      message: 'O pagamento do plano foi confirmado. Confira a situação atual em Plano e faturamento.',
       email: {
-        subject: 'Pagamento de fatura confirmado',
-        preview: 'Stripe confirmou o pagamento de uma fatura da assinatura.',
+        subject: 'Pagamento do plano confirmado',
+        preview: 'O pagamento da assinatura foi confirmado.',
       },
     };
   }
@@ -297,11 +307,11 @@ function mapPlatformBillingEventToNotification(
   if (eventType === 'invoice.payment_failed' || eventType === 'invoice.payment_action_required') {
     return {
       severity: NotificationSeverity.WARNING,
-      title: 'Pagamento da assinatura pendente',
+      title: 'Pagamento do plano pendente',
       message:
-        'Stripe sinalizou falha ou ação necessária em uma cobrança da assinatura. Verifique o pagamento em Plano e faturamento.',
+        'Não foi possível confirmar o pagamento do plano. Confira os dados de pagamento em Plano e faturamento para evitar restrições de acesso.',
       email: {
-        subject: 'Pagamento da assinatura pendente',
+        subject: 'Pagamento do plano pendente',
         preview: 'Atualize o pagamento para evitar restrições no acesso.',
         actionLabel: 'Regularizar pagamento',
       },
@@ -332,18 +342,18 @@ function mapPlatformBillingEventToNotification(
     return {
       severity: NotificationSeverity.INFO,
       title: 'Assinatura atualizada',
-      message: 'O estado da assinatura foi sincronizado com segurança.',
+      message: 'Os dados da sua assinatura foram atualizados. Confira a situação atual em Plano e faturamento.',
     };
   }
 
   if (eventType === 'customer.subscription.deleted') {
     return {
       severity: NotificationSeverity.CRITICAL,
-      title: 'Assinatura da Alusa encerrada',
-      message: 'A assinatura comercial da conta foi encerrada.',
+      title: 'Assinatura encerrada',
+      message: 'A assinatura do plano foi encerrada. Confira a situação do acesso da conta em Plano e faturamento.',
       email: {
-        subject: 'Assinatura da Alusa encerrada',
-        preview: 'A assinatura comercial da conta foi encerrada.',
+        subject: 'Assinatura encerrada',
+        preview: 'A assinatura do plano foi encerrada.',
         actionLabel: 'Ver assinatura',
       },
     };

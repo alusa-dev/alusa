@@ -46,6 +46,7 @@ function buildTx(modelExists = true) {
     },
     contratoDocumento: { create: vi.fn().mockResolvedValue({ id: 'documento-1' }) },
     contractEvidence: { create: vi.fn().mockResolvedValue({ id: 'evidencia-1' }) },
+    auditLog: { create: vi.fn().mockResolvedValue({ id: 'audit-1' }) },
     matricula: {
       findFirst: vi.fn().mockResolvedValue({
         id: 'matricula-1',
@@ -59,6 +60,7 @@ function buildTx(modelExists = true) {
       }),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
+    conta: { findUnique: vi.fn().mockResolvedValue({ contractNotificationsEnabled: true, contractWhatsAppNotificationsEnabled: true, contractEmailNotificationsEnabled: false }) },
   };
 }
 
@@ -113,6 +115,7 @@ describe('createPendingEnrollmentContract', () => {
         dataNasc: new Date('2015-01-01'),
         telefone: null,
         responsaveis: [{ tipoVinculo: 'PRINCIPAL', responsavel: {
+          contaId: 'conta-1',
           nome: 'Responsável',
           cpf: null,
           telefone: '+55 (97) 98128-3106',
@@ -143,6 +146,84 @@ describe('createPendingEnrollmentContract', () => {
         }),
       }),
     );
+  });
+
+  it('não enfileira contrato quando a conta desativa o WhatsApp digital', async () => {
+    const tx = buildTx();
+    tx.conta.findUnique.mockResolvedValue({ contractWhatsAppNotificationsEnabled: false });
+    tx.matricula.findFirst.mockResolvedValue({
+      id: 'matricula-1',
+      aluno: {
+        nome: 'Aluno Menor', cpf: null, dataNasc: new Date('2015-01-01'), telefone: null,
+        responsaveis: [{ tipoVinculo: 'PRINCIPAL', responsavel: {
+          nome: 'Responsável', cpf: null, telefone: '+55 (97) 98128-3106',
+          consentimentoComunicacoes: true,
+          dataConsentimentoComunicacoes: new Date('2026-09-05T12:00:00.000Z'),
+          versaoConsentimentoComunicacoes: '2026-09-05', origemConsentimentoComunicacoes: 'ALUNO_WIZARD',
+        } }],
+      },
+      responsavelFinanceiro: null,
+    });
+    const notification = { create: vi.fn() };
+    (tx as typeof tx & { contractWhatsAppNotification: typeof notification }).contractWhatsAppNotification = notification;
+
+    await createPendingEnrollmentContract(tx as never, {
+      contaId: 'conta-1', matriculaId: 'matricula-1', modeloId: 'modelo-1', actorId: 'usuario-1',
+    });
+
+    expect(notification.create).not.toHaveBeenCalled();
+  });
+
+  it('enfileira o e-mail na emissão quando o canal da conta está ativo', async () => {
+    const tx = buildTx();
+    tx.conta.findUnique.mockResolvedValue({ contractNotificationsEnabled: true, contractWhatsAppNotificationsEnabled: true, contractEmailNotificationsEnabled: true });
+    tx.matricula.findFirst.mockResolvedValue({
+      id: 'matricula-1',
+      aluno: { nome: 'Aluno Menor', cpf: null, dataNasc: new Date('2015-01-01'), email: null, telefone: null, responsaveis: [] },
+      responsavelFinanceiro: { contaId: 'conta-1', nome: 'Responsável Teste', cpf: null, email: 'responsavel@example.com', telefone: null, consentimentoComunicacoes: false },
+    });
+    const upsert = vi.fn().mockResolvedValue({ id: 'email-notification-1' });
+    (tx as typeof tx & { contractEmailNotification: { upsert: typeof upsert } }).contractEmailNotification = { upsert };
+
+    await createPendingEnrollmentContract(tx as never, { contaId: 'conta-1', matriculaId: 'matricula-1', modeloId: 'modelo-1', actorId: 'usuario-1' });
+
+    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { uq_contract_email_notification_delivery: { contaId: 'conta-1', deliveryKey: 'contract:contrato-1:email:issued' } },
+      create: expect.objectContaining({ recipientEmail: 'responsavel@example.com', recipientName: 'Responsável Teste', tokenPublicoHash: expect.any(String) }),
+    }));
+  });
+
+  it('não usa responsável de outra conta ao escolher destinatário de contrato', async () => {
+    const tx = buildTx();
+    tx.conta.findUnique.mockResolvedValue({ contractNotificationsEnabled: true, contractWhatsAppNotificationsEnabled: true, contractEmailNotificationsEnabled: true });
+    tx.matricula.findFirst.mockResolvedValue({
+      id: 'matricula-1',
+      aluno: { nome: 'Aluno Menor', cpf: null, dataNasc: new Date('2015-01-01'), email: null, telefone: null, responsaveis: [{ tipoVinculo: 'PRINCIPAL', responsavel: { contaId: 'outra-conta', nome: 'Responsável externo', cpf: null, email: 'externo@example.com', telefone: '+55 (11) 99999-9999', consentimentoComunicacoes: true } }] },
+      responsavelFinanceiro: { contaId: 'outra-conta', nome: 'Responsável externo', cpf: null, email: 'externo@example.com', telefone: '+55 (11) 99999-9999', consentimentoComunicacoes: true },
+    });
+    const whatsappCreate = vi.fn();
+    const emailUpsert = vi.fn();
+    (tx as typeof tx & { contractWhatsAppNotification: { create: typeof whatsappCreate }; contractEmailNotification: { upsert: typeof emailUpsert } }).contractWhatsAppNotification = { create: whatsappCreate };
+    (tx as typeof tx & { contractEmailNotification: { upsert: typeof emailUpsert } }).contractEmailNotification = { upsert: emailUpsert };
+
+    await createPendingEnrollmentContract(tx as never, { contaId: 'conta-1', matriculaId: 'matricula-1', modeloId: 'modelo-1', actorId: 'usuario-1' });
+
+    expect(whatsappCreate).not.toHaveBeenCalled();
+    expect(emailUpsert).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'CONTRACT_EMAIL_NOT_ENQUEUED_NO_TENANT_RECIPIENT', metadata: expect.objectContaining({ reason: 'CANONICAL_EMAIL_UNAVAILABLE' }) }) }));
+  });
+
+  it('não cria outbox pendente quando o e-mail canônico está ausente', async () => {
+    const tx = buildTx();
+    tx.conta.findUnique.mockResolvedValue({ contractNotificationsEnabled: true, contractWhatsAppNotificationsEnabled: true, contractEmailNotificationsEnabled: true });
+    tx.matricula.findFirst.mockResolvedValue({ id: 'matricula-1', aluno: { nome: 'Aluno Adulto', cpf: null, dataNasc: new Date('1990-01-01'), email: '   ', telefone: null, responsaveis: [] }, responsavelFinanceiro: null });
+    const emailUpsert = vi.fn();
+    (tx as typeof tx & { contractEmailNotification: { upsert: typeof emailUpsert } }).contractEmailNotification = { upsert: emailUpsert };
+
+    await createPendingEnrollmentContract(tx as never, { contaId: 'conta-1', matriculaId: 'matricula-1', modeloId: 'modelo-1', actorId: 'usuario-1' });
+
+    expect(emailUpsert).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ action: 'CONTRACT_EMAIL_NOT_ENQUEUED_NO_TENANT_RECIPIENT' }) }));
   });
 
   it('falha antes de escrever quando o modelo não pertence à conta', async () => {

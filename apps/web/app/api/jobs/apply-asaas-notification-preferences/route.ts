@@ -38,14 +38,12 @@ async function run(req: Request) {
 
     const limit = clampPositiveInt(url.searchParams.get('limit'), 50, 200);
     const enqueue = url.searchParams.get('enqueue') === 'true';
-    const enqueueLimit = clampPositiveInt(url.searchParams.get('enqueueLimit'), 500, 5_000);
     let enqueued = 0;
 
     if (enqueue && tenantScope.contaId) {
       const enqueueResult = await enqueueAsaasNotificationPreferenceSyncForTenant({
         contaId: tenantScope.contaId,
         reason: 'JOB_ENQUEUE_REQUEST',
-        limit: enqueueLimit,
       });
       enqueued = enqueueResult.enqueued;
     }

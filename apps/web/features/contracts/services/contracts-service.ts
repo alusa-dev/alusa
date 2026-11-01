@@ -29,6 +29,29 @@ export type ContractWhatsAppNotification = {
   createdAt: string;
   processedAt: string | null;
 };
+export type ContractEmailNotification = {
+  id: string;
+  status: string;
+  attempts: number;
+  lastErrorCode: string | null;
+  lastError: string | null;
+  providerEmailId: string | null;
+  recipientEmail: string;
+  createdAt: string;
+  processedAt: string | null;
+};
+export type ContractWhatsAppHistoryItem = {
+  id: string;
+  status: string;
+  attempts: number;
+  lastErrorCode: string | null;
+  lastError: string | null;
+  providerMessageId: string | null;
+  providerAccepted: boolean;
+  createdAt: string;
+  processedAt: string | null;
+};
+export type ContractNotificationHistory = { email: ContractEmailNotification[]; whatsapp: ContractWhatsAppHistoryItem[] };
 export type StudentContractCard = AlunoContratoCardDTO;
 export type StudentsWithContractsPage = ListAlunosComContratosResultDTO;
 
@@ -94,8 +117,12 @@ export async function getContractWhatsAppNotification(id: string): Promise<Contr
   return (json?.notification ?? null) as ContractWhatsAppNotification | null;
 }
 
-export async function retryContractWhatsAppNotification(id: string) {
-  const res = await fetch(`/api/comunicacao/whatsapp/contratos/${encodeURIComponent(id)}/template`, { method: 'POST' });
+export async function retryContractWhatsAppNotification(id: string, operationId: string) {
+  const res = await fetch(`/api/comunicacao/whatsapp/contratos/${encodeURIComponent(id)}/template`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operationId }),
+  });
   const json = await res.json().catch(() => null);
   if (!res.ok) throw new Error(json?.error ?? 'Erro ao reenviar comunicação WhatsApp');
   return json as {
@@ -104,6 +131,24 @@ export async function retryContractWhatsAppNotification(id: string) {
     notification: { deadLettered: number; retried: number; queued: number };
     outbox: { deadLettered: number; retried: number; sent: number };
   };
+}
+
+export async function getContractNotificationHistory(id: string): Promise<ContractNotificationHistory> {
+  const res = await fetch(`/api/comunicacao/contratos/${encodeURIComponent(id)}/notificacoes`, { cache: 'no-store' });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(json?.error ?? 'Erro ao consultar notificações do contrato');
+  return json.notifications as ContractNotificationHistory;
+}
+
+export async function resendContractNotification(id: string, channel: 'EMAIL' | 'WHATSAPP', operationId: string) {
+  const res = await fetch(`/api/comunicacao/contratos/${encodeURIComponent(id)}/notificacoes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ channel, operationId }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(json?.error ?? 'Erro ao reenviar notificação do contrato');
+  return json as { queued: true; channel: 'EMAIL' | 'WHATSAPP'; notificationId: string };
 }
 
 export async function getContractsByStudent(

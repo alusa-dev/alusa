@@ -1,4 +1,5 @@
 import { prisma } from '@/prisma/client';
+import { runWithTenant } from '@/lib/prisma-tenant';
 import { PeriodicidadePlano, type Prisma } from '@prisma/client';
 import { buildSubscriptionExternalReference, createSubscription } from '@alusa/finance';
 import { calcularPrecoMatricula } from '@/src/server/enrollments/enrollment.service';
@@ -41,7 +42,7 @@ export async function getContractCreationContext(input: { contaId: string; matri
 export async function issueContractForTenant(input: {
   contaId: string; matriculaId: string; modeloId: string; contratoOrigemId?: string | null; actorId: string;
 }) {
-  return prisma.$transaction((tx) => issueEnrollmentContract(tx, { ...input, source: 'MANUAL', onExisting: 'reject' }));
+  return runWithTenant(input.contaId, (tx) => issueEnrollmentContract(tx, { ...input, source: 'MANUAL', onExisting: 'reject' }));
 }
 
 type CreationMatricula = NonNullable<Awaited<ReturnType<typeof getContractCreationContext>>>['matricula'];

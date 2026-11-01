@@ -151,8 +151,8 @@ export async function checkWebhookHealth(opts?: {
         type: NotificationType.WEBHOOK_INTERRUPTED,
         category: NotificationCategory.SYSTEM,
         severity: NotificationSeverity.CRITICAL,
-        title: 'Fila de webhook interrompida',
-        message: `${interrupted.length} webhook(s) interrompido(s) no Asaas. Eventos financeiros podem não estar chegando. ${canRecover ? 'Recuperação automática em andamento.' : 'Intervenção manual necessária.'}`,
+        title: 'Atualizações financeiras interrompidas',
+        message: `As atualizações financeiras desta conta estão temporariamente paradas. ${canRecover ? 'Estamos tentando restabelecer o serviço.' : 'Peça ao administrador para verificar a conexão financeira.'}`,
         dedupeKey: `webhook_interrupted:${contaId}:${interruptedFingerprint}`,
         sourceType: 'SYSTEM',
         sourceId: null,
@@ -328,8 +328,8 @@ export async function checkWebhookHealth(opts?: {
         if (transitionedToInvalid) {
           await alertService.dispatch({
             severity: 'critical',
-            title: 'Credencial Asaas inválida',
-            message: 'A credencial da subconta Asaas foi rejeitada. As rotinas externas foram interrompidas até a reconexão.',
+            title: 'Conexão financeira precisa de atenção',
+            message: 'Não foi possível acessar os serviços financeiros da conta. Revise a conexão para retomar as atualizações e operações.',
             contaId,
             metadata: { status: failure.status, category: failure.category },
           }).catch(() => undefined);

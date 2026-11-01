@@ -19,6 +19,7 @@ describe('http method observability', () => {
       'POST',
     ]);
     expect(getKnownApiMethods('/api/comunicacao/whatsapp/contratos/contrato-1')).toEqual(['POST']);
+    expect(getKnownApiMethods('/api/comunicacao/contratos/contrato-1/notificacoes')).toEqual(['GET', 'POST']);
   });
 
   it('considera HEAD e OPTIONS automáticos quando aplicável', () => {

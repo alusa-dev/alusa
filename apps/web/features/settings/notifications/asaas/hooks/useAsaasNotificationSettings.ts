@@ -3,18 +3,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { NotificationPreference } from '../types';
 import {
+  asaasNotificationPolicySchema,
   asaasNotificationPreferencesResultDTOSchema,
   saveAsaasNotificationPreferencesResultDTOSchema,
 } from '../dtos';
 
 type FetchResponse = typeof asaasNotificationPreferencesResultDTOSchema._type;
 type SaveResponse = typeof saveAsaasNotificationPreferencesResultDTOSchema._type;
+type NotificationPolicy = typeof asaasNotificationPolicySchema._type;
+type NotificationSynchronization = FetchResponse['synchronization'];
 
 function normalizePreference(pref: NotificationPreference): NotificationPreference {
   return {
     ...pref,
     scheduleOffset: pref.scheduleOffset ?? 0,
     enabled: pref.enabled ?? true,
+    customerEnabled: pref.customerEnabled ?? true,
     emailEnabledForProvider: Boolean(pref.emailEnabledForProvider),
     smsEnabledForProvider: Boolean(pref.smsEnabledForProvider),
     emailEnabledForCustomer: Boolean(pref.emailEnabledForCustomer),
@@ -36,6 +40,7 @@ function serializePreferences(prefs: NotificationPreference[]): string {
         event: pref.event,
         scheduleOffset: pref.scheduleOffset,
         enabled: pref.enabled,
+        customerEnabled: pref.customerEnabled,
         emailEnabledForProvider: pref.emailEnabledForProvider,
         smsEnabledForProvider: pref.smsEnabledForProvider,
         emailEnabledForCustomer: pref.emailEnabledForCustomer,
@@ -46,16 +51,16 @@ function serializePreferences(prefs: NotificationPreference[]): string {
   );
 }
 
-const AUTO_SAVE_DELAY = 800;
-
 export function useAsaasNotificationSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
   const [originalPrefs, setOriginalPrefs] = useState<NotificationPreference[]>([]);
   const [preferences, setPreferences] = useState<NotificationPreference[]>([]);
-  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const initialPolicy: NotificationPolicy = { customerNotificationsEnabled: true, customerEmailNotificationsEnabled: true, customerWhatsAppNotificationsEnabled: true, customerSmsNotificationsEnabled: true, contractWhatsAppNotificationsEnabled: true, contractNotificationsEnabled: true, contractEmailNotificationsEnabled: false, version: 1 };
+  const [originalPolicy, setOriginalPolicy] = useState<NotificationPolicy>(initialPolicy);
+  const [policy, setPolicy] = useState<NotificationPolicy>(initialPolicy);
+  const [synchronization, setSynchronization] = useState<NotificationSynchronization>({ pending: 0, failed: 0, legacyPreferenceUnknown: 0 });
   const isMountedRef = useRef(true);
 
   const fetchPreferences = useCallback(async () => {
@@ -73,6 +78,9 @@ export function useAsaasNotificationSettings() {
       const normalized = (json.preferences ?? []).map(normalizePreference);
       setOriginalPrefs(normalized);
       setPreferences(normalized);
+      setOriginalPolicy(json.policy);
+      setPolicy(json.policy);
+      setSynchronization(json.synchronization);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Falha ao carregar preferências');
     } finally {
@@ -85,16 +93,20 @@ export function useAsaasNotificationSettings() {
     void fetchPreferences();
     return () => {
       isMountedRef.current = false;
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-      }
     };
   }, [fetchPreferences]);
 
   const hasChanges = useMemo(() => {
     if (preferences.length !== originalPrefs.length) return true;
-    return serializePreferences(preferences) !== serializePreferences(originalPrefs);
-  }, [preferences, originalPrefs]);
+    return serializePreferences(preferences) !== serializePreferences(originalPrefs) ||
+      policy.customerNotificationsEnabled !== originalPolicy.customerNotificationsEnabled ||
+      policy.customerEmailNotificationsEnabled !== originalPolicy.customerEmailNotificationsEnabled ||
+      policy.customerWhatsAppNotificationsEnabled !== originalPolicy.customerWhatsAppNotificationsEnabled ||
+      policy.customerSmsNotificationsEnabled !== originalPolicy.customerSmsNotificationsEnabled ||
+      policy.contractWhatsAppNotificationsEnabled !== originalPolicy.contractWhatsAppNotificationsEnabled ||
+      policy.contractNotificationsEnabled !== originalPolicy.contractNotificationsEnabled ||
+      policy.contractEmailNotificationsEnabled !== originalPolicy.contractEmailNotificationsEnabled;
+  }, [preferences, originalPrefs, policy, originalPolicy]);
 
   const savePreferencesInternal = useCallback(
     async (prefsToSave: NotificationPreference[]) => {
@@ -106,6 +118,15 @@ export function useAsaasNotificationSettings() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             preferences: prefsToSave,
+            policy: {
+              customerNotificationsEnabled: policy.customerNotificationsEnabled,
+              customerEmailNotificationsEnabled: policy.customerEmailNotificationsEnabled,
+              customerWhatsAppNotificationsEnabled: policy.customerWhatsAppNotificationsEnabled,
+              customerSmsNotificationsEnabled: policy.customerSmsNotificationsEnabled,
+              contractWhatsAppNotificationsEnabled: policy.contractWhatsAppNotificationsEnabled,
+              contractNotificationsEnabled: policy.contractNotificationsEnabled,
+              contractEmailNotificationsEnabled: policy.contractEmailNotificationsEnabled,
+            },
           }),
         });
         const raw = (await response.json()) as SaveResponse & { error?: string };
@@ -117,10 +138,9 @@ export function useAsaasNotificationSettings() {
           const normalized = (json.preferences ?? []).map(normalizePreference);
           setOriginalPrefs(normalized);
           setPreferences(normalized);
-          setSuccess('Salvo — novos pagadores herdam esta régua. Sincronize existentes se necessário.');
-          setTimeout(() => {
-            if (isMountedRef.current) setSuccess(null);
-          }, 4000);
+          setOriginalPolicy(json.policy);
+          setPolicy(json.policy);
+          setSynchronization(json.synchronization);
         }
       } catch (err) {
         if (isMountedRef.current) {
@@ -133,7 +153,7 @@ export function useAsaasNotificationSettings() {
         }
       }
     },
-    [],
+    [policy],
   );
 
   const updatePreference = useCallback(
@@ -145,66 +165,60 @@ export function useAsaasNotificationSettings() {
             : pref,
         );
         
-        // Auto-save with debounce
-        if (autoSaveTimerRef.current) {
-          clearTimeout(autoSaveTimerRef.current);
-        }
-        autoSaveTimerRef.current = setTimeout(() => {
-          void savePreferencesInternal(updated);
-        }, AUTO_SAVE_DELAY);
-        
         return updated;
       });
     },
-    [savePreferencesInternal],
+    [],
   );
 
-  const syncToExistingCustomers = useCallback(async () => {
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current);
-    }
-
-    if (hasChanges) {
-      await savePreferencesInternal(preferences);
-    }
-
-    const response = await fetch('/api/configuracoes/notificacoes/asaas', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    });
-    const raw = (await response.json().catch(() => null)) as { error?: string; message?: string } | null;
-    if (!response.ok) {
-      throw new Error(raw?.error || raw?.message || 'Erro ao iniciar sincronização');
-    }
-
-    if (isMountedRef.current) {
-      setSuccess(raw?.message || 'Sincronização iniciada');
-      setTimeout(() => {
-        if (isMountedRef.current) setSuccess(null);
-      }, 2000);
-    }
-  }, [hasChanges, preferences, savePreferencesInternal]);
+  const savePreferences = useCallback(async () => {
+    await savePreferencesInternal(preferences);
+  }, [preferences, savePreferencesInternal]);
 
   const reset = useCallback(() => {
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current);
-    }
     setPreferences(originalPrefs);
-    setSuccess(null);
+    setPolicy(originalPolicy);
     setError(null);
-  }, [originalPrefs]);
+  }, [originalPrefs, originalPolicy]);
+
+  const setCustomerNotificationsEnabled = useCallback((customerNotificationsEnabled: boolean) => {
+    setPolicy((current) => ({ ...current, customerNotificationsEnabled }));
+  }, []);
+
+  const setCustomerChannelEnabled = useCallback((channel: 'email' | 'whatsapp' | 'sms', enabled: boolean) => {
+    const key = channel === 'email' ? 'customerEmailNotificationsEnabled' : channel === 'whatsapp' ? 'customerWhatsAppNotificationsEnabled' : 'customerSmsNotificationsEnabled';
+    setPolicy((current) => ({ ...current, [key]: enabled }));
+  }, []);
+
+  const setContractWhatsAppNotificationsEnabled = useCallback((contractWhatsAppNotificationsEnabled: boolean) => {
+    setPolicy((current) => ({ ...current, contractWhatsAppNotificationsEnabled }));
+  }, []);
+
+  const setContractNotificationsEnabled = useCallback((contractNotificationsEnabled: boolean) => {
+    setPolicy((current) => ({ ...current, contractNotificationsEnabled }));
+  }, []);
+
+  const setContractChannelEnabled = useCallback((channel: 'email' | 'whatsapp', enabled: boolean) => {
+    const key = channel === 'email' ? 'contractEmailNotificationsEnabled' : 'contractWhatsAppNotificationsEnabled';
+    setPolicy((current) => ({ ...current, [key]: enabled }));
+  }, []);
 
   return {
     loading,
     saving,
     error,
-    success,
     preferences,
+    policy,
+    synchronization,
     hasChanges,
     fetchPreferences,
     updatePreference,
     reset,
-    syncToExistingCustomers,
-    setSuccess,
+    savePreferences,
+    setCustomerNotificationsEnabled,
+    setCustomerChannelEnabled,
+    setContractWhatsAppNotificationsEnabled,
+    setContractNotificationsEnabled,
+    setContractChannelEnabled,
   };
 }

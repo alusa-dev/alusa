@@ -5,6 +5,7 @@ import { createContractEvidence } from '@alusa/lib/contracts/evidence/create-con
 import { createPublicContractToken } from '@alusa/lib/contracts/tokens';
 import { normalizeBrazilianWhatsAppPhone } from '@alusa/whatsapp';
 import { getWhatsAppRuntimeConfig } from '@/src/server/whatsapp/config';
+import { enqueueContractEmailNotification } from './contract-email-queue';
 import {
   getMissingContractSignatureFieldsMessage,
   hasRequiredContractSignatureFields,
@@ -139,6 +140,7 @@ export async function issueEnrollmentContract(
           nome: true,
           cpf: true,
           dataNasc: true,
+          email: true,
           telefone: true,
           consentimentoComunicacoes: true,
           dataConsentimentoComunicacoes: true,
@@ -152,8 +154,10 @@ export async function issueEnrollmentContract(
               tipoVinculo: true,
               responsavel: {
                 select: {
+                  contaId: true,
                   nome: true,
                   cpf: true,
+                  email: true,
                   telefone: true,
                   consentimentoComunicacoes: true,
                   dataConsentimentoComunicacoes: true,
@@ -167,8 +171,10 @@ export async function issueEnrollmentContract(
       },
       responsavelFinanceiro: {
         select: {
+          contaId: true,
           nome: true,
           cpf: true,
+          email: true,
           telefone: true,
           consentimentoComunicacoes: true,
           dataConsentimentoComunicacoes: true,
@@ -180,6 +186,16 @@ export async function issueEnrollmentContract(
   });
 
   if (!matricula) throw new Error('MATRICULA_NAO_ENCONTRADA');
+
+  const responsavelFinanceiroTenant = matricula.responsavelFinanceiro?.contaId === input.contaId
+    ? matricula.responsavelFinanceiro
+    : null;
+  const responsaveisTenant = matricula.aluno.responsaveis.filter((link) => link.responsavel.contaId === input.contaId);
+  const matriculaTenant = {
+    ...matricula,
+    responsavelFinanceiro: responsavelFinanceiroTenant,
+    aluno: { ...matricula.aluno, responsaveis: responsaveisTenant },
+  };
 
   const existing = await tx.contrato.findFirst({
     where: { contaId: input.contaId, matriculaId: input.matriculaId, status: 'PENDENTE' },
@@ -203,28 +219,34 @@ export async function issueEnrollmentContract(
   }
 
   const alunoMaior = Boolean(matricula.aluno.dataNasc && isMaiorDeIdade(matricula.aluno.dataNasc));
-  const linkedResponsavel = matricula.aluno.responsaveis[0]?.responsavel ?? null;
+  const linkedResponsavel = matriculaTenant.aluno.responsaveis[0]?.responsavel ?? null;
   const recipient = alunoMaior
     ? {
         phone: matricula.aluno.telefone,
+        email: matricula.aluno.email,
+        name: matricula.aluno.nome,
         type: 'ALUNO',
         consent: matricula.aluno.consentimentoComunicacoes,
         consentAt: matricula.aluno.dataConsentimentoComunicacoes,
         consentVersion: matricula.aluno.versaoConsentimentoComunicacoes,
         consentSource: matricula.aluno.origemConsentimentoComunicacoes,
       }
-    : matricula.responsavelFinanceiro
+    : matriculaTenant.responsavelFinanceiro
       ? {
-          phone: matricula.responsavelFinanceiro.telefone,
+          phone: matriculaTenant.responsavelFinanceiro.telefone,
+          email: matriculaTenant.responsavelFinanceiro.email,
+          name: matriculaTenant.responsavelFinanceiro.nome,
           type: 'RESPONSAVEL',
-          consent: matricula.responsavelFinanceiro.consentimentoComunicacoes,
-          consentAt: matricula.responsavelFinanceiro.dataConsentimentoComunicacoes,
-          consentVersion: matricula.responsavelFinanceiro.versaoConsentimentoComunicacoes,
-          consentSource: matricula.responsavelFinanceiro.origemConsentimentoComunicacoes,
+          consent: matriculaTenant.responsavelFinanceiro.consentimentoComunicacoes,
+          consentAt: matriculaTenant.responsavelFinanceiro.dataConsentimentoComunicacoes,
+          consentVersion: matriculaTenant.responsavelFinanceiro.versaoConsentimentoComunicacoes,
+          consentSource: matriculaTenant.responsavelFinanceiro.origemConsentimentoComunicacoes,
         }
       : linkedResponsavel
         ? {
             phone: linkedResponsavel.telefone,
+          email: linkedResponsavel.email,
+          name: linkedResponsavel.nome,
             type: 'RESPONSAVEL',
             consent: linkedResponsavel.consentimentoComunicacoes,
             consentAt: linkedResponsavel.dataConsentimentoComunicacoes,
@@ -242,7 +264,7 @@ export async function issueEnrollmentContract(
       source: recipient?.consentSource ?? null,
     },
   } as Prisma.InputJsonValue;
-  const signerContext = buildSignerContext(matricula);
+  const signerContext = buildSignerContext(matriculaTenant);
   const { token: publicToken, tokenHash: tokenPublicoHash } = createPublicContractToken();
   const expirationDays = Math.max(1, Math.min(90, input.expirationDays ?? 7));
   const tokenExpiraEm = new Date(Date.now() + expirationDays * 24 * 60 * 60 * 1000);
@@ -313,7 +335,11 @@ export async function issueEnrollmentContract(
     data: { contratoAtualId: contrato.id, statusContrato: 'AGUARDANDO_ASSINATURA' },
   });
 
-  if (recipient?.phone && recipient.consent) {
+  const tenantContractNotifications = await tx.conta.findUnique({
+    where: { id: input.contaId },
+    select: { contractNotificationsEnabled: true, contractWhatsAppNotificationsEnabled: true, contractEmailNotificationsEnabled: true },
+  });
+  if (recipient?.phone && recipient.consent && tenantContractNotifications?.contractNotificationsEnabled !== false && tenantContractNotifications?.contractWhatsAppNotificationsEnabled !== false) {
     let normalizedPhone: string;
     try {
       normalizedPhone = normalizeBrazilianWhatsAppPhone(recipient.phone);
@@ -347,7 +373,9 @@ export async function issueEnrollmentContract(
         data: {
           contaId: input.contaId,
           actorType: 'SYSTEM',
-          action: 'WHATSAPP_CONTRATO_NAO_ENFILEIRADO_SEM_CONSENTIMENTO',
+          action: recipient?.consent && (tenantContractNotifications?.contractNotificationsEnabled === false || tenantContractNotifications?.contractWhatsAppNotificationsEnabled === false)
+            ? 'WHATSAPP_CONTRATO_NAO_ENFILEIRADO_POR_PREFERENCIA_DA_CONTA'
+            : 'WHATSAPP_CONTRATO_NAO_ENFILEIRADO_SEM_CONSENTIMENTO',
           entityType: 'CONTRATO',
           entityId: contrato.id,
           correlationId: `contract:${contrato.id}`,
@@ -356,6 +384,34 @@ export async function issueEnrollmentContract(
             hasPhone: Boolean(recipient?.phone),
             consentimentoComunicacoes: Boolean(recipient?.consent),
           },
+        },
+      });
+    }
+  }
+
+  if (tenantContractNotifications?.contractNotificationsEnabled !== false && tenantContractNotifications?.contractEmailNotificationsEnabled === true) {
+    const recipientEmail = recipient?.email?.trim().toLowerCase() ?? '';
+    if (recipientEmail) {
+      await enqueueContractEmailNotification(tx, {
+        contaId: input.contaId,
+        contratoId: contrato.id,
+        matriculaId: input.matriculaId,
+        token: publicToken,
+        tokenHash: tokenPublicoHash,
+        recipientEmail,
+        recipientName: recipient?.name ?? 'Responsável',
+        deliveryKey: `contract:${contrato.id}:email:issued`,
+      });
+    } else if (tx.auditLog?.create) {
+      await tx.auditLog.create({
+        data: {
+          contaId: input.contaId,
+          actorType: 'SYSTEM',
+          action: 'CONTRACT_EMAIL_NOT_ENQUEUED_NO_TENANT_RECIPIENT',
+          entityType: 'CONTRATO',
+          entityId: contrato.id,
+          correlationId: `contract:${contrato.id}:email:issued`,
+          metadata: { channel: 'EMAIL', recipientType: recipient?.type ?? null, reason: 'CANONICAL_EMAIL_UNAVAILABLE' },
         },
       });
     }

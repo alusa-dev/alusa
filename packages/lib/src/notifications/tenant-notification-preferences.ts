@@ -5,6 +5,7 @@ export type TenantNotificationEventPreference = {
   event: AsaasNotificationEvent;
   scheduleOffset: number;
   enabled: boolean;
+  customerEnabled: boolean;
   emailEnabledForProvider: boolean;
   smsEnabledForProvider: boolean;
   emailEnabledForCustomer: boolean;
@@ -28,6 +29,7 @@ export async function loadTenantNotificationEventPreferences(
       event: true,
       scheduleOffset: true,
       enabled: true,
+      customerEnabled: true,
       emailEnabledForProvider: true,
       smsEnabledForProvider: true,
       emailEnabledForCustomer: true,
@@ -41,6 +43,7 @@ export async function loadTenantNotificationEventPreferences(
     event: row.event,
     scheduleOffset: row.scheduleOffset,
     enabled: row.enabled,
+    customerEnabled: row.customerEnabled,
     emailEnabledForProvider: row.emailEnabledForProvider,
     smsEnabledForProvider: row.smsEnabledForProvider,
     emailEnabledForCustomer: row.emailEnabledForCustomer,
@@ -58,7 +61,7 @@ export async function loadTenantNotificationEventPreferences(
 export function channelsFromTenantNotificationPreferences(
   tenantPreferences: TenantNotificationEventPreference[],
 ): NotificationChannelSelection {
-  const enabledPreferences = tenantPreferences.filter((preference) => preference.enabled);
+  const enabledPreferences = tenantPreferences.filter((preference) => preference.enabled && preference.customerEnabled);
   return {
     email: enabledPreferences.some((preference) => preference.emailEnabledForCustomer),
     sms: enabledPreferences.some((preference) => preference.smsEnabledForCustomer),

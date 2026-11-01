@@ -117,6 +117,17 @@ describe('auth middleware', () => {
     );
   });
 
+  it('preserva o caminho canônico em português de configurações de notificações', async () => {
+    const response = await proxy(
+      new NextRequest('http://localhost:3000/admin/configuracoes/notificacoes'),
+    );
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get('location')).toContain(
+      '/auth/login?callbackUrl=%2Fadmin%2Fconfiguracoes%2Fnotificacoes',
+    );
+  });
+
   it('preserva a API pública em português sem aplicar tradução de rotas de interface', async () => {
     const response = await proxy(new NextRequest('http://localhost:3000/api/alunos'));
 

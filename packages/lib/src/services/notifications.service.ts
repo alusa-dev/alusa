@@ -971,7 +971,7 @@ function mapWebhookEventToNotification(params: {
       type: NotificationType.PAYMENT_CONFIRMED,
       category: NotificationCategory.PAYMENT,
       severity: NotificationSeverity.SUCCESS,
-      title: 'Pagamento recebido em espécie',
+      title: 'Dinheiro recebido',
     };
   }
 
@@ -984,7 +984,7 @@ function mapWebhookEventToNotification(params: {
         params.billingChannel === 'PIX'
           ? 'Pix recebido'
           : params.billingChannel === 'BOLETO'
-            ? 'Boleto compensado'
+            ? 'Boleto pago'
             : 'Pagamento recebido',
     };
   }
@@ -994,7 +994,7 @@ function mapWebhookEventToNotification(params: {
       type: NotificationType.PAYMENT_CONFIRMED,
       category: NotificationCategory.PAYMENT,
       severity: NotificationSeverity.SUCCESS,
-      title: 'Cobrança recuperada',
+      title: 'Pagamento recebido',
     };
   }
 
@@ -1003,7 +1003,7 @@ function mapWebhookEventToNotification(params: {
       type: NotificationType.PAYMENT_REFUNDED,
       category: NotificationCategory.PAYMENT,
       severity: NotificationSeverity.WARNING,
-      title: 'Cobrança estornada',
+      title: 'Pagamento devolvido',
     };
   }
 
@@ -1012,7 +1012,7 @@ function mapWebhookEventToNotification(params: {
       type: NotificationType.PAYMENT_REFUNDED,
       category: NotificationCategory.PAYMENT,
       severity: NotificationSeverity.CRITICAL,
-      title: 'Contestação de cobrança',
+      title: 'Pagamento contestado',
     };
   }
 
@@ -1021,7 +1021,7 @@ function mapWebhookEventToNotification(params: {
       type: NotificationType.BILLING_CANCELLED,
       category: NotificationCategory.BILLING,
       severity: NotificationSeverity.WARNING,
-      title: 'Cobrança excluída',
+      title: 'Cobrança cancelada',
     };
   }
 
@@ -1076,11 +1076,11 @@ function buildBillingMessage(params: {
   }
 
   if (params.eventName === 'PAYMENT_OVERDUE') {
-    return `A cobrança de ${subject}${dueDate ? ` com vencimento em ${dueDate}` : ''} está vencida. Acompanhe a situação financeira da matrícula.`;
+    return `A cobrança de ${subject}${dueDate ? ` com vencimento em ${dueDate}` : ''} está vencida. Entre em contato com o responsável para combinar a regularização.`;
   }
 
   if (params.eventName === 'PAYMENT_RECEIVED_IN_CASH') {
-    return `O pagamento em espécie de ${subject}${value ? ` no valor de ${value}` : ''} foi registrado${description ? ` referente a ${description}` : ''}.`;
+    return `O pagamento em dinheiro de ${subject}${value ? ` no valor de ${value}` : ''} foi registrado${description ? ` referente a ${description}` : ''}.`;
   }
 
   if (params.eventName === 'PAYMENT_RECEIVED') {
@@ -1089,26 +1089,26 @@ function buildBillingMessage(params: {
     }
 
     if (params.billingChannel === 'BOLETO') {
-      return `O boleto de ${subject}${value ? ` no valor de ${value}` : ''} foi compensado${description ? ` para ${description}` : ''}.`;
+      return `O pagamento do boleto de ${subject}${value ? ` no valor de ${value}` : ''} foi recebido${description ? `, referente a ${description}` : ''}.`;
     }
 
     return `O pagamento de ${subject}${value ? ` no valor de ${value}` : ''} foi recebido${description ? ` para ${description}` : ''}.`;
   }
 
   if (params.eventName === 'DUNNING_RECEIVED') {
-    return `A cobrança de ${subject}${value ? ` no valor de ${value}` : ''} foi recuperada com sucesso${description ? ` referente a ${description}` : ''}.`;
+    return `O pagamento de ${subject}${value ? ` no valor de ${value}` : ''} foi recebido e a pendência foi regularizada${description ? ` referente a ${description}` : ''}.`;
   }
 
   if (params.eventName === 'PAYMENT_REFUNDED') {
-    return `O pagamento de ${subject}${value ? ` no valor de ${value}` : ''}${description ? ` referente a ${description}` : ''} foi estornado. O valor será devolvido ao pagador.`;
+    return `O pagamento de ${subject}${value ? ` no valor de ${value}` : ''}${description ? ` referente a ${description}` : ''} foi devolvido ao pagador.`;
   }
 
   if (params.eventName === 'PAYMENT_CHARGEBACK_REQUESTED') {
-    return `Foi aberta uma contestação para o pagamento de ${subject}${value ? ` no valor de ${value}` : ''}${description ? ` referente a ${description}` : ''}. Acompanhe o caso financeiro da matrícula.`;
+    return `O pagamento de ${subject}${value ? ` no valor de ${value}` : ''}${description ? ` referente a ${description}` : ''} foi contestado. Confira os detalhes e acompanhe a análise.`;
   }
 
   if (params.eventName === 'PAYMENT_DELETED') {
-    return `A cobrança de ${subject}${value ? ` no valor de ${value}` : ''}${description ? ` referente a ${description}` : ''} foi excluída.`;
+    return `A cobrança de ${subject}${value ? ` no valor de ${value}` : ''}${description ? ` referente a ${description}` : ''} foi cancelada.`;
   }
 
   if (params.eventName === 'PAYMENT_RESTORED') {

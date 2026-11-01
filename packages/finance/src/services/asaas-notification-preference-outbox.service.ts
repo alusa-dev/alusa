@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { prisma } from '@alusa/database';
+import type { NotificationPreferenceInput } from './asaas-notification-preferences.service';
 
 import {
   applyAsaasNotificationPreferencesToCustomer,
   listCustomerIdsWithAsaas,
+  saveAsaasNotificationPreferences,
 } from './asaas-notification-preferences.service';
 
 export type EnqueueAsaasNotificationPreferenceSyncInput = {
@@ -48,6 +50,7 @@ export async function enqueueAsaasNotificationPreferenceSync(
   input: EnqueueAsaasNotificationPreferenceSyncInput,
 ) {
   const key = dedupeKey(input.asaasCustomerId);
+  const policy = await prisma.conta.findUnique({ where: { id: input.contaId }, select: { notificationPolicyVersion: true } });
 
   return prisma.asaasNotificationPreferenceOutbox.upsert({
     where: {
@@ -60,6 +63,7 @@ export async function enqueueAsaasNotificationPreferenceSync(
       asaasCustomerId: input.asaasCustomerId,
       status: 'PENDING',
       reason: input.reason ?? null,
+      policyVersion: policy?.notificationPolicyVersion ?? 1,
       attempts: 0,
       nextAttemptAt: new Date(),
       processingAt: null,
@@ -72,6 +76,7 @@ export async function enqueueAsaasNotificationPreferenceSync(
       contaId: input.contaId,
       asaasCustomerId: input.asaasCustomerId,
       dedupeKey: key,
+      policyVersion: policy?.notificationPolicyVersion ?? 1,
       reason: input.reason ?? null,
     },
   });
@@ -80,22 +85,122 @@ export async function enqueueAsaasNotificationPreferenceSync(
 export async function enqueueAsaasNotificationPreferenceSyncForTenant(input: {
   contaId: string;
   reason?: string;
-  limit?: number;
 }) {
-  const limit = clampInt(input.limit, 500, 1, 5_000);
-  const customerIds = (await listCustomerIdsWithAsaas(input.contaId)).slice(0, limit);
-  let enqueued = 0;
+  const customerIds = await listCustomerIdsWithAsaas(input.contaId);
+  if (customerIds.length === 0) return { enqueued: 0, customerIds };
+  const policy = await prisma.conta.findUnique({ where: { id: input.contaId }, select: { notificationPolicyVersion: true } });
+  const policyVersion = policy?.notificationPolicyVersion ?? 1;
+  await prisma.$transaction(async (tx) => {
+    for (let offset = 0; offset < customerIds.length; offset += 500) {
+      const page = customerIds.slice(offset, offset + 500);
+      await tx.asaasNotificationPreferenceOutbox.updateMany({
+        where: { contaId: input.contaId, asaasCustomerId: { in: page } },
+        data: {
+          status: 'PENDING', reason: input.reason ?? null, policyVersion, attempts: 0,
+          nextAttemptAt: new Date(), processingAt: null, claimToken: null,
+          processedAt: null, lastError: null, lastErrorAt: null,
+        },
+      });
+      await tx.asaasNotificationPreferenceOutbox.createMany({
+        data: page.map((asaasCustomerId) => ({
+          contaId: input.contaId,
+          asaasCustomerId,
+          dedupeKey: dedupeKey(asaasCustomerId),
+          reason: input.reason ?? null,
+          policyVersion,
+        })),
+        skipDuplicates: true,
+      });
+    }
+  });
+  return { enqueued: customerIds.length, customerIds };
+}
 
-  for (const asaasCustomerId of customerIds) {
-    await enqueueAsaasNotificationPreferenceSync({
-      contaId: input.contaId,
-      asaasCustomerId,
-      reason: input.reason,
+export async function saveAsaasNotificationPolicyAndEnqueue(input: {
+  contaId: string;
+  preferences: NotificationPreferenceInput[];
+  policy: {
+    customerNotificationsEnabled: boolean;
+    customerEmailNotificationsEnabled: boolean;
+    customerWhatsAppNotificationsEnabled: boolean;
+    customerSmsNotificationsEnabled: boolean;
+    contractWhatsAppNotificationsEnabled: boolean;
+    contractNotificationsEnabled: boolean;
+    contractEmailNotificationsEnabled: boolean;
+  };
+}) {
+  return prisma.$transaction(async (tx) => {
+    const [existingPreferences, existingPolicy] = await Promise.all([
+      tx.asaasNotificationPreference.findMany({ where: { contaId: input.contaId } }),
+      tx.conta.findUnique({
+        where: { id: input.contaId },
+        select: {
+          customerNotificationsEnabled: true,
+          customerEmailNotificationsEnabled: true,
+          customerWhatsAppNotificationsEnabled: true,
+          customerSmsNotificationsEnabled: true,
+          contractWhatsAppNotificationsEnabled: true,
+          contractNotificationsEnabled: true,
+          contractEmailNotificationsEnabled: true,
+        },
+      }),
+    ]);
+    const incoming = new Map(input.preferences.map((preference) => [`${preference.event}:${preference.scheduleOffset ?? 0}`, preference]));
+    const preferenceChanged = existingPreferences.length !== incoming.size || existingPreferences.some((current) => {
+      const next = incoming.get(`${current.event}:${current.scheduleOffset}`);
+      return !next || [
+        'enabled', 'customerEnabled', 'emailEnabledForProvider', 'smsEnabledForProvider',
+        'emailEnabledForCustomer', 'smsEnabledForCustomer', 'whatsappEnabledForCustomer',
+        'phoneCallEnabledForCustomer',
+      ].some((key) => current[key as keyof typeof current] !== next[key as keyof typeof next]);
     });
-    enqueued += 1;
-  }
-
-  return { enqueued, customerIds };
+    const customerPolicyChanged = preferenceChanged ||
+      existingPolicy?.customerNotificationsEnabled !== input.policy.customerNotificationsEnabled ||
+      existingPolicy?.customerEmailNotificationsEnabled !== input.policy.customerEmailNotificationsEnabled ||
+      existingPolicy?.customerWhatsAppNotificationsEnabled !== input.policy.customerWhatsAppNotificationsEnabled ||
+      existingPolicy?.customerSmsNotificationsEnabled !== input.policy.customerSmsNotificationsEnabled;
+    const preferences = await saveAsaasNotificationPreferences(input.contaId, input.preferences, tx);
+    const conta = await tx.conta.update({
+      where: { id: input.contaId },
+      data: {
+        customerNotificationsEnabled: input.policy.customerNotificationsEnabled,
+        customerEmailNotificationsEnabled: input.policy.customerEmailNotificationsEnabled,
+        customerWhatsAppNotificationsEnabled: input.policy.customerWhatsAppNotificationsEnabled,
+        customerSmsNotificationsEnabled: input.policy.customerSmsNotificationsEnabled,
+        contractWhatsAppNotificationsEnabled: input.policy.contractWhatsAppNotificationsEnabled,
+        contractNotificationsEnabled: input.policy.contractNotificationsEnabled,
+        contractEmailNotificationsEnabled: input.policy.contractEmailNotificationsEnabled,
+        ...(customerPolicyChanged ? { notificationPolicyVersion: { increment: 1 } } : {}),
+      },
+      select: { notificationPolicyVersion: true },
+    });
+    const customerIds = customerPolicyChanged ? await listCustomerIdsWithAsaas(input.contaId, tx) : [];
+    if (customerIds.length > 0) {
+      for (let offset = 0; offset < customerIds.length; offset += 500) {
+        const page = customerIds.slice(offset, offset + 500);
+        await tx.asaasNotificationPreferenceOutbox.updateMany({
+          where: { contaId: input.contaId, asaasCustomerId: { in: page } },
+          data: {
+            status: 'PENDING', reason: 'POLITICA_NOTIFICACOES_ATUALIZADA',
+            policyVersion: conta.notificationPolicyVersion, attempts: 0,
+            nextAttemptAt: new Date(), processingAt: null, claimToken: null,
+            processedAt: null, lastError: null, lastErrorAt: null,
+          },
+        });
+        await tx.asaasNotificationPreferenceOutbox.createMany({
+          data: page.map((asaasCustomerId) => ({
+            contaId: input.contaId,
+            asaasCustomerId,
+            dedupeKey: dedupeKey(asaasCustomerId),
+            reason: 'POLITICA_NOTIFICACOES_ATUALIZADA',
+            policyVersion: conta.notificationPolicyVersion,
+          })),
+          skipDuplicates: true,
+        });
+      }
+    }
+    return { preferences, policy: { ...input.policy, version: conta.notificationPolicyVersion }, enqueued: customerIds.length };
+  });
 }
 
 export async function processAsaasNotificationPreferenceOutbox(
@@ -143,6 +248,7 @@ export async function processAsaasNotificationPreferenceOutbox(
           status: row.status,
           processingAt: row.processingAt,
           claimToken: row.claimToken,
+          policyVersion: row.policyVersion,
         },
         data: { status: 'EXHAUSTED', processingAt: null, claimToken: null },
       });
@@ -158,6 +264,7 @@ export async function processAsaasNotificationPreferenceOutbox(
         status: row.status,
         processingAt: row.processingAt,
         claimToken: row.claimToken,
+        policyVersion: row.policyVersion,
       },
       data: {
         status: 'PROCESSING',
@@ -176,18 +283,34 @@ export async function processAsaasNotificationPreferenceOutbox(
         row.asaasCustomerId,
       );
       const completed = await prisma.asaasNotificationPreferenceOutbox.updateMany({
-        where: { id: row.id, contaId: row.contaId, status: 'PROCESSING', claimToken },
+        where: { id: row.id, contaId: row.contaId, status: 'PROCESSING', claimToken, policyVersion: row.policyVersion },
         data: {
           status: 'DONE',
           processingAt: null,
           claimToken: null,
+          lastAppliedPolicyVersion: row.policyVersion,
           processedAt: new Date(),
           lastError: null,
           lastErrorAt: null,
         },
       });
       if (completed.count === 0) {
-        if (sync.updated) {
+        // A newer intent may have been persisted while this PUT was in flight.
+        // Release our claim without overwriting its version so the latest local
+        // state is picked up on the next pass.
+        if (row.policyVersion == null && sync.updated) {
+          await enqueueAsaasNotificationPreferenceSync({
+            contaId: row.contaId,
+            asaasCustomerId: row.asaasCustomerId,
+            reason: 'PREFERENCE_PUT_COMPLETED_AFTER_CLAIM_LOST',
+          });
+          continue;
+        }
+        const rearmed = await prisma.asaasNotificationPreferenceOutbox.updateMany({
+          where: { id: row.id, contaId: row.contaId, status: 'PROCESSING', claimToken, policyVersion: { not: row.policyVersion } },
+          data: { status: 'PENDING', processingAt: null, claimToken: null, nextAttemptAt: new Date() },
+        });
+        if (rearmed.count === 0 && sync.updated) {
           await enqueueAsaasNotificationPreferenceSync({
             contaId: row.contaId,
             asaasCustomerId: row.asaasCustomerId,
@@ -203,7 +326,7 @@ export async function processAsaasNotificationPreferenceOutbox(
       const message = error instanceof Error ? error.message : String(error);
       const exhausted = attempts >= MAX_ATTEMPTS;
       const failed = await prisma.asaasNotificationPreferenceOutbox.updateMany({
-        where: { id: row.id, contaId: row.contaId, status: 'PROCESSING', claimToken },
+        where: { id: row.id, contaId: row.contaId, status: 'PROCESSING', claimToken, policyVersion: row.policyVersion },
         data: {
           status: exhausted ? 'EXHAUSTED' : 'FAILED',
           processingAt: null,
@@ -213,7 +336,13 @@ export async function processAsaasNotificationPreferenceOutbox(
           lastErrorAt: new Date(),
         },
       });
-      if (failed.count === 0) continue;
+      if (failed.count === 0) {
+        await prisma.asaasNotificationPreferenceOutbox.updateMany({
+          where: { id: row.id, contaId: row.contaId, status: 'PROCESSING', claimToken, policyVersion: { not: row.policyVersion } },
+          data: { status: 'PENDING', processingAt: null, claimToken: null, nextAttemptAt: new Date() },
+        });
+        continue;
+      }
       result.failed += 1;
       if (exhausted) result.exhausted += 1;
       result.errors.push({

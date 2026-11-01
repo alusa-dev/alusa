@@ -1,4 +1,5 @@
 import { prisma } from '@/prisma/client';
+import { runWithTenant } from '@/lib/prisma-tenant';
 import { StatusAssinatura, type Prisma } from '@prisma/client';
 import { canCancelContract } from '@alusa/domain';
 import { createContractEvidence } from '@alusa/lib/contracts/evidence/create-contract-evidence';
@@ -7,6 +8,7 @@ import { createPublicContractToken, hashPublicContractToken } from '@alusa/lib/c
 import { encryptSecret } from '@alusa/database';
 import { normalizeBrazilianWhatsAppPhone } from '@alusa/whatsapp';
 import { getWhatsAppRuntimeConfig } from '@/src/server/whatsapp/config';
+import { enqueueContractEmailNotification } from './contract-email-queue';
 
 const contractListInclude = {
   modelo: { select: { id: true, nome: true } },
@@ -48,6 +50,7 @@ export function findPublicContractByToken(token: string) {
         select: {
           aluno: {
             select: {
+              contaId: true,
               nome: true,
               dataNasc: true,
               responsaveis: {
@@ -87,16 +90,19 @@ export async function getContractForRegeneration(input: { contaId: string; id: s
           id: true,
           aluno: {
             select: {
+              contaId: true,
+              nome: true,
               dataNasc: true,
+              email: true,
               telefone: true,
               responsaveis: {
                 where: { contaId: input.contaId, tipoVinculo: { in: ['FINANCEIRO', 'PRINCIPAL'] } },
                 orderBy: { id: 'asc' }, take: 1,
-                select: { responsavel: { select: { telefone: true } } },
+                select: { responsavel: { select: { contaId: true, nome: true, email: true, telefone: true } } },
               },
             },
           },
-          responsavelFinanceiro: { select: { telefone: true } },
+          responsavelFinanceiro: { select: { contaId: true, nome: true, email: true, telefone: true } },
         },
       },
     },
@@ -109,23 +115,65 @@ export async function regenerateContractLinkForTenant(input: { contaId: string; 
   if (!['PENDENTE', 'RECUSADO', 'EXPIRADO'].includes(contrato.status)) return { status: 'NOT_REGENERATABLE' as const };
   const novaExpiracao = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   const { token: tokenPublico, tokenHash: tokenPublicoHash } = createPublicContractToken();
-  await prisma.$transaction(async (tx) => {
+  await runWithTenant(input.contaId, async (tx) => {
     const updated = await tx.contrato.updateMany({ where: { id: contrato.id, contaId: input.contaId, status: contrato.status }, data: { tokenPublico: `hash:${tokenPublicoHash}`, tokenPublicoHash, tokenPublicoCriptografado: encryptSecret(tokenPublico), tokenExpiraEm: novaExpiracao, status: 'PENDENTE' } });
     if (updated.count !== 1) throw new Error('CONTRACT_CHANGED_CONCURRENTLY');
     await createContractEvidence(tx as never, { contaId: input.contaId, contratoId: contrato.id, type: 'PUBLIC_LINK_CREATED', actorType: 'USER', actorId: input.actorId, payload: { tokenPublicoHash, tokenExpiraEm: novaExpiracao.toISOString(), regenerated: true } });
     await tx.matricula.updateMany({ where: { id: contrato.matricula.id, contaId: input.contaId }, data: { contratoAtualId: contrato.id, statusContrato: 'AGUARDANDO_ASSINATURA' } });
     const alunoMaior = isAdult(contrato.matricula.aluno.dataNasc);
-    const recipientPhone = alunoMaior ? contrato.matricula.aluno.telefone : contrato.matricula.responsavelFinanceiro?.telefone ?? contrato.matricula.aluno.responsaveis[0]?.responsavel.telefone ?? null;
-    if (!recipientPhone) return;
-    let normalized = '';
-    try { normalized = normalizeBrazilianWhatsAppPhone(recipientPhone); } catch { normalized = ''; }
-    if (!normalized) return;
-    const config = getWhatsAppRuntimeConfig();
-    await tx.contractWhatsAppNotification.upsert({
-      where: { uq_contract_whatsapp_notification_dedupe: { contaId: input.contaId, contratoId: contrato.id, recipientPhone: normalized, templateName: alunoMaior ? config.contractMajorTemplateName : config.contractMinorTemplateName } },
-      update: { tokenCriptografado: encryptSecret(tokenPublico), status: 'PENDING', nextAttemptAt: new Date(), lockedAt: null, lockedBy: null, processedAt: null, lastErrorCode: null, lastError: null },
-      create: { contaId: input.contaId, contratoId: contrato.id, matriculaId: contrato.matricula.id, templateName: alunoMaior ? config.contractMajorTemplateName : config.contractMinorTemplateName, languageCode: config.contractTemplateLanguage, recipientPhone: normalized, recipientType: alunoMaior ? 'ALUNO' : 'RESPONSAVEL', tokenCriptografado: encryptSecret(tokenPublico), correlationId: `contract:${contrato.id}:regenerated` },
+    const rawLinkedGuardian = contrato.matricula.aluno.responsaveis[0]?.responsavel ?? null;
+    const linkedGuardian = rawLinkedGuardian?.contaId === input.contaId ? rawLinkedGuardian : null;
+    const financialGuardian = contrato.matricula.responsavelFinanceiro?.contaId === input.contaId ? contrato.matricula.responsavelFinanceiro : null;
+    const recipient = alunoMaior
+      ? { name: contrato.matricula.aluno.nome, email: contrato.matricula.aluno.email, phone: contrato.matricula.aluno.telefone }
+      : { name: financialGuardian?.nome ?? linkedGuardian?.nome ?? contrato.matricula.aluno.nome, email: financialGuardian?.email ?? linkedGuardian?.email ?? null, phone: financialGuardian?.telefone ?? linkedGuardian?.telefone ?? null };
+    const accountSetting = await tx.conta.findUnique({
+      where: { id: input.contaId },
+      select: { contractNotificationsEnabled: true, contractWhatsAppNotificationsEnabled: true, contractEmailNotificationsEnabled: true },
     });
+    const studentBelongsToTenant = contrato.matricula.aluno.contaId === input.contaId;
+    if (studentBelongsToTenant && accountSetting?.contractNotificationsEnabled !== false && accountSetting?.contractWhatsAppNotificationsEnabled !== false && recipient.phone) {
+      let normalized = '';
+      try { normalized = normalizeBrazilianWhatsAppPhone(recipient.phone); } catch { normalized = ''; }
+      if (normalized) {
+        const config = getWhatsAppRuntimeConfig();
+        await tx.contractWhatsAppNotification.upsert({
+          where: { uq_contract_whatsapp_notification_dedupe: { contaId: input.contaId, contratoId: contrato.id, recipientPhone: normalized, templateName: alunoMaior ? config.contractMajorTemplateName : config.contractMinorTemplateName } },
+          update: { tokenCriptografado: encryptSecret(tokenPublico), status: 'PENDING', nextAttemptAt: new Date(), lockedAt: null, lockedBy: null, processedAt: null, lastErrorCode: null, lastError: null },
+          create: { contaId: input.contaId, contratoId: contrato.id, matriculaId: contrato.matricula.id, templateName: alunoMaior ? config.contractMajorTemplateName : config.contractMinorTemplateName, languageCode: config.contractTemplateLanguage, recipientPhone: normalized, recipientType: alunoMaior ? 'ALUNO' : 'RESPONSAVEL', tokenCriptografado: encryptSecret(tokenPublico), correlationId: `contract:${contrato.id}:regenerated` },
+        });
+      }
+    }
+    if (studentBelongsToTenant && accountSetting?.contractNotificationsEnabled !== false && accountSetting?.contractEmailNotificationsEnabled === true) {
+      const recipientEmail = recipient.email?.trim().toLowerCase() ?? '';
+      if (recipientEmail) {
+        await enqueueContractEmailNotification(tx, {
+          contaId: input.contaId,
+          contratoId: contrato.id,
+          matriculaId: contrato.matricula.id,
+          token: tokenPublico,
+          tokenHash: tokenPublicoHash,
+          recipientEmail,
+          recipientName: recipient.name,
+          deliveryKey: `contract:${contrato.id}:email:regenerated:${tokenPublicoHash}`,
+        });
+      } else if (tx.auditLog?.create) {
+        await tx.auditLog.create({
+          data: {
+            contaId: input.contaId,
+            actorType: 'SYSTEM',
+            action: 'CONTRACT_EMAIL_NOT_ENQUEUED_NO_TENANT_RECIPIENT',
+            entityType: 'CONTRATO',
+            entityId: contrato.id,
+            correlationId: `contract:${contrato.id}:email:regenerated:${tokenPublicoHash}`,
+            metadata: { channel: 'EMAIL', reason: 'CANONICAL_EMAIL_UNAVAILABLE' },
+          },
+        });
+      }
+    }
+    if (!studentBelongsToTenant && tx.auditLog?.create) {
+      await tx.auditLog.create({ data: { contaId: input.contaId, actorType: 'SYSTEM', action: 'CONTRACT_NOTIFICATION_NOT_ENQUEUED_INVALID_STUDENT_TENANT', entityType: 'CONTRATO', entityId: contrato.id, correlationId: `contract:${contrato.id}:regenerated`, metadata: { reason: 'STUDENT_TENANT_MISMATCH' } } });
+    }
   });
   const hydrated = await getContractForTenant({ contaId: input.contaId, id: contrato.id });
   if (!hydrated) return { status: 'NOT_FOUND_AFTER_REGENERATION' as const };

@@ -141,6 +141,25 @@ describe('job observability', () => {
     warn.mockRestore();
   });
 
+  it('logs sanitized tenant drain failure with aggregate count and invocation correlation', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const run = startJobRun('process-contract-email-notifications');
+    logJobResult('process-contract-email-notifications', run, { tenants: 1, failedTenants: 1 }, { partialFailure: true });
+    logJobFailure('process-contract-email-notifications', run, new Error('private payload / token'), {
+      contaId: 'school-safe-123', errorCode: 'TENANT_DRAIN_FAILED',
+    });
+
+    const resultLog = JSON.parse(String(warn.mock.calls.at(-1)?.[0]));
+    const failureLog = JSON.parse(String(error.mock.calls.at(-1)?.[0]));
+    expect(resultLog.attributes).toMatchObject({ failedTenants: 1, partialFailure: true, correlationId: run.correlationId });
+    expect(failureLog.attributes).toMatchObject({ jobName: 'process-contract-email-notifications', correlationId: run.correlationId, errorCode: 'TENANT_DRAIN_FAILED' });
+    expect(failureLog.attributes.tenantRef).toMatch(/^[0-9a-f]{16}$/);
+    expect(JSON.stringify([resultLog, failureLog])).not.toMatch(/private payload|token|school-safe-123/);
+    warn.mockRestore();
+    error.mockRestore();
+  });
+
   it('registra contagens dos jobs de ingressos e mantém a lista de campos permitidos', () => {
     const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
     const recordMetric = vi

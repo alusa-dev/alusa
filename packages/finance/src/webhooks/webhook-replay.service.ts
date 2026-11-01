@@ -342,7 +342,7 @@ async function processWebhookReplay(params: {
         severity: isBlocked ? NotificationSeverity.CRITICAL : NotificationSeverity.SUCCESS,
         title: isBlocked ? 'Saldo bloqueado na conta' : 'Saldo desbloqueado na conta',
         message: isBlocked
-          ? 'O saldo desta conta foi bloqueado pelo Asaas. Operações financeiras podem estar indisponíveis. Verifique a situação da conta no painel.'
+          ? 'O saldo desta conta está bloqueado. Algumas operações financeiras podem estar indisponíveis. Verifique a situação da conta.'
           : 'O bloqueio de saldo desta conta foi removido. As operações financeiras voltaram ao normal.',
         dedupeKey: `balance:${event}:${payload.id ?? contaId}`,
         sourceType: 'WEBHOOK',
@@ -420,19 +420,19 @@ async function processWebhookReplay(params: {
             ? NotificationSeverity.CRITICAL
             : NotificationSeverity.WARNING,
           title: isExpired
-            ? 'Token de API expirado'
+            ? 'Conexão financeira expirada'
             : event === 'ACCESS_TOKEN_DISABLED'
-              ? 'Token de API desabilitado'
+              ? 'Conexão financeira desativada'
               : event === 'ACCESS_TOKEN_DELETED'
-                ? 'Token de API excluído'
-                : 'Token de API próximo do vencimento',
+                ? 'Conexão financeira removida'
+                : 'Conexão financeira prestes a expirar',
           message: isExpired
-            ? 'O token de API do Asaas desta conta expirou. Todas as operações financeiras estão bloqueadas. Renove imediatamente no painel do Asaas.'
+            ? 'A conexão financeira desta conta expirou. As operações financeiras estão temporariamente indisponíveis. Reconecte a conta para retomá-las.'
             : event === 'ACCESS_TOKEN_DISABLED'
-              ? 'O token de API do Asaas desta conta foi desabilitado. Todas as operações financeiras estão bloqueadas até a reconexão.'
+              ? 'A conexão financeira desta conta foi desativada. Reconecte a conta para retomar as operações financeiras.'
               : event === 'ACCESS_TOKEN_DELETED'
-                ? 'O token de API do Asaas desta conta foi excluído. Todas as operações financeiras estão bloqueadas até salvar uma nova chave.'
-                : 'O token de API do Asaas desta conta está próximo do vencimento. Renove antes que expire para evitar interrupção das operações financeiras.',
+                ? 'A conexão financeira desta conta foi removida. Reconecte a conta para retomar as operações financeiras.'
+                : 'A conexão financeira desta conta está prestes a expirar. Renove-a para evitar a interrupção das operações financeiras.',
           dedupeKey: `access_token:${event}:${contaId}`,
           sourceType: 'WEBHOOK',
           sourceId: payload.id ?? null,

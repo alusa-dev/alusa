@@ -140,7 +140,7 @@ export default function ConfirmationSection({ all, fotoPreview }: Props) {
                     id="aluno-consentimento-comunicacoes"
                     checked={field.value === true}
                     onCheckedChange={(checked) => field.onChange(checked === true)}
-                    className="mt-0.5"
+                    className="mt-1"
                   />
                 )}
               />
@@ -166,7 +166,7 @@ export default function ConfirmationSection({ all, fotoPreview }: Props) {
                     id="aluno-consentimento-marketing"
                     checked={field.value === true}
                     onCheckedChange={(checked) => field.onChange(checked === true)}
-                    className="mt-0.5"
+                    className="mt-1"
                   />
                 )}
               />

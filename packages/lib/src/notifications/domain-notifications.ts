@@ -28,7 +28,7 @@ export async function createEnrollmentRenewedNotification(params: {
     category: NotificationCategory.ENROLLMENT,
     severity: NotificationSeverity.INFO,
     title: 'Rematrícula realizada',
-    message: `${params.alunoNome} foi rematriculado(a). Nova matrícula criada a partir da matrícula anterior.`,
+    message: `A rematrícula de ${params.alunoNome} foi concluída e uma nova matrícula foi criada.`,
     dedupeKey: `enrollment:renewed:${params.matriculaId}`,
     relatedPath: `/matriculas/${params.matriculaId}`,
     entityType: 'Matricula',
@@ -198,7 +198,7 @@ export async function createContractExpiringNotification(params: {
         ? NotificationSeverity.WARNING
         : NotificationSeverity.INFO,
     title: 'Contrato próximo do vencimento',
-    message: `O contrato de ${params.alunoNome} vence em ${params.diasRestantes} dia(s) (${formatDateBr(params.dataFimContrato)}).`,
+    message: `O contrato de ${params.alunoNome} vence ${params.diasRestantes === 0 ? 'hoje' : params.diasRestantes === 1 ? 'amanhã' : `em ${params.diasRestantes} dias`} (${formatDateBr(params.dataFimContrato)}).`,
     dedupeKey: `contract:expiring:${params.matriculaId}:${dateKey}:${params.diasRestantes}`,
     relatedPath: `/matriculas/${params.matriculaId}`,
     entityType: 'Matricula',

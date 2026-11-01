@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   createStructuredLog,
   normalizeMetricDimensions,
@@ -123,6 +123,7 @@ const COUNT_FIELDS = new Set([
   'sideEffectsProcessed',
   'sideEffectsFailed',
   'enrollmentAttempted',
+  'failedTenants',
   'enrollmentProcessed',
   'familyAttempted',
   'familyProcessed',
@@ -275,15 +276,25 @@ function numericFields(result: unknown) {
 }
 
 function safeExtraFields(extra: Record<string, unknown>) {
-  return Object.fromEntries(
-    Object.entries(extra).filter(([key, value]) => {
-      if (key === 'workStatus') {
-        return value === 'empty' || value === 'worked' || value === 'unknown';
+  const safe: Record<string, string | number | boolean> = {};
+  for (const [key, value] of Object.entries(extra)) {
+    if (key === 'workStatus') {
+      if (value === 'empty' || value === 'worked' || value === 'unknown') safe[key] = value;
+      continue;
+    }
+    if (key === 'contaId') {
+      if (typeof value === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value)) {
+        safe.tenantRef = createHash('sha256').update(value).digest('hex').slice(0, 16);
       }
-      return SAFE_EXTRA_FIELDS.has(key) &&
-        (typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value)));
-    }),
-  );
+      continue;
+    }
+    if (key === 'errorCode') {
+      if (typeof value === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(value)) safe.errorCode = value;
+      continue;
+    }
+    if (SAFE_EXTRA_FIELDS.has(key) && (typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value)))) safe[key] = value;
+  }
+  return safe;
 }
 
 function numericExtraFields(extra: Record<string, unknown>) {

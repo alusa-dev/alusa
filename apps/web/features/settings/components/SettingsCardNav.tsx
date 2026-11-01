@@ -8,7 +8,7 @@ type Item = { href: string; label: string };
 const items: Item[] = [
   { href: '/admin/settings/users', label: 'Usuários e Convites' },
   { href: '/admin/settings/integrations', label: 'Integrações' },
-  { href: '/admin/settings/notifications', label: 'Notificações' },
+  { href: '/admin/configuracoes/notificacoes', label: 'Notificações' },
   { href: '/admin/settings/tax-invoices', label: 'Nota Fiscal' },
 ];
 

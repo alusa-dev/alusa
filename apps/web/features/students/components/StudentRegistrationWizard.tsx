@@ -63,8 +63,8 @@ export default function StudentRegistrationWizard({
     defaultValues: {
       status: 'ATIVO',
       responsavel: null,
-      consentimentoComunicacoes: false,
-      consentimentoMarketing: false,
+      consentimentoComunicacoes: true,
+      consentimentoMarketing: true,
       responsavelModo: 'existente',
       responsavelExistenteId: null,
     } as Partial<WizardData>,
@@ -131,8 +131,8 @@ export default function StudentRegistrationWizard({
       responsavelModo: 'existente',
       responsavelExistenteId: null,
       responsavel: null,
-      consentimentoComunicacoes: false,
-      consentimentoMarketing: false,
+      consentimentoComunicacoes: true,
+      consentimentoMarketing: true,
     } as Partial<WizardData>);
     setFoto('');
     setCropSource(null);

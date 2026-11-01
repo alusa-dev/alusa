@@ -8,6 +8,7 @@ import {
   EventTicketWhatsAppNotificationStatus,
   type Prisma,
 } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import {
   sanitizeWhatsAppError,
   WhatsAppCloudApiError,
@@ -19,8 +20,11 @@ import {
 } from '@alusa/whatsapp';
 import { decryptSecret } from '@alusa/database';
 import { prisma } from '@/prisma/client';
+import { runWithTenant } from '@/lib/prisma-tenant';
 import { assertWhatsAppConfigured, getWhatsAppRuntimeConfig } from './config';
 import { buildContractTemplateIdempotencyKey } from './contract-idempotency';
+import { persistContractWhatsAppResendOperation } from '@/src/server/contracts/contract-whatsapp-resend.service';
+import { resolveContractWhatsAppTemplateRecipient } from '@/src/server/contracts/contract-whatsapp-template-recipient';
 import {
   canAdvanceTicketNotificationStatus,
   canAdvanceWhatsAppMessageStatus,
@@ -181,57 +185,72 @@ async function hasCurrentContractRecipientConsent(input: {
   return Boolean(await prisma.responsavel.findFirst({ where, select: { id: true } }));
 }
 
-export async function requeueContractWhatsAppNotification(input: { contaId: string; contratoId: string; actorUserId?: string | null }) {
-  const notification = await prisma.contractWhatsAppNotification.findFirst({
-    where: { contaId: input.contaId, contratoId: input.contratoId },
-    orderBy: { createdAt: 'desc' },
-    select: { id: true, status: true, recipientPhone: true },
-  });
-  if (!notification) return null;
-  let recipientPhone = notification.recipientPhone;
+export async function requeueContractWhatsAppNotification(input: { contaId: string; contratoId: string; actorUserId?: string | null; operationId?: string }) {
+  const operationId = input.operationId ?? randomUUID();
   try {
-    recipientPhone = normalizeBrazilianWhatsAppPhone(recipientPhone);
-  } catch {
-    // O worker registrará a falha de destinatário sem interromper o reprocessamento.
+    return await runWithTenant(input.contaId, async (tx) => {
+      const accountSetting = await tx.conta.findUnique({
+        where: { id: input.contaId },
+        select: { contractNotificationsEnabled: true, contractWhatsAppNotificationsEnabled: true },
+      });
+      if (accountSetting?.contractNotificationsEnabled === false || accountSetting?.contractWhatsAppNotificationsEnabled === false) return null;
+      const notification = await tx.contractWhatsAppNotification.findFirst({
+        where: { contaId: input.contaId, contratoId: input.contratoId },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, status: true, recipientPhone: true },
+      });
+      if (!notification) return null;
+      const previousOperation = await tx.contractWhatsAppResendOperation.findUnique({
+        where: { uq_contract_whatsapp_resend_operation: { contaId: input.contaId, notificationId: notification.id, operationId } },
+        select: { id: true },
+      });
+      if (previousOperation) return { id: notification.id, previousStatus: notification.status, alreadyQueued: true };
+      let recipientPhone = notification.recipientPhone;
+      try {
+        recipientPhone = normalizeBrazilianWhatsAppPhone(recipientPhone);
+      } catch {
+        // O worker registrará a falha de destinatário sem interromper o reprocessamento.
+      }
+      const consentPhoneVariants = Array.from(new Set([recipientPhone, recipientPhone.slice(-11)]));
+      const [alunoConsent, responsavelConsent] = await Promise.all([
+        tx.aluno.findFirst({
+          where: { contaId: input.contaId, consentimentoComunicacoes: true, OR: consentPhoneVariants.map((telefone) => ({ telefone })) },
+          select: { id: true },
+        }),
+        tx.responsavel.findFirst({
+          where: { contaId: input.contaId, consentimentoComunicacoes: true, OR: consentPhoneVariants.map((telefone) => ({ telefone })) },
+          select: { id: true },
+        }),
+      ]);
+      if (!alunoConsent && !responsavelConsent) return null;
+      const applied = await persistContractWhatsAppResendOperation(tx, {
+        contaId: input.contaId,
+        notificationId: notification.id,
+        operationId,
+        actorUserId: input.actorUserId,
+        recipientPhone,
+      });
+      return { id: notification.id, previousStatus: notification.status, alreadyQueued: !applied };
+    });
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error && (error as { code?: string }).code === 'P2002') {
+      const recovered = await runWithTenant(input.contaId, async (tx) => {
+        const notification = await tx.contractWhatsAppNotification.findFirst({
+          where: { contaId: input.contaId, contratoId: input.contratoId },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, status: true },
+        });
+        if (!notification) return null;
+        const operation = await tx.contractWhatsAppResendOperation.findUnique({
+          where: { uq_contract_whatsapp_resend_operation: { contaId: input.contaId, notificationId: notification.id, operationId } },
+          select: { id: true },
+        });
+        return operation ? notification : null;
+      });
+      if (recovered) return { id: recovered.id, previousStatus: recovered.status, alreadyQueued: true };
+    }
+    throw error;
   }
-  const consentPhoneVariants = Array.from(new Set([recipientPhone, recipientPhone.slice(-11)]));
-  const [alunoConsent, responsavelConsent] = await Promise.all([
-    prisma.aluno.findFirst({
-      where: { contaId: input.contaId, consentimentoComunicacoes: true, OR: consentPhoneVariants.map((telefone) => ({ telefone })) },
-      select: { id: true },
-    }),
-    prisma.responsavel.findFirst({
-      where: { contaId: input.contaId, consentimentoComunicacoes: true, OR: consentPhoneVariants.map((telefone) => ({ telefone })) },
-      select: { id: true },
-    }),
-  ]);
-  if (!alunoConsent && !responsavelConsent) return null;
-  const updated = await prisma.contractWhatsAppNotification.updateMany({
-    where: { id: notification.id, contaId: input.contaId },
-    data: {
-      status: 'PENDING',
-      recipientPhone,
-      nextAttemptAt: new Date(),
-      lockedAt: null,
-      lockedBy: null,
-      processedAt: null,
-      lastErrorCode: null,
-      lastError: null,
-      consentimentoRevogadoEm: null,
-    },
-  });
-  if (updated.count !== 1) return null;
-  await prisma.auditLog.create({
-    data: {
-      contaId: input.contaId,
-      actorType: input.actorUserId ? 'USER' : 'SYSTEM',
-      actorId: input.actorUserId ?? null,
-      action: 'contract.whatsapp.notification.requeued',
-      entityType: 'ContractWhatsAppNotification',
-      entityId: notification.id,
-    },
-  });
-  return { id: notification.id, previousStatus: notification.status };
 }
 
 /** Converts committed contract events into approved Meta template messages. */
@@ -291,23 +310,25 @@ export async function drainContractWhatsAppNotifications(
                 dataInicio: true,
                 aluno: {
                   select: {
+                    contaId: true,
                     nome: true,
+                    telefone: true,
                     dataNasc: true,
                     responsaveis: {
-                      where: { tipoVinculo: { in: ['FINANCEIRO', 'PRINCIPAL'] } },
+                      where: { contaId: candidate.contaId, tipoVinculo: { in: ['FINANCEIRO', 'PRINCIPAL'] } },
                       orderBy: { id: 'asc' },
                       take: 1,
-                      select: { responsavel: { select: { nome: true } } },
+                      select: { responsavel: { select: { contaId: true, nome: true, telefone: true } } },
                     },
                   },
                 },
-                responsavelFinanceiro: { select: { nome: true } },
-                turma: { select: { nome: true } },
+                responsavelFinanceiro: { select: { contaId: true, nome: true, telefone: true } },
+                turma: { select: { contaId: true, nome: true } },
               },
             },
           },
         },
-        conta: { select: { nome: true } },
+        conta: { select: { nome: true, contractNotificationsEnabled: true, contractWhatsAppNotificationsEnabled: true } },
       },
     });
     if (!notification) {
@@ -329,6 +350,14 @@ export async function drainContractWhatsAppNotifications(
     try {
       if (notification.contrato.status !== 'PENDENTE' || (notification.contrato.tokenExpiraEm && notification.contrato.tokenExpiraEm <= now)) {
         await prisma.contractWhatsAppNotification.update({ where: { id: notification.id }, data: { status: 'SKIPPED', processedAt: now, lockedAt: null, lockedBy: null, lastErrorCode: 'CONTRACT_NOT_SENDABLE' } });
+        result.skipped += 1;
+        continue;
+      }
+      if (notification.conta.contractNotificationsEnabled === false || notification.conta.contractWhatsAppNotificationsEnabled === false) {
+        await prisma.contractWhatsAppNotification.update({
+          where: { id: notification.id },
+          data: { status: 'SKIPPED', processedAt: now, lockedAt: null, lockedBy: null, lastErrorCode: 'TENANT_CONTRACT_NOTIFICATIONS_DISABLED' },
+        });
         result.skipped += 1;
         continue;
       }
@@ -364,6 +393,23 @@ export async function drainContractWhatsAppNotifications(
         result.skipped += 1;
         continue;
       }
+      const currentRecipient = resolveContractWhatsAppTemplateRecipient({
+        contaId: notification.contaId,
+        recipientType: notification.recipientType,
+        recipientPhone: notification.recipientPhone,
+        student: {
+          contaId: notification.contrato.matricula.aluno.contaId,
+          nome: notification.contrato.matricula.aluno.nome,
+          telefone: notification.contrato.matricula.aluno.telefone,
+        },
+        financialResponsible: notification.contrato.matricula.responsavelFinanceiro,
+        linkedResponsible: notification.contrato.matricula.aluno.responsaveis[0]?.responsavel ?? null,
+      });
+      if (!currentRecipient) {
+        await prisma.contractWhatsAppNotification.update({ where: { id: notification.id }, data: { status: 'SKIPPED', processedAt: now, lockedAt: null, lockedBy: null, lastErrorCode: 'RECIPIENT_RELATION_INVALID', lastError: 'Envio bloqueado porque o vínculo atual do destinatário não corresponde a esta matrícula.' } });
+        result.skipped += 1;
+        continue;
+      }
       const token = decryptSecret(notification.tokenCriptografado || notification.contrato.tokenPublicoCriptografado);
       if (!token) throw new Error('CONTRACT_TOKEN_UNAVAILABLE');
       const baseUrl = process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL;
@@ -372,12 +418,10 @@ export async function drainContractWhatsAppNotifications(
       if (publicUrl.protocol !== 'https:') throw new Error('CONTRACT_PUBLIC_URL_MUST_BE_HTTPS');
 
       const isMinorTemplate = notification.recipientType === 'RESPONSAVEL';
-      const recipientName = isMinorTemplate
-        ? notification.contrato.matricula.responsavelFinanceiro?.nome ?? notification.contrato.matricula.aluno.responsaveis[0]?.responsavel.nome ?? 'responsável legal'
-        : notification.contrato.matricula.aluno.nome;
+      const recipientName = currentRecipient.recipientName;
       const bodyValues = isMinorTemplate
-        ? [notification.contrato.matricula.aluno.nome, notification.conta.nome, notification.contrato.matricula.turma?.nome ?? 'não informado', formatDate(notification.contrato.matricula.dataInicio)]
-        : [notification.conta.nome, notification.contrato.matricula.turma?.nome ?? 'não informado', formatDate(notification.contrato.matricula.dataInicio)];
+        ? [currentRecipient.studentName, notification.conta.nome, notification.contrato.matricula.turma?.contaId === notification.contaId ? notification.contrato.matricula.turma.nome : 'não informado', formatDate(notification.contrato.matricula.dataInicio)]
+        : [notification.conta.nome, notification.contrato.matricula.turma?.contaId === notification.contaId ? notification.contrato.matricula.turma.nome : 'não informado', formatDate(notification.contrato.matricula.dataInicio)];
       const recipientPhone = normalizeBrazilianWhatsAppPhone(notification.recipientPhone);
       const request: WhatsAppMessageRequest = {
         kind: 'template',
@@ -498,6 +542,27 @@ export async function drainWhatsAppOutbox(input: { limit?: number; jobId?: strin
     if (!job) continue;
 
     try {
+      if (job.correlationId?.startsWith('contract:') && job.contaId) {
+        const accountSetting = await prisma.conta.findUnique({
+          where: { id: job.contaId },
+          select: { contractNotificationsEnabled: true, contractWhatsAppNotificationsEnabled: true },
+        });
+        if (accountSetting?.contractNotificationsEnabled === false || accountSetting?.contractWhatsAppNotificationsEnabled === false) {
+          await prisma.whatsAppOutboundJob.update({
+            where: { id: job.id },
+            data: { status: WhatsAppOutboundJobStatus.CANCELLED, processedAt: new Date(), lockedAt: null, lockedBy: null, lastErrorCode: 'TENANT_CONTRACT_NOTIFICATIONS_DISABLED' },
+          });
+          await prisma.whatsAppMessage.updateMany({
+            where: { id: job.messageId, status: WhatsAppMessageStatus.QUEUED },
+            data: { status: WhatsAppMessageStatus.FAILED, errorCode: 'TENANT_CONTRACT_NOTIFICATIONS_DISABLED', errorMessage: 'Envio cancelado pela preferência da conta.' },
+          });
+          await prisma.contractWhatsAppNotification.updateMany({
+            where: { contaId: job.contaId, correlationId: job.correlationId, status: 'SENT' },
+            data: { status: 'SKIPPED', lastErrorCode: 'TENANT_CONTRACT_NOTIFICATIONS_DISABLED', lastError: 'Envio cancelado pela preferência da conta.' },
+          });
+          continue;
+        }
+      }
       if (job.message.status === WhatsAppMessageStatus.SENT && job.message.externalMessageId) {
         await markWhatsAppJobSent(job.id, job.message.id, job.message.externalMessageId);
         result.sent += 1;

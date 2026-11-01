@@ -121,6 +121,15 @@ enum ContractWhatsAppNotificationStatus {
   SKIPPED
 }
 
+enum ContractEmailNotificationStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+  DLQ
+  SKIPPED
+}
+
 enum EventTicketWhatsAppNotificationStatus {
   PENDING
   PROCESSING
@@ -1406,6 +1415,14 @@ model Conta {
   deactivationComment               String?
   createdAt                         DateTime                            @default(now())
   updatedAt                         DateTime                            @updatedAt
+  customerNotificationsEnabled     Boolean                             @default(true)
+  customerEmailNotificationsEnabled Boolean                             @default(true)
+  customerWhatsAppNotificationsEnabled Boolean                          @default(true)
+  customerSmsNotificationsEnabled Boolean                               @default(true)
+  contractWhatsAppNotificationsEnabled Boolean                          @default(true)
+  contractNotificationsEnabled        Boolean                          @default(true)
+  contractEmailNotificationsEnabled   Boolean                          @default(false)
+  notificationPolicyVersion       Int                                 @default(1)
   // Dono (owner) da conta — imutável na lógica de negócio
   ownerUserId                       String?
   ownerUser                         Usuario?                            @relation("ContaOwner", fields: [ownerUserId], references: [id])
@@ -1442,11 +1459,14 @@ model Conta {
   logsIntegracao                    LogIntegracao[]
   asaasIntegrationJobs              AsaasIntegrationJob[]
   asaasNotificationPreferences      AsaasNotificationPreference[]
+  asaasCustomerNotificationOverrides AsaasCustomerNotificationOverride[]
   // Núcleo financeiro whitelabel (Fases 0+)
   financeProfile                    FinanceProfile?
   tenantFeatureFlags                TenantFeatureFlags?
   auditLogs                         AuditLog[]
   contractWhatsAppNotifications    ContractWhatsAppNotification[]
+  contractWhatsAppResendOperations ContractWhatsAppResendOperation[]
+  contractEmailNotifications       ContractEmailNotification[]
   notifications                     Notification[]
   notificationDigestEvents          NotificationDigestEvent[]
   paymentStateTransitions           FinancePaymentStateTransition[]
@@ -1689,6 +1709,7 @@ model AsaasNotificationPreference {
   event                           AsaasNotificationEvent
   scheduleOffset                  Int                    @default(0)
   enabled                         Boolean                @default(true)
+  customerEnabled                 Boolean                @default(true)
   emailEnabledForProvider         Boolean                @default(false)
   smsEnabledForProvider           Boolean                @default(false)
   emailEnabledForCustomer         Boolean                @default(true)
@@ -1706,6 +1727,27 @@ model AsaasNotificationPreference {
 
   @@unique([contaId, event, scheduleOffset])
   @@index([contaId])
+}
+
+model AsaasCustomerNotificationOverride {
+  id                            String                 @id @default(cuid())
+  contaId                       String
+  asaasCustomerId               String
+  event                         AsaasNotificationEvent
+  scheduleOffset                Int                    @default(0)
+  customerEnabled               Boolean?
+  emailEnabledForCustomer       Boolean?
+  smsEnabledForCustomer         Boolean?
+  whatsappEnabledForCustomer    Boolean?
+  phoneCallEnabledForCustomer   Boolean?
+  source                        String                 @default("EXPLICIT")
+  createdAt                     DateTime               @default(now())
+  updatedAt                     DateTime               @updatedAt
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@unique([contaId, asaasCustomerId, event, scheduleOffset], name: "uq_asaas_customer_notification_override")
+  @@index([contaId, asaasCustomerId], name: "idx_asaas_customer_notification_override_customer")
 }
 
 /// Modelo de Professor com foco em multi-tenant via contaId.
@@ -2434,6 +2476,7 @@ model Matricula {
   billingAllocations             BillingAllocation[]
   creationOperation              EnrollmentCreationOperation?
   contractWhatsAppNotifications ContractWhatsAppNotification[]
+  contractEmailNotifications ContractEmailNotification[]
 
   @@unique([contaId, uiRequestId], name: "uq_matricula_conta_request")
   @@unique([contaId, id], name: "uq_matricula_conta_id")
@@ -5871,9 +5914,11 @@ model Contrato {
   signatureOtps             ContractSignatureOtp[]
   documentos                ContratoDocumento[]
   whatsappNotifications     ContractWhatsAppNotification[]
+  emailNotifications        ContractEmailNotification[]
   rematriculaContratoFuturo ContratoFuturo?
 
   @@index([contaId, status], name: "idx_contrato_conta_status")
+  @@unique([contaId, id, matriculaId], name: "uq_contrato_conta_contract_enrollment")
   @@index([contaId, matriculaId], name: "idx_contrato_conta_matricula")
   @@index([contaId, createdAt], name: "idx_contrato_conta_created")
   @@index([contaId, tokenPublicoHash], name: "idx_contrato_conta_token_hash")
@@ -5911,6 +5956,7 @@ model ContractWhatsAppNotification {
   consentimentoRegistradoEm DateTime?
   consentimentoRevogadoEm   DateTime?
   whatsappJobId     String?
+  lastManualOperationId String?
   processedAt       DateTime?
   createdAt         DateTime                            @default(now())
   updatedAt         DateTime                            @updatedAt
@@ -5918,10 +5964,58 @@ model ContractWhatsAppNotification {
   conta    Conta     @relation(fields: [contaId], references: [id], onDelete: Restrict)
   contrato Contrato  @relation(fields: [contratoId], references: [id], onDelete: Restrict)
   matricula Matricula @relation(fields: [matriculaId], references: [id], onDelete: Restrict)
+  resendOperations ContractWhatsAppResendOperation[]
 
+  @@unique([contaId, id], name: "uq_contract_whatsapp_notification_tenant_id")
   @@unique([contaId, contratoId, recipientPhone, templateName], name: "uq_contract_whatsapp_notification_dedupe")
   @@index([contaId, status, nextAttemptAt], name: "idx_contract_whatsapp_notification_status_retry")
   @@index([contaId, contratoId], name: "idx_contract_whatsapp_notification_contract")
+}
+
+model ContractWhatsAppResendOperation {
+  id             String   @id @default(cuid())
+  contaId        String
+  notificationId String
+  operationId    String
+  createdAt      DateTime @default(now())
+
+  conta        Conta                       @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  notification ContractWhatsAppNotification @relation(fields: [contaId, notificationId], references: [contaId, id], onDelete: Restrict)
+
+  @@unique([contaId, notificationId, operationId], name: "uq_contract_whatsapp_resend_operation")
+  @@index([contaId, notificationId, createdAt], name: "idx_contract_whatsapp_resend_operation_history")
+}
+
+model ContractEmailNotification {
+  id                 String                            @id @default(cuid())
+  contaId            String
+  contratoId         String
+  matriculaId        String
+  status             ContractEmailNotificationStatus  @default(PENDING)
+  recipientEmail     String
+  recipientName      String
+  tokenCriptografado String
+  tokenPublicoHash   String
+  deliveryKey        String
+  attempts           Int                               @default(0)
+  maxAttempts        Int                               @default(8)
+  nextAttemptAt      DateTime                          @default(now())
+  lockedAt           DateTime?
+  lockedBy           String?
+  lastErrorCode      String?
+  lastError          String?
+  providerEmailId    String?
+  processedAt        DateTime?
+  createdAt          DateTime                          @default(now())
+  updatedAt          DateTime                          @updatedAt
+
+  conta     Conta     @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  contrato  Contrato  @relation(fields: [contaId, contratoId, matriculaId], references: [contaId, id, matriculaId], onDelete: Restrict)
+  matricula Matricula @relation(fields: [contaId, matriculaId], references: [contaId, id], onDelete: Restrict)
+
+  @@unique([contaId, deliveryKey], name: "uq_contract_email_notification_delivery")
+  @@index([contaId, status, nextAttemptAt], name: "idx_contract_email_notification_retry")
+  @@index([contaId, contratoId, createdAt], name: "idx_contract_email_notification_contract")
 }
 
 // Contratos operacionais gerados para a participação de um aluno em um evento.
@@ -7049,6 +7143,8 @@ model AsaasNotificationPreferenceOutbox {
   dedupeKey       String
   status          String  @default("PENDING")
   reason          String?
+  policyVersion   Int     @default(1)
+  lastAppliedPolicyVersion Int?
 
   attempts      Int       @default(0)
   nextAttemptAt DateTime  @default(now())

@@ -3,8 +3,9 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { platformBillingAccessResponseForConta } from '@/src/server/platform-billing/capacity';
 import {
   enqueueAsaasNotificationPreferenceSyncForTenant,
+  getAsaasNotificationPolicy,
   getAsaasNotificationPreferences,
-  saveAsaasNotificationPreferences,
+  saveAsaasNotificationPolicyAndEnqueue,
   type NotificationPreferenceInput,
 } from '@alusa/finance';
 import {
@@ -29,11 +30,15 @@ export async function GET(request: Request) {
       return json(403, { error: 'SEM_PERMISSAO' });
 
     const preferences = await getAsaasNotificationPreferences(auth.contaId);
+    const notificationPolicy = await getAsaasNotificationPolicy(auth.contaId);
     return json(
       200,
       asaasNotificationPreferencesResultDTOSchema.parse({
         preferences,
-        customerChannelDefaults: deriveCustomerNotificationChannelDefaults(preferences),
+        ...notificationPolicy,
+        customerChannelDefaults: notificationPolicy.policy.customerNotificationsEnabled
+          ? deriveCustomerNotificationChannelDefaults(preferences)
+          : [],
       }),
     );
   } catch (error) {
@@ -57,11 +62,21 @@ export async function PUT(request: Request) {
     }
 
     const preferencesPayload = parsed.data.preferences as NotificationPreferenceInput[];
-    const preferences = await saveAsaasNotificationPreferences(auth.contaId, preferencesPayload);
+    const result = await saveAsaasNotificationPolicyAndEnqueue({
+      contaId: auth.contaId,
+      preferences: preferencesPayload,
+      policy: parsed.data.policy,
+    });
+    const syncStatus = await getAsaasNotificationPolicy(auth.contaId);
 
     return json(
       200,
-      saveAsaasNotificationPreferencesResultDTOSchema.parse({ preferences }),
+      saveAsaasNotificationPreferencesResultDTOSchema.parse({
+        preferences: result.preferences,
+        enqueued: result.enqueued,
+        policy: result.policy,
+        synchronization: syncStatus.synchronization,
+      }),
     );
   } catch (error) {
     logApiOperationalEvent({ severity: 'error', eventName: 'api.asaas_notification_preferences.request.failed', route: '/api/configuracoes/notificacoes/asaas', method: 'PUT', requestId: getRequestId(request), error });
@@ -82,7 +97,6 @@ export async function POST(request: Request) {
     const result = await enqueueAsaasNotificationPreferenceSyncForTenant({
       contaId: auth.contaId,
       reason: 'CONFIGURACAO_GLOBAL_ATUALIZADA',
-      limit: 5_000,
     });
 
     return json(202, {

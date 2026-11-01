@@ -28,6 +28,7 @@ export interface NotificationEventPreference {
   event: AsaasNotificationEvent | string;
   scheduleOffset: number;
   enabled: boolean;
+  customerEnabled?: boolean;
   emailEnabledForProvider: boolean;
   smsEnabledForProvider: boolean;
   emailEnabledForCustomer: boolean;
@@ -149,11 +150,11 @@ function resolveDesiredChannels(
       enabled: eventPreference.enabled,
       emailEnabledForProvider: eventPreference.emailEnabledForProvider,
       smsEnabledForProvider: eventPreference.smsEnabledForProvider,
-      emailEnabledForCustomer: eventPreference.emailEnabledForCustomer,
-      smsEnabledForCustomer: eventPreference.smsEnabledForCustomer,
+      emailEnabledForCustomer: eventPreference.customerEnabled !== false && eventPreference.emailEnabledForCustomer,
+      smsEnabledForCustomer: eventPreference.customerEnabled !== false && eventPreference.smsEnabledForCustomer,
       whatsappEnabledForCustomer:
-        eventPreference.whatsappEnabledForCustomer && whatsappSupported && !sandboxEnv,
-      phoneCallEnabledForCustomer: eventPreference.phoneCallEnabledForCustomer,
+        eventPreference.customerEnabled !== false && eventPreference.whatsappEnabledForCustomer && whatsappSupported && !sandboxEnv,
+      phoneCallEnabledForCustomer: eventPreference.customerEnabled !== false && eventPreference.phoneCallEnabledForCustomer,
     };
   }
 

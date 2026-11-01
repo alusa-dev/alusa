@@ -169,7 +169,26 @@ function resolveOperationLabel(
   officialOp: string | null | undefined,
 ): string {
   const op = officialOp ?? (parsedDest?.type === 'PIX' ? 'PIX' : 'TED');
-  return op === 'PIX' ? 'PIX' : 'TED';
+  return op === 'PIX' ? 'Pix' : 'transferência bancária';
+}
+
+function explainTransferFailure(reason: string | null): string {
+  if (!reason) return 'Confira os dados do destinatário e tente novamente. Se o problema continuar, fale com o suporte.';
+
+  const normalized = reason.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  if (/saldo|insufficient.?funds|funds.?insufficient/.test(normalized)) {
+    return 'Confira se há saldo disponível na conta antes de tentar novamente.';
+  }
+  if (/destinat|recipient|beneficiar/.test(normalized)) {
+    return 'Confira os dados do destinatário e tente novamente.';
+  }
+  if (/limite|limit/.test(normalized)) {
+    return 'O limite disponível não permitiu concluir a transferência. Confira os limites da conta.';
+  }
+  if (/conta|account|banc/.test(normalized)) {
+    return 'Confira os dados da conta de destino e tente novamente.';
+  }
+  return 'Confira os dados do destinatário e tente novamente. Se o problema continuar, fale com o suporte.';
 }
 
 function buildTransferDoneMessage(params: {
@@ -180,19 +199,19 @@ function buildTransferDoneMessage(params: {
   operation: string;
   datetime: Date;
 }): string {
-  const lines: string[] = ['Transferência realizada com sucesso.', ''];
+  const lines: string[] = ['A transferência foi concluída com sucesso.', ''];
 
   const displayValue = params.netValue ?? params.value;
   if (displayValue != null) {
     lines.push(`**Valor enviado:** ${formatBRL(displayValue)}`);
   }
-  if (params.feeValue) {
-    lines.push(`**Taxa:** ${formatBRL(params.feeValue)}`);
+  if (params.feeValue != null) {
+    lines.push(`**Custo da transferência:** ${formatBRL(params.feeValue)}`);
   }
   if (params.recipient) {
     lines.push(`**Destinatário:** ${params.recipient}`);
   }
-  lines.push(`**Método:** ${params.operation}`);
+  lines.push(`**Forma da transferência:** ${params.operation}`);
   lines.push(`**Data e hora:** ${formatBRTDateTime(params.datetime)}`);
 
   return lines.join('\n');
@@ -213,11 +232,9 @@ function buildTransferFailedMessage(params: {
   if (params.recipient) {
     lines.push(`**Destinatário:** ${params.recipient}`);
   }
-  lines.push(`**Método:** ${params.operation}`);
+  lines.push(`**Forma da transferência:** ${params.operation}`);
   lines.push(`**Data e hora:** ${formatBRTDateTime(params.datetime)}`);
-  if (params.failReason) {
-    lines.push(`**Motivo:** ${params.failReason}`);
-  }
+  lines.push(`**O que fazer:** ${explainTransferFailure(params.failReason)}`);
 
   return lines.join('\n');
 }
@@ -236,7 +253,7 @@ function buildTransferCancelledMessage(params: {
   if (params.recipient) {
     lines.push(`**Destinatário:** ${params.recipient}`);
   }
-  lines.push(`**Método:** ${params.operation}`);
+  lines.push(`**Forma da transferência:** ${params.operation}`);
   lines.push(`**Data e hora:** ${formatBRTDateTime(params.datetime)}`);
 
   return lines.join('\n');
@@ -524,7 +541,7 @@ export async function handleTransferWebhook(
           type: NotificationType.TRANSFER_DONE,
           category: NotificationCategory.SYSTEM,
           severity: NotificationSeverity.SUCCESS,
-          title: 'Transferência realizada',
+          title: 'Transferência concluída',
           message: doneMessage,
           dedupeKey: `transfer:done:${transferRequest.id}`,
           entityType: 'TransferRequest',
@@ -556,7 +573,7 @@ export async function handleTransferWebhook(
           type: NotificationType.TRANSFER_FAILED,
           category: NotificationCategory.SYSTEM,
           severity: NotificationSeverity.CRITICAL,
-          title: 'Envio não processado',
+          title: 'Transferência não concluída',
           message: failedMessage,
           dedupeKey: `transfer:failed:${transferRequest.id}`,
           entityType: 'TransferRequest',

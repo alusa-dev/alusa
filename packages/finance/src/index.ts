@@ -607,6 +607,7 @@ export type { AsaasTransactionRaw } from './mappers/ledger.mapper';
 // Extrato (contrato canônico da página)
 export { getExtrato } from './use-cases/get-extrato';
 export type { GetExtratoInput, GetExtratoError } from './use-cases/get-extrato';
+export { readConfirmedAsaasLedgerFee } from './read-model/confirmed-asaas-ledger-fee';
 export {
   ledgerEntryTypeSchema,
   ledgerEntryStatusSchema,
@@ -639,6 +640,7 @@ export {
 export {
   ensureAsaasNotificationPreferences,
   getAsaasNotificationPreferences,
+  getAsaasNotificationPolicy,
   saveAsaasNotificationPreferences,
   getAsaasCustomerNotificationPreferences,
   saveAsaasCustomerNotificationPreferences,
@@ -650,6 +652,7 @@ export {
   enqueueAsaasNotificationPreferenceSync,
   enqueueAsaasNotificationPreferenceSyncForTenant,
   processAsaasNotificationPreferenceOutbox,
+  saveAsaasNotificationPolicyAndEnqueue,
 } from './services/asaas-notification-preference-outbox.service';
 export type {
   NotificationChannels,

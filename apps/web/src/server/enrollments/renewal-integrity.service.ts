@@ -57,6 +57,7 @@ async function notifyCapacityIssue(
       ? typeof metadata.targetClassId === 'string' ? metadata.targetClassId : 'unknown'
       : typeof metadata.targetComboId === 'string' ? metadata.targetComboId : 'unknown';
   const entityType = input.issue.code === 'FUTURE_CLASS_OVER_CAPACITY' ? 'Turma' : 'Combo';
+  const capacityLabel = entityType === 'Turma' ? 'da turma' : 'do combo';
 
   try {
     await createNotification({
@@ -64,8 +65,8 @@ async function notifyCapacityIssue(
       type: NotificationType.SYSTEM_ATTENTION,
       category: NotificationCategory.ENROLLMENT,
       severity: NotificationSeverity.CRITICAL,
-      title: input.issue.title,
-      message: `${input.issue.message} Revise as reservas do período ${targetPeriodId}.`,
+      title: `Vagas insuficientes para as rematrículas futuras ${capacityLabel}`,
+      message: `A quantidade de rematrículas futuras excede as vagas disponíveis ${capacityLabel}. Revise as reservas antes de concluir o processo.`,
       dedupeKey: `renewal-integrity:${input.contaId}:${input.issue.code}:${targetPeriodId}:${targetId}`,
       relatedPath: '/reenrollments',
       entityType,

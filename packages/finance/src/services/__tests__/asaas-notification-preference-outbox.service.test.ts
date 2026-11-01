@@ -1,11 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const prismaMock = {
+  conta: { findUnique: vi.fn().mockResolvedValue({ notificationPolicyVersion: 1 }) },
   asaasNotificationPreferenceOutbox: {
     upsert: vi.fn(),
     findMany: vi.fn(),
     updateMany: vi.fn(),
+    createMany: vi.fn(),
   },
+  $transaction: vi.fn(),
 };
 
 vi.mock('@alusa/database', () => ({
@@ -19,17 +22,21 @@ vi.mock('../asaas-notification-preferences.service', () => ({
 
 const {
   enqueueAsaasNotificationPreferenceSync,
+  enqueueAsaasNotificationPreferenceSyncForTenant,
   processAsaasNotificationPreferenceOutbox,
 } = await import('../asaas-notification-preference-outbox.service');
 const { applyAsaasNotificationPreferencesToCustomer } = await import(
   '../asaas-notification-preferences.service'
 );
+const { listCustomerIdsWithAsaas } = await import('../asaas-notification-preferences.service');
 
 describe('asaas-notification-preference-outbox.service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    prismaMock.$transaction.mockImplementation(async (callback: (tx: typeof prismaMock) => Promise<unknown>) => callback(prismaMock));
     prismaMock.asaasNotificationPreferenceOutbox.upsert.mockResolvedValue({});
     prismaMock.asaasNotificationPreferenceOutbox.updateMany.mockResolvedValue({ count: 1 });
+    prismaMock.asaasNotificationPreferenceOutbox.createMany.mockResolvedValue({ count: 0 });
   });
 
   it('enfileira por tenant/customer com chave idempotente', async () => {
@@ -59,6 +66,28 @@ describe('asaas-notification-preference-outbox.service', () => {
         }),
       }),
     );
+  });
+
+  it('faz fanout paginado para todos os customers do tenant sem duplicar ou incluir outro tenant', async () => {
+    const customerIds = Array.from({ length: 1_101 }, (_, index) => `cus-tenant-a-${index}`);
+    vi.mocked(listCustomerIdsWithAsaas).mockImplementation(async (contaId) => {
+      expect(contaId).toBe('conta-a');
+      return customerIds;
+    });
+    prismaMock.conta.findUnique.mockResolvedValue({ notificationPolicyVersion: 12 });
+
+    const result = await enqueueAsaasNotificationPreferenceSyncForTenant({ contaId: 'conta-a', reason: 'POLICY' });
+
+    expect(result.enqueued).toBe(1_101);
+    expect(listCustomerIdsWithAsaas).toHaveBeenCalledTimes(1);
+    expect(listCustomerIdsWithAsaas).toHaveBeenCalledWith('conta-a');
+    const batches = prismaMock.asaasNotificationPreferenceOutbox.createMany.mock.calls.map(([arg]) => arg.data);
+    expect(batches.map((batch) => batch.length)).toEqual([500, 500, 101]);
+    const allQueued = batches.flat().map((row) => row.asaasCustomerId);
+    expect(allQueued).toHaveLength(1_101);
+    expect(new Set(allQueued).size).toBe(1_101);
+    expect(allQueued).toEqual(customerIds);
+    expect(allQueued.some((id) => id.startsWith('cus-tenant-b-'))).toBe(false);
   });
 
   it('processa item pendente e marca DONE sem duplicar claim', async () => {
@@ -92,6 +121,31 @@ describe('asaas-notification-preference-outbox.service', () => {
       }),
     );
     expect(result).toMatchObject({ processed: 1, updated: 1, failed: 0 });
+  });
+
+  it('rearama a outbox quando uma edição mais recente chega durante o PUT do worker', async () => {
+    prismaMock.asaasNotificationPreferenceOutbox.findMany.mockResolvedValue([{
+      id: 'outbox-race', contaId: 'conta-1', asaasCustomerId: 'cus_1',
+      status: 'PENDING', attempts: 0, policyVersion: 7, processingAt: null, claimToken: null,
+    }]);
+    prismaMock.asaasNotificationPreferenceOutbox.updateMany
+      .mockResolvedValueOnce({ count: 1 }) // claim version 7
+      .mockResolvedValueOnce({ count: 0 }) // completion loses to newer version 8
+      .mockResolvedValueOnce({ count: 1 }); // release old claim and rearm
+    vi.mocked(applyAsaasNotificationPreferencesToCustomer).mockResolvedValue({ updated: true, total: 1 });
+
+    const result = await processAsaasNotificationPreferenceOutbox({ contaId: 'conta-1' });
+
+    expect(prismaMock.asaasNotificationPreferenceOutbox.updateMany).toHaveBeenNthCalledWith(2,
+      expect.objectContaining({ where: expect.objectContaining({ policyVersion: 7 }) }),
+    );
+    expect(prismaMock.asaasNotificationPreferenceOutbox.updateMany).toHaveBeenNthCalledWith(3,
+      expect.objectContaining({
+        where: expect.objectContaining({ policyVersion: { not: 7 }, claimToken: expect.any(String) }),
+        data: expect.objectContaining({ status: 'PENDING', claimToken: null }),
+      }),
+    );
+    expect(result).toMatchObject({ processed: 0, failed: 0 });
   });
 
   it('marca FAILED com backoff quando a aplicação no Asaas falha', async () => {

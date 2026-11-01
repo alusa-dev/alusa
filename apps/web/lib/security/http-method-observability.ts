@@ -63,6 +63,10 @@ export function getKnownApiMethods(pathname: string): readonly ApiMethod[] | nul
   const override = knownMethodOverrides.get(pathname);
   if (override) return override;
 
+  if (pathname.startsWith('/api/comunicacao/contratos/') && pathname.endsWith('/notificacoes')) {
+    return ['GET', 'POST'];
+  }
+
   if (pathname.startsWith('/api/comunicacao/whatsapp/')) {
     if (pathname.startsWith('/api/comunicacao/whatsapp/contratos/') && pathname.endsWith('/template')) {
       return ['GET', 'POST'];

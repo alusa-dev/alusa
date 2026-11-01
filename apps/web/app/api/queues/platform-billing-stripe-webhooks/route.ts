@@ -1,8 +1,8 @@
 import { handleCallback } from '@vercel/queue';
 import { z } from 'zod';
-import { prisma } from '@/lib/prisma';
 import type { PlatformBillingEnvironment } from '@alusa/platform-billing';
 import { drainStripeWebhookWorker } from '@/src/server/platform-billing/webhook-worker';
+import { findStripeWebhookQueueEventStatus } from '@/src/server/platform-billing/stripe-webhook-queue-message';
 
 export const runtime = 'nodejs';
 
@@ -24,13 +24,7 @@ export async function processStripeWebhookQueueMessage(
     } | null>;
   } = {
     drain: ({ environment, eventIds: _eventIds }) => drainStripeWebhookWorker({ environment, eventIds: _eventIds }),
-    findStatus: async ({ environment, eventId: _eventId }) => {
-      const event = await prisma.platformBillingWebhookEvent.findUnique({
-        where: { uq_platform_billing_webhook_env_event: { environment, eventId: _eventId } },
-        select: { status: true, nextAttemptAt: true, processingTimeoutAt: true },
-      });
-      return event ?? null;
-    },
+    findStatus: findStripeWebhookQueueEventStatus,
   },
 ): Promise<void> {
   const message = queueMessageSchema.parse(rawMessage);
