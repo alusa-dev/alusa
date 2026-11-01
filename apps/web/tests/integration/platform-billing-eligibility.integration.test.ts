@@ -235,9 +235,20 @@ describe.skipIf(!isSafeTestDatabase)('platform billing eligibility PostgreSQL qu
         where: { contaId, action: 'PLATFORM_BILLING_MONTHLY_SNAPSHOT_RECOVERED', entityId: '2026-09-01' },
       })).toBe(1);
       const untrackedTenantIssue = `TEST:${otherContaId}:monthly-close-inconclusive:2026-09-01`;
-      expect(await db.platformBillingIssue.findUniqueOrThrow({
+      const otherTenantIssue = await db.platformBillingIssue.findUniqueOrThrow({
         where: { uq_platform_billing_issue_env_fingerprint: { environment: 'TEST', fingerprint: untrackedTenantIssue } },
-      })).toMatchObject({ status: 'OPEN' });
+      });
+      // Tenant pagination can defer this account to a later cron page. If it
+      // was processed, its own irrecoverable pre-coverage gap is terminalized.
+      if (otherTenantIssue.status === 'IGNORED') {
+        expect(otherTenantIssue.details).toMatchObject({
+          reason: 'HISTORICAL_COVERAGE_UNAVAILABLE',
+          resolution: 'closed without recalculation due to missing historical evidence',
+          automaticPricing: false,
+        });
+      } else {
+        expect(otherTenantIssue).toMatchObject({ status: 'OPEN', details: { reason: 'MISSED_CLOSE_WINDOW' } });
+      }
       expect(await db.platformBillingMonthlySnapshot.findUnique({
         where: { uq_platform_billing_monthly_snapshot_conta_env_period: { contaId: otherContaId, environment: 'TEST', periodStart: new Date('2026-09-01T00:00:00.000Z') } },
       })).toBeNull();
@@ -262,13 +273,16 @@ describe.skipIf(!isSafeTestDatabase)('platform billing eligibility PostgreSQL qu
       const persistedRecoveryIssue = await db.platformBillingIssue.findUniqueOrThrow({
         where: { uq_platform_billing_issue_env_fingerprint: { environment: 'TEST', fingerprint: inconclusiveIssueFingerprint } },
       });
-      expect(persistedRecoveryIssue.details).toMatchObject({ recoveryRetryAfter: '2026-10-27T13:00:00.000Z' });
+      expect(persistedRecoveryIssue).toMatchObject({ status: 'IGNORED', details: {
+        periodStart: '2026-08-01', reason: 'HISTORICAL_EVIDENCE_LOST',
+        resolution: 'closed without recalculation due to missing historical evidence', automaticPricing: false,
+      } });
       expect(await db.platformBillingMonthlySnapshot.findUnique({
         where: { uq_platform_billing_monthly_snapshot_conta_env_period: { contaId, environment: 'TEST', periodStart: new Date('2026-08-01T00:00:00.000Z') } },
       })).toBeNull();
       expect(await db.platformBillingIssue.findUniqueOrThrow({
         where: { uq_platform_billing_issue_env_fingerprint: { environment: 'TEST', fingerprint: inconclusiveIssueFingerprint } },
-      })).toMatchObject({ status: 'OPEN' });
+      })).toMatchObject({ status: 'IGNORED' });
 
       // A later competence can be captured, but it never resolves or fills the
       // older missing period when current enrollment data changed afterwards.
@@ -283,7 +297,7 @@ describe.skipIf(!isSafeTestDatabase)('platform billing eligibility PostgreSQL qu
       })).toBeNull();
       expect(await db.platformBillingIssue.findUniqueOrThrow({
         where: { uq_platform_billing_issue_env_fingerprint: { environment: 'TEST', fingerprint: inconclusiveIssueFingerprint } },
-      })).toMatchObject({ status: 'OPEN' });
+      })).toMatchObject({ status: 'IGNORED' });
 
       await db.$executeRaw`UPDATE "Plano" SET "updatedAt" = ${new Date('2026-10-15T12:00:00Z')} WHERE id IN (${cadencePlanIds[0]}, ${fullPricePlan})`;
       await expect(runWithTenant(contaId, (tx) => countActivePlatformBillingStudents({ tx, contaId, asOf })))
@@ -498,6 +512,82 @@ describe.skipIf(!isSafeTestDatabase)('platform billing eligibility PostgreSQL qu
     } finally {
       await db.platformBillingIssue.deleteMany({ where: { contaId } });
       await db.platformBillingAccount.deleteMany({ where: { contaId } });
+      await db.conta.update({ where: { id: contaId }, data: { status: 'INATIVO' } });
+    }
+  });
+
+  it('terminalizes an older legacy gap even when the current month is already ignored', async () => {
+    const db = prisma as PrismaClient;
+    const suffix = randomUUID().replaceAll('-', '');
+    const contaId = `pb_older_legacy_gap_${suffix}`;
+    const billingAccountId = `pba_older_legacy_gap_${suffix}`;
+    const createdAt = new Date('2025-01-01T00:00:00.000Z');
+    await db.conta.create({ data: { id: contaId, nome: 'Older legacy gap fixture', createdAt, updatedAt: createdAt } });
+    await db.platformBillingAccount.create({
+      data: {
+        id: billingAccountId, contaId, environment: 'TEST', status: 'ACTIVE', accessStatus: 'ACTIVE',
+        planCode: 'BAND_001_025', createdAt, updatedAt: createdAt,
+      },
+    });
+    const septemberFingerprint = `TEST:${contaId}:monthly-close-inconclusive:2026-09-01`;
+    const octoberFingerprint = `TEST:${contaId}:monthly-close-inconclusive:2026-10-01`;
+    try {
+      await db.platformBillingIssue.createMany({ data: [
+        {
+          contaId, billingAccountId, environment: 'TEST', severity: 'WARNING', status: 'OPEN',
+          code: 'MONTHLY_CLOSE_INCONCLUSIVE', title: 'Older missed close', message: 'September has no historical evidence.',
+          fingerprint: septemberFingerprint,
+          details: { periodStart: '2026-09-01', reason: 'MISSED_CLOSE_WINDOW', automaticPricing: false },
+        },
+        {
+          contaId, billingAccountId, environment: 'TEST', severity: 'WARNING', status: 'IGNORED',
+          ignoredAt: new Date('2026-11-01T00:00:00.000Z'),
+          code: 'MONTHLY_CLOSE_INCONCLUSIVE', title: 'Current missed close', message: 'October was closed without recalculation.',
+          fingerprint: octoberFingerprint,
+          details: {
+            periodStart: '2026-10-01', reason: 'HISTORICAL_COVERAGE_UNAVAILABLE', automaticPricing: false,
+            resolution: 'closed without recalculation due to missing historical evidence',
+          },
+        },
+      ] });
+
+      const { capturePlatformBillingMonthlySnapshots } = await vi.importActual<typeof import('@/src/server/platform-billing/monthly-snapshots')>(
+        '@/src/server/platform-billing/monthly-snapshots',
+      );
+      const closeInput = { prisma: db, environment: 'TEST' as const, now: new Date('2026-11-01T12:00:00.000Z'), limit: 500 };
+      await Promise.all([
+        capturePlatformBillingMonthlySnapshots(closeInput),
+        capturePlatformBillingMonthlySnapshots(closeInput),
+      ]);
+
+      expect(await db.platformBillingIssue.findUniqueOrThrow({
+        where: { uq_platform_billing_issue_env_fingerprint: { environment: 'TEST', fingerprint: septemberFingerprint } },
+      })).toMatchObject({ status: 'IGNORED', details: {
+        periodStart: '2026-09-01', reason: 'HISTORICAL_COVERAGE_UNAVAILABLE',
+        resolution: 'closed without recalculation due to missing historical evidence', automaticPricing: false,
+      } });
+      expect(await db.platformBillingIssue.findUniqueOrThrow({
+        where: { uq_platform_billing_issue_env_fingerprint: { environment: 'TEST', fingerprint: octoberFingerprint } },
+      })).toMatchObject({ status: 'IGNORED' });
+      expect(await db.platformBillingMonthlySnapshot.count({ where: { contaId, environment: 'TEST' } })).toBe(0);
+      expect(await db.platformBillingAuditLog.count({
+        where: { contaId, action: 'PLATFORM_BILLING_MONTHLY_CLOSE_GAP_CLOSED_WITHOUT_RECALCULATION', entityId: septemberFingerprint },
+      })).toBe(1);
+      expect(await db.platformBillingAuditLog.count({
+        where: { contaId, action: 'PLATFORM_BILLING_MONTHLY_CLOSE_GAP_CLOSED_WITHOUT_RECALCULATION', entityId: octoberFingerprint },
+      })).toBe(0);
+
+      await capturePlatformBillingMonthlySnapshots(closeInput);
+      expect(await db.platformBillingAuditLog.count({
+        where: { contaId, action: 'PLATFORM_BILLING_MONTHLY_CLOSE_GAP_CLOSED_WITHOUT_RECALCULATION', entityId: septemberFingerprint },
+      })).toBe(1);
+      expect(await db.platformBillingMonthlySnapshot.count({ where: { contaId, environment: 'TEST' } })).toBe(0);
+    } finally {
+      await db.platformBillingAuditLog.deleteMany({ where: { contaId } });
+      await db.platformBillingIssue.deleteMany({ where: { contaId } });
+      await db.platformBillingMonthlySnapshot.deleteMany({ where: { contaId } });
+      await db.platformBillingAccount.deleteMany({ where: { contaId } });
+      await db.auditLog.deleteMany({ where: { contaId } });
       await db.conta.update({ where: { id: contaId }, data: { status: 'INATIVO' } });
     }
   });

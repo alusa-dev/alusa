@@ -505,6 +505,19 @@ async function recoverOpenMonthlyCloseIssues(input: {
       if (result.inconclusive) inconclusive += 1;
     } catch (error) {
       inconclusive += 1;
+      if (
+        error instanceof PlatformBillingHistoricalCountInconclusive &&
+        (error.reason === 'HISTORICAL_COVERAGE_UNAVAILABLE' || error.reason === 'HISTORICAL_EVIDENCE_LOST')
+      ) {
+        await recordInconclusiveClose({
+          contaId: input.contaId,
+          environment: input.environment,
+          periodStart,
+          reason: error.reason,
+          terminal: true,
+          now: input.now,
+        });
+      }
       logApiOperationalEvent({
         severity: 'warn',
         eventName: 'job.platform_billing.monthly_snapshot_recovery.inconclusive',
@@ -559,7 +572,9 @@ async function recordInconclusiveClose(input: {
       reason: input.reason,
       automaticPricing: false,
     };
-    if ((existing?.status === 'OPEN' || existing?.status === 'IGNORED') && hasSameMonthlyCloseDetails(existing.details, details)) return;
+    if (existing?.status === 'IGNORED' && isTerminalMonthlyCloseGap(existing.details)) return;
+    const desiredStatus = input.terminal ? 'IGNORED' : 'OPEN';
+    if (existing?.status === desiredStatus && hasSameMonthlyCloseDetails(existing.details, details)) return;
     const billingAccount = await tx.platformBillingAccount.findUnique({
       where: { uq_platform_billing_account_conta_env: { contaId: input.contaId, environment: input.environment } },
       select: { id: true },
