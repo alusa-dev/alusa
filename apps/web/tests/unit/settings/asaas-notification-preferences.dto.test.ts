@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { asaasNotificationPreferenceDTOSchema, notificationPreferenceArraySchema } from '@/features/settings/notifications/asaas/dtos';
+import { asaasNotificationPreferenceDTOSchema, normalizeAsaasNotificationPreferencesForRead, notificationPreferenceArraySchema } from '@/features/settings/notifications/asaas/dtos';
 
 const preference = {
   event: 'PAYMENT_DUEDATE_WARNING', scheduleOffset: 15, enabled: true,
@@ -26,5 +26,31 @@ describe('Asaas notification preference DTO', () => {
     expect(notificationPreferenceArraySchema(asaasNotificationPreferenceDTOSchema).safeParse([
       { ...preference, scheduleOffset: 5 }, { ...preference, scheduleOffset: 15 },
     ]).success).toBe(false);
+  });
+
+  it('normaliza lembretes legados na leitura priorizando habilitado e, em empate, maior intervalo', () => {
+    const preferences = [
+      { ...preference, id: 'due', event: 'PAYMENT_DUEDATE_WARNING' as const, scheduleOffset: 0 },
+      { ...preference, id: 'five', event: 'PAYMENT_DUEDATE_WARNING' as const, scheduleOffset: 5, enabled: true },
+      { ...preference, id: 'ten', event: 'PAYMENT_DUEDATE_WARNING' as const, scheduleOffset: 10, enabled: true },
+      { ...preference, id: 'other', event: 'PAYMENT_CREATED' as const, scheduleOffset: 0 },
+    ];
+
+    const normalized = normalizeAsaasNotificationPreferencesForRead(preferences);
+
+    expect(normalized.map(({ id }) => id)).toEqual(['due', 'ten', 'other']);
+    expect(normalized.filter(({ event, scheduleOffset }) => event === 'PAYMENT_DUEDATE_WARNING' && scheduleOffset > 0)).toHaveLength(1);
+    expect(normalized.find(({ id }) => id === 'other')).toEqual(preferences[3]);
+    expect(notificationPreferenceArraySchema(asaasNotificationPreferenceDTOSchema).safeParse(normalized).success).toBe(true);
+    expect(notificationPreferenceArraySchema(asaasNotificationPreferenceDTOSchema).safeParse(preferences).success).toBe(false);
+  });
+
+  it('prioriza o lembrete habilitado mesmo quando há um intervalo maior desabilitado', () => {
+    const normalized = normalizeAsaasNotificationPreferencesForRead([
+      { ...preference, event: 'PAYMENT_DUEDATE_WARNING' as const, scheduleOffset: 5, enabled: true },
+      { ...preference, event: 'PAYMENT_DUEDATE_WARNING' as const, scheduleOffset: 10, enabled: false },
+    ]);
+
+    expect(normalized.map(({ scheduleOffset }) => scheduleOffset)).toEqual([5]);
   });
 });

@@ -68,6 +68,36 @@ export type AsaasNotificationPreferenceDTO = z.infer<
   typeof asaasNotificationPreferenceDTOSchema
 >;
 
+/**
+ * Produces the single reminder value expected by settings controls when legacy
+ * data contains several positive offsets for the same event. Prefer an enabled
+ * reminder, then the largest offset (the earliest warning). This is read-only:
+ * persisted preferences are never changed by a GET.
+ */
+export function normalizeAsaasNotificationPreferencesForRead<T extends {
+  event: AsaasNotificationEvent;
+  scheduleOffset: number;
+  enabled: boolean;
+}>(preferences: readonly T[]): T[] {
+  const selectedReminderByEvent = new Map<AsaasNotificationEvent, T>();
+
+  for (const preference of preferences) {
+    if (preference.scheduleOffset <= 0) continue;
+    const current = selectedReminderByEvent.get(preference.event);
+    if (
+      !current ||
+      (preference.enabled && !current.enabled) ||
+      (preference.enabled === current.enabled && preference.scheduleOffset > current.scheduleOffset)
+    ) {
+      selectedReminderByEvent.set(preference.event, preference);
+    }
+  }
+
+  return preferences.filter((preference) =>
+    preference.scheduleOffset <= 0 || selectedReminderByEvent.get(preference.event) === preference,
+  );
+}
+
 export const updateAsaasNotificationPreferencesInputDTOSchema = z.object({
   preferences: notificationPreferenceArraySchema(asaasNotificationPreferenceDTOSchema),
   policy: asaasNotificationPolicySchema.omit({ version: true }),

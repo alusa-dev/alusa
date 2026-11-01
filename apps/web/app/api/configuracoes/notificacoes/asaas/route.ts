@@ -10,6 +10,7 @@ import {
 } from '@alusa/finance';
 import {
   asaasNotificationPreferencesResultDTOSchema,
+  normalizeAsaasNotificationPreferencesForRead,
   saveAsaasNotificationPreferencesResultDTOSchema,
   updateAsaasNotificationPreferencesInputDTOSchema,
 } from '@/features/settings/notifications/asaas/dtos';
@@ -29,7 +30,9 @@ export async function GET(request: Request) {
     if (!auth.role || !allowedRoles.has(auth.role.toUpperCase()))
       return json(403, { error: 'SEM_PERMISSAO' });
 
-    const preferences = await getAsaasNotificationPreferences(auth.contaId);
+    const preferences = normalizeAsaasNotificationPreferencesForRead(
+      await getAsaasNotificationPreferences(auth.contaId),
+    );
     const notificationPolicy = await getAsaasNotificationPolicy(auth.contaId);
     return json(
       200,

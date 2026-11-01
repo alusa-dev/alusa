@@ -7,51 +7,74 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, POST, PUT } from '@/app/api/configuracoes/notificacoes/asaas/route';
-import { getServerSession } from 'next-auth';
+import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
   getAsaasNotificationPreferences,
-  saveAsaasNotificationPreferences,
+  getAsaasNotificationPolicy,
+  saveAsaasNotificationPolicyAndEnqueue,
   enqueueAsaasNotificationPreferenceSyncForTenant,
 } from '@alusa/finance';
 
-vi.mock('next-auth', () => ({
-  getServerSession: vi.fn(),
+vi.mock('@/lib/api/with-tenant-session', () => ({
+  resolveTenantSession: vi.fn(),
 }));
 
 vi.mock('@alusa/finance', () => ({
   getAsaasNotificationPreferences: vi.fn(),
-  saveAsaasNotificationPreferences: vi.fn(),
+  getAsaasNotificationPolicy: vi.fn(),
+  saveAsaasNotificationPolicyAndEnqueue: vi.fn(),
   enqueueAsaasNotificationPreferenceSyncForTenant: vi.fn(),
 }));
 
+vi.mock('@/src/server/platform-billing/capacity', () => ({
+  platformBillingAccessResponseForConta: vi.fn().mockResolvedValue(null),
+}));
+
 describe('Configurações globais de notificações Asaas', () => {
-  const mockUser = { user: { id: 'user-1', role: 'ADMIN', contaId: 'conta-1' } };
+  const mockPolicy = {
+    policy: {
+      customerNotificationsEnabled: true,
+      customerEmailNotificationsEnabled: true,
+      customerWhatsAppNotificationsEnabled: true,
+      customerSmsNotificationsEnabled: true,
+      contractWhatsAppNotificationsEnabled: false,
+      contractNotificationsEnabled: true,
+      contractEmailNotificationsEnabled: true,
+      version: 1,
+    },
+    synchronization: { pending: 0, failed: 0, legacyPreferenceUnknown: 0 },
+  };
+  const mockPreference = (event: string, scheduleOffset: number, id = `${event}-${scheduleOffset}`) => ({
+    id,
+    contaId: 'conta-1',
+    event,
+    scheduleOffset,
+    enabled: true,
+    emailEnabledForProvider: false,
+    smsEnabledForProvider: false,
+    emailEnabledForCustomer: true,
+    smsEnabledForCustomer: true,
+    whatsappEnabledForCustomer: false,
+    phoneCallEnabledForCustomer: false,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
-    (getServerSession as ReturnType<typeof vi.fn>).mockResolvedValue(mockUser);
+    vi.mocked(resolveTenantSession).mockResolvedValue({ ok: true, contaId: 'conta-1', userId: 'user-1', role: 'ADMIN' });
+    vi.mocked(getAsaasNotificationPolicy).mockResolvedValue(mockPolicy);
+    vi.mocked(saveAsaasNotificationPolicyAndEnqueue).mockResolvedValue({
+      preferences: [mockPreference('PAYMENT_CREATED', 0)],
+      enqueued: 0,
+      policy: mockPolicy.policy,
+    } as never);
   });
 
   it('GET deve retornar preferências atuais', async () => {
-    (getAsaasNotificationPreferences as ReturnType<typeof vi.fn>).mockResolvedValue([
-      {
-        id: 'pref-1',
-        contaId: 'conta-1',
-        event: 'PAYMENT_CREATED',
-        scheduleOffset: 0,
-        enabled: true,
-        emailEnabledForProvider: false,
-        smsEnabledForProvider: false,
-        emailEnabledForCustomer: true,
-        smsEnabledForCustomer: true,
-        whatsappEnabledForCustomer: false,
-        phoneCallEnabledForCustomer: false,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-    ]);
+    vi.mocked(getAsaasNotificationPreferences).mockResolvedValue([mockPreference('PAYMENT_CREATED', 0)]);
 
-    const response = await GET();
+    const response = await GET(new Request('http://localhost/api/configuracoes/notificacoes/asaas'));
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -60,9 +83,30 @@ describe('Configurações globais de notificações Asaas', () => {
     expect(getAsaasNotificationPreferences).toHaveBeenCalledWith('conta-1');
   });
 
+  it('GET normaliza offsets legados [5,10] e preserva uma única preferência positiva', async () => {
+    vi.mocked(getAsaasNotificationPreferences).mockResolvedValue([
+      mockPreference('PAYMENT_DUEDATE_WARNING', 0),
+      mockPreference('PAYMENT_DUEDATE_WARNING', 5),
+      mockPreference('PAYMENT_DUEDATE_WARNING', 10),
+      mockPreference('PAYMENT_CREATED', 0),
+    ]);
+
+    const response = await GET(new Request('http://localhost/api/configuracoes/notificacoes/asaas'));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.preferences.filter((preference: { event: string; scheduleOffset: number }) =>
+      preference.event === 'PAYMENT_DUEDATE_WARNING' && preference.scheduleOffset > 0,
+    )).toHaveLength(1);
+    expect(body.preferences.find((preference: { event: string; scheduleOffset: number }) =>
+      preference.event === 'PAYMENT_DUEDATE_WARNING' && preference.scheduleOffset > 0,
+    )?.scheduleOffset).toBe(10);
+    expect(body.preferences).toHaveLength(3);
+  });
+
   it('GET deve bloquear usuário não autenticado', async () => {
-    (getServerSession as ReturnType<typeof vi.fn>).mockResolvedValueOnce(null);
-    const response = await GET();
+    vi.mocked(resolveTenantSession).mockResolvedValueOnce({ ok: false, reason: 'UNAUTHENTICATED' });
+    const response = await GET(new Request('http://localhost/api/configuracoes/notificacoes/asaas'));
     expect(response.status).toBe(401);
   });
 
@@ -74,28 +118,10 @@ describe('Configurações globais de notificações Asaas', () => {
     });
     const response = await PUT(request);
     expect(response.status).toBe(422);
-    expect(saveAsaasNotificationPreferences).not.toHaveBeenCalled();
+    expect(saveAsaasNotificationPolicyAndEnqueue).not.toHaveBeenCalled();
   });
 
   it('PUT deve salvar preferências sem aplicar em clientes existentes', async () => {
-    (saveAsaasNotificationPreferences as ReturnType<typeof vi.fn>).mockResolvedValue([
-      {
-        id: 'pref-1',
-        contaId: 'conta-1',
-        event: 'PAYMENT_CREATED',
-        scheduleOffset: 0,
-        enabled: true,
-        emailEnabledForProvider: false,
-        smsEnabledForProvider: false,
-        emailEnabledForCustomer: true,
-        smsEnabledForCustomer: true,
-        whatsappEnabledForCustomer: false,
-        phoneCallEnabledForCustomer: false,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
-    ]);
-
     const request = new NextRequest('http://localhost/api/configuracoes/notificacoes/asaas', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -113,6 +139,15 @@ describe('Configurações globais de notificações Asaas', () => {
             phoneCallEnabledForCustomer: false,
           },
         ],
+        policy: {
+          customerNotificationsEnabled: true,
+          customerEmailNotificationsEnabled: true,
+          customerWhatsAppNotificationsEnabled: true,
+          customerSmsNotificationsEnabled: true,
+          contractWhatsAppNotificationsEnabled: false,
+          contractNotificationsEnabled: true,
+          contractEmailNotificationsEnabled: true,
+        },
       }),
     });
 
@@ -121,7 +156,7 @@ describe('Configurações globais de notificações Asaas', () => {
 
     expect(response.status).toBe(200);
     expect(body.preferences).toHaveLength(1);
-    expect(saveAsaasNotificationPreferences).toHaveBeenCalledWith('conta-1', expect.any(Array));
+    expect(saveAsaasNotificationPolicyAndEnqueue).toHaveBeenCalledWith(expect.objectContaining({ contaId: 'conta-1', preferences: expect.any(Array) }));
     expect(enqueueAsaasNotificationPreferenceSyncForTenant).not.toHaveBeenCalled();
   });
 
@@ -131,14 +166,13 @@ describe('Configurações globais de notificações Asaas', () => {
       customerIds: ['cus_1', 'cus_2'],
     });
 
-    const response = await POST();
+    const response = await POST(new Request('http://localhost/api/configuracoes/notificacoes/asaas', { method: 'POST' }));
     const body = await response.json();
 
     expect(response.status).toBe(202);
     expect(enqueueAsaasNotificationPreferenceSyncForTenant).toHaveBeenCalledWith({
       contaId: 'conta-1',
       reason: 'CONFIGURACAO_GLOBAL_ATUALIZADA',
-      limit: 5_000,
     });
     expect(body.accepted).toBe(true);
     expect(body.enqueued).toBe(2);
