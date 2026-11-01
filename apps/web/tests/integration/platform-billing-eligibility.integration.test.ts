@@ -224,7 +224,7 @@ describe.skipIf(!isSafeTestDatabase)('platform billing eligibility PostgreSQL qu
       const recoveredSnapshot = await db.platformBillingMonthlySnapshot.findUniqueOrThrow({
         where: { uq_platform_billing_monthly_snapshot_conta_env_period: { contaId, environment: 'TEST', periodStart: new Date('2026-09-01T00:00:00.000Z') } },
       });
-      expect(recoveredSnapshot).toMatchObject({ studentCount: 12, candidateBand: 'BAND_001_025' });
+      expect(recoveredSnapshot).toMatchObject({ studentCount: 12, candidateBand: 'BAND_001_025', isRecovered: true, customQuantitySyncStatus: null });
       expect(await db.platformBillingMonthlySnapshot.count({
         where: { contaId, environment: 'TEST', periodStart: new Date('2026-09-01T00:00:00.000Z') },
       })).toBe(1);
@@ -301,7 +301,204 @@ describe.skipIf(!isSafeTestDatabase)('platform billing eligibility PostgreSQL qu
       if (discountId) await db.desconto.deleteMany({ where: { id: discountId } });
       await db.combo.deleteMany({ where: { id: { in: [...combos] } } });
       await db.plano.deleteMany({ where: { contaId: { in: [contaId, otherContaId] } } });
-      await db.conta.deleteMany({ where: { id: { in: [contaId, otherContaId] } } });
+      // Eligibility history deliberately retains a Restrict FK to Conta. Keep
+      // these isolated disposable-fixture accounts until the database reset.
+      await db.conta.updateMany({ where: { id: { in: [contaId, otherContaId] } }, data: { status: 'INATIVO' } });
+    }
+  });
+
+  it('reconstructs only the state effective at close, captures deletes and rolls history back with source writes', async () => {
+    const db = prisma as PrismaClient;
+    const suffix = randomUUID().replaceAll('-', '');
+    const contaId = `pb_temporal_${suffix}`;
+    const studentId = `al_temporal_${suffix}`;
+    const planId = `pl_temporal_${suffix}`;
+    const enrollmentId = `mat_temporal_${suffix}`;
+    const rollbackStudentId = `al_rollback_${suffix}`;
+    const rollbackPlanId = `pl_rollback_${suffix}`;
+    const rollbackEnrollmentId = `mat_rollback_${suffix}`;
+    await db.conta.create({ data: { id: contaId, nome: 'Temporal eligibility fixture' } });
+
+    try {
+      await db.plano.create({ data: { id: planId, contaId, nome: `temporal-${suffix}`, valor: 100 } });
+      await db.aluno.create({ data: { id: studentId, contaId, nome: 'Temporal student', dataNasc: new Date('2010-01-01T00:00:00Z') } });
+      await db.matricula.create({ data: {
+        id: enrollmentId, contaId, alunoId: studentId, planoId: planId,
+        dataInicio: new Date('2026-01-01T00:00:00Z'), dataFimContrato: new Date('2030-12-31T00:00:00Z'), taxaMatricula: 0,
+      } });
+      const [{ closeAt }] = await db.$queryRaw<Array<{ closeAt: Date }>>`SELECT clock_timestamp() + interval '10 milliseconds' AS "closeAt"`;
+      const initialCount = await runWithTenant(contaId, (tx) => countActivePlatformBillingStudents({ tx, contaId, asOf: closeAt }));
+      expect(initialCount).toBe(1);
+
+      // Mutable current rows now say the student is not billable and the
+      // enrollment has been physically removed. Both changes are after close.
+      await db.$executeRaw`SELECT pg_sleep(0.02)`;
+      await db.plano.update({ where: { id: planId }, data: { valor: 0 } });
+      await db.matricula.delete({ where: { id: enrollmentId } });
+      const historicalCount = await runWithTenant(contaId, (tx) => countActivePlatformBillingStudents({ tx, contaId, asOf: closeAt }));
+      const [{ laterAsOf }] = await db.$queryRaw<Array<{ laterAsOf: Date }>>`SELECT clock_timestamp() AS "laterAsOf"`;
+      const currentHistoricalCount = await runWithTenant(contaId, (tx) => countActivePlatformBillingStudents({ tx, contaId, asOf: laterAsOf }));
+      expect(historicalCount).toBe(1);
+      expect(currentHistoricalCount).toBe(0);
+
+      const recoveryPeriod = new Date('2026-01-01T00:00:00.000Z');
+      await db.platformBillingMonthlySnapshot.createMany({ data: [
+        { contaId, environment: 'TEST', periodStart: recoveryPeriod, studentCount: 1 },
+        { contaId, environment: 'LIVE', periodStart: recoveryPeriod, studentCount: 1 },
+      ] });
+      await db.platformBillingAuditLog.create({ data: {
+        contaId,
+        action: 'PLATFORM_BILLING_MONTHLY_SNAPSHOT_RECOVERED',
+        entityType: 'PlatformBillingMonthlySnapshot',
+        entityId: '2026-01-01',
+        metadata: { environment: 'TEST', periodStart: '2026-01-01' },
+      } });
+      expect(await db.platformBillingMonthlySnapshot.findUniqueOrThrow({
+        where: { uq_platform_billing_monthly_snapshot_conta_env_period: { contaId, environment: 'TEST', periodStart: recoveryPeriod } },
+      })).toMatchObject({ isRecovered: true });
+      expect(await db.platformBillingMonthlySnapshot.findUniqueOrThrow({
+        where: { uq_platform_billing_monthly_snapshot_conta_env_period: { contaId, environment: 'LIVE', periodStart: recoveryPeriod } },
+      })).toMatchObject({ isRecovered: false });
+
+      await expect(db.$transaction(async (tx) => {
+        await tx.plano.create({ data: { id: rollbackPlanId, contaId, nome: `rollback-${suffix}`, valor: 100 } });
+        await tx.aluno.create({ data: { id: rollbackStudentId, contaId, nome: 'Rollback student', dataNasc: new Date('2010-01-01T00:00:00Z') } });
+        await tx.matricula.create({ data: {
+          id: rollbackEnrollmentId, contaId, alunoId: rollbackStudentId, planoId: rollbackPlanId,
+          dataInicio: new Date('2026-01-01T00:00:00Z'), dataFimContrato: new Date('2030-12-31T00:00:00Z'), taxaMatricula: 0,
+        } });
+        throw new Error('rollback fixture');
+      })).rejects.toThrow('rollback fixture');
+      expect(await db.platformBillingEligibilityHistory.count({
+        where: { contaId, entityId: { in: [rollbackPlanId, rollbackStudentId, rollbackEnrollmentId] } },
+      })).toBe(0);
+
+      await expect(db.$transaction(async (tx) => {
+        await tx.$executeRaw`CREATE TEMP TABLE eligibility_history_spoof (id text, "contaId" text, status text, "dataInativacao" timestamptz)`;
+        await tx.$executeRaw`CREATE TRIGGER eligibility_history_spoof_trigger BEFORE INSERT ON eligibility_history_spoof
+          FOR EACH ROW EXECUTE FUNCTION public.capture_platform_billing_eligibility_history('STUDENT')`;
+        await tx.$executeRaw`INSERT INTO eligibility_history_spoof (id, "contaId", status) VALUES ('spoof', ${contaId}, 'ATIVO')`;
+      })).rejects.toThrow('Unsupported source relation');
+    } finally {
+      await db.matricula.deleteMany({ where: { contaId } });
+      await db.aluno.deleteMany({ where: { contaId } });
+      await db.plano.deleteMany({ where: { contaId } });
+      // Conta and its immutable coverage/history remain in the disposable DB.
+      await db.conta.update({ where: { id: contaId }, data: { status: 'INATIVO' } });
+    }
+  });
+
+  it('serializes a close against in-flight tenant writes and rejects a transaction split by the cutoff', async () => {
+    const db = prisma as PrismaClient;
+    const suffix = randomUUID().replaceAll('-', '');
+    const contaId = `pb_lock_${suffix}`;
+    const planId = `pl_lock_${suffix}`;
+    await db.conta.create({ data: { id: contaId, nome: 'Eligibility lock fixture' } });
+    await db.plano.create({ data: { id: planId, contaId, nome: `lock-${suffix}`, valor: 100 } });
+
+    try {
+      let writerReady!: () => void;
+      let releaseWriter!: () => void;
+      const ready = new Promise<void>((resolve) => { writerReady = resolve; });
+      const blocked = new Promise<void>((resolve) => { releaseWriter = resolve; });
+      const studentId = `al_lock_${suffix}`;
+      const enrollmentId = `mat_lock_${suffix}`;
+      const writer = db.$transaction(async (tx) => {
+        await tx.aluno.create({ data: { id: studentId, contaId, nome: 'Concurrent student', dataNasc: new Date('2010-01-01T00:00:00Z') } });
+        await tx.matricula.create({ data: {
+          id: enrollmentId, contaId, alunoId: studentId, planoId: planId,
+          dataInicio: new Date('2020-01-01T00:00:00Z'), dataFimContrato: new Date('2030-12-31T00:00:00Z'), taxaMatricula: 0,
+        } });
+        writerReady();
+        await blocked;
+      });
+      await ready;
+      const [{ closeAt }] = await db.$queryRaw<Array<{ closeAt: Date }>>`SELECT clock_timestamp() + interval '10 milliseconds' AS "closeAt"`;
+      let closeFinished = false;
+      const closing = runWithTenant(contaId, (tx) => countActivePlatformBillingStudents({ tx, contaId, asOf: closeAt }))
+        .then((count) => { closeFinished = true; return count; });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(closeFinished).toBe(false);
+      releaseWriter();
+      await writer;
+      expect(await closing).toBe(1);
+
+      let splitReady!: () => void;
+      let continueSplit!: () => void;
+      const splitPrepared = new Promise<void>((resolve) => { splitReady = resolve; });
+      const splitContinue = new Promise<void>((resolve) => { continueSplit = resolve; });
+      const splitStudentId = `al_split_${suffix}`;
+      const splitEnrollmentId = `mat_split_${suffix}`;
+      const splitWriter = db.$transaction(async (tx) => {
+        await tx.aluno.create({ data: { id: splitStudentId, contaId, nome: 'Split transaction student', dataNasc: new Date('2010-01-01T00:00:00Z') } });
+        splitReady();
+        await splitContinue;
+        await tx.matricula.create({ data: {
+          id: splitEnrollmentId, contaId, alunoId: splitStudentId, planoId: planId,
+          dataInicio: new Date('2020-01-01T00:00:00Z'), dataFimContrato: new Date('2030-12-31T00:00:00Z'), taxaMatricula: 0,
+        } });
+      });
+      await splitPrepared;
+      const [{ splitAt }] = await db.$queryRaw<Array<{ splitAt: Date }>>`SELECT clock_timestamp() + interval '5 milliseconds' AS "splitAt"`;
+      await db.$executeRaw`SELECT pg_sleep(0.01)`;
+      continueSplit();
+      await splitWriter;
+      await expect(runWithTenant(contaId, (tx) => countActivePlatformBillingStudents({ tx, contaId, asOf: splitAt })))
+        .rejects.toBeInstanceOf(PlatformBillingHistoricalCountInconclusive);
+    } finally {
+      await db.matricula.deleteMany({ where: { contaId } });
+      await db.aluno.deleteMany({ where: { contaId } });
+      await db.plano.deleteMany({ where: { contaId } });
+      await db.conta.update({ where: { id: contaId }, data: { status: 'INATIVO' } });
+    }
+  });
+
+  it('closes a pre-coverage gap once under concurrent cron retries without creating a snapshot', async () => {
+    const db = prisma as PrismaClient;
+    const suffix = randomUUID().replaceAll('-', '');
+    const contaId = `pb_legacy_gap_${suffix}`;
+    const billingAccountId = `pba_legacy_gap_${suffix}`;
+    const createdAt = new Date('2025-01-01T00:00:00.000Z');
+    await db.conta.create({ data: { id: contaId, nome: 'Legacy eligibility gap fixture', createdAt, updatedAt: createdAt } });
+    await db.platformBillingAccount.create({
+      data: {
+        id: billingAccountId, contaId, environment: 'TEST', status: 'ACTIVE', accessStatus: 'ACTIVE',
+        planCode: 'BAND_001_025', createdAt, updatedAt: createdAt,
+      },
+    });
+    try {
+      const { capturePlatformBillingMonthlySnapshots } = await vi.importActual<typeof import('@/src/server/platform-billing/monthly-snapshots')>(
+        '@/src/server/platform-billing/monthly-snapshots',
+      );
+      const closeInput = { prisma: db, environment: 'TEST' as const, now: new Date('2026-11-01T12:00:00.000Z'), limit: 500 };
+      const [first, concurrent] = await Promise.all([
+        capturePlatformBillingMonthlySnapshots(closeInput),
+        capturePlatformBillingMonthlySnapshots(closeInput),
+      ]);
+      expect(first.inconclusive + concurrent.inconclusive).toBeGreaterThan(0);
+
+      const fingerprint = `TEST:${contaId}:monthly-close-inconclusive:2026-10-01`;
+      expect(await db.platformBillingIssue.findUniqueOrThrow({
+        where: { uq_platform_billing_issue_env_fingerprint: { environment: 'TEST', fingerprint } },
+      })).toMatchObject({ status: 'IGNORED', details: {
+        reason: 'HISTORICAL_COVERAGE_UNAVAILABLE',
+        resolution: 'closed without recalculation due to missing historical evidence',
+        automaticPricing: false,
+      } });
+      expect(await db.platformBillingMonthlySnapshot.count({ where: { contaId, environment: 'TEST' } })).toBe(0);
+      expect(await db.platformBillingAuditLog.count({
+        where: { contaId, action: 'PLATFORM_BILLING_MONTHLY_CLOSE_GAP_CLOSED_WITHOUT_RECALCULATION', entityId: fingerprint },
+      })).toBe(1);
+
+      await capturePlatformBillingMonthlySnapshots(closeInput);
+      expect(await db.platformBillingMonthlySnapshot.count({ where: { contaId, environment: 'TEST' } })).toBe(0);
+      expect(await db.platformBillingAuditLog.count({
+        where: { contaId, action: 'PLATFORM_BILLING_MONTHLY_CLOSE_GAP_CLOSED_WITHOUT_RECALCULATION', entityId: fingerprint },
+      })).toBe(1);
+    } finally {
+      await db.platformBillingIssue.deleteMany({ where: { contaId } });
+      await db.platformBillingAccount.deleteMany({ where: { contaId } });
+      await db.conta.update({ where: { id: contaId }, data: { status: 'INATIVO' } });
     }
   });
 });

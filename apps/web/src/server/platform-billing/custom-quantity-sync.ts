@@ -20,6 +20,7 @@ type SnapshotSyncRow = {
   environment: PlatformBillingEnvironment;
   periodStart: Date;
   studentCount: number;
+  isRecovered: boolean;
   customQuantitySyncStatus: SyncStatus | null;
   customQuantitySyncRequestedQuantity: number | null;
   customQuantitySyncOperationKey: string | null;
@@ -71,9 +72,10 @@ export async function syncCustomSubscriptionQuantityForMonthlyClose(input: {
       where: { uq_platform_billing_monthly_snapshot_conta_env_period: { contaId: input.contaId, environment: input.environment, periodStart: input.periodStart } },
     }) as SnapshotSyncRow | null;
     if (!snapshot) return null;
+    if (snapshot.isRecovered) return { snapshot, active: false as const };
     const [latest, account, invitation] = await Promise.all([
       tx.platformBillingMonthlySnapshot.findFirst({
-        where: { contaId: input.contaId, environment: input.environment },
+        where: { contaId: input.contaId, environment: input.environment, isRecovered: false },
         orderBy: { periodStart: 'desc' }, select: { periodStart: true },
       }),
       tx.platformBillingAccount.findUnique({
@@ -123,12 +125,13 @@ export async function syncCustomSubscriptionQuantityForMonthlyClose(input: {
     where: {
       contaId: input.contaId,
       environment: input.environment,
+      isRecovered: false,
       customQuantitySyncStatus: { in: UNRESOLVED_STATUSES },
     },
     orderBy: { periodStart: 'asc' },
   }) as Promise<SnapshotSyncRow[]>);
   const latest = await runTenant(input.contaId, async (tx) => tx.platformBillingMonthlySnapshot.findFirst({
-    where: { contaId: input.contaId, environment: input.environment }, orderBy: { periodStart: 'desc' }, select: { periodStart: true },
+    where: { contaId: input.contaId, environment: input.environment, isRecovered: false }, orderBy: { periodStart: 'desc' }, select: { periodStart: true },
   }));
   if (!latest) return [{ status: 'NOT_APPLICABLE', changed: false }];
 
@@ -144,6 +147,7 @@ export async function syncCustomSubscriptionQuantityForMonthlyClose(input: {
     where: {
       contaId: input.contaId,
       environment: input.environment,
+      isRecovered: false,
       customQuantitySyncStatus: { in: UNRESOLVED_STATUSES },
     },
     orderBy: { periodStart: 'asc' },
@@ -160,7 +164,7 @@ export async function syncCustomSubscriptionQuantityForMonthlyClose(input: {
       }
     }
     const currentLatest = await runTenant(input.contaId, async (tx) => tx.platformBillingMonthlySnapshot.findFirst({
-      where: { contaId: input.contaId, environment: input.environment },
+      where: { contaId: input.contaId, environment: input.environment, isRecovered: false },
       orderBy: { periodStart: 'desc' }, select: { periodStart: true },
     }));
     const rowIsLatest = currentLatest && periodKey(currentLatest.periodStart) === periodKey(row.periodStart);

@@ -87,15 +87,6 @@ export async function capturePlatformBillingMonthlySnapshots(input: {
     // existed. Do not manufacture an issue/snapshot for that earlier period.
     if (conta.createdAt > periodEnd || !billingAccount || billingAccount.createdAt > periodEnd) continue;
     await ensureEligibilityHistoryTracking(conta.id);
-    if (!close.canCapture) {
-      const alreadyCaptured = await runWithTenant(conta.id, (tx) => tx.platformBillingMonthlySnapshot.findUnique({
-        where: { uq_platform_billing_monthly_snapshot_conta_env_period: { contaId: conta.id, environment, periodStart } },
-        select: { id: true },
-      }));
-      if (!alreadyCaptured) {
-        await recordInconclusiveClose({ contaId: conta.id, environment, periodStart, reason: 'MISSED_CLOSE_WINDOW' });
-      }
-    }
     const recovery = await recoverOpenMonthlyCloseIssues({
       contaId: conta.id,
       billingAccountId: billingAccount.id,
@@ -105,31 +96,76 @@ export async function capturePlatformBillingMonthlySnapshots(input: {
     });
     recovered += recovery.recovered;
     inconclusive += recovery.inconclusive;
+    const terminalGap = await runWithTenant(conta.id, (tx) => tx.platformBillingIssue.findUnique({
+      where: { uq_platform_billing_issue_env_fingerprint: {
+        environment,
+        fingerprint: `${environment}:${conta.id}:monthly-close-inconclusive:${periodStart.toISOString().slice(0, 10)}`,
+      } },
+      select: { status: true, details: true },
+    }));
+    if (terminalGap?.status === 'IGNORED' && isTerminalMonthlyCloseGap(terminalGap.details)) {
+      continue;
+    }
+    const recoveredCurrentPeriod = await runWithTenant(conta.id, (tx) => tx.platformBillingMonthlySnapshot.findUnique({
+      where: { uq_platform_billing_monthly_snapshot_conta_env_period: { contaId: conta.id, environment, periodStart } },
+      select: { isRecovered: true },
+    }));
+    if (recoveredCurrentPeriod?.isRecovered) continue;
     if (!close.canCapture) {
+      const alreadyCaptured = await runWithTenant(conta.id, (tx) => tx.platformBillingMonthlySnapshot.findUnique({
+        where: { uq_platform_billing_monthly_snapshot_conta_env_period: { contaId: conta.id, environment, periodStart } },
+        select: { id: true },
+      }));
+      if (!alreadyCaptured) {
+        await recordInconclusiveClose({ contaId: conta.id, environment, periodStart, reason: 'MISSED_CLOSE_WINDOW' });
+      }
       // Recovery records the original month only. It never evaluates a price
       // transition; the regular monthly close owns that decision.
       await retryCustomQuantitySync({ contaId: conta.id, environment, periodStart, now });
       continue;
     }
     const result = await runWithTenant(conta.id, async (tx) => {
-      const studentCount = await countActivePlatformBillingStudents({ tx, contaId: conta.id, asOf: periodEnd });
-      const target = resolveSchoolCommercialTarget(studentCount);
       const billingAccount = await tx.platformBillingAccount.findUnique({
         where: { uq_platform_billing_account_conta_env: { contaId: conta.id, environment } },
         select: { id: true, planCode: true },
       });
-      const inserted = await tx.platformBillingMonthlySnapshot.createMany({
-        data: [{
-          contaId: conta.id,
-          billingAccountId: billingAccount?.id ?? null,
-          environment,
-          periodStart,
-          studentCount,
-          candidateBand: target?.kind === 'SPECIALIST' ? 'SPECIALIST' : target?.band.code ?? null,
-          specialistRequired: target?.kind === 'SPECIALIST',
-        }],
-        skipDuplicates: true,
+      // A persisted close is immutable evidence. Recounting live roster data
+      // on every cron retry can fail after later source edits and reopen a
+      // competence that was already completed.
+      let snapshot = await tx.platformBillingMonthlySnapshot.findUnique({
+        where: { uq_platform_billing_monthly_snapshot_conta_env_period: { contaId: conta.id, environment, periodStart } },
+        select: { id: true, studentCount: true, candidateBand: true, specialistRequired: true },
       });
+      let insertedCount = 0;
+      if (!snapshot) {
+        const studentCount = await countActivePlatformBillingStudents({ tx, contaId: conta.id, asOf: periodEnd });
+        const target = resolveSchoolCommercialTarget(studentCount);
+        const inserted = await tx.platformBillingMonthlySnapshot.createMany({
+          data: [{
+            contaId: conta.id,
+            billingAccountId: billingAccount?.id ?? null,
+            environment,
+            periodStart,
+            studentCount,
+            candidateBand: target?.kind === 'SPECIALIST' ? 'SPECIALIST' : target?.band.code ?? null,
+            specialistRequired: target?.kind === 'SPECIALIST',
+          }],
+          skipDuplicates: true,
+        });
+        insertedCount = inserted.count;
+        snapshot = inserted.count > 0
+          ? {
+            id: 'inserted',
+            studentCount,
+            candidateBand: target?.kind === 'SPECIALIST' ? 'SPECIALIST' : target?.band.code ?? null,
+            specialistRequired: target?.kind === 'SPECIALIST',
+          }
+          : await tx.platformBillingMonthlySnapshot.findUnique({
+            where: { uq_platform_billing_monthly_snapshot_conta_env_period: { contaId: conta.id, environment, periodStart } },
+            select: { id: true, studentCount: true, candidateBand: true, specialistRequired: true },
+          });
+        if (!snapshot) throw new Error('Monthly snapshot insert did not produce the expected period.');
+      }
       const openCloseIssues = await tx.platformBillingIssue.findMany({
         where: {
           contaId: conta.id,
@@ -164,7 +200,7 @@ export async function capturePlatformBillingMonthlySnapshots(input: {
           });
         }
       }
-      if (inserted.count > 0) await tx.platformBillingAuditLog.create({
+      if (insertedCount > 0) await tx.platformBillingAuditLog.create({
         data: {
           contaId: conta.id,
           billingAccountId: billingAccount?.id ?? null,
@@ -175,14 +211,14 @@ export async function capturePlatformBillingMonthlySnapshots(input: {
           metadata: {
             environment,
             periodStart: periodStart.toISOString().slice(0, 10),
-            studentCount,
-            candidateBand: target?.kind === 'SPECIALIST' ? 'SPECIALIST' : target?.band.code ?? null,
+            studentCount: snapshot.studentCount,
+            candidateBand: snapshot.candidateBand,
           },
         },
       });
 
       const recentSnapshots = await tx.platformBillingMonthlySnapshot.findMany({
-        where: { contaId: conta.id, environment },
+        where: { contaId: conta.id, environment, isRecovered: false },
         orderBy: { periodStart: 'desc' },
         take: 3,
         select: { periodStart: true, candidateBand: true },
@@ -211,7 +247,7 @@ export async function capturePlatformBillingMonthlySnapshots(input: {
             fingerprint,
             correlationId: `${environment}:${conta.id}:specialist-negotiation`,
             details: {
-              studentCount,
+              studentCount: snapshot.studentCount,
               noticeAt: noticeAt.toISOString(),
               transitionEndsAt: transitionEndsAt.toISOString(),
               automaticPricing: false,
@@ -241,7 +277,7 @@ export async function capturePlatformBillingMonthlySnapshots(input: {
               correlationId: eventId,
               metadata: {
                 environment,
-                studentCount,
+                studentCount: snapshot.studentCount,
                 noticeAt: noticeAt.toISOString(),
                 transitionEndsAt: transitionEndsAt.toISOString(),
                 automaticPricing: false,
@@ -251,7 +287,7 @@ export async function capturePlatformBillingMonthlySnapshots(input: {
         }
       }
       return {
-        inserted: inserted.count > 0,
+        inserted: insertedCount > 0,
         specialistReady: stableBand === 'SPECIALIST',
         specialistNoticeCreated,
         stableBand,
@@ -289,8 +325,11 @@ export async function capturePlatformBillingMonthlySnapshots(input: {
         environment,
         periodStart,
         reason: error instanceof PlatformBillingHistoricalCountInconclusive
-          ? 'HISTORICAL_DATA_INSUFFICIENT'
+          ? error.reason ?? 'HISTORICAL_DATA_INSUFFICIENT'
           : 'CLOSE_PROCESSING_FAILED',
+        terminal: error instanceof PlatformBillingHistoricalCountInconclusive &&
+          error.reason === 'HISTORICAL_COVERAGE_UNAVAILABLE',
+        now,
       });
       inconclusive += 1;
     }
@@ -399,6 +438,7 @@ async function recoverOpenMonthlyCloseIssues(input: {
               studentCount,
               candidateBand: target?.kind === 'SPECIALIST' ? 'SPECIALIST' : target?.band.code ?? null,
               specialistRequired: target?.kind === 'SPECIALIST',
+              isRecovered: true,
             }],
             skipDuplicates: true,
           });
@@ -504,9 +544,12 @@ async function recordInconclusiveClose(input: {
   environment: PlatformBillingEnvironment;
   periodStart: Date;
   reason: string;
+  terminal?: boolean;
+  now?: Date;
 }) {
   const fingerprint = `${input.environment}:${input.contaId}:monthly-close-inconclusive:${input.periodStart.toISOString().slice(0, 10)}`;
   await runWithTenant(input.contaId, async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`platform-billing-monthly-close-issue:${input.environment}:${input.contaId}:${input.periodStart.toISOString().slice(0, 10)}`}, 0))`;
     const existing = await tx.platformBillingIssue.findUnique({
       where: { uq_platform_billing_issue_env_fingerprint: { environment: input.environment, fingerprint } },
       select: { id: true, status: true, details: true },
@@ -516,7 +559,7 @@ async function recordInconclusiveClose(input: {
       reason: input.reason,
       automaticPricing: false,
     };
-    if (existing?.status === 'OPEN' && hasSameMonthlyCloseDetails(existing.details, details)) return;
+    if ((existing?.status === 'OPEN' || existing?.status === 'IGNORED') && hasSameMonthlyCloseDetails(existing.details, details)) return;
     const billingAccount = await tx.platformBillingAccount.findUnique({
       where: { uq_platform_billing_account_conta_env: { contaId: input.contaId, environment: input.environment } },
       select: { id: true },
@@ -528,7 +571,8 @@ async function recordInconclusiveClose(input: {
         billingAccountId: billingAccount?.id ?? null,
         environment: input.environment,
         severity: 'WARNING',
-        status: 'OPEN',
+        status: input.terminal ? 'IGNORED' : 'OPEN',
+        ignoredAt: input.terminal ? input.now ?? new Date() : null,
         code: 'MONTHLY_CLOSE_INCONCLUSIVE',
         title: 'Fechamento comercial mensal inconclusivo',
         message: 'A competência não foi fechada porque a janela do job foi perdida ou os dados históricos disponíveis não permitem reconstruir a elegibilidade com segurança. Nenhuma alteração de faixa foi aplicada.',
@@ -536,18 +580,46 @@ async function recordInconclusiveClose(input: {
         correlationId: fingerprint,
         details: {
           ...details,
+          ...(input.terminal ? { resolution: 'closed without recalculation due to missing historical evidence' } : {}),
         },
       },
       update: {
-        status: 'OPEN',
+        status: input.terminal ? 'IGNORED' : 'OPEN',
         resolvedAt: null,
-        ignoredAt: null,
+        ignoredAt: input.terminal ? input.now ?? new Date() : null,
         details: {
           ...details,
+          ...(input.terminal ? { resolution: 'closed without recalculation due to missing historical evidence' } : {}),
         },
       },
     });
+    if (input.terminal) {
+      await tx.platformBillingAuditLog.create({
+        data: {
+          contaId: input.contaId,
+          billingAccountId: billingAccount?.id ?? null,
+          action: 'PLATFORM_BILLING_MONTHLY_CLOSE_GAP_CLOSED_WITHOUT_RECALCULATION',
+          entityType: 'PlatformBillingIssue',
+          entityId: fingerprint,
+          correlationId: fingerprint,
+          metadata: {
+            periodStart: details.periodStart,
+            reason: input.reason,
+            status: 'IGNORED',
+            resolution: 'closed without recalculation due to missing historical evidence',
+            automaticPricing: false,
+          },
+        },
+      });
+    }
   });
+}
+
+function isTerminalMonthlyCloseGap(details: unknown): boolean {
+  const record = getRecord(details);
+  return record.automaticPricing === false &&
+    record.reason === 'HISTORICAL_COVERAGE_UNAVAILABLE' &&
+    record.resolution === 'closed without recalculation due to missing historical evidence';
 }
 
 function getRecord(value: unknown): Record<string, unknown> {

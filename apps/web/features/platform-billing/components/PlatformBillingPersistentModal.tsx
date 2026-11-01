@@ -2,7 +2,6 @@
 
 import React, { useEffect, useState } from 'react';
 import { CheckoutResumePopup } from './CheckoutResumePopup';
-import { MonthlyCloseInconclusiveNotice } from './MonthlyCloseInconclusiveNotice';
 import { usePlatformBilling } from '@/features/platform-billing/PlatformBillingContext';
 import type { PlatformBillingNotice } from './PlatformBillingNoticeModal';
 import type {
@@ -68,7 +67,6 @@ export function PlatformBillingPersistentModal() {
           }}
         />
       ) : null}
-      <MonthlyCloseInconclusiveNotice suppressed={isAccessNoticeVisible} />
     </>
   );
 }

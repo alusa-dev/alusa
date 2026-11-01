@@ -22,13 +22,16 @@ O trial dura 14 dias sem exigir cartão. A inclusão opcional de cartão durante
 trial usa Setup Checkout separado, com consentimento explícito, e não converte
 o plano nem inicia cobrança. A contratação ocorre em Checkout explícito e a
 ativação depende de confirmação financeira Stripe.
-O job não reconstrói uma competência perdida usando dados atuais: cria issue
-`MONTHLY_CLOSE_INCONCLUSIVE` e preserva a faixa vigente. Uma competência mais
-recente não resolve o mês ausente por si só. A manutenção pode reconstruir a
-competência original quando a contagem histórica passa as verificações de
-`updatedAt`, existe marcador de cobertura anterior ao mês e não houve matrícula
-excluída após o fechamento. Caso contrário, a issue permanece aberta. Contas
-ainda fora do billing ou abertas depois do fim do período não recebem issues
-retroativas de fechamento. A recuperação não agenda mudança de preço; só o
-fluxo mensal normal avalia três competências consecutivas e aplica qualquer
-alteração em ciclo futuro.
+Fechamentos usam um histórico temporal append-only, sem PII, preenchido por
+triggers nas alterações relevantes de aluno, matrícula, plano, combo e desconto.
+A migration cria um baseline com timestamp verdadeiro; competências anteriores
+à cobertura não recebem contagem fabricada. Esses gaps ficam auditados como
+`IGNORED`, sem marcar o fechamento financeiro como resolvido. Falhas transitórias
+permanecem abertas e recuperáveis. Triggers e fechamento usam lock transacional
+por Conta: eventos recebem horário de mutação após o lock da linha, e o fechamento
+espera transações de escrita em andamento. Se uma mesma transação tiver mudanças
+de elegibilidade dos dois lados do instante de corte, o cálculo fica inconclusivo
+para evitar uma projeção parcial. Snapshots reconstruídos ficam marcados e não
+participam de mudança de faixa nem sincronização de quantidade; três fechamentos
+mensais consecutivos capturados normalmente continuam necessários para uma
+mudança comercial futura.

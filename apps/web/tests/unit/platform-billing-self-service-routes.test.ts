@@ -430,7 +430,7 @@ describe('platform billing checkout and trial commercial boundaries', () => {
       select: { wizardCompletedAt: true, onboardingStudentCount: true },
     });
     expect(tenantContext.tx.platformBillingMonthlySnapshot.findMany).toHaveBeenCalledWith({
-      where: { contaId: 'conta_a', environment: 'TEST' },
+      where: { contaId: 'conta_a', environment: 'TEST', isRecovered: false },
       orderBy: { periodStart: 'desc' },
       take: 3,
       select: { periodStart: true, candidateBand: true },

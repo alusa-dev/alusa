@@ -247,10 +247,7 @@ afterEach(() => {
   window.sessionStorage.clear();
 });
 
-describe('monthly close notice in authenticated app shell', () => {
-  const noticeTitle = 'Fechamento de abril de 2030 inconclusivo';
-  const acknowledgeUrl = '/api/platform-billing/issues/monthly-close-inconclusive/acknowledge';
-
+describe('monthly close diagnostics in authenticated app shell', () => {
   function renderGlobalBillingModal() {
     return render(
       <PlatformBillingProvider>
@@ -262,49 +259,17 @@ describe('monthly close notice in authenticated app shell', () => {
     );
   }
 
-  it('shows one toast per unacknowledged issue and persists acknowledgement only after dismissal', async () => {
-    window.sessionStorage.clear();
-    window.history.replaceState({}, '', '/dashboard');
-    const fetchMock = vi.fn((url: string) => url === '/api/platform-billing/summary'
-      ? Promise.resolve(response(monthlyCloseSummary('billing-account-A', 'tenant-A')))
-      : Promise.resolve(response({ acknowledged: true })));
+  it('does not show a resume popup or ask the school to acknowledge an internal diagnostic', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response(monthlyCloseSummary('billing-account-A', 'tenant-A')));
     vi.stubGlobal('fetch', fetchMock);
 
     renderGlobalBillingModal();
 
-    expect(await screen.findByText(noticeTitle)).toBeInTheDocument();
-    expect(window.location.pathname).toBe('/dashboard');
-    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/platform-billing/summary')).toHaveLength(1);
-    expect(fetchMock.mock.calls.some(([url]) => url === acknowledgeUrl)).toBe(false);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Fechar aviso' }));
-    await waitFor(() => expect(screen.queryByText(noticeTitle)).not.toBeInTheDocument());
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(acknowledgeUrl, expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ issueId: 'monthly-close-tenant-A' }),
-    })));
-
-    cleanup();
-    fetchMock.mockClear();
-    renderGlobalBillingModal();
     await waitFor(() => expect(screen.getByTestId('billing-probe')).toHaveTextContent('Escola Alusa:false'));
-    expect(screen.queryByText(noticeTitle)).not.toBeInTheDocument();
+    expect(screen.queryByText('Sua mensalidade atual foi mantida')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Ver alunos' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Fechar aviso' })).not.toBeInTheDocument();
     expect(fetchMock.mock.calls.filter(([url]) => url === '/api/platform-billing/summary')).toHaveLength(1);
-    window.history.replaceState({}, '', '/');
-  });
-
-  it('acknowledges the issue and opens billing details from the CTA', async () => {
-    window.sessionStorage.clear();
-    const fetchMock = vi.fn((url: string) => url === '/api/platform-billing/summary'
-      ? Promise.resolve(response(monthlyCloseSummary('billing-account-CTA', 'tenant-CTA')))
-      : Promise.resolve(response({ acknowledged: true })));
-    vi.stubGlobal('fetch', fetchMock);
-    renderGlobalBillingModal();
-
-    expect(await screen.findByText(noticeTitle)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Ver faturamento' }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(acknowledgeUrl, expect.anything()));
-    await waitFor(() => expect(screen.queryByText(noticeTitle)).not.toBeInTheDocument());
   });
 
   it('does not toast an issue acknowledged server-side after a fresh session', async () => {
@@ -314,8 +279,7 @@ describe('monthly close notice in authenticated app shell', () => {
     renderGlobalBillingModal();
 
     await waitFor(() => expect(screen.getByTestId('billing-probe')).toHaveTextContent('Escola Alusa:false'));
-    expect(screen.queryByText(noticeTitle)).not.toBeInTheDocument();
-    expect(fetchMock.mock.calls.some(([url]) => url === acknowledgeUrl)).toBe(false);
+    expect(screen.queryByText('Fechamento de abril de 2030 inconclusivo')).not.toBeInTheDocument();
   });
 
   it('keeps the open occurrence visible in billing with competence and unconfirmed wording', async () => {

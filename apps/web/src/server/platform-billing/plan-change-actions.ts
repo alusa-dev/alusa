@@ -148,7 +148,7 @@ export async function requestPlatformPlanChange(input: {
   }
 
   const snapshots = await input.prisma.platformBillingMonthlySnapshot.findMany({
-    where: { contaId: input.contaId, environment },
+    where: { contaId: input.contaId, environment, isRecovered: false },
     orderBy: { periodStart: 'desc' },
     take: 3,
     select: { periodStart: true, candidateBand: true },
@@ -469,7 +469,7 @@ export async function scheduleStablePlatformPriceBandTransition(input: {
         where: { uq_platform_billing_account_conta_env: { contaId: input.contaId, environment: input.environment } },
       }),
       tx.platformBillingMonthlySnapshot.findMany({
-        where: { contaId: input.contaId, environment: input.environment },
+        where: { contaId: input.contaId, environment: input.environment, isRecovered: false },
         orderBy: { periodStart: 'desc' },
         take: 3,
         select: { periodStart: true, candidateBand: true },

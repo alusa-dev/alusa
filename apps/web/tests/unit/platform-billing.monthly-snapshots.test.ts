@@ -6,6 +6,7 @@ const { state, tx, prisma } = vi.hoisted(() => {
   const auditCreate = vi.fn();
   const issueUpsert = vi.fn();
   const tx = {
+    $executeRaw: vi.fn(async () => 1),
     platformBillingAccount: { findUnique: vi.fn() },
     platformBillingMonthlySnapshot: { createMany: snapshotCreateMany, findMany: vi.fn(), findUnique: vi.fn() },
     platformBillingAuditLog: { create: auditCreate },
@@ -48,6 +49,7 @@ vi.mock('@/src/server/platform-billing/custom-quantity-sync', () => ({
 import { capturePlatformBillingMonthlySnapshots } from '@/src/server/platform-billing/monthly-snapshots';
 import { countActivePlatformBillingStudents, PlatformBillingHistoricalCountInconclusive } from '@/src/server/platform-billing/platform-billing-server';
 import { scheduleStablePlatformPriceBandTransition } from '@/src/server/platform-billing/plan-change-actions';
+import { syncCustomSubscriptionQuantityForMonthlyClose } from '@/src/server/platform-billing/custom-quantity-sync';
 
 describe('capturePlatformBillingMonthlySnapshots', () => {
   beforeEach(() => {
@@ -64,7 +66,15 @@ describe('capturePlatformBillingMonthlySnapshots', () => {
       { periodStart: new Date('2026-09-01T00:00:00Z'), candidateBand: 'SPECIALIST' },
       { periodStart: new Date('2026-08-01T00:00:00Z'), candidateBand: 'SPECIALIST' },
     ] as never);
-    vi.mocked(tx.platformBillingMonthlySnapshot.findUnique).mockResolvedValue(null as never);
+    vi.mocked(tx.platformBillingMonthlySnapshot.findUnique).mockImplementation(async ({ where }) =>
+      state.snapshots.find((snapshot) => new Date(String(snapshot.periodStart)).getTime() === where.uq_platform_billing_monthly_snapshot_conta_env_period.periodStart.getTime()) as never ?? null,
+    );
+    vi.mocked(tx.platformBillingMonthlySnapshot.createMany).mockImplementation(async ({ data }) => {
+      const snapshot = data[0] as Record<string, unknown>;
+      if (state.snapshots.some((existing) => new Date(String(existing.periodStart)).getTime() === new Date(String(snapshot.periodStart)).getTime())) return { count: 0 } as never;
+      state.snapshots.push(snapshot);
+      return { count: 1 } as never;
+    });
     vi.mocked(tx.platformBillingIssue.upsert).mockResolvedValue({} as never);
     vi.mocked(tx.platformBillingIssue.findUnique).mockResolvedValue(null as never);
     vi.mocked(tx.platformBillingIssue.updateMany).mockResolvedValue({ count: 1 } as never);
@@ -82,9 +92,6 @@ describe('capturePlatformBillingMonthlySnapshots', () => {
     const now = new Date('2026-11-01T00:00:00Z');
     let persistedIssue: Record<string, unknown> | null = null;
     const persistedNotices = new Set<string>();
-    vi.mocked(tx.platformBillingMonthlySnapshot.createMany)
-      .mockResolvedValueOnce({ count: 1 } as never)
-      .mockResolvedValueOnce({ count: 0 } as never);
     vi.mocked(tx.platformBillingIssue.upsert).mockImplementation(async ({ create, update }) => {
       if (!persistedIssue) persistedIssue = { ...create };
       else Object.assign(persistedIssue, update);
@@ -132,7 +139,7 @@ describe('capturePlatformBillingMonthlySnapshots', () => {
       data: [expect.objectContaining({ eventType: 'platform.specialist_negotiation_ready', contaId: 'conta_1' })],
       skipDuplicates: true,
     }));
-    expect(tx.platformBillingAuditLog.create).toHaveBeenCalledTimes(2);
+    expect(tx.platformBillingAuditLog.create).toHaveBeenCalledTimes(3);
     expect(scheduleStablePlatformPriceBandTransition).not.toHaveBeenCalled();
   });
 
@@ -248,6 +255,27 @@ describe('capturePlatformBillingMonthlySnapshots', () => {
     }));
   });
 
+  it('reuses a persisted monthly close without recounting mutable historical sources', async () => {
+    vi.mocked(tx.platformBillingMonthlySnapshot.findUnique).mockResolvedValue({
+      id: 'snapshot-october',
+      studentCount: 42,
+      candidateBand: 'BAND_026_050',
+      specialistRequired: false,
+    } as never);
+
+    const result = await capturePlatformBillingMonthlySnapshots({
+      prisma: prisma as never,
+      now: new Date('2026-11-01T12:00:00Z'),
+    });
+
+    expect(result.captured).toBe(0);
+    expect(countActivePlatformBillingStudents).not.toHaveBeenCalled();
+    expect(tx.platformBillingMonthlySnapshot.createMany).not.toHaveBeenCalled();
+    expect(tx.platformBillingIssue.upsert).not.toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ code: 'MONTHLY_CLOSE_INCONCLUSIVE' }),
+    }));
+  });
+
   it('distinguishes known historical uncertainty from operational failures and reopens a resolved issue', async () => {
     vi.mocked(tx.platformBillingIssue.findUnique).mockResolvedValue({
       id: 'issue-1', status: 'RESOLVED', details: { reason: 'OLDER_REASON' },
@@ -274,11 +302,16 @@ describe('capturePlatformBillingMonthlySnapshots', () => {
       .mockResolvedValueOnce(42);
     vi.mocked(tx.platformBillingIssue.findUnique)
       .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce(null as never)
       .mockResolvedValueOnce({ id: 'issue-close', contaId: 'conta_1', status: 'OPEN' } as never);
     vi.mocked(tx.platformBillingMonthlySnapshot.createMany)
       .mockResolvedValueOnce({ count: 1 } as never)
       .mockResolvedValueOnce({ count: 0 } as never);
-    vi.mocked(tx.platformBillingMonthlySnapshot.findUnique).mockResolvedValue({ id: 'snapshot-october' } as never);
+    vi.mocked(tx.platformBillingMonthlySnapshot.findUnique)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValueOnce(null as never)
+      .mockResolvedValue({ id: 'snapshot-october', isRecovered: true } as never);
     vi.mocked(tx.platformBillingIssue.findMany).mockResolvedValue([
       { id: 'issue-close', fingerprint: 'TEST:conta_1:monthly-close-inconclusive:2026-10-01', details: {} },
     ] as never);
@@ -287,7 +320,11 @@ describe('capturePlatformBillingMonthlySnapshots', () => {
     const recovered = await capturePlatformBillingMonthlySnapshots({ prisma: prisma as never, now: new Date('2026-11-01T12:05:00Z') });
 
     expect(failed.inconclusive).toBe(1);
-    expect(recovered).toMatchObject({ inconclusive: 0, recovered: 1, captured: 1 });
+    expect(recovered).toMatchObject({ inconclusive: 0, recovered: 1, captured: 0, transitionsScheduled: 0 });
+    expect(syncCustomSubscriptionQuantityForMonthlyClose).toHaveBeenCalledTimes(1);
+    expect(syncCustomSubscriptionQuantityForMonthlyClose).toHaveBeenCalledWith(expect.objectContaining({
+      now: new Date('2026-11-01T12:00:00Z'),
+    }));
     expect(tx.platformBillingMonthlySnapshot.createMany).toHaveBeenCalledTimes(1);
     expect(tx.platformBillingIssue.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: 'issue-close', contaId: 'conta_1', environment: 'TEST', status: 'OPEN' }),

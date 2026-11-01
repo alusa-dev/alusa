@@ -552,7 +552,7 @@ export function PlatformBillingFeature({ checkoutState, setupState }: { checkout
 
       {monthlyCloseIssues.map((issue) => (
         <InfoCallout key={issue.id} variant="info" size="sm" title={`Fechamento de ${formatCompetence(issue.periodStart)} inconclusivo`} showIcon>
-          A competência {formatCompetence(issue.periodStart)} não teve fechamento confirmado. A faixa vigente foi mantida e nenhuma alteração automática foi aplicada.
+          A competência não teve fechamento confirmado. Nenhuma ação é necessária da escola; a faixa vigente foi mantida, e a ocorrência foi registrada para acompanhamento interno.
         </InfoCallout>
       ))}
 

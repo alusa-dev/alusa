@@ -21,7 +21,7 @@ export function resolveTenantPlatformBillingCheckoutPlan(input: {
           select: { wizardCompletedAt: true, onboardingStudentCount: true },
         }),
         tx.platformBillingMonthlySnapshot.findMany({
-          where: { contaId, environment },
+          where: { contaId, environment, isRecovered: false },
           orderBy: { periodStart: 'desc' },
           take: 3,
           select: { periodStart: true, candidateBand: true },

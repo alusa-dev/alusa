@@ -72,6 +72,74 @@ export async function countActivePlatformBillingStudents(params: {
   }, {});
   const asOfDate = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
   if (historical) {
+    // Source triggers take this same tenant lock before recording each change.
+    // Holding it through snapshot creation serializes a close against in-flight
+    // eligibility mutations without pretending mutation time is commit time.
+    await params.tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('platform-billing-eligibility:' || ${params.contaId}, 0))`;
+    const temporalCoverage = await params.tx.platformBillingEligibilityCoverage.findUnique({
+      where: { contaId: params.contaId },
+      select: { startedAt: true },
+    });
+    if (temporalCoverage && temporalCoverage.startedAt <= asOf) {
+      const splitTransaction = await params.tx.$queryRaw<Array<{ transactionId: string }>>`
+        SELECT "transactionId"
+        FROM "PlatformBillingEligibilityHistory"
+        WHERE "contaId" = ${params.contaId}
+        GROUP BY "transactionId"
+        HAVING BOOL_OR("recordedAt" <= ${asOf}) AND BOOL_OR("recordedAt" > ${asOf})
+        LIMIT 1
+      `;
+      if (splitTransaction.length > 0) throw new PlatformBillingHistoricalCountInconclusive();
+      const temporalRows = await params.tx.$queryRaw<Array<{ studentCount: bigint }>>`
+        WITH latest AS (
+          SELECT DISTINCT ON ("entityType", "entityId") "entityType", "entityId", "isDeleted", payload
+          FROM "PlatformBillingEligibilityHistory"
+          WHERE "contaId" = ${params.contaId} AND "recordedAt" <= ${asOf}
+          ORDER BY "entityType", "entityId", "recordedAt" DESC, id DESC
+        ),
+        students AS (
+          SELECT "entityId" AS id, payload FROM latest WHERE "entityType" = 'STUDENT' AND NOT "isDeleted"
+        ),
+        plans AS (
+          SELECT "entityId" AS id, payload FROM latest WHERE "entityType" = 'PLAN' AND NOT "isDeleted"
+        ),
+        combos AS (
+          SELECT "entityId" AS id, payload FROM latest WHERE "entityType" = 'COMBO' AND NOT "isDeleted"
+        ),
+        enrollments AS (
+          SELECT "entityId" AS id, payload FROM latest WHERE "entityType" = 'ENROLLMENT' AND NOT "isDeleted"
+        ),
+        discounts AS (
+          SELECT payload->>'matriculaId' AS "matriculaId",
+            SUM(COALESCE(NULLIF(payload->>'valorFinal', '')::numeric, 0)) AS amount
+          FROM latest WHERE "entityType" = 'DISCOUNT' AND NOT "isDeleted"
+          GROUP BY payload->>'matriculaId'
+        ),
+        effective AS (
+          SELECT e.id, e.payload AS enrollment, s.payload AS student,
+            COALESCE(NULLIF(c.payload->>'valor', '')::numeric, NULLIF(p.payload->>'valor', '')::numeric, 0) AS cycle_amount,
+            COALESCE(d.amount, 0) AS discount_amount
+          FROM enrollments e
+          JOIN students s ON s.id = e.payload->>'alunoId'
+          LEFT JOIN combos c ON c.id = e.payload->>'comboId'
+          LEFT JOIN plans p ON p.id = e.payload->>'planoId'
+          LEFT JOIN discounts d ON d."matriculaId" = e.id
+        )
+        SELECT COUNT(DISTINCT enrollment->>'alunoId')::bigint AS "studentCount"
+        FROM effective
+        WHERE cycle_amount > 0 AND discount_amount < cycle_amount
+          AND (enrollment->>'status' = 'ATIVA'
+            OR (enrollment->>'status' = 'ENCERRADA' AND (enrollment->>'dataFim' IS NOT NULL OR enrollment->>'dataFimContrato' IS NOT NULL))
+            OR (enrollment->>'status' = 'CANCELADA' AND NULLIF(enrollment->>'cancelledAt', '')::timestamptz > ${asOf})
+            OR (enrollment->>'status' = 'PAUSADA' AND (COALESCE((enrollment->>'cobrarDurantePausa')::boolean, false)
+              OR NULLIF(enrollment->>'dataInicioPausa', '')::timestamptz > ${asOf})))
+          AND (student->>'status' = 'ATIVO' OR NULLIF(student->>'dataInativacao', '')::timestamptz > ${asOf})
+          AND NULLIF(enrollment->>'dataInicio', '')::timestamptz::date <= ${asOfDate}::date
+          AND (NULLIF(enrollment->>'dataFim', '') IS NULL OR NULLIF(enrollment->>'dataFim', '')::timestamptz::date >= ${asOfDate}::date)
+          AND (NULLIF(enrollment->>'dataFimContrato', '') IS NULL OR NULLIF(enrollment->>'dataFimContrato', '')::timestamptz::date >= ${asOfDate}::date)
+      `;
+      return Number(temporalRows[0]?.studentCount ?? 0);
+    }
     // Current enrollment rows cannot reveal a physical delete. Historical
     // recovery is accepted only for competencies whose entire start predates
     // a durable audit-coverage marker, and only when no audited deletion took
@@ -95,7 +163,8 @@ export async function countActivePlatformBillingStudents(params: {
       },
       select: { id: true },
     });
-    if (!historyCoverage || deletionAfterClose) throw new PlatformBillingHistoricalCountInconclusive();
+    if (!historyCoverage) throw new PlatformBillingHistoricalCountInconclusive('HISTORICAL_COVERAGE_UNAVAILABLE');
+    if (deletionAfterClose) throw new PlatformBillingHistoricalCountInconclusive('HISTORICAL_EVIDENCE_LOST');
   }
   const rows = await params.tx.$queryRaw<Array<{ studentCount: bigint; historyInconclusive: boolean }>>`
     WITH enrollment_state AS (
@@ -158,15 +227,18 @@ export async function countActivePlatformBillingStudents(params: {
   const result = rows[0];
   if (!result) return 0;
   if (historical && result.historyInconclusive) {
-    throw new PlatformBillingHistoricalCountInconclusive();
+    throw new PlatformBillingHistoricalCountInconclusive('HISTORICAL_EVIDENCE_LOST');
   }
   return Number(result.studentCount);
 }
 
 export class PlatformBillingHistoricalCountInconclusive extends Error {
-  constructor() {
+  readonly reason: 'HISTORICAL_COVERAGE_UNAVAILABLE' | 'HISTORICAL_EVIDENCE_LOST' | 'HISTORICAL_DATA_INSUFFICIENT';
+
+  constructor(reason: PlatformBillingHistoricalCountInconclusive['reason'] = 'HISTORICAL_DATA_INSUFFICIENT') {
     super('Historical platform billing student eligibility cannot be reconstructed safely.');
     this.name = 'PlatformBillingHistoricalCountInconclusive';
+    this.reason = reason;
   }
 }
 

@@ -148,7 +148,7 @@ export async function getPlatformBillingSummary(params: {
       select: { createdAt: true, correlationId: true },
     }),
     params.tx.platformBillingMonthlySnapshot.findMany({
-      where: { contaId: params.contaId, environment: params.environment },
+      where: { contaId: params.contaId, environment: params.environment, isRecovered: false },
       orderBy: { periodStart: 'desc' },
       take: 3,
       select: { periodStart: true, candidateBand: true },

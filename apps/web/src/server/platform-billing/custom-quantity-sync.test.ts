@@ -7,7 +7,7 @@ function makeHarness(options: { periods?: string[]; priceId?: string; includeFor
   const environment = 'TEST' as const;
   const periods = options.periods ?? ['2026-10-01'];
   const snapshots = periods.map((start, index) => ({
-    id: `snapshot_${index + 1}`, contaId, environment, periodStart: new Date(`${start}T00:00:00.000Z`), studentCount: index === 0 ? 44 : 51,
+    id: `snapshot_${index + 1}`, contaId, environment, periodStart: new Date(`${start}T00:00:00.000Z`), studentCount: index === 0 ? 44 : 51, isRecovered: false,
     customQuantitySyncStatus: index < periods.length - 1 ? 'PENDING' as string : null,
     customQuantitySyncRequestedQuantity: index < periods.length - 1 ? 44 : null,
     customQuantitySyncOperationKey: index < periods.length - 1 ? `old-operation-${index}` : null,
@@ -23,6 +23,7 @@ function makeHarness(options: { periods?: string[]; priceId?: string; includeFor
     id: 'snapshot_tenant_b', contaId: 'tenant_b', environment,
     periodStart: new Date(`${periods.at(-1)}T00:00:00.000Z`), studentCount: 88,
     customQuantitySyncStatus: 'PENDING' as string, customQuantitySyncRequestedQuantity: 88,
+    isRecovered: false,
     customQuantitySyncOperationKey: 'tenant-b-operation', customQuantitySyncStripeSubscriptionId: 'sub_b',
     customQuantitySyncStripeSubscriptionItemId: null as string | null, customQuantitySyncPriceId: 'price_b',
     customQuantitySyncAttemptCount: 0, customQuantitySyncLastAttemptAt: null as Date | null,
@@ -42,8 +43,8 @@ function makeHarness(options: { periods?: string[]; priceId?: string; includeFor
   const tx = {
     platformBillingMonthlySnapshot: {
       findUnique: vi.fn(async ({ where }: { where: { uq_platform_billing_monthly_snapshot_conta_env_period: { contaId: string; environment: string; periodStart: Date } } }) => snapshots.find((row) => row.contaId === where.uq_platform_billing_monthly_snapshot_conta_env_period.contaId && row.environment === where.uq_platform_billing_monthly_snapshot_conta_env_period.environment && row.periodStart.getTime() === where.uq_platform_billing_monthly_snapshot_conta_env_period.periodStart.getTime()) ?? null),
-      findFirst: vi.fn(async ({ where, orderBy }: { where?: { contaId?: string; environment?: string }; orderBy?: { periodStart: 'desc' } }) => [...snapshots].filter((row) => (!where?.contaId || row.contaId === where.contaId) && (!where?.environment || row.environment === where.environment)).sort((a, b) => orderBy?.periodStart === 'desc' ? b.periodStart.getTime() - a.periodStart.getTime() : a.periodStart.getTime() - b.periodStart.getTime())[0] ?? null),
-      findMany: vi.fn(async ({ where }: { where: { contaId?: string; environment?: string; customQuantitySyncStatus?: unknown } }) => snapshots.filter((row) => (!where.contaId || row.contaId === where.contaId) && (!where.environment || row.environment === where.environment) && matchesStatus(row, where.customQuantitySyncStatus)).sort((a, b) => a.periodStart.getTime() - b.periodStart.getTime())),
+      findFirst: vi.fn(async ({ where, orderBy }: { where?: { contaId?: string; environment?: string; isRecovered?: boolean }; orderBy?: { periodStart: 'desc' } }) => [...snapshots].filter((row) => (!where?.contaId || row.contaId === where.contaId) && (!where?.environment || row.environment === where.environment) && (where?.isRecovered === undefined || row.isRecovered === where.isRecovered)).sort((a, b) => orderBy?.periodStart === 'desc' ? b.periodStart.getTime() - a.periodStart.getTime() : a.periodStart.getTime() - b.periodStart.getTime())[0] ?? null),
+      findMany: vi.fn(async ({ where }: { where: { contaId?: string; environment?: string; isRecovered?: boolean; customQuantitySyncStatus?: unknown } }) => snapshots.filter((row) => (!where.contaId || row.contaId === where.contaId) && (!where.environment || row.environment === where.environment) && (where.isRecovered === undefined || row.isRecovered === where.isRecovered) && matchesStatus(row, where.customQuantitySyncStatus)).sort((a, b) => a.periodStart.getTime() - b.periodStart.getTime())),
       updateMany: vi.fn(async ({ where, data }: { where: { id: string; contaId?: string; environment?: string; customQuantitySyncStatus?: unknown; customQuantitySyncLastAttemptAt?: { lt: Date }; OR?: Array<{ customQuantitySyncLastAttemptAt: null | { lt: Date } }> }; data: Record<string, unknown> }) => {
         const row = snapshots.find((candidate) => candidate.id === where.id && (!where.contaId || candidate.contaId === where.contaId) && (!where.environment || candidate.environment === where.environment));
         if (!row || !matchesStatus(row, where.customQuantitySyncStatus)) return { count: 0 };
@@ -209,5 +210,21 @@ describe('custom subscription monthly quantity sync', () => {
     expect(update).toHaveBeenCalledTimes(1);
     expect(retrieve).toHaveBeenCalledTimes(2);
     expect(h.snapshots[0]?.customQuantitySyncAttemptCount).toBe(2);
+  });
+
+  it('never queues or sends Stripe quantity updates for a recovered historical snapshot', async () => {
+    const h = makeHarness();
+    h.snapshots[0]!.isRecovered = true;
+    const retrieve = vi.fn(async (_subscriptionId: string) => stripeState());
+    const update = vi.fn(async (_input: { subscriptionItemId: string; quantity: number; operationPeriod: string; idempotencyKey: string }) => ({ id: 'si_a', quantity: 44 }));
+
+    await expect(syncCustomSubscriptionQuantityForMonthlyClose({
+      contaId: h.contaId, environment: h.environment, periodStart: h.periodStart, now: fixedNow,
+      runTenant: h.runTenant as never, retrieve, update,
+    })).resolves.toEqual([{ status: 'NOT_APPLICABLE', changed: false }]);
+
+    expect(retrieve).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(h.snapshots[0]).toMatchObject({ isRecovered: true, customQuantitySyncStatus: null });
   });
 });

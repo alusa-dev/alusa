@@ -1447,6 +1447,8 @@ model Conta {
   financeWebhookSideEffectOutbox    FinanceWebhookSideEffectOutbox[]
   hubspotAccountCreatedOutbox                  HubSpotAccountCreatedOutbox?
   platformBillingAccounts           PlatformBillingAccount[]
+  platformBillingEligibilityHistory PlatformBillingEligibilityHistory[]
+  platformBillingEligibilityCoverage PlatformBillingEligibilityCoverage?
   platformBillingCheckoutSessions   PlatformBillingCheckoutSession[]
   platformBillingInvoices           PlatformBillingInvoice[]
   platformBillingAuditLogs          PlatformBillingAuditLog[]
@@ -4326,6 +4328,34 @@ model PlatformSchoolInvitationResendRequest {
   @@index([invitationId, createdAt])
 }
 
+/// Append-only, PII-free source versions used to reconstruct monthly platform
+/// billing eligibility without relying on mutable current rows.
+model PlatformBillingEligibilityHistory {
+  id         BigInt   @id @default(autoincrement())
+  contaId    String
+  entityType String
+  entityId   String
+  recordedAt DateTime @db.Timestamptz(6)
+  transactionId String   @default(dbgenerated("txid_current()::text"))
+  isDeleted  Boolean  @default(false)
+  payload    Json
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@index([contaId, entityType, entityId, recordedAt(sort: Desc), id(sort: Desc)], map: "idx_platform_billing_eligibility_history_lookup")
+  @@index([contaId, recordedAt], map: "idx_platform_billing_eligibility_history_coverage")
+  @@index([contaId, transactionId, recordedAt], map: "idx_platform_billing_eligibility_history_transaction")
+  @@map("PlatformBillingEligibilityHistory")
+}
+
+model PlatformBillingEligibilityCoverage {
+  contaId    String   @id
+  startedAt  DateTime @db.Timestamptz(6)
+  conta      Conta    @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@map("PlatformBillingEligibilityCoverage")
+}
+
 model PlatformBillingMonthlySnapshot {
   id                 String                     @id @default(cuid())
   contaId            String
@@ -4335,6 +4365,7 @@ model PlatformBillingMonthlySnapshot {
   studentCount       Int
   candidateBand      PlatformBillingPriceBand?
   specialistRequired Boolean                    @default(false)
+  isRecovered        Boolean                    @default(false)
   customQuantitySyncStatus                   String?
   customQuantitySyncRequestedQuantity        Int?
   customQuantitySyncOperationKey             String?                    @unique

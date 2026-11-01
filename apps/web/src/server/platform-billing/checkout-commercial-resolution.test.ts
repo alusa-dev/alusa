@@ -14,6 +14,7 @@ describe('resolveTenantPlatformBillingCheckoutPlan', () => {
       })) },
       financeProfile: { findUnique: vi.fn(async () => null) },
       platformBillingMonthlySnapshot: { findMany: vi.fn(async () => []) },
+      platformSchoolInvitation: { findFirst: vi.fn(async () => null) },
     };
 
     const result = await resolveTenantPlatformBillingCheckoutPlan({
@@ -33,10 +34,14 @@ describe('resolveTenantPlatformBillingCheckoutPlan', () => {
       select: { wizardCompletedAt: true, onboardingStudentCount: true },
     });
     expect(tx.platformBillingMonthlySnapshot.findMany).toHaveBeenCalledWith({
-      where: { contaId: 'conta_a', environment: 'TEST' },
+      where: { contaId: 'conta_a', environment: 'TEST', isRecovered: false },
       orderBy: { periodStart: 'desc' },
       take: 3,
       select: { periodStart: true, candidateBand: true },
+    });
+    expect(tx.platformSchoolInvitation.findFirst).toHaveBeenCalledWith({
+      where: { acceptedContaId: 'conta_a', status: 'ACCEPTED' },
+      select: { conditionType: true, stripePriceId: true, studentCount: true },
     });
   });
 });
