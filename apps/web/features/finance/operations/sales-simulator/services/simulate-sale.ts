@@ -1,5 +1,17 @@
 import type { PaymentSimulationResult } from '../types';
 
+function isErrorCode(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Z][A-Z0-9_]{1,79}$/.test(value);
+}
+
+function resolveErrorCode(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') return 'ERRO_ASAAS';
+  const body = payload as { error?: unknown; code?: unknown };
+  if (isErrorCode(body.error)) return body.error;
+  if (isErrorCode(body.code)) return body.code;
+  return 'ERRO_ASAAS';
+}
+
 export async function simulateVenda(input: {
   value: number;
   installmentCount: number;
@@ -13,8 +25,7 @@ export async function simulateVenda(input: {
 
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    const error = typeof payload?.error === 'string' ? payload.error : 'ERRO_ASAAS';
-    throw new Error(error);
+    throw new Error(resolveErrorCode(payload));
   }
 
   if (!payload?.data) throw new Error('RESULTADO_ASAAS_INVALIDO');

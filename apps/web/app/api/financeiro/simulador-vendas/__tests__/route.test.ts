@@ -76,6 +76,54 @@ describe('POST /api/financeiro/simulador-vendas', () => {
     });
   });
 
+  it('permite conta Asaas externa conectada sem aplicar gate de KYC whitelabel', async () => {
+    await mockSession({
+      id: 'user-1',
+      contaId: 'conta-externa',
+      role: 'ADMIN',
+      financeIntegrationMode: 'EXTERNAL_ASAAS_ACCOUNT',
+    });
+    const finance = await import('@alusa/finance');
+    const gate = await import('@/lib/finance/financial-account-gate');
+    vi.mocked(finance.simulatePaymentFees).mockResolvedValueOnce({
+      success: true,
+      data: { requestedValue: 300, chargeValue: 300, installmentCount: 1, netValue: 290, installmentValue: 300, installmentNetValue: 290, feeValue: 10, feePercentage: 3, operationFee: 0 },
+    } as never);
+
+    const response = await POST(buildRequest({ value: 300, installmentCount: 1 }));
+
+    expect(response.status).toBe(200);
+    expect(finance.simulatePaymentFees).toHaveBeenCalledWith({
+      contaId: 'conta-externa',
+      input: { value: 300, installmentCount: 1 },
+    });
+    expect(gate.guardFinancialAccountOr412).not.toHaveBeenCalled();
+  });
+
+  it('mantém o gate financeiro para o modo whitelabel', async () => {
+    await mockSession({ id: 'user-1', contaId: 'conta-1', role: 'ADMIN', financeIntegrationMode: 'WHITELABEL_BAAS' });
+    const gate = await import('@/lib/finance/financial-account-gate');
+    const finance = await import('@alusa/finance');
+    vi.mocked(finance.simulatePaymentFees).mockResolvedValueOnce({
+      success: true,
+      data: { requestedValue: 300, chargeValue: 300, installmentCount: 1, netValue: 290, installmentValue: 300, installmentNetValue: 290, feeValue: 10, feePercentage: 3, operationFee: 0 },
+    } as never);
+
+    await POST(buildRequest({ value: 300, installmentCount: 1 }));
+
+    expect(gate.guardFinancialAccountOr412).toHaveBeenCalledWith('conta-1');
+  });
+
+  it('nega roles fora do financeiro antes de chamar a integração', async () => {
+    await mockSession({ id: 'user-1', contaId: 'conta-1', role: 'PROFESSOR' });
+    const finance = await import('@alusa/finance');
+
+    const response = await POST(buildRequest({ value: 300, installmentCount: 1 }));
+
+    expect(response.status).toBe(403);
+    expect(finance.simulatePaymentFees).not.toHaveBeenCalled();
+  });
+
   it('mapeia credencial ausente para 503', async () => {
     await mockSession({ id: 'user-1', contaId: 'conta-1', role: 'ADMIN' });
     const finance = await import('@alusa/finance');

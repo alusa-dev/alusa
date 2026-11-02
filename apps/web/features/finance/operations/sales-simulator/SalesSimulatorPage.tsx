@@ -45,6 +45,23 @@ function SimulationLoadingState() {
   );
 }
 
+function simulationErrorMessage(error: unknown): string {
+  const code = error instanceof Error ? error.message : '';
+  if (code === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS' || code === 'FINANCIAL_ACCOUNT_NOT_READY') {
+    return 'Conecte ou reconecte sua conta Asaas para consultar as condições do cartão.';
+  }
+  if (code === 'KYC_REQUIRED' || code === 'COMMERCIAL_INFO_EXPIRED') {
+    return 'A conta financeira ainda não está pronta. Verifique as pendências de ativação.';
+  }
+  if (code === 'FINANCIAL_ACCOUNT_UNAVAILABLE') {
+    return 'A conta financeira está indisponível no momento. Verifique a configuração do Asaas.';
+  }
+  if (code === 'RESULTADO_ASAAS_INVALIDO') {
+    return 'O Asaas não retornou uma estimativa válida. Tente novamente.';
+  }
+  return 'Não foi possível consultar as condições do Asaas. Tente novamente em alguns instantes.';
+}
+
 function ResultRow({ label, value, emphasis = false }: { label: string; value: ReactNode; emphasis?: boolean }) {
   return (
     <div className="flex items-center justify-between gap-4 border-b border-slate-100 py-3 last:border-b-0">
@@ -106,10 +123,7 @@ export function SalesSimulatorPage() {
       setStatus('error');
       pushToast({
         title: 'Não foi possível simular a venda',
-        description:
-          error instanceof Error && error.message === 'CREDENCIAIS_ASAAS_NAO_CONFIGURADAS'
-            ? 'A conta financeira ainda não está conectada ao Asaas.'
-            : 'Tente novamente em alguns instantes.',
+        description: simulationErrorMessage(error),
         variant: 'error',
       });
     }
