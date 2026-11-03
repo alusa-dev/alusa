@@ -55,12 +55,12 @@ describe('/api/users/[id]', () => {
     expect(removeManagedUserAccessMock).not.toHaveBeenCalled();
   });
 
-  it('remove definitivamente o acesso do usuário alvo', async () => {
+  it('suspende somente o acesso do usuário alvo na conta autenticada', async () => {
     prismaMock.usuario.findFirst.mockResolvedValueOnce({ id: 'user-2' });
     prismaMock.conta.findUnique.mockResolvedValueOnce({ ownerUserId: 'owner-1' });
     removeManagedUserAccessMock.mockResolvedValueOnce({
       id: 'user-2',
-      hard: true,
+      hard: false,
       alreadyRemoved: false,
     });
 
@@ -70,13 +70,36 @@ describe('/api/users/[id]', () => {
     const json = await response.json();
 
     expect(response.status).toBe(200);
-    expect(json).toEqual({ ok: true, id: 'user-2', hard: true });
+    expect(json).toEqual({ ok: true, id: 'user-2', hard: false });
     expect(removeManagedUserAccessMock).toHaveBeenCalledWith({
       userId: 'user-2',
       contaId: 'conta-1',
       actorId: 'admin-1',
       reason: undefined,
     });
+  });
+
+  it('bloqueia suspensão do owner', async () => {
+    prismaMock.usuario.findFirst.mockResolvedValueOnce({ id: 'owner-1', nome: 'Owner', email: 'owner@example.com', role: 'ADMIN', status: 'ATIVO' });
+    prismaMock.conta.findUnique.mockResolvedValueOnce({ ownerUserId: 'owner-1' });
+
+    const response = await DELETE(new Request('http://x/api/users/owner-1', { method: 'DELETE' }), {
+      params: { id: 'owner-1' },
+    });
+
+    expect(response.status).toBe(403);
+    expect(removeManagedUserAccessMock).not.toHaveBeenCalled();
+  });
+
+  it('não localiza usuário que não pertence à conta da sessão', async () => {
+    prismaMock.usuario.findFirst.mockResolvedValueOnce(null);
+
+    const response = await DELETE(new Request('http://x/api/users/user-from-other-school', { method: 'DELETE' }), {
+      params: { id: 'user-from-other-school' },
+    });
+
+    expect(response.status).toBe(404);
+    expect(removeManagedUserAccessMock).not.toHaveBeenCalled();
   });
 
   it('bloqueia auto-inativação via PATCH', async () => {

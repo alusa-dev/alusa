@@ -31,18 +31,17 @@ export default function UserDeleteDialog({
     if (!usuarioId) return;
     try {
       setSubmitting(true);
-      const params = new URLSearchParams();
-      params.set('hard', '1');
-      if (motivo.trim()) params.set('motivo', motivo.trim());
-      const res = await fetch(`/api/users/${encodeURIComponent(usuarioId)}?${params.toString()}`, {
+      const res = await fetch(`/api/users/${encodeURIComponent(usuarioId)}`, {
         method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(motivo.trim() ? { reason: motivo.trim() } : {}),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
-        toast.error((data?.error?.message || data?.error || 'Erro ao excluir') as string);
+        toast.error((data?.error?.message || data?.error || 'Erro ao remover acesso') as string);
         return;
       }
-      toast.success('Usuário excluído');
+      toast.success('Acesso suspenso nesta escola');
       try {
         window.dispatchEvent(new CustomEvent('usuarios:changed'));
       } catch {
@@ -58,17 +57,17 @@ export default function UserDeleteDialog({
   }
 
   const description = usuarioNome
-    ? `Tem certeza que deseja excluir ${usuarioNome}? Esta ação é permanente.`
-    : 'Tem certeza que deseja excluir este usuário? Esta ação é permanente.';
+    ? `Tem certeza que deseja suspender o acesso de ${usuarioNome} a esta escola? O cadastro e os vínculos serão preservados, e o acesso poderá ser reativado depois.`
+    : 'Tem certeza que deseja suspender o acesso deste usuário a esta escola? O cadastro e os vínculos serão preservados.';
 
   return (
     <ActionConfirmationDialog
       open={open}
-      title="Excluir usuário"
+      title="Suspender acesso"
       description={description}
-      confirmLabel={submitting ? 'Excluindo...' : 'Excluir'}
+      confirmLabel={submitting ? 'Suspendendo...' : 'Suspender acesso'}
       cancelLabel="Cancelar"
-      loadingLabel="Excluindo..."
+      loadingLabel="Suspendendo..."
       onOpenChange={onOpenChange}
       onConfirm={handleConfirm}
     >

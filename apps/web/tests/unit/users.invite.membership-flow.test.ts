@@ -27,38 +27,53 @@ import { POST as invitePost } from '@/app/api/users/invite/route';
 import { POST as acceptPost } from '@/app/api/users/accept/route';
 
 describe('convite multi-tenant por identidade global', () => {
-  const createdContaIds: string[] = [];
-  const createdEmails: string[] = [];
+  const fixtureContaIds = [
+    'invite-flow-origin', 'invite-flow-existing', 'invite-flow-accept',
+    'invite-flow-school-a', 'invite-flow-school-b', 'invite-flow-duplicate',
+    'invite-flow-delete', 'invite-flow-delete-other',
+  ];
+  const fixtureEmails = [
+    'invite-flow-admin-origin@example.com', 'invite-flow-owner-existing@example.com',
+    'invite-flow-admin-accept@example.com', 'invite-flow-new-colleague@example.com',
+    'invite-flow-admin-a@example.com', 'invite-flow-admin-b@example.com',
+    'invite-flow-collaborator@example.com', 'invite-flow-admin-duplicate@example.com',
+    'invite-flow-duplicate-target@example.com',
+  ];
 
-  beforeEach(() => {
+  async function cleanupFixtures() {
+    await prisma.invite.deleteMany({ where: { contaId: { in: fixtureContaIds } } });
+    await prisma.usuarioConta.deleteMany({ where: { contaId: { in: fixtureContaIds } } });
+    await prisma.conta.updateMany({ where: { id: { in: fixtureContaIds } }, data: { ownerUserId: null } });
+    await prisma.usuario.deleteMany({ where: { email: { in: fixtureEmails } } });
+  }
+
+  async function ensureConta(id: string, nome: string) {
+    return prisma.conta.upsert({
+      where: { id },
+      update: { nome, status: 'ATIVO', ownerUserId: null },
+      create: { id, nome, status: 'ATIVO' },
+    });
+  }
+
+  beforeEach(async () => {
     vi.clearAllMocks();
+    await cleanupFixtures();
   });
 
   afterEach(async () => {
-    await prisma.invite.deleteMany({ where: { contaId: { in: createdContaIds } } });
-    await prisma.usuarioConta.deleteMany({ where: { contaId: { in: createdContaIds } } });
-    await prisma.usuario.deleteMany({ where: { email: { in: createdEmails } } });
-    await prisma.conta.deleteMany({ where: { id: { in: createdContaIds } } });
-    createdContaIds.length = 0;
-    createdEmails.length = 0;
+    await cleanupFixtures();
   });
 
   it('convida um email já cadastrado sem duplicar a identidade e cria o vínculo após autenticação', async () => {
     const password = 'Abcdef1!';
-    const suffix = randomUUID();
-    const contaOrigemId = `conta-origem-${suffix}`;
-    const contaExistenteId = `conta-existente-${suffix}`;
-    const adminEmail = `admin-${suffix}@example.com`;
-    const existingOwnerEmail = `owner-${suffix}@example.com`;
-    createdContaIds.push(contaOrigemId, contaExistenteId);
-    createdEmails.push(adminEmail, existingOwnerEmail);
-
-    await prisma.conta.createMany({
-      data: [
-        { id: contaOrigemId, nome: 'Escola Origem', status: 'ATIVO' },
-        { id: contaExistenteId, nome: 'Escola Existente', status: 'ATIVO' },
-      ],
-    });
+    const contaOrigemId = 'invite-flow-origin';
+    const contaExistenteId = 'invite-flow-existing';
+    const adminEmail = 'invite-flow-admin-origin@example.com';
+    const existingOwnerEmail = 'invite-flow-owner-existing@example.com';
+    await Promise.all([
+      ensureConta(contaOrigemId, 'Escola Origem'),
+      ensureConta(contaExistenteId, 'Escola Existente'),
+    ]);
 
     const [admin, existingOwner] = await Promise.all([
       prisma.usuario.create({
@@ -139,16 +154,10 @@ describe('convite multi-tenant por identidade global', () => {
   });
 
   it('cria a conta e o vínculo da escola ao aceitar um convite novo sem sessão', async () => {
-    const suffix = randomUUID();
-    const contaId = `conta-aceite-${suffix}`;
-    const adminEmail = `admin-aceite-${suffix}@example.com`;
-    const inviteEmail = `novo-colaborador-${suffix}@example.com`;
-    createdContaIds.push(contaId);
-    createdEmails.push(adminEmail, inviteEmail);
-
-    await prisma.conta.create({
-      data: { id: contaId, nome: 'Escola teste de aceite', status: 'ATIVO' },
-    });
+    const contaId = 'invite-flow-accept';
+    const adminEmail = 'invite-flow-admin-accept@example.com';
+    const inviteEmail = 'invite-flow-new-colleague@example.com';
+    await ensureConta(contaId, 'Escola teste de aceite');
     const admin = await prisma.usuario.create({
       data: {
         contaId,
@@ -200,13 +209,10 @@ describe('convite multi-tenant por identidade global', () => {
   });
 
   it('permite convites pendentes simultâneos para o mesmo usuário em escolas distintas', async () => {
-    const suffix = randomUUID();
-    const accountIds = [`conta-a-${suffix}`, `conta-b-${suffix}`];
-    const emails = [`admin-a-${suffix}@example.com`, `admin-b-${suffix}@example.com`];
-    const targetEmail = `collaborator-${suffix}@example.com`;
-    createdContaIds.push(...accountIds);
-    createdEmails.push(...emails);
-    await prisma.conta.createMany({ data: accountIds.map((id) => ({ id, nome: id, status: 'ATIVO' })) });
+    const accountIds = ['invite-flow-school-a', 'invite-flow-school-b'];
+    const emails = ['invite-flow-admin-a@example.com', 'invite-flow-admin-b@example.com'];
+    const targetEmail = 'invite-flow-collaborator@example.com';
+    await Promise.all(accountIds.map((id) => ensureConta(id, id)));
     const hashedPassword = await hashPassword('Abcdef1!');
     const admins = await Promise.all(accountIds.map((contaId, index) => prisma.usuario.create({
       data: { contaId, nome: 'Admin', email: emails[index], senhaHash: hashedPassword, role: Role.ADMIN },
@@ -227,16 +233,10 @@ describe('convite multi-tenant por identidade global', () => {
   });
 
   it('mapeia convite pendente duplicado para 409 mesmo com capitalização diferente', async () => {
-    const suffix = randomUUID();
-    const contaId = `conta-duplicado-${suffix}`;
-    const adminEmail = `admin-duplicado-${suffix}@example.com`;
-    const inviteEmail = `invite-duplicado-${suffix}@example.com`;
-    createdContaIds.push(contaId);
-    createdEmails.push(adminEmail);
-
-    await prisma.conta.create({
-      data: { id: contaId, nome: 'Escola Convite Duplicado', status: 'ATIVO' },
-    });
+    const contaId = 'invite-flow-duplicate';
+    const adminEmail = 'invite-flow-admin-duplicate@example.com';
+    const inviteEmail = 'invite-flow-duplicate-target@example.com';
+    await ensureConta(contaId, 'Escola Convite Duplicado');
     const admin = await prisma.usuario.create({
       data: {
         contaId,
@@ -289,21 +289,17 @@ describe('convite multi-tenant por identidade global', () => {
   });
 
   it('apaga fisicamente somente o convite dentro da conta solicitada', async () => {
-    const suffix = randomUUID();
-    const contaId = `conta-exclusao-convite-${suffix}`;
-    const outraContaId = `conta-outra-exclusao-${suffix}`;
-    createdContaIds.push(contaId, outraContaId);
-    await prisma.conta.createMany({
-      data: [
-        { id: contaId, nome: 'Conta com convite' },
-        { id: outraContaId, nome: 'Outra conta' },
-      ],
-    });
+    const contaId = 'invite-flow-delete';
+    const outraContaId = 'invite-flow-delete-other';
+    await Promise.all([
+      ensureConta(contaId, 'Conta com convite'),
+      ensureConta(outraContaId, 'Outra conta'),
+    ]);
 
     const invite = await prisma.invite.create({
       data: {
         contaId,
-        email: `excluir-${suffix}@example.com`,
+        email: 'invite-flow-delete-target@example.com',
         role: Role.RECEPCAO,
         token: randomUUID(),
         invitedById: 'admin-teste',

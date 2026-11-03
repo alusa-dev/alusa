@@ -4,162 +4,74 @@ import prisma from '@/lib/prisma';
 export const REMOVED_USER_EMAIL_PREFIX = 'removed-user+';
 export const REMOVED_USER_EMAIL_DOMAIN = '@alusa.invalid';
 
-export function buildRemovedUserEmail(userId: string) {
-  return `${REMOVED_USER_EMAIL_PREFIX}${userId}${REMOVED_USER_EMAIL_DOMAIN}`;
-}
-
 export function isRemovedUserEmail(email: string | null | undefined) {
   if (!email) return false;
   const normalizedEmail = email.trim().toLowerCase();
-  return (
-    normalizedEmail.startsWith(REMOVED_USER_EMAIL_PREFIX) &&
-    normalizedEmail.endsWith(REMOVED_USER_EMAIL_DOMAIN)
-  );
+  return normalizedEmail.startsWith(REMOVED_USER_EMAIL_PREFIX) &&
+    normalizedEmail.endsWith(REMOVED_USER_EMAIL_DOMAIN);
 }
 
+/** Removes a user's access to one school while preserving the identity and its history. */
 export async function removeManagedUserAccess(input: {
   userId: string;
   contaId: string;
   actorId: string;
   reason?: string | null;
 }) {
-  const membershipClient = (prisma as unknown as {
-    usuarioConta?: {
-      findUnique: (_args: unknown) => Promise<{
-        usuarioId: string;
-        contaId: string;
-        role: string;
-        status: string;
-        usuario: {
-          id: string;
-          contaId: string;
-          nome: string;
-          email: string;
-          role: string;
-          status: string;
-        };
-      } | null>;
-      count: (_args: unknown) => Promise<number>;
-      updateMany: (_args: unknown) => Promise<{ count: number }>;
-      deleteMany: (_args: unknown) => Promise<{ count: number }>;
-    };
-  }).usuarioConta;
-
-  const membership = membershipClient?.findUnique
-    ? await membershipClient.findUnique({
-        where: { usuarioId_contaId: { usuarioId: input.userId, contaId: input.contaId } },
-        select: {
-          usuarioId: true,
-          contaId: true,
-          role: true,
-          status: true,
-          usuario: {
-            select: { id: true, contaId: true, nome: true, email: true, role: true, status: true },
-          },
-        },
-      })
-    : null;
-
-  const user = membership?.usuario ?? (await prisma.usuario.findFirst({
-    where: { id: input.userId, contaId: input.contaId },
+  const membership = await prisma.usuarioConta.findUnique({
+    where: { usuarioId_contaId: { usuarioId: input.userId, contaId: input.contaId } },
     select: {
-      id: true,
+      usuarioId: true,
       contaId: true,
-      nome: true,
-      email: true,
       role: true,
       status: true,
+      usuario: {
+        select: { id: true, contaId: true, nome: true, email: true, role: true, status: true },
+      },
     },
+  });
+  const user = membership?.usuario ?? (await prisma.usuario.findFirst({
+    where: { id: input.userId, contaId: input.contaId },
+    select: { id: true, contaId: true, nome: true, email: true, role: true, status: true },
   }));
 
-  if (!user) {
-    return null;
-  }
+  if (!user) return null;
 
-  const membershipCount = membershipClient?.count
-    ? await membershipClient.count({ where: { usuarioId: user.id } })
-    : 0;
-  const shouldRemoveMembershipOnly =
-    Boolean(membership) && (user.contaId !== input.contaId || membershipCount > 1);
-
-  if (shouldRemoveMembershipOnly && membershipClient?.updateMany) {
-    const removedAt = new Date();
-    const correlationId = randomUUID();
-
-    await prisma.$transaction(async (tx) => {
-      await Promise.all([
-        tx.colaborador.updateMany({ where: { contaId: input.contaId, usuarioId: user.id }, data: { usuarioId: null } }),
-        tx.responsavel.updateMany({ where: { contaId: input.contaId, usuarioId: user.id }, data: { usuarioId: null } }),
-        tx.aluno.updateMany({ where: { contaId: input.contaId, usuarioId: user.id }, data: { usuarioId: null } }),
-      ]);
-
-      await tx.usuarioConta.deleteMany({
-        where: { usuarioId: user.id, contaId: input.contaId },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          contaId: input.contaId,
-          actorType: 'USER',
-          actorId: input.actorId,
-          action: 'USER_TENANT_ACCESS_REMOVED',
-          entityType: 'UsuarioConta',
-          entityId: user.id,
-          correlationId,
-          metadata: {
-            removedAt: removedAt.toISOString(),
-            removedUserEmail: user.email,
-            removedUserName: user.nome,
-            removedUserRole: membership?.role ?? user.role,
-            reason: input.reason?.trim() || null,
-          },
-        },
-      });
-    });
-
-    return {
-      id: user.id,
-      hard: false,
-      alreadyRemoved: membership?.status === 'INATIVO',
-    };
-  }
-
-  const removedAt = new Date();
+  const alreadySuspended = membership?.status === 'INATIVO';
   const correlationId = randomUUID();
-
   await prisma.$transaction(async (tx) => {
-    await Promise.all([
-      tx.colaborador.updateMany({ where: { usuarioId: user.id }, data: { usuarioId: null } }),
-      tx.responsavel.updateMany({ where: { usuarioId: user.id }, data: { usuarioId: null } }),
-      tx.aluno.updateMany({ where: { usuarioId: user.id }, data: { usuarioId: null } }),
-      tx.usuarioConta.deleteMany({ where: { usuarioId: user.id } }),
-    ]);
-
+    // Legacy users can predate UsuarioConta; create the tenant-scoped membership
+    // in a suspended state so the same authorized PATCH can reactivate it later.
+    await tx.usuarioConta.upsert({
+      where: { usuarioId_contaId: { usuarioId: user.id, contaId: input.contaId } },
+      update: { status: 'INATIVO' },
+      create: {
+        usuarioId: user.id,
+        contaId: input.contaId,
+        role: membership?.role ?? user.role,
+        status: 'INATIVO',
+      },
+    });
     await tx.auditLog.create({
       data: {
         contaId: input.contaId,
         actorType: 'USER',
         actorId: input.actorId,
-        action: 'USER_ACCESS_REMOVED',
-        entityType: 'Usuario',
-        entityId: user.id,
+        action: 'USER_TENANT_ACCESS_SUSPENDED',
+        entityType: 'UsuarioConta',
+        entityId: `${user.id}:${input.contaId}`,
         correlationId,
         metadata: {
-          removedAt: removedAt.toISOString(),
-          removedUserEmail: user.email,
-          removedUserName: user.nome,
-          removedUserRole: user.role,
+          suspendedAt: new Date().toISOString(),
+          userId: user.id,
+          suspendedUserEmail: user.email,
+          suspendedUserName: user.nome,
+          suspendedUserRole: membership?.role ?? user.role,
           reason: input.reason?.trim() || null,
         },
       },
     });
-
-    await tx.usuario.delete({ where: { id: user.id } });
   });
 
-  return {
-    id: user.id,
-    hard: true,
-    alreadyRemoved: false,
-  };
+  return { id: user.id, hard: false, alreadyRemoved: alreadySuspended };
 }
