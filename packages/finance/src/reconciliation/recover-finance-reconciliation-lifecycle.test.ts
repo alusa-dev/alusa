@@ -1,30 +1,33 @@
+import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-const { prisma, tx, getPayment, getSubscription, auditCreate, issueUpdate } = vi.hoisted(() => {
+const { prisma, tx, getPayment, getSubscription, listPayments, auditCreate, issueUpdate } = vi.hoisted(() => {
   const auditCreate = vi.fn();
   const issueUpdate = vi.fn();
   const model = () => ({ findFirst: vi.fn().mockResolvedValue(null) });
   const tx = {
     charge: model(), cobranca: model(), pagamento: model(), subscription: model(),
     standaloneSubscription: model(), billingAgreement: model(), matricula: model(),
-    enrollmentCreationOperation: model(), acordoFinanceiroFuturo: model(),
+    enrollmentCreationOperation: model(), acordoFinanceiroFuturo: model(), eventMapOrder: model(),
     financeReconciliationIssue: { updateMany: issueUpdate },
     auditLog: { create: auditCreate },
   };
   const prisma = {
     charge: model(), cobranca: model(), pagamento: model(), subscription: model(),
     standaloneSubscription: model(), billingAgreement: model(), matricula: model(),
-    enrollmentCreationOperation: model(), acordoFinanceiroFuturo: model(),
+    enrollmentCreationOperation: model(), acordoFinanceiroFuturo: model(), eventMapOrder: model(),
     financeReconciliationIssue: { findFirst: vi.fn() },
     asaasResourceOrigin: { findUnique: vi.fn() },
     $queryRaw: vi.fn(),
     $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
   };
-  return { prisma, tx, getPayment: vi.fn(), getSubscription: vi.fn(), auditCreate, issueUpdate };
+  return { prisma, tx, getPayment: vi.fn(), getSubscription: vi.fn(), listPayments: vi.fn(), auditCreate, issueUpdate };
 });
 
 vi.mock('@alusa/database', () => ({ prisma, loadAsaasCredentials: vi.fn() }));
-vi.mock('../../../../packages/asaas/src', () => ({ getPayment, getSubscription, listPayments: vi.fn() }));
+vi.mock('../../../../packages/asaas/src', () => ({ getPayment, getSubscription, listPayments }));
 vi.mock('./asaas-resource-origin.service', () => ({
   classifyPreviewedExternalSubscription: vi.fn(), previewExternalSubscriptionCandidates: vi.fn(),
 }));
@@ -32,24 +35,207 @@ vi.mock('../foundation/webhook-job-lock.service', () => ({
   acquireWebhookJobLock: vi.fn(), releaseWebhookJobLock: vi.fn(), renewWebhookJobLock: vi.fn(),
 }));
 vi.mock('../webhooks/webhook-reconciliation.service', () => ({ reconcileWithAsaas: vi.fn() }));
-vi.mock('../use-cases/asaas-pagination', () => ({ assertCompleteAsaasPage: vi.fn() }));
+
 
 import {
+  runRecovery,
+  resolveVerifiedEventCancellation,
   resolveExternalChildReview,
   resolveAbsentTerminalLagIssue,
   resolveAlreadyLinkedPaymentIssue,
   resolveHistoricalPayment,
 } from '../../../../scripts/recover-finance-reconciliation-lifecycle';
 
+import { loadAsaasCredentials } from '@alusa/database';
+import { acquireWebhookJobLock, releaseWebhookJobLock } from '../foundation/webhook-job-lock.service';
+import { previewExternalSubscriptionCandidates } from './asaas-resource-origin.service';
+import { reconcileWithAsaas } from '../webhooks/webhook-reconciliation.service';
+
 describe('finance recovery lifecycle race guards', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    issueUpdate.mockResolvedValue({ count: 1 });
+    auditCreate.mockResolvedValue({});
     for (const row of [tx.charge, tx.cobranca, tx.pagamento, tx.subscription, tx.standaloneSubscription,
-      tx.billingAgreement, tx.matricula, tx.enrollmentCreationOperation, tx.acordoFinanceiroFuturo,
+      tx.billingAgreement, tx.matricula, tx.enrollmentCreationOperation, tx.acordoFinanceiroFuturo, tx.eventMapOrder,
       prisma.charge, prisma.cobranca, prisma.pagamento, prisma.subscription, prisma.standaloneSubscription,
-      prisma.billingAgreement, prisma.matricula, prisma.enrollmentCreationOperation, prisma.acordoFinanceiroFuturo]) {
+      prisma.billingAgreement, prisma.matricula, prisma.enrollmentCreationOperation, prisma.acordoFinanceiroFuturo, prisma.eventMapOrder]) {
       vi.mocked(row.findFirst).mockResolvedValue(null);
     }
+  });
+
+  function canonicalCycleFixture() {
+    const lastSeenAt = new Date('2026-11-03T13:00:00.000Z');
+    const issueManifest = { id: 'issue-cycle', issueType: 'PAYMENT_MISSING_LOCAL_ENTITY', entityType: 'PAYMENT',
+      entityId: null, asaasId: 'pay-cycle', lastSeenAt: lastSeenAt.toISOString() };
+    const issue = { ...issueManifest, lastSeenAt, status: 'OPEN', remoteStatus: 'PENDING', metadata: {
+      manualRepair: 'legacy_subscription_cycle_reconciliation', resolvedLocalEntityId: 'cob-cycle', lastCauseId: 'evt-cycle',
+    } };
+    const charge = { id: 'charge-cycle', cobrancaId: 'cob-cycle', externalReference: 'enrollment-op:op-cycle:subscription:payment:pay-cycle',
+      status: 'OPEN', value: 170, dueDate: new Date('2026-11-10T12:00:00.000Z') };
+    const cobranca = { id: 'cob-cycle', matriculaId: 'mat-cycle', asaasPaymentId: 'pay-cycle', asaasId: 'pay-cycle',
+      status: 'A_VENCER', valor: 170, vencimento: new Date('2026-11-10T12:00:00.000Z') };
+    const operation = { id: 'op-cycle', status: 'COMMITTED', matriculaId: 'mat-cycle', asaasSubscriptionId: 'sub-parent', asaasFirstPaymentId: 'pay-other-first' };
+    const subscription = { id: 'sub-local', status: 'ACTIVE', matriculaId: 'mat-cycle', externalReference: 'enrollment-op:op-cycle:subscription' };
+    prisma.financeReconciliationIssue.findFirst.mockResolvedValue(issue);
+    for (const db of [prisma, tx]) {
+      db.charge.findFirst.mockResolvedValue(charge); db.cobranca.findFirst.mockResolvedValue(cobranca);
+      db.enrollmentCreationOperation.findFirst.mockResolvedValue(operation); db.subscription.findFirst.mockResolvedValue(subscription);
+      db.matricula.findFirst.mockResolvedValue({ id: 'mat-cycle' });
+    }
+    getPayment.mockResolvedValue({ id: 'pay-cycle', subscription: 'sub-parent', externalReference: subscription.externalReference,
+      status: 'PENDING', value: 170, dueDate: '2026-11-10', deleted: false });
+    getSubscription.mockResolvedValue({ id: 'sub-parent', externalReference: subscription.externalReference, status: 'ACTIVE', deleted: false });
+    return { issue, charge, cobranca, operation, subscription, input: {
+      manifest: { version: 1 as const, contaId: 'tenant-reviewed', reviewedAt: '2026-11-03', reason: 'reviewed',
+        approvedExternalSubscriptionIds: [], approvedExternalPaymentIds: [], openIssues: [issueManifest], externalEvidence: [] },
+      issueManifest, apiKey: 'test-key', auditContext: { operatorLabel: 'operator', runId: 'run-cycle' }, apply: true,
+    } };
+  }
+
+  it('resolves a string-marked recurring cycle through its committed parent chain, independently of first payment', async () => {
+    const { input, issue } = canonicalCycleFixture();
+    await expect(resolveAlreadyLinkedPaymentIssue(input)).resolves.toBe('RESOLVED');
+    expect(issueUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({
+      metadata: { equals: issue.metadata }, lastSeenAt: issue.lastSeenAt, asaasId: 'pay-cycle',
+    }) }));
+    expect(auditCreate).toHaveBeenCalledOnce();
+    expect(auditCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
+      metadata: expect.objectContaining({ subscriptionId: 'sub-local', enrollmentId: 'mat-cycle', operationId: 'op-cycle' }),
+    }) }));
+  });
+
+  it.each(['wrong-parent', 'wrong-suffix', 'uncommitted', 'wrong-enrollment', 'wrong-value', 'wrong-date'])('rejects recurring proof: %s', async (scenario) => {
+    const { input, charge, operation } = canonicalCycleFixture();
+    if (scenario === 'wrong-parent') getPayment.mockResolvedValue({ id: 'pay-cycle', subscription: 'sub-other', status: 'PENDING' });
+    if (scenario === 'wrong-suffix') prisma.charge.findFirst.mockResolvedValue({ ...charge, externalReference: 'enrollment-op:op-cycle:subscription:payment:pay-other' });
+    if (scenario === 'uncommitted') prisma.enrollmentCreationOperation.findFirst.mockResolvedValue({ ...operation, status: 'PENDING' });
+    if (scenario === 'wrong-enrollment') prisma.enrollmentCreationOperation.findFirst.mockResolvedValue({ ...operation, matriculaId: 'mat-other' });
+    if (scenario === 'wrong-value') prisma.charge.findFirst.mockResolvedValue({ ...charge, value: 171 });
+    if (scenario === 'wrong-date') prisma.charge.findFirst.mockResolvedValue({ ...charge, dueDate: new Date('2026-11-11T12:00:00.000Z') });
+    await expect(resolveAlreadyLinkedPaymentIssue(input)).rejects.toThrow();
+    expect(issueUpdate).not.toHaveBeenCalled(); expect(auditCreate).not.toHaveBeenCalled();
+  });
+
+  it.each(['charge-status', 'subscription-parent', 'issue-cause'])('preserves recurring issue on concurrent %s change', async (scenario) => {
+    const { input, charge, subscription } = canonicalCycleFixture();
+    if (scenario === 'charge-status') tx.charge.findFirst.mockResolvedValue({ ...charge, status: 'PAID' });
+    if (scenario === 'subscription-parent') tx.subscription.findFirst.mockResolvedValue({ ...subscription, matriculaId: 'mat-other' });
+    if (scenario === 'issue-cause') issueUpdate.mockResolvedValueOnce({ count: 0 });
+    await expect(resolveAlreadyLinkedPaymentIssue(input)).resolves.toBe('SKIPPED_STALE');
+    expect(auditCreate).not.toHaveBeenCalled();
+  });
+
+  function legacyEventFixture() {
+    const lastSeenAt = new Date('2026-11-03T13:00:00.000Z');
+    const issueManifest = { id: 'issue-event', issueType: 'BILLING_OPERATION_UNCERTAIN', entityType: 'PAYMENT',
+      entityId: 'order-cancelled', asaasId: null, lastSeenAt: lastSeenAt.toISOString() };
+    const issue = { ...issueManifest, lastSeenAt, status: 'OPEN', remoteStatus: 'BUYER_CUSTOMER_NOT_CONFIRMED', metadata: {
+      orderId: 'order-cancelled', paymentId: 'pay-cancelled', externalReference: 'event-map-order:order-cancelled', lookupError: 'MULTIPLE_BUYER_CUSTOMERS',
+    } };
+    const order = { id: 'order-cancelled', status: 'CANCELLED', paymentStatus: 'DELETED', paymentProvider: 'ASAAS', asaasPaymentId: 'pay-cancelled' };
+    prisma.financeReconciliationIssue.findFirst.mockResolvedValue(issue);
+    prisma.eventMapOrder.findFirst.mockResolvedValue(order); tx.eventMapOrder.findFirst.mockResolvedValue(order);
+    const payment = { id: 'pay-cancelled', externalReference: 'event-map-order:order-cancelled', status: 'DELETED', deleted: true };
+    getPayment.mockResolvedValue(payment);
+    listPayments.mockResolvedValue({ data: [payment], totalCount: 1, offset: 0, limit: 100, hasMore: false });
+    return { issue, order, payment, input: { manifest: {
+      version: 1 as const, contaId: 'tenant-reviewed', reviewedAt: '2026-11-03', reason: 'reviewed', approvedExternalSubscriptionIds: [],
+      approvedExternalPaymentIds: [], openIssues: [issueManifest], externalEvidence: [],
+    }, issueManifest, apiKey: 'test-key', auditContext: { operatorLabel: 'operator', runId: 'run-event' }, apply: true } };
+  }
+
+  it('resolves legacy event ambiguity with null original provider ID and no cause using full metadata CAS', async () => {
+    const { input, issue } = legacyEventFixture();
+    await expect(resolveVerifiedEventCancellation(input)).resolves.toBe('RESOLVED');
+    expect(issueUpdate).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({
+      asaasId: null, entityId: 'order-cancelled', metadata: { equals: issue.metadata },
+      remoteStatus: 'BUYER_CUSTOMER_NOT_CONFIRMED', lastSeenAt: issue.lastSeenAt,
+    }) }));
+    expect(auditCreate).toHaveBeenCalledOnce();
+  });
+
+  it('accepts an empty complete available listing only after the known target GET confirms deletion', async () => {
+    const { input } = legacyEventFixture();
+    listPayments.mockResolvedValue({ data: [], totalCount: 0, offset: 0, limit: 100, hasMore: false });
+    await expect(resolveVerifiedEventCancellation(input)).resolves.toBe('RESOLVED');
+    expect(listPayments).toHaveBeenCalledWith({ apiKey: 'test-key', externalReference: 'event-map-order:order-cancelled', offset: 0, limit: 100 });
+    expect(auditCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ metadata: expect.objectContaining({
+      providerEvidence: 'KNOWN_TARGET_GET_DELETED_AND_NO_AVAILABLE_ALTERNATIVE', availableReferencePaymentCount: 0,
+    }) }) }));
+  });
+
+  it('rejects an empty listing when the exact GET does not prove target deletion', async () => {
+    const { input, payment } = legacyEventFixture();
+    listPayments.mockResolvedValue({ data: [], totalCount: 0, offset: 0, limit: 100, hasMore: false });
+    getPayment.mockResolvedValue({ ...payment, deleted: false, status: 'PENDING' });
+    await expect(resolveVerifiedEventCancellation(input)).rejects.toThrow('não está excluído');
+    expect(listPayments).not.toHaveBeenCalled(); expect(issueUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each(['conflicting-reason', 'cause-without-reason', 'duplicate-target', 'wrong-reference', 'inconsistent-target-state'])('rejects legacy event proof: %s', async (scenario) => {
+    const { input, issue, payment } = legacyEventFixture();
+    if (scenario === 'conflicting-reason') prisma.financeReconciliationIssue.findFirst.mockResolvedValue({ ...issue, metadata: { ...issue.metadata, reason: 'REMOTE_CREATION_RESULT_STILL_UNCERTAIN' } });
+    if (scenario === 'cause-without-reason') prisma.financeReconciliationIssue.findFirst.mockResolvedValue({ ...issue, metadata: { ...issue.metadata, lastCauseId: 'cause-new' } });
+    const rows = scenario === 'duplicate-target' ? [payment, payment]
+      : [{ ...payment, ...(scenario === 'wrong-reference' ? { externalReference: 'event-map-order:other' } : { deleted: false }) }];
+    if (!['conflicting-reason', 'cause-without-reason'].includes(scenario)) listPayments.mockResolvedValue({ data: rows, totalCount: rows.length, offset: 0, limit: 100, hasMore: false });
+    await expect(resolveVerifiedEventCancellation(input)).rejects.toThrow();
+    expect(issueUpdate).not.toHaveBeenCalled(); expect(auditCreate).not.toHaveBeenCalled();
+  });
+
+  it.each(['wrong-order', 'duplicate-active', 'incomplete-page', 'other-reason'])('rejects legacy event: %s', async (scenario) => {
+    const { input, order, payment, issue } = legacyEventFixture();
+    if (scenario === 'wrong-order') prisma.eventMapOrder.findFirst.mockResolvedValue({ ...order, asaasPaymentId: 'pay-other' });
+    if (scenario === 'duplicate-active') listPayments.mockResolvedValue({ data: [payment, { ...payment, id: 'pay-active', status: 'PENDING', deleted: false }], totalCount: 2, offset: 0, limit: 100, hasMore: false });
+    if (scenario === 'incomplete-page') listPayments.mockResolvedValue({ data: [payment], totalCount: 2, offset: 0, limit: 100, hasMore: false });
+    if (scenario === 'other-reason') prisma.financeReconciliationIssue.findFirst.mockResolvedValue({ ...issue, metadata: { ...issue.metadata, lookupError: 'OTHER_ERROR' } });
+    await expect(resolveVerifiedEventCancellation(input)).rejects.toThrow();
+    expect(issueUpdate).not.toHaveBeenCalled(); expect(auditCreate).not.toHaveBeenCalled();
+  });
+
+  it.each(['metadata', 'order-state'])('preserves event issue on concurrent %s change', async (scenario) => {
+    const { input, order } = legacyEventFixture();
+    if (scenario === 'metadata') issueUpdate.mockResolvedValueOnce({ count: 0 });
+    if (scenario === 'order-state') tx.eventMapOrder.findFirst.mockResolvedValue({ ...order, paymentStatus: 'PENDING' });
+    await expect(resolveVerifiedEventCancellation(input)).resolves.toBe('SKIPPED_STALE');
+    expect(auditCreate).not.toHaveBeenCalled();
+  });
+
+  it('discovers string-marked cycle and null-ID legacy event through the real dry-run entrypoint', async () => {
+    const cycle = canonicalCycleFixture();
+    const event = legacyEventFixture();
+    prisma.financeReconciliationIssue.findFirst.mockImplementation(async ({ where }) => where.id === cycle.issue.id ? cycle.issue : event.issue);
+    getPayment.mockImplementation(async ({ paymentId }) => paymentId === 'pay-cycle'
+      ? { id: 'pay-cycle', subscription: 'sub-parent', externalReference: 'enrollment-op:op-cycle:subscription',
+          status: 'PENDING', value: 170, dueDate: '2026-11-10', deleted: false }
+      : event.payment);
+    vi.mocked(loadAsaasCredentials).mockResolvedValue({ apiKey: 'test-key' } as never);
+    vi.mocked(acquireWebhookJobLock).mockResolvedValue({ acquired: true, jobName: 'test-lock', workerId: 'test-worker' } as never);
+    vi.mocked(previewExternalSubscriptionCandidates).mockResolvedValue({ items: [], nextCursor: null } as never);
+    vi.mocked(reconcileWithAsaas).mockResolvedValue({ checkedPayments: 0, checkedSubscriptions: 0, paymentDrift: 0, subscriptionDrift: 0, asaasCalls: 0, budgetExhausted: false } as never);
+    const directory = await mkdtemp(join(tmpdir(), 'alusa-recovery-test-'));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      const manifestPath = join(directory, 'manifest.json');
+      await writeFile(manifestPath, JSON.stringify({ ...cycle.input.manifest, openIssues: [...cycle.input.manifest.openIssues, ...event.input.manifest.openIssues] }));
+      await runRecovery({ manifestPath, apply: false, auditContext: { operatorLabel: 'operator', runId: 'run-dry' } });
+      expect(JSON.parse(log.mock.calls.at(-1)![0])).toMatchObject({ mode: 'dry-run', manuallyRepairedIssues: 1, eventCancellations: 1 });
+      expect(issueUpdate).not.toHaveBeenCalled(); expect(auditCreate).not.toHaveBeenCalled();
+      expect(releaseWebhookJobLock).toHaveBeenCalledWith({ jobName: 'test-lock', workerId: 'test-worker' });
+    } finally {
+      log.mockRestore();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts another verifier resolution without rechecking or writing, and skips newer open observations', async () => {
+    const { input, issue } = legacyEventFixture();
+    prisma.financeReconciliationIssue.findFirst.mockResolvedValue({ ...issue, status: 'RESOLVED', resolution: 'Verified by another safe reconciler' });
+    await expect(resolveVerifiedEventCancellation(input)).resolves.toBe('ALREADY_RESOLVED');
+    prisma.financeReconciliationIssue.findFirst.mockResolvedValue({ ...issue, lastSeenAt: new Date(issue.lastSeenAt.getTime() + 1) });
+    await expect(resolveVerifiedEventCancellation(input)).resolves.toBe('SKIPPED_STALE');
+    expect(getPayment).not.toHaveBeenCalled(); expect(issueUpdate).not.toHaveBeenCalled();
   });
 
   it.each([false, true])('validates legacy child proof without financial writes (ambiguous=%s)', async (ambiguous) => {
