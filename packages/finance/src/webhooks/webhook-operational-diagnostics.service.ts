@@ -446,8 +446,8 @@ export async function getWebhookOperationalDiagnostics(
       recommendations,
       fromBoolean(chargeGaps + subscriptionGaps > 0, {
         code: 'WEBHOOK_GAPS_DETECTED',
-        severity: 'warning',
-        message: `Foram detectados ${chargeGaps} gap(s) em cobranças e ${subscriptionGaps} gap(s) em assinaturas.`,
+        severity: 'info',
+        message: `${chargeGaps} cobrança(s) e ${subscriptionGaps} assinatura(s) aguardam verificação de snapshot; idade sem evento não confirma divergência financeira.`,
       }),
     );
   }

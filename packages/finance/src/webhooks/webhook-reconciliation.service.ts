@@ -13,12 +13,12 @@
  */
 
 import { loadAsaasCredentials, prisma } from '@alusa/database';
-import { Prisma, type ChargeStatus } from '@prisma/client';
+import { Prisma, type ChargeStatus, type StatusCobranca } from '@prisma/client';
 import { getInstallment, getPayment, getSubscription, listInstallmentPayments, listPayments } from '@alusa/asaas';
 import type { AsaasPayment, AsaasSubscription } from '@alusa/asaas';
 import { recordAsaasReadIntent } from '../foundation/asaas-read-intent';
 import { alertService } from '../foundation/alert-channel';
-import { mapAsaasToChargeStatus } from '../core';
+import { mapAsaasToChargeStatus, mapAsaasToCobrancaStatus } from '../core';
 import { mapAsaasSubscriptionStatus } from '../mappers/asaas-subscription-status';
 import { handlePaymentWebhook } from './payment-webhook-handler';
 import { handleSubscriptionWebhook } from './subscription-webhook-handler';
@@ -256,6 +256,7 @@ type PaymentReconciliationCandidate = {
   externalReference: string | null;
   source: 'charge' | 'cobranca';
   lastProviderCheckAt: Date | null;
+  webhookLagLastSeenAt?: Date;
 };
 
 export function isProviderCheckDue(
@@ -323,7 +324,7 @@ async function listPaymentReconciliationCandidates(
   limit: number,
   cutoff: Date,
 ): Promise<PaymentReconciliationCandidate[]> {
-  const [openCharges, settledCharges, openCobrancas, settledCobrancas] = await Promise.all([
+  const [openCharges, settledCharges, openCobrancas, settledCobrancas, webhookLagIssues] = await Promise.all([
     prisma.charge.findMany({
       where: {
         contaId,
@@ -402,6 +403,12 @@ async function listPaymentReconciliationCandidates(
         charge: { select: { externalReference: true } },
       },
     }),
+    prisma.financeReconciliationIssue.findMany({
+      where: { contaId, issueType: 'WEBHOOK_LAG', status: 'OPEN', entityType: 'CHARGE', asaasId: { not: null } },
+      orderBy: [{ detectedAt: 'asc' }, { lastSeenAt: 'asc' }],
+      take: limit,
+      select: { entityId: true, asaasId: true, lastSeenAt: true },
+    }),
   ]);
 
   const byPaymentId = new Map<string, PaymentReconciliationCandidate>();
@@ -446,7 +453,50 @@ async function listPaymentReconciliationCandidates(
     addCobranca(cobranca);
   }
 
-  return Array.from(byPaymentId.values()).slice(0, limit);
+  // Old lag alerts are independently selected oldest-first, so a stream of
+  // new nonfinal charges cannot starve bounded verification of existing alerts.
+  const lagIds = webhookLagIssues.flatMap((issue) => issue.entityId ? [issue.entityId] : []);
+  if (lagIds.length > 0) {
+    const [lagCharges, lagCobrancas] = await Promise.all([
+      prisma.charge.findMany({
+        where: { contaId, id: { in: lagIds }, asaasPaymentId: { not: null }, ...providerCheckDueWhere(cutoff) },
+        select: { id: true, asaasPaymentId: true, status: true, asaasStatus: true, lastProviderCheckAt: true, externalReference: true },
+        take: limit,
+      }),
+      prisma.cobranca.findMany({
+        where: { contaId, id: { in: lagIds }, matricula: { contaId, aluno: { contaId } }, asaasPaymentId: { not: null }, ...providerCheckDueWhere(cutoff) },
+        select: { id: true, asaasPaymentId: true, status: true, asaasStatus: true, lastProviderCheckAt: true, charge: { select: { externalReference: true } } },
+        take: limit,
+      }),
+    ]);
+    const issueByEntityId = new Map(webhookLagIssues.map((issue) => [issue.entityId, issue]));
+    for (const charge of lagCharges) {
+      const issue = issueByEntityId.get(charge.id);
+      if (!issue || issue.asaasId !== charge.asaasPaymentId) continue;
+      byPaymentId.set(charge.asaasPaymentId!, {
+        entityId: charge.id, asaasPaymentId: charge.asaasPaymentId!, localStatus: charge.status,
+        persistedAsaasStatus: charge.asaasStatus, externalReference: charge.externalReference,
+        source: 'charge', lastProviderCheckAt: charge.lastProviderCheckAt, webhookLagLastSeenAt: issue.lastSeenAt,
+      });
+    }
+    for (const cobranca of lagCobrancas) {
+      const issue = issueByEntityId.get(cobranca.id);
+      if (!issue || issue.asaasId !== cobranca.asaasPaymentId) continue;
+      byPaymentId.set(cobranca.asaasPaymentId!, {
+        entityId: cobranca.id, asaasPaymentId: cobranca.asaasPaymentId!, localStatus: cobranca.status,
+        persistedAsaasStatus: cobranca.asaasStatus, externalReference: cobranca.charge?.externalReference ?? null,
+        source: 'cobranca', lastProviderCheckAt: cobranca.lastProviderCheckAt, webhookLagLastSeenAt: issue.lastSeenAt,
+      });
+    }
+  }
+
+  return Array.from(byPaymentId.values())
+    .sort((left, right) => {
+      const leftSeen = left.webhookLagLastSeenAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      const rightSeen = right.webhookLagLastSeenAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      return leftSeen - rightSeen;
+    })
+    .slice(0, limit);
 }
 
 function resolvePaymentDriftIssueType(
@@ -495,6 +545,33 @@ function hasPaymentReconciliationDrift(
   }
 
   return false;
+}
+
+async function markPaymentProviderCheckIfCurrent(input: {
+  contaId: string;
+  candidate: PaymentReconciliationCandidate;
+  localStatus: string;
+  asaasStatus: string | null;
+  providerCheckAt: Date;
+}): Promise<boolean> {
+  const result = input.candidate.source === 'charge'
+    ? await prisma.charge.updateMany({
+        where: {
+          id: input.candidate.entityId, contaId: input.contaId,
+          asaasPaymentId: input.candidate.asaasPaymentId,
+          status: input.localStatus as ChargeStatus, asaasStatus: input.asaasStatus,
+        },
+        data: { lastProviderCheckAt: input.providerCheckAt, lastAsaasFetchAt: input.providerCheckAt },
+      })
+    : await prisma.cobranca.updateMany({
+        where: {
+          id: input.candidate.entityId, contaId: input.contaId,
+          asaasPaymentId: input.candidate.asaasPaymentId,
+          status: input.localStatus as StatusCobranca, asaasStatus: input.asaasStatus,
+        },
+        data: { lastProviderCheckAt: input.providerCheckAt, lastAsaasFetchAt: input.providerCheckAt },
+      });
+  return result.count === 1;
 }
 
 async function attachLastWebhookAt<T extends { asaasPaymentId: string | null }>(
@@ -661,41 +738,9 @@ export async function detectWebhookGaps(
   );
 
   if (options.persistIssues) {
-    await Promise.all([
-      ...chargesWithGap.map((charge) =>
-        upsertFinanceReconciliationIssue({
-          contaId,
-          entityType: 'CHARGE',
-          entityId: charge.id,
-          asaasId: charge.asaasPaymentId,
-          issueType: 'WEBHOOK_LAG',
-          severity: 'HIGH',
-          localStatus: charge.status,
-          remoteStatus: null,
-          metadata: {
-            dueDate: charge.dueDate?.toISOString() ?? null,
-            lastWebhookAt: charge.lastWebhookAt?.toISOString() ?? null,
-            source: 'detectWebhookGaps',
-          },
-        }),
-      ),
-      ...subscriptionsWithGap.map((subscription) =>
-        upsertFinanceReconciliationIssue({
-          contaId,
-          entityType: 'SUBSCRIPTION',
-          entityId: subscription.id,
-          asaasId: subscription.asaasSubscriptionId,
-          issueType: 'WEBHOOK_LAG',
-          severity: 'MEDIUM',
-          localStatus: subscription.status,
-          remoteStatus: null,
-          metadata: {
-            lastWebhookAt: subscription.lastWebhookAt?.toISOString() ?? null,
-            source: 'detectWebhookGaps',
-          },
-        }),
-      ),
-    ]);
+    // Event age alone does not establish financial divergence. This result is
+    // transport telemetry; the bounded Asaas snapshot reconciliation below is
+    // responsible for opening financial issues when provider state disagrees.
   }
 
   return {
@@ -1455,8 +1500,9 @@ export async function reconcileWithAsaas(
   let checkedInstallments = 0;
   let installmentDrift = 0;
   const remoteSubscriptions = new Map<string, AsaasSubscription>();
+  const prefetchedSubscriptionReads = new Map<string, Promise<{ remote: AsaasSubscription } | { error: unknown }>>();
 
-  const [subscriptions, canonicalAgreements, installmentPlans, standaloneInstallments] = await Promise.all([
+  const [subscriptions, canonicalAgreements, installmentPlans, standaloneInstallments, webhookLagSubscriptionIssues] = await Promise.all([
     prisma.subscription.findMany({
       where: {
         contaId: options.contaId,
@@ -1511,17 +1557,98 @@ export async function reconcileWithAsaas(
       take: limit,
       select: { id: true, asaasInstallmentId: true, status: true, lastProviderCheckAt: true },
     }),
+    prisma.financeReconciliationIssue.findMany({
+      where: { contaId: options.contaId, issueType: 'WEBHOOK_LAG', status: 'OPEN', entityType: 'SUBSCRIPTION', asaasId: { not: null } },
+      orderBy: [{ detectedAt: 'asc' }, { lastSeenAt: 'asc' }],
+      take: limit,
+      select: { entityId: true, asaasId: true, lastSeenAt: true },
+    }),
   ]);
 
+  const lagSubscriptionIds = webhookLagSubscriptionIssues.flatMap((issue) => issue.entityId ? [issue.entityId] : []);
+  if (lagSubscriptionIds.length > 0) {
+    const lagSubscriptions = await prisma.subscription.findMany({
+      where: { contaId: options.contaId, id: { in: lagSubscriptionIds }, asaasSubscriptionId: { not: null }, ...providerCheckDueWhere(providerCheckCutoff) },
+      select: { id: true, asaasSubscriptionId: true, status: true, lastProviderCheckAt: true },
+      take: limit,
+    });
+    const regularIds = new Set(subscriptions.map((subscription) => subscription.id));
+    for (const subscription of lagSubscriptions) {
+      const issue = webhookLagSubscriptionIssues.find((item) => item.entityId === subscription.id);
+      if (!issue || issue.asaasId !== subscription.asaasSubscriptionId || regularIds.has(subscription.id)) continue;
+      subscriptions.push(subscription);
+    }
+  }
+  const webhookLagSubscriptionLastSeenById = new Map(
+    webhookLagSubscriptionIssues.flatMap((issue) => issue.entityId && issue.asaasId
+      && subscriptions.some((subscription) => subscription.id === issue.entityId && subscription.asaasSubscriptionId === issue.asaasId)
+      ? [[issue.entityId, issue.lastSeenAt] as const]
+      : []),
+  );
+
+  // Reserve subscription capacity and start one bounded read before payments.
+  // SDK retries may outlast the soft deadline, so fairness cannot depend on a
+  // guessed timeout. A one-call pass alternates from durable attempted counts.
+  const hasSubscriptionWork = subscriptions.some((subscription) => subscription.asaasSubscriptionId)
+    || canonicalAgreements.some((agreement) => agreement.asaasSubscriptionId);
+  const hasPaymentWork = paymentCandidates.length > 0;
+  let singleCallClass: 'PAYMENT' | 'SUBSCRIPTION' | null = null;
+  if (hasSubscriptionWork && hasPaymentWork && budget.max === 1) {
+    const previousRun = await prisma.financeReconciliationRun.findFirst({
+      where: { contaId: options.contaId, completedAt: { not: null } },
+      orderBy: [{ completedAt: 'desc' }, { startedAt: 'desc' }],
+      select: { checkedPayments: true, checkedSubscriptions: true },
+    });
+    if (previousRun && previousRun.checkedPayments > 0 && previousRun.checkedSubscriptions === 0) singleCallClass = 'SUBSCRIPTION';
+    else if (previousRun && previousRun.checkedSubscriptions > 0 && previousRun.checkedPayments === 0) singleCallClass = 'PAYMENT';
+    else singleCallClass = 'SUBSCRIPTION';
+  }
+  const subscriptionCallReserve = hasSubscriptionWork && hasPaymentWork && budget.max > 1
+    ? Math.max(1, Math.min(20, Math.ceil(budget.max * 0.2)))
+    : 0;
+  const paymentCallLimit = singleCallClass
+    ? (singleCallClass === 'PAYMENT' ? budget.max : 0)
+    : budget.max - subscriptionCallReserve;
+  subscriptions.sort((left, right) => {
+    const leftLag = webhookLagSubscriptionLastSeenById.get(left.id)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+    const rightLag = webhookLagSubscriptionLastSeenById.get(right.id)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+    if (leftLag !== rightLag) return leftLag - rightLag;
+    const leftChecked = left.lastProviderCheckAt?.getTime() ?? 0;
+    const rightChecked = right.lastProviderCheckAt?.getTime() ?? 0;
+    return leftChecked - rightChecked || left.id.localeCompare(right.id);
+  });
+
+  if (hasSubscriptionWork && hasPaymentWork && budget.max > 1 && !singleCallClass) {
+    const firstSubscription = subscriptions.find((item) => item.asaasSubscriptionId);
+    const firstAgreement = canonicalAgreements.find((item) => item.asaasSubscriptionId);
+    const selected = firstSubscription
+      ? { key: `subscription:${firstSubscription.id}`, asaasSubscriptionId: firstSubscription.asaasSubscriptionId! }
+      : firstAgreement
+        ? { key: `agreement:${firstAgreement.id}`, asaasSubscriptionId: firstAgreement.asaasSubscriptionId! }
+        : null;
+    if (selected && reserveAsaasCall(budget, errors)) {
+      checkedSubscriptions += 1;
+      recordAsaasReadIntent('RECONCILIATION');
+      const read = getSubscription({ apiKey: credentials.apiKey, subscriptionId: selected.asaasSubscriptionId });
+      prefetchedSubscriptionReads.set(selected.key, read.then(
+        (remote) => ({ remote }),
+        (error: unknown) => ({ error }),
+      ));
+    }
+  }
+
+  let paymentCallsStarted = 0;
   for (const candidate of paymentCandidates) {
     if (budget.exhausted) break;
-    checkedPayments += 1;
+    if (paymentCallsStarted >= paymentCallLimit) break;
     try {
       if (await hasInflightWebhookForPayment(options.contaId, candidate.asaasPaymentId)) {
         continue;
       }
 
       if (!reserveAsaasCall(budget, errors)) break;
+      paymentCallsStarted += 1;
+      checkedPayments += 1;
       recordAsaasReadIntent('RECONCILIATION');
       const remote = await getPayment({
         apiKey: credentials.apiKey,
@@ -1532,17 +1659,13 @@ export async function reconcileWithAsaas(
       if (!hasPaymentReconciliationDrift(remoteStatus, candidate)) {
         if (!dryRun) {
           const providerCheckAt = new Date();
-          if (candidate.source === 'charge') {
-            await prisma.charge.updateMany({
-              where: { id: candidate.entityId, contaId: options.contaId },
-              data: { lastProviderCheckAt: providerCheckAt, lastAsaasFetchAt: providerCheckAt },
-            });
-          } else {
-            await prisma.cobranca.updateMany({
-              where: { id: candidate.entityId, contaId: options.contaId },
-              data: { lastProviderCheckAt: providerCheckAt, lastAsaasFetchAt: providerCheckAt },
-            });
-          }
+          const localStateStillMatches = await markPaymentProviderCheckIfCurrent({
+            contaId: options.contaId, candidate,
+            localStatus: candidate.localStatus,
+            asaasStatus: candidate.persistedAsaasStatus,
+            providerCheckAt,
+          });
+          if (!localStateStillMatches) continue;
           for (const issueType of ['ASAAS_SNAPSHOT_STALE', 'PAYMENT_STATUS_DRIFT'] as const) {
             await resolveFinanceReconciliationIssueByDedupe({
               contaId: options.contaId,
@@ -1553,6 +1676,23 @@ export async function reconcileWithAsaas(
                 issueType,
               }),
               resolution: 'O snapshot Asaas e o estado local convergiram durante a reconciliação.',
+            });
+          }
+          if (candidate.webhookLagLastSeenAt) {
+            await resolveFinanceReconciliationIssueByDedupe({
+              contaId: options.contaId,
+              dedupeKey: buildFinanceReconciliationIssueDedupeKey({
+                entityType: 'CHARGE', entityId: candidate.entityId,
+                asaasId: candidate.asaasPaymentId, issueType: 'WEBHOOK_LAG',
+              }),
+              resolution: 'Snapshot Asaas atual e estado local confirmaram consistência.',
+              expectedLastSeenAt: candidate.webhookLagLastSeenAt,
+              auditMetadata: {
+                provider: 'ASAAS', paymentId: candidate.asaasPaymentId,
+                remoteStatus, localStatus: candidate.localStatus,
+                externalReference: remote.externalReference ?? candidate.externalReference,
+                source: 'reconcileWithAsaas',
+              },
             });
           }
         }
@@ -1595,15 +1735,26 @@ export async function reconcileWithAsaas(
             resolution: 'Issue substituída por divergência de snapshot Asaas stale em pagamento liquidado.',
           });
           const providerCheckAt = new Date();
-          if (candidate.source === 'charge') {
-            await prisma.charge.updateMany({
-              where: { id: candidate.entityId, contaId: options.contaId },
-              data: { lastProviderCheckAt: providerCheckAt, lastAsaasFetchAt: providerCheckAt },
-            });
-          } else {
-            await prisma.cobranca.updateMany({
-              where: { id: candidate.entityId, contaId: options.contaId },
-              data: { lastProviderCheckAt: providerCheckAt, lastAsaasFetchAt: providerCheckAt },
+          const localStateStillMatches = await markPaymentProviderCheckIfCurrent({
+            contaId: options.contaId, candidate,
+            localStatus: candidate.localStatus, asaasStatus: candidate.persistedAsaasStatus,
+            providerCheckAt,
+          });
+          if (localStateStillMatches && candidate.webhookLagLastSeenAt) {
+            await resolveFinanceReconciliationIssueByDedupe({
+              contaId: options.contaId,
+              dedupeKey: buildFinanceReconciliationIssueDedupeKey({
+                entityType: 'CHARGE', entityId: candidate.entityId,
+                asaasId: candidate.asaasPaymentId, issueType: 'WEBHOOK_LAG',
+              }),
+              resolution: 'A verificação identificou e registrou divergência específica de snapshot Asaas.',
+              expectedLastSeenAt: candidate.webhookLagLastSeenAt,
+              auditMetadata: {
+                provider: 'ASAAS', paymentId: candidate.asaasPaymentId,
+                remoteStatus, localStatus: candidate.localStatus,
+                externalReference: remote.externalReference ?? candidate.externalReference,
+                source: 'reconcileWithAsaas', outcome: 'specific_snapshot_drift_recorded',
+              },
             });
           }
           continue;
@@ -1638,37 +1789,66 @@ export async function reconcileWithAsaas(
           continue;
         }
         const providerCheckAt = new Date();
-        if (candidate.source === 'charge') {
-          await prisma.charge.updateMany({
-            where: { id: candidate.entityId, contaId: options.contaId },
-            data: { lastProviderCheckAt: providerCheckAt, lastAsaasFetchAt: providerCheckAt },
-          });
-        } else {
-          await prisma.cobranca.updateMany({
-            where: { id: candidate.entityId, contaId: options.contaId },
-            data: { lastProviderCheckAt: providerCheckAt, lastAsaasFetchAt: providerCheckAt },
+        const convergedLocalStatus = candidate.source === 'charge'
+          ? remoteLocalStatus
+          : mapAsaasToCobrancaStatus(remoteStatus);
+        const localStateConverged = await markPaymentProviderCheckIfCurrent({
+          contaId: options.contaId, candidate,
+          localStatus: convergedLocalStatus,
+          asaasStatus: remoteStatus,
+          providerCheckAt,
+        });
+        if (localStateConverged && candidate.webhookLagLastSeenAt) {
+          await resolveFinanceReconciliationIssueByDedupe({
+            contaId: options.contaId,
+            dedupeKey: buildFinanceReconciliationIssueDedupeKey({
+              entityType: 'CHARGE', entityId: candidate.entityId,
+              asaasId: candidate.asaasPaymentId, issueType: 'WEBHOOK_LAG',
+            }),
+            resolution: 'Snapshot Asaas foi aplicado localmente após handler e os estados agora convergem.',
+            expectedLastSeenAt: candidate.webhookLagLastSeenAt,
+            auditMetadata: {
+              provider: 'ASAAS', paymentId: candidate.asaasPaymentId,
+              remoteStatus, localStatus: convergedLocalStatus,
+              externalReference: remote.externalReference ?? candidate.externalReference,
+              source: 'reconcileWithAsaas', outcome: 'webhook_handler_applied',
+            },
           });
         }
         reconciledPayments += 1;
       }
     } catch (error) {
+      if (!dryRun) {
+        await markPaymentProviderCheckIfCurrent({
+          contaId: options.contaId, candidate,
+          localStatus: candidate.localStatus,
+          asaasStatus: candidate.persistedAsaasStatus,
+          providerCheckAt: new Date(),
+        });
+      }
       errors.push(`payment:${candidate.asaasPaymentId}:${safeReconciliationError(error)}`);
     }
   }
 
   for (const sub of subscriptions) {
-    if (budget.exhausted) break;
+    const prefetchKey = `subscription:${sub.id}`;
+    const prefetch = prefetchedSubscriptionReads.get(prefetchKey);
+    if (budget.exhausted && !prefetch) break;
+    if (singleCallClass === 'PAYMENT') break;
     if (!sub.asaasSubscriptionId) continue;
-    checkedSubscriptions += 1;
     try {
       let remote = remoteSubscriptions.get(sub.asaasSubscriptionId);
       if (!remote) {
-        if (!reserveAsaasCall(budget, errors)) break;
-        recordAsaasReadIntent('RECONCILIATION');
-        remote = await getSubscription({
-          apiKey: credentials.apiKey,
-          subscriptionId: sub.asaasSubscriptionId,
-        });
+        if (prefetch) {
+          const result = await prefetch;
+          if ('error' in result) throw result.error;
+          remote = result.remote;
+        } else {
+          if (!reserveAsaasCall(budget, errors)) break;
+          checkedSubscriptions += 1;
+          recordAsaasReadIntent('RECONCILIATION');
+          remote = await getSubscription({ apiKey: credentials.apiKey, subscriptionId: sub.asaasSubscriptionId });
+        }
         remoteSubscriptions.set(sub.asaasSubscriptionId, remote);
       }
       const nextStatus = mapAsaasSubscriptionStatus({
@@ -1718,29 +1898,68 @@ export async function reconcileWithAsaas(
         }
       }
       if (!dryRun && providerStateApplied) {
+        const expectedLocalStatus = nextStatus === sub.status ? sub.status : nextStatus;
+        const providerCheck = await prisma.subscription.updateMany({
+          where: {
+            id: sub.id, contaId: options.contaId,
+            asaasSubscriptionId: sub.asaasSubscriptionId,
+            status: expectedLocalStatus,
+          },
+          data: { lastProviderCheckAt: new Date() },
+        });
+        const webhookLagLastSeenAt = webhookLagSubscriptionLastSeenById.get(sub.id);
+        if (providerCheck.count === 1 && webhookLagLastSeenAt) {
+          await resolveFinanceReconciliationIssueByDedupe({
+            contaId: options.contaId,
+            dedupeKey: buildFinanceReconciliationIssueDedupeKey({
+              entityType: 'SUBSCRIPTION', entityId: sub.id,
+              asaasId: sub.asaasSubscriptionId, issueType: 'WEBHOOK_LAG',
+            }),
+            resolution: nextStatus === sub.status
+              ? 'Snapshot atual do Asaas confirmou consistência da assinatura local.'
+              : 'Snapshot atual do Asaas foi aplicado e substituiu o alerta de atraso por verificação específica.',
+            expectedLastSeenAt: webhookLagLastSeenAt,
+            auditMetadata: {
+              provider: 'ASAAS', subscriptionId: sub.asaasSubscriptionId,
+              remoteStatus: remote.status ?? null, localStatus: expectedLocalStatus,
+              deleted: remote.deleted ?? false, source: 'reconcileWithAsaas',
+            },
+          });
+        }
+      }
+    } catch (error) {
+      if (!dryRun) {
         await prisma.subscription.updateMany({
-          where: { id: sub.id, contaId: options.contaId },
+          where: {
+            id: sub.id, contaId: options.contaId,
+            asaasSubscriptionId: sub.asaasSubscriptionId, status: sub.status,
+          },
           data: { lastProviderCheckAt: new Date() },
         });
       }
-    } catch (error) {
       errors.push(`subscription:${sub.asaasSubscriptionId}:${safeReconciliationError(error)}`);
     }
   }
 
   for (const agreement of canonicalAgreements) {
-    if (budget.exhausted) break;
+    const prefetchKey = `agreement:${agreement.id}`;
+    const prefetch = prefetchedSubscriptionReads.get(prefetchKey);
+    if (budget.exhausted && !prefetch) break;
     if (!agreement.asaasSubscriptionId) continue;
-    checkedSubscriptions += 1;
+    if (singleCallClass === 'PAYMENT') break;
     try {
       let remote = remoteSubscriptions.get(agreement.asaasSubscriptionId);
       if (!remote) {
-        if (!reserveAsaasCall(budget, errors)) break;
-        recordAsaasReadIntent('RECONCILIATION');
-        remote = await getSubscription({
-          apiKey: credentials.apiKey,
-          subscriptionId: agreement.asaasSubscriptionId,
-        });
+        if (prefetch) {
+          const result = await prefetch;
+          if ('error' in result) throw result.error;
+          remote = result.remote;
+        } else {
+          if (!reserveAsaasCall(budget, errors)) break;
+          checkedSubscriptions += 1;
+          recordAsaasReadIntent('RECONCILIATION');
+          remote = await getSubscription({ apiKey: credentials.apiKey, subscriptionId: agreement.asaasSubscriptionId });
+        }
         remoteSubscriptions.set(agreement.asaasSubscriptionId, remote);
       }
       const remoteValue = Number(remote.value ?? 0);

@@ -338,6 +338,75 @@ export type PaymentWebhookPayload = {
   };
 };
 
+async function resolveDeletedEventOrderCustomerAmbiguity(input: {
+  contaId: string;
+  orderId: string;
+  paymentId: string;
+  externalReference: string | null | undefined;
+  eventId: string | null | undefined;
+}) {
+  const expectedReference = `event-map-order:${input.orderId}`;
+  if (input.externalReference !== expectedReference) return false;
+
+  return prisma.$transaction(async (tx) => {
+    const order = await tx.eventMapOrder.findFirst({
+      where: { id: input.orderId, contaId: input.contaId },
+      select: { id: true, status: true, asaasPaymentId: true, paymentProvider: true, paymentStatus: true },
+    });
+    if (!order || !['CANCELLED', 'EXPIRED'].includes(order.status) ||
+        order.asaasPaymentId !== input.paymentId || order.paymentProvider !== 'ASAAS' || order.paymentStatus !== 'DELETED') return false;
+
+    const issue = await tx.financeReconciliationIssue.findFirst({
+      where: {
+        contaId: input.contaId,
+        dedupeKey: `BILLING_OPERATION_UNCERTAIN:PAYMENT:${input.orderId}`,
+        issueType: 'BILLING_OPERATION_UNCERTAIN', entityType: 'PAYMENT', entityId: input.orderId,
+        asaasId: input.paymentId, status: 'OPEN',
+      },
+      select: { id: true, lastSeenAt: true, metadata: true },
+    });
+    const metadata = issue?.metadata && typeof issue.metadata === 'object' && !Array.isArray(issue.metadata)
+      ? issue.metadata as Prisma.JsonObject : null;
+    if (!issue || metadata?.reason !== 'BUYER_CUSTOMER_NOT_CONFIRMED' ||
+        metadata.orderId !== input.orderId || metadata.paymentId !== input.paymentId ||
+        metadata.externalReference !== expectedReference || metadata.lookupError !== 'MULTIPLE_BUYER_CUSTOMERS') return false;
+
+    const resolvedAt = new Date();
+    const changed = await tx.financeReconciliationIssue.updateMany({
+      where: {
+        id: issue.id, contaId: input.contaId, status: 'OPEN',
+        issueType: 'BILLING_OPERATION_UNCERTAIN', entityType: 'PAYMENT',
+        entityId: input.orderId, asaasId: input.paymentId, lastSeenAt: issue.lastSeenAt,
+        AND: [
+          { metadata: { path: ['reason'], equals: 'BUYER_CUSTOMER_NOT_CONFIRMED' } },
+          { metadata: { path: ['orderId'], equals: input.orderId } },
+          { metadata: { path: ['paymentId'], equals: input.paymentId } },
+          { metadata: { path: ['externalReference'], equals: expectedReference } },
+          { metadata: { path: ['lookupError'], equals: 'MULTIPLE_BUYER_CUSTOMERS' } },
+        ],
+      },
+      data: {
+        status: 'RESOLVED', resolvedAt,
+        resolution: 'Pedido de evento cancelado e pagamento excluído confirmados após ambiguidade de cliente Asaas.',
+      },
+    });
+    if (changed.count !== 1) return false;
+    await tx.auditLog.create({ data: {
+      contaId: input.contaId, actorType: 'SYSTEM', actorId: null,
+      correlationId: input.eventId ?? undefined,
+      action: 'finance.reconciliation_issue.resolved',
+      entityType: 'FinanceReconciliationIssue', entityId: issue.id,
+      metadata: {
+        issueType: 'BILLING_OPERATION_UNCERTAIN', entityType: 'PAYMENT', entityId: input.orderId,
+        asaasId: input.paymentId, externalReference: expectedReference,
+        cause: 'MULTIPLE_BUYER_CUSTOMERS', providerEvent: 'PAYMENT_DELETED',
+        resolution: 'EXACT_CANCELED_EVENT_ORDER_AND_DELETED_PAYMENT',
+      },
+    } });
+    return true;
+  }, { isolationLevel: 'Serializable' });
+}
+
 function getCompletedRefundTotal(refunds: PaymentWebhookPayload['payment']['refunds']): number | null {
   if (!Array.isArray(refunds)) return null;
   let completedCount = 0;
@@ -2120,6 +2189,12 @@ async function handlePaymentWebhookCore(
     // issues for a valid public ticket purchase. Unknown provider states still
     // update the pending order's payment snapshot through the same guarded CAS.
     if (payload.payment.externalReference?.startsWith('event-map-order:') || eventMapOrderByPayment) {
+      if (knownEventMapOrder && (payload.event === 'PAYMENT_DELETED' || payload.payment.deleted === true || effectiveAsaasStatus === 'DELETED')) {
+        await resolveDeletedEventOrderCustomerAmbiguity({
+          contaId, orderId: knownEventMapOrder.id, paymentId: payload.payment.id,
+          externalReference: payload.payment.externalReference, eventId: payload.eventId,
+        });
+      }
       if (!cancellationInProgress && !paymentSnapshotIsDeleted &&
         (knownEventMapOrder?.status !== 'CANCELLED' || payload.event === 'PAYMENT_DELETED' || payload.payment.deleted)) {
         await syncPublicEventMapOrderPaymentCreated({

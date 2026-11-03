@@ -151,12 +151,44 @@ export async function resolveFinanceReconciliationIssueByDedupe(input: {
   contaId: string;
   dedupeKey: string;
   resolution: string;
+  /** Compare-and-set guard for observations verified asynchronously. */
+  expectedLastSeenAt?: Date;
+  /** Provider evidence for an audited automated resolution. */
+  auditMetadata?: Prisma.InputJsonValue;
 }) {
+  if (input.auditMetadata) {
+    return prisma.$transaction(async (tx) => {
+      const issue = await tx.financeReconciliationIssue.findFirst({
+        where: { contaId: input.contaId, dedupeKey: input.dedupeKey, status: 'OPEN' },
+        select: { id: true, issueType: true, entityType: true, entityId: true, asaasId: true },
+      });
+      if (!issue) return { count: 0 };
+      const changed = await tx.financeReconciliationIssue.updateMany({
+        where: {
+          id: issue.id, contaId: input.contaId, dedupeKey: input.dedupeKey, status: 'OPEN',
+          ...(input.expectedLastSeenAt ? { lastSeenAt: input.expectedLastSeenAt } : {}),
+        },
+        data: { status: 'RESOLVED', resolvedAt: new Date(), resolution: input.resolution },
+      });
+      if (changed.count === 1) {
+        await tx.auditLog.create({ data: {
+          contaId: input.contaId, actorType: 'SYSTEM', action: 'finance.reconciliation_issue.auto_resolved',
+          entityType: 'FinanceReconciliationIssue', entityId: issue.id,
+          metadata: {
+            issueType: issue.issueType, entityType: issue.entityType, entityId: issue.entityId,
+            asaasId: issue.asaasId, resolution: input.resolution, providerEvidence: input.auditMetadata,
+          },
+        } });
+      }
+      return changed;
+    }, { isolationLevel: 'Serializable' });
+  }
   return prisma.financeReconciliationIssue.updateMany({
     where: {
       contaId: input.contaId,
       dedupeKey: input.dedupeKey,
       status: 'OPEN',
+      ...(input.expectedLastSeenAt ? { lastSeenAt: input.expectedLastSeenAt } : {}),
     },
     data: {
       status: 'RESOLVED',

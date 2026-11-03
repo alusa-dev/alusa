@@ -28,6 +28,7 @@ vi.mock('../../webhooks/webhook-reconciliation.service', () => ({
 
 import { prisma } from '@alusa/database';
 import { detectWebhookGaps, reconcileWithAsaas } from '../../webhooks/webhook-reconciliation.service';
+import { withWebhookJobLock } from '../../foundation/webhook-job-lock.service';
 import { reconcileFinanceWebhooksJob } from '../reconcile-finance-webhooks-job';
 
 function reconcileResult(contaId: string, errors: string[] = []) {
@@ -96,6 +97,24 @@ describe('reconcileFinanceWebhooksJob', () => {
     expect(result.accountsProcessed).toBe(3);
     expect(result.asaasCalls).toBe(6);
     expect(result.outcome).toBe('completed');
+  });
+
+  it('persists failed provider attempt counts for durable class fairness in a budget-exhausted partial run', async () => {
+    vi.mocked(reconcileWithAsaas).mockResolvedValue({
+      ...reconcileResult('conta-a', ['RECONCILIATION_DEADLINE_EXCEEDED', 'subscription:sub-a:unknown_error']),
+      checkedPayments: 0, checkedSubscriptions: 1, asaasCalls: 1, maxAsaasCalls: 1, budgetExhausted: true,
+    });
+
+    const result = await reconcileFinanceWebhooksJob({ contaId: 'conta-a', includeGaps: false, maxAsaasCalls: 1 });
+
+    expect(result.outcome).toBe('partial');
+    expect(prisma.financeReconciliationRun.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+      contaId: 'conta-a', completedAt: expect.any(Date), outcome: 'partial',
+      checkedPayments: 0, checkedSubscriptions: 1, asaasCalls: 1, budgetExhausted: true,
+    }) });
+    expect(withWebhookJobLock).toHaveBeenCalledWith(
+      'reconcile-finance-webhooks:conta-a', expect.any(Function), expect.any(Object),
+    );
   });
 
   it('retorna partial e erro sanitizado quando uma conta falha', async () => {

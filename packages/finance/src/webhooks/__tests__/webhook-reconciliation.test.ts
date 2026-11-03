@@ -43,7 +43,8 @@ vi.mock('@alusa/database', () => ({
       updateMany: vi.fn(),
       count: vi.fn(),
     },
-    financeReconciliationIssue: { updateMany: vi.fn() },
+    financeReconciliationIssue: { findMany: vi.fn(), updateMany: vi.fn() },
+    financeReconciliationRun: { findFirst: vi.fn() },
     $queryRaw: vi.fn(),
   },
   loadAsaasCredentials: vi.fn(),
@@ -108,6 +109,8 @@ describe('webhook-reconciliation.service', () => {
   });
 
   beforeEach(() => {
+    vi.mocked(prisma.financeReconciliationIssue.findMany).mockResolvedValue([] as never);
+    vi.mocked(prisma.financeReconciliationRun.findFirst).mockResolvedValue(null as never);
     vi.clearAllMocks();
     vi.mocked(prisma.subscription.findMany).mockResolvedValue([]);
     vi.mocked(prisma.billingAgreement.findMany).mockResolvedValue([]);
@@ -260,6 +263,20 @@ describe('webhook-reconciliation.service', () => {
 
       expect(result.chargesWithMissingFinalStatus).toHaveLength(0);
     });
+
+    it('mantém ausência de evento como diagnóstico e não abre falha financeira sem divergência verificada', async () => {
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([{
+        id: 'cob-pending', asaasPaymentId: 'pay-pending', status: 'PENDENTE', vencimento: new Date(),
+      }] as never);
+      vi.mocked(prisma.charge.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.webhookAsaas.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.subscription.findMany).mockResolvedValue([]);
+
+      const result = await detectWebhookGaps('conta-1', { persistIssues: true });
+
+      expect(result.chargesWithMissingFinalStatus).toHaveLength(1);
+      expect(upsertFinanceReconciliationIssue).not.toHaveBeenCalled();
+    });
   });
 
   describe('reconcileWithAsaas', () => {
@@ -329,6 +346,212 @@ describe('webhook-reconciliation.service', () => {
         AND: expect.arrayContaining([expect.objectContaining({ status: { in: expect.any(Array) } })]),
       });
       expect(prisma.charge.findMany.mock.calls[1]?.[0].where).toMatchObject({ status: 'PAID' });
+    });
+
+    it('reserva chamadas para assinaturas quando há backlog de pagamentos e orçamento baixo', async () => {
+      vi.mocked(prisma.charge.findMany)
+        .mockResolvedValueOnce(Array.from({ length: 5 }, (_, index) => ({
+          id: `ch-open-${index + 1}`,
+          asaasPaymentId: `pay-open-${index + 1}`,
+          status: 'OPEN',
+          asaasStatus: 'PENDING',
+          externalReference: null,
+          lastProviderCheckAt: null,
+        })) as never)
+        .mockResolvedValueOnce([] as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValueOnce([] as never).mockResolvedValueOnce([] as never);
+      vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValue(null);
+      vi.mocked(prisma.subscription.findMany).mockResolvedValueOnce([{
+        id: 'sub-local-1', asaasSubscriptionId: 'sub-remote-1', status: 'ACTIVE', lastProviderCheckAt: null,
+      }] as never);
+      vi.mocked(getPayment).mockImplementation(async ({ paymentId }) => ({
+        id: paymentId, status: 'PENDING', value: 100, netValue: 100,
+      } as never));
+      vi.mocked(getSubscription).mockResolvedValue({
+        id: 'sub-remote-1', status: 'ACTIVE', value: 100,
+      } as never);
+
+      const result = await reconcileWithAsaas({ contaId: 'tenant-a', limit: 10, maxAsaasCalls: 2, dryRun: true });
+
+      expect(result.asaasCalls).toBe(2);
+      expect(result.checkedPayments).toBe(1);
+      expect(result.checkedSubscriptions).toBe(1);
+      expect(getPayment).toHaveBeenCalledTimes(1);
+      expect(getSubscription).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([false, true])('consumes reserved subscription evidence after fully retried payment GET exceeds the soft deadline (failure=%s)', async (paymentFails) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-11-03T04:00:00.000Z'));
+      vi.mocked(prisma.charge.findMany)
+        .mockResolvedValueOnce(Array.from({ length: 5 }, (_, index) => ({
+          id: `ch-slow-${index}`, asaasPaymentId: `pay-slow-${index}`, status: 'OPEN', asaasStatus: 'PENDING',
+          externalReference: null, lastProviderCheckAt: null,
+        })) as never)
+        .mockResolvedValueOnce([] as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValue(null);
+      vi.mocked(prisma.subscription.findMany).mockResolvedValueOnce([{
+        id: 'sub-slow-local', asaasSubscriptionId: 'sub-slow-remote', status: 'ACTIVE', lastProviderCheckAt: null,
+      }] as never);
+      const lastSeenAt = new Date('2026-11-01T00:00:00.000Z');
+      vi.mocked(prisma.financeReconciliationIssue.findMany).mockResolvedValueOnce([] as never).mockResolvedValueOnce([{
+        entityId: 'sub-slow-local', asaasId: 'sub-slow-remote', lastSeenAt,
+      }] as never);
+      // One SDK operation includes all its retries/backoff/Retry-After waits.
+      vi.mocked(getPayment).mockImplementation(async ({ paymentId }) => {
+        await new Promise((resolve) => setTimeout(resolve, 65_000));
+        if (paymentFails) throw new Error('SDK retries exhausted');
+        return { id: paymentId, status: 'PENDING', value: 100, netValue: 100 } as never;
+      });
+      vi.mocked(getSubscription).mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50_000));
+        return { id: 'sub-slow-remote', status: 'ACTIVE', value: 100 } as never;
+      });
+
+      try {
+        const pass = reconcileWithAsaas({
+          contaId: 'tenant-a', limit: 10, maxAsaasCalls: 10, maxDurationMs: 5_000,
+        });
+        await vi.advanceTimersByTimeAsync(70_000);
+        const result = await pass;
+
+        expect(result.asaasCalls).toBe(2);
+        expect(result.checkedPayments).toBe(1);
+        expect(result.checkedSubscriptions).toBe(1);
+        expect(result.budgetExhausted).toBe(true);
+        expect(getPayment).toHaveBeenCalledTimes(1);
+        expect(getSubscription).toHaveBeenCalledTimes(1);
+        expect(getSubscription.mock.invocationCallOrder[0]).toBeLessThan(getPayment.mock.invocationCallOrder[0]!);
+        expect(prisma.subscription.updateMany).toHaveBeenCalledWith({
+          where: { id: 'sub-slow-local', contaId: 'tenant-a', asaasSubscriptionId: 'sub-slow-remote', status: 'ACTIVE' },
+          data: { lastProviderCheckAt: expect.any(Date) },
+        });
+        expect(resolveFinanceReconciliationIssueByDedupe).toHaveBeenCalledWith(expect.objectContaining({
+          contaId: 'tenant-a', expectedLastSeenAt: lastSeenAt,
+          dedupeKey: 'WEBHOOK_LAG:SUBSCRIPTION:sub-slow-local',
+        }));
+        expect(handlePaymentWebhook).not.toHaveBeenCalled();
+        expect(handleSubscriptionWebhook).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('awaits a failed prefetched subscription and persists its attempt cursor after deadline exhaustion', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-11-03T04:00:00.000Z'));
+      vi.mocked(prisma.charge.findMany).mockResolvedValue(Array.from({ length: 2 }, (_, index) => ({
+        id: `ch-fail-${index}`, asaasPaymentId: `pay-fail-${index}`, status: 'OPEN', asaasStatus: 'PENDING',
+        externalReference: null, lastProviderCheckAt: null,
+      })) as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValue(null);
+      vi.mocked(prisma.subscription.findMany).mockResolvedValueOnce([{
+        id: 'sub-fail-local', asaasSubscriptionId: 'sub-fail-remote', status: 'ACTIVE', lastProviderCheckAt: null,
+      }] as never);
+      vi.mocked(getPayment).mockImplementation(async ({ paymentId }) => {
+        await new Promise((resolve) => setTimeout(resolve, 10_000));
+        return { id: paymentId, status: 'PENDING', value: 100, netValue: 100 } as never;
+      });
+      vi.mocked(getSubscription).mockImplementation(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 65_000));
+        throw new Error('subscription SDK retries exhausted');
+      });
+      try {
+        const pass = reconcileWithAsaas({ contaId: 'tenant-a', maxAsaasCalls: 10, maxDurationMs: 5_000 });
+        await vi.advanceTimersByTimeAsync(70_000);
+        const result = await pass;
+        expect(result.asaasCalls).toBe(2);
+        expect(result.checkedSubscriptions).toBe(1);
+        expect(result.budgetExhausted).toBe(true);
+        expect(result.errors).toEqual(expect.arrayContaining([expect.stringMatching(/^subscription:sub-fail-remote:/)]));
+        expect(getSubscription).toHaveBeenCalledTimes(1);
+        expect(prisma.subscription.updateMany).toHaveBeenCalledWith({
+          where: { id: 'sub-fail-local', contaId: 'tenant-a', asaasSubscriptionId: 'sub-fail-remote', status: 'ACTIVE' },
+          data: { lastProviderCheckAt: expect.any(Date) },
+        });
+        expect(resolveFinanceReconciliationIssueByDedupe).not.toHaveBeenCalledWith(expect.objectContaining({
+          dedupeKey: 'WEBHOOK_LAG:SUBSCRIPTION:sub-fail-local',
+        }));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('consumes the one reserved agreement GET after payments exhaust the deadline', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-11-03T04:00:00.000Z'));
+      vi.mocked(prisma.charge.findMany).mockResolvedValue(Array.from({ length: 3 }, (_, index) => ({
+        id: `ch-agreement-${index}`, asaasPaymentId: `pay-agreement-${index}`, status: 'OPEN', asaasStatus: 'PENDING',
+        externalReference: null, lastProviderCheckAt: null,
+      })) as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValue(null);
+      vi.mocked(prisma.billingAgreement.findMany).mockResolvedValueOnce([{
+        id: 'agreement-local', asaasSubscriptionId: 'agreement-remote', status: 'ACTIVE',
+        remoteStatus: 'ACTIVE', desiredValue: 100, confirmedValue: 100, lastReconciledAt: null,
+      }] as never);
+      vi.mocked(getSubscription).mockResolvedValue({ id: 'agreement-remote', status: 'ACTIVE', value: 120 } as never);
+      vi.mocked(getPayment).mockImplementation(async ({ paymentId }) => {
+        await new Promise((resolve) => setTimeout(resolve, 10_000));
+        return { id: paymentId, status: 'PENDING', value: 100, netValue: 100 } as never;
+      });
+      try {
+        const pass = reconcileWithAsaas({ contaId: 'tenant-a', maxAsaasCalls: 10, maxDurationMs: 5_000, dryRun: true });
+        await vi.advanceTimersByTimeAsync(15_000);
+        const result = await pass;
+        expect(result.asaasCalls).toBe(2);
+        expect(result.checkedSubscriptions).toBe(1);
+        expect(result.subscriptionDrift).toBe(1);
+        expect(result.budgetExhausted).toBe(true);
+        expect(getSubscription).toHaveBeenCalledWith({ apiKey: 'test-key', subscriptionId: 'agreement-remote' });
+        expect(handleSubscriptionWebhook).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('alternates a one-call budget using the last persisted tenant run', async () => {
+      vi.mocked(prisma.charge.findMany)
+        .mockResolvedValue([{
+          id: 'ch-fair', asaasPaymentId: 'pay-fair', status: 'OPEN', asaasStatus: 'PENDING',
+          externalReference: null, lastProviderCheckAt: null,
+        }] as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValue(null);
+      vi.mocked(prisma.subscription.findMany).mockResolvedValue([{
+        id: 'sub-fair-local', asaasSubscriptionId: 'sub-fair-remote', status: 'ACTIVE', lastProviderCheckAt: null,
+      }] as never);
+      vi.mocked(getPayment).mockImplementation(async ({ paymentId }) => ({
+        id: paymentId, status: 'PENDING', value: 100, netValue: 100,
+      } as never));
+      vi.mocked(getSubscription).mockResolvedValue({
+        id: 'sub-fair-remote', status: 'ACTIVE', value: 100,
+      } as never);
+      vi.mocked(prisma.financeReconciliationRun.findFirst)
+        .mockResolvedValueOnce({ checkedPayments: 1, checkedSubscriptions: 0 } as never)
+        .mockResolvedValueOnce({ checkedPayments: 0, checkedSubscriptions: 1 } as never);
+
+      vi.mocked(getSubscription).mockRejectedValueOnce(new Error('failed subscription attempt'));
+      const first = await reconcileWithAsaas({ contaId: 'tenant-a', limit: 10, maxAsaasCalls: 1 });
+      expect(first.checkedSubscriptions).toBe(1);
+      expect(first.checkedPayments).toBe(0);
+      expect(first.errors).toEqual(expect.arrayContaining([expect.stringMatching(/^subscription:sub-fair-remote:/)]));
+      expect(getPayment).not.toHaveBeenCalled();
+      expect(getSubscription).toHaveBeenCalledTimes(1);
+
+      vi.mocked(getPayment).mockClear();
+      vi.mocked(getSubscription).mockClear();
+      vi.mocked(getPayment).mockRejectedValueOnce(new Error('failed payment attempt'));
+      const second = await reconcileWithAsaas({ contaId: 'tenant-a', limit: 10, maxAsaasCalls: 1 });
+      expect(second.checkedPayments).toBe(1);
+      expect(second.checkedSubscriptions).toBe(0);
+      expect(prisma.financeReconciliationRun.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+        where: { contaId: 'tenant-a', completedAt: { not: null } },
+      }));
+      expect(getPayment).toHaveBeenCalledTimes(1);
+      expect(getSubscription).not.toHaveBeenCalled();
     });
 
     it('reconcilia charge avulsa em status não-final quando Asaas está pago', async () => {
@@ -415,10 +638,65 @@ describe('webhook-reconciliation.service', () => {
         asaasStatus: expect.anything(),
       }));
       expect(prisma.charge.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-        where: { id: 'ch-paid', contaId: 'conta-a' },
+        where: { id: 'ch-paid', contaId: 'conta-a', asaasPaymentId: 'pay-paid', status: 'PAID', asaasStatus: 'CONFIRMED' },
         data: expect.objectContaining({ lastProviderCheckAt: expect.any(Date), lastAsaasFetchAt: expect.any(Date) }),
       }));
       expect(handlePaymentWebhook).not.toHaveBeenCalled();
+    });
+
+    it('verifica WEBHOOK_LAG aberto para charge cancelada e fecha somente a observação lida', async () => {
+      const observedAt = new Date('2026-10-01T00:00:00.000Z');
+      vi.mocked(prisma.charge.findMany)
+        .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce([{
+          id: 'ch-canceled', asaasPaymentId: 'pay-canceled', status: 'CANCELED',
+          asaasStatus: 'DELETED', lastProviderCheckAt: null, externalReference: 'alusa:ch-canceled',
+        }] as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.financeReconciliationIssue.findMany).mockResolvedValue([{
+        entityId: 'ch-canceled', asaasId: 'pay-canceled', lastSeenAt: observedAt,
+      }] as never);
+      vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValue(null);
+      vi.mocked(getPayment).mockResolvedValue({ id: 'pay-canceled', status: 'DELETED', deleted: true, value: 50 } as never);
+
+      const result = await reconcileWithAsaas({ contaId: 'conta-a', limit: 10 });
+
+      expect(result.checkedPayments).toBe(1);
+      expect(result.paymentDrift).toBe(0);
+      expect(resolveFinanceReconciliationIssueByDedupe).toHaveBeenCalledWith(expect.objectContaining({
+        contaId: 'conta-a', dedupeKey: 'WEBHOOK_LAG:CHARGE:ch-canceled', expectedLastSeenAt: observedAt,
+      }));
+      expect(prisma.charge.findMany.mock.calls[2]?.[0].where).toMatchObject({
+        contaId: 'conta-a', id: { in: ['ch-canceled'] },
+      });
+    });
+
+    it('mantém WEBHOOK_LAG aberto quando o GET Asaas falha', async () => {
+      vi.mocked(prisma.charge.findMany)
+        .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce([{
+          id: 'ch-lag', asaasPaymentId: 'pay-lag', status: 'OPEN', asaasStatus: 'PENDING',
+          lastProviderCheckAt: null, externalReference: 'alusa:ch-lag',
+        }] as never);
+      vi.mocked(prisma.cobranca.findMany).mockResolvedValue([] as never);
+      vi.mocked(prisma.financeReconciliationIssue.findMany).mockResolvedValue([{
+        entityId: 'ch-lag', asaasId: 'pay-lag', lastSeenAt: new Date('2026-10-01T00:00:00.000Z'),
+      }] as never);
+      vi.mocked(prisma.webhookAsaas.findFirst).mockResolvedValue(null);
+      vi.mocked(getPayment).mockRejectedValue(new Error('provider unavailable'));
+
+      const result = await reconcileWithAsaas({ contaId: 'conta-a', limit: 10 });
+
+      expect(result.errors.some((error) => error.includes('payment:pay-lag:'))).toBe(true);
+      expect(resolveFinanceReconciliationIssueByDedupe).not.toHaveBeenCalledWith(expect.objectContaining({
+        dedupeKey: 'WEBHOOK_LAG:CHARGE:ch-lag',
+      }));
+      expect(prisma.charge.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 'ch-lag', contaId: 'conta-a', asaasPaymentId: 'pay-lag', status: 'OPEN', asaasStatus: 'PENDING' },
+        data: expect.objectContaining({ lastProviderCheckAt: expect.any(Date) }),
+      }));
     });
 
     it('não avança o cursor quando o handler local falha após consulta ao Asaas', async () => {
@@ -476,6 +754,33 @@ describe('webhook-reconciliation.service', () => {
       expect(prisma.subscription.updateMany).not.toHaveBeenCalled();
     });
 
+    it('não resolve lag de assinatura cujo asaasId observado não corresponde à assinatura local consultada', async () => {
+      const observedAt = new Date('2026-10-01T00:00:00.000Z');
+      vi.mocked(prisma.subscription.findMany)
+        .mockResolvedValueOnce([{
+          id: 'subscription-local', asaasSubscriptionId: 'sub-canonical', status: 'ACTIVE', lastProviderCheckAt: null,
+        }] as never)
+        .mockResolvedValueOnce([{
+          id: 'subscription-local', asaasSubscriptionId: 'sub-canonical', status: 'ACTIVE', lastProviderCheckAt: null,
+        }] as never);
+      vi.mocked(prisma.financeReconciliationIssue.findMany)
+        .mockResolvedValueOnce([] as never)
+        .mockResolvedValueOnce([{
+          entityId: 'subscription-local', asaasId: 'sub-other', lastSeenAt: observedAt,
+        }] as never);
+      vi.mocked(getSubscription).mockResolvedValue({ id: 'sub-canonical', status: 'ACTIVE' } as never);
+
+      const result = await reconcileWithAsaas({ contaId: 'conta-a', limit: 10 });
+
+      expect(result.checkedSubscriptions).toBe(1);
+      expect(resolveFinanceReconciliationIssueByDedupe).not.toHaveBeenCalledWith(expect.objectContaining({
+        dedupeKey: 'WEBHOOK_LAG:SUBSCRIPTION:subscription-local',
+      }));
+      expect(prisma.subscription.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: 'subscription-local', contaId: 'conta-a', asaasSubscriptionId: 'sub-canonical', status: 'ACTIVE' },
+      }));
+    });
+
     it('não chama Asaas quando webhook ainda está na fila', async () => {
       vi.mocked(prisma.charge.findMany).mockResolvedValue([
         {
@@ -490,7 +795,7 @@ describe('webhook-reconciliation.service', () => {
 
       const result = await reconcileWithAsaas({ contaId: 'conta-1', limit: 10 });
 
-      expect(result.checkedPayments).toBe(1);
+      expect(result.checkedPayments).toBe(0);
       expect(result.paymentDrift).toBe(0);
       expect(getPayment).not.toHaveBeenCalled();
       expect(handlePaymentWebhook).not.toHaveBeenCalled();
@@ -698,6 +1003,9 @@ describe('webhook-reconciliation.service', () => {
       expect(result.paymentDrift).toBe(0);
       expect(result.reconciledPayments).toBe(0);
       expect(handlePaymentWebhook).not.toHaveBeenCalled();
+      expect(resolveFinanceReconciliationIssueByDedupe).not.toHaveBeenCalledWith(expect.objectContaining({
+        dedupeKey: 'WEBHOOK_LAG:CHARGE:ch-1',
+      }));
       expect(resolveFinanceReconciliationIssueByDedupe).toHaveBeenCalledWith(expect.objectContaining({
         contaId: 'conta-1', dedupeKey: 'ASAAS_SNAPSHOT_STALE:CHARGE:ch-1',
       }));

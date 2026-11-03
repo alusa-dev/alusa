@@ -157,4 +157,34 @@ describe('resolveEventMapPaymentAtExpiry buyer identity', () => {
       }),
     }));
   });
+
+  it('persists stable exact identity for a multiple-customer ambiguity', async () => {
+    mocks.provider.listCustomers.mockResolvedValue({
+      offset: 0, limit: 100, totalCount: 2, hasMore: false,
+      data: [
+        { id: 'cus-expected-a', cpfCnpj: '12345678901' },
+        { id: 'cus-expected-b', cpfCnpj: '12345678901' },
+      ],
+    });
+
+    const result = await resolveEventMapPaymentAtExpiry({
+      contaId: 'conta-A', eventId: 'event-1', orderId: 'order-1',
+      now: new Date('2026-10-15T12:00:00Z'), paymentId: 'pay-paid-wrong-buyer',
+      paymentCreationUnresolved: false, paymentCreationUpdatedAt: new Date('2026-10-15T10:00:00Z'),
+      reservationId: 'reservation-1',
+    });
+
+    expect(result).toEqual({ decision: 'NOT_CANCELLABLE', paymentId: 'pay-paid-wrong-buyer' });
+    expect(mocks.upsertIssue).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-A', entityId: 'order-1', asaasId: 'pay-paid-wrong-buyer',
+      remoteStatus: 'BUYER_CUSTOMER_NOT_CONFIRMED',
+      metadata: expect.objectContaining({
+        reason: 'BUYER_CUSTOMER_NOT_CONFIRMED',
+        orderId: 'order-1', paymentId: 'pay-paid-wrong-buyer', externalReference,
+        lookupError: 'MULTIPLE_BUYER_CUSTOMERS',
+      }),
+    }));
+    expect(mocks.confirmPayment).not.toHaveBeenCalled();
+    expect(mocks.provider.deletePayment).not.toHaveBeenCalled();
+  });
 });
