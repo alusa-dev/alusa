@@ -42,7 +42,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await verifyPasswordChangeOtp({ userId: actor.userId, ...parsed.data });
+    const result = await verifyPasswordChangeOtp({ userId: actor.userId, contaId: actor.contaId, ...parsed.data });
     return NextResponse.json(result, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return otpErrorResponse(error, 'Não foi possível validar o código.', 'verify');

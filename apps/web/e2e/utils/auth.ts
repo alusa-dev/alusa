@@ -36,29 +36,30 @@ export async function seedAdminAndAuthenticate(page: Page, params: { email: stri
     },
   });
 
-  const user = await prisma.usuario.create({
-    data: {
-      contaId: conta.id,
-      nome: 'Admin E2E',
-      email: params.email,
-      senhaHash: 'hash_nao_usado_no_e2e',
-      role: 'ADMIN',
-      status: 'ATIVO',
-    },
-    select: { id: true },
+  const user = await prisma.$transaction(async (tx) => {
+    const created = await tx.usuario.create({
+      data: {
+        contaId: conta.id,
+        nome: 'Admin E2E',
+        email: params.email,
+        senhaHash: 'hash_nao_usado_no_e2e',
+        role: 'ADMIN',
+        status: 'ATIVO',
+      },
+      select: { id: true },
+    });
+    await tx.usuarioConta.create({
+      data: {
+        usuarioId: created.id,
+        contaId: conta.id,
+        role: 'ADMIN',
+        status: 'ATIVO',
+        lastAccessedAt: new Date(),
+      },
+    });
+    await tx.conta.update({ where: { id: conta.id }, data: { ownerUserId: created.id } });
+    return created;
   });
-
-  await prisma.usuarioConta.create({
-    data: {
-      usuarioId: user.id,
-      contaId: conta.id,
-      role: 'ADMIN',
-      status: 'ATIVO',
-      lastAccessedAt: new Date(),
-    },
-  });
-
-  await prisma.conta.update({ where: { id: conta.id }, data: { ownerUserId: user.id } });
 
   const secret = process.env.NEXTAUTH_SECRET;
   if (!secret) throw new Error('NEXTAUTH_SECRET ausente no ambiente de teste');

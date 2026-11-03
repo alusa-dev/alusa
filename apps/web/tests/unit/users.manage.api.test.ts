@@ -15,6 +15,7 @@ const { prismaMock, removeManagedUserAccessMock } = vi.hoisted(() => ({
       findFirst: vi.fn(),
       updateMany: vi.fn(),
     },
+    usuarioConta: { findUnique: vi.fn(), updateMany: vi.fn() },
     conta: {
       findUnique: vi.fn(),
     },
@@ -44,6 +45,7 @@ describe('/api/users/[id]', () => {
       user: { id: 'admin-1', role: 'ADMIN', contaId: 'conta-1' },
     } as never);
     prismaMock.usuario.findUnique.mockResolvedValue({ contaId: 'conta-1', id: 'admin-1' });
+    prismaMock.usuarioConta.findUnique.mockResolvedValue(null);
   });
 
   it('bloqueia remoção do próprio acesso', async () => {
@@ -56,7 +58,9 @@ describe('/api/users/[id]', () => {
   });
 
   it('suspende somente o acesso do usuário alvo na conta autenticada', async () => {
-    prismaMock.usuario.findFirst.mockResolvedValueOnce({ id: 'user-2' });
+    prismaMock.usuarioConta.findUnique.mockResolvedValueOnce({
+      role: 'RECEPCAO', status: 'ATIVO', usuario: { id: 'user-2', nome: 'User', email: 'user@example.com', status: 'ATIVO' },
+    });
     prismaMock.conta.findUnique.mockResolvedValueOnce({ ownerUserId: 'owner-1' });
     removeManagedUserAccessMock.mockResolvedValueOnce({
       id: 'user-2',
@@ -80,7 +84,9 @@ describe('/api/users/[id]', () => {
   });
 
   it('bloqueia suspensão do owner', async () => {
-    prismaMock.usuario.findFirst.mockResolvedValueOnce({ id: 'owner-1', nome: 'Owner', email: 'owner@example.com', role: 'ADMIN', status: 'ATIVO' });
+    prismaMock.usuarioConta.findUnique.mockResolvedValueOnce({
+      role: 'ADMIN', status: 'ATIVO', usuario: { id: 'owner-1', nome: 'Owner', email: 'owner@example.com', status: 'ATIVO' },
+    });
     prismaMock.conta.findUnique.mockResolvedValueOnce({ ownerUserId: 'owner-1' });
 
     const response = await DELETE(new Request('http://x/api/users/owner-1', { method: 'DELETE' }), {
@@ -92,7 +98,7 @@ describe('/api/users/[id]', () => {
   });
 
   it('não localiza usuário que não pertence à conta da sessão', async () => {
-    prismaMock.usuario.findFirst.mockResolvedValueOnce(null);
+    prismaMock.usuarioConta.findUnique.mockResolvedValueOnce(null);
 
     const response = await DELETE(new Request('http://x/api/users/user-from-other-school', { method: 'DELETE' }), {
       params: { id: 'user-from-other-school' },
@@ -103,12 +109,10 @@ describe('/api/users/[id]', () => {
   });
 
   it('bloqueia auto-inativação via PATCH', async () => {
-    prismaMock.usuario.findFirst.mockResolvedValueOnce({
-      id: 'admin-1',
-      nome: 'Admin',
-      email: 'admin@example.com',
-      role: 'ADMIN',
-      status: 'ATIVO',
+    prismaMock.usuarioConta.findUnique.mockResolvedValueOnce({
+      role: 'ADMIN', status: 'ATIVO', usuario: {
+        id: 'admin-1', nome: 'Admin', email: 'admin@example.com', status: 'ATIVO',
+      },
     });
 
     const response = await PATCH(

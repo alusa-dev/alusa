@@ -90,87 +90,97 @@ export async function createInvite(
   const normalizedEmail = normalizeEmail(email);
   if (role === Role.ADMIN) throw new ForbiddenRoleError();
 
-  // Descobrir contaId caso não informado
-  let targetContaId = contaId || null;
-  if (!targetContaId) {
-    const inviter = await prisma.usuario.findUnique({ where: { id: invitedById } });
-    targetContaId = inviter?.contaId ?? null;
-  }
-  // Para coerência multi-tenant e do índice único, novas criações DEVEM carregar contaId
+  const targetContaId = contaId?.trim();
   if (!targetContaId) throw new MissingContaError();
-
-  if (role === Role.RESPONSAVEL) {
-    const studentIds = normalizeAlunoIds(metadata as Prisma.JsonValue | undefined);
-    if (!studentIds.length) throw new InvalidInviteError();
-    const linkedStudents = await prisma.alunoResponsavel.findMany({
-      where: { contaId: targetContaId, alunoId: { in: studentIds } },
-      select: { alunoId: true },
-      distinct: ['alunoId'],
-    });
-    if (linkedStudents.length > 0) throw new StudentAlreadyLinkedError();
-  }
-
   const now = new Date();
-  // Expiração é terminal; limpar o estado antes de checar/reemitir dentro do tenant.
-  await prisma.invite.updateMany({
-    where: { contaId: targetContaId, status: 'PENDING', expiresAt: { lte: now } },
-    data: { status: 'EXPIRED' },
-  });
-
-  // Um usuário global pode receber acesso a várias escolas, mas não duas vezes à mesma.
-  if (normalizedEmail) {
-    const existingUser = await prisma.usuario.findFirst({
-      where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
-      select: { id: true, contaId: true },
-    });
-    if (existingUser) {
-      if (existingUser.contaId === targetContaId) throw new UserAlreadyLinkedError();
-      const membership = await prisma.usuarioConta.findUnique({
-        where: { usuarioId_contaId: { usuarioId: existingUser.id, contaId: targetContaId } },
-        select: { id: true, status: true },
-      });
-      if (membership?.status === 'ATIVO') throw new UserAlreadyLinkedError();
-    }
-
-    const dup = await prisma.invite.findFirst({
-      where: {
-        contaId: targetContaId,
-        email: { equals: normalizedEmail, mode: 'insensitive' },
-        status: 'PENDING',
-        expiresAt: { gt: now },
-      },
-    });
-    if (dup) throw new DuplicateInviteError();
-  } else if (role === Role.RESPONSAVEL && metadata) {
-    const pendingResponsavelInvites = await prisma.invite.findMany({
-      where: { contaId: targetContaId, role: Role.RESPONSAVEL, status: 'PENDING' },
-      select: { id: true, metadata: true },
-    });
-
-    const duplicatedInvite = pendingResponsavelInvites.some((invite) =>
-      hasSameResponsavelInviteTarget(invite.metadata, metadata),
-    );
-
-    if (duplicatedInvite) throw new DuplicateInviteError();
-  }
-
-  const expiresAt = new Date(now.getTime() + 72 * 60 * 60 * 1000);
-  const token = randomUUID();
+  const inviteIdentity = normalizedEmail ?? `${role}:${normalizeAlunoIds(metadata as Prisma.JsonValue | undefined).join(',')}`;
+  const lockKey = `invite:${targetContaId}:${inviteIdentity}`;
 
   try {
-    const created = await prisma.invite.create({
-      data: {
-        contaId: targetContaId,
-        email: normalizedEmail,
-        role,
-        token,
-        invitedById,
-        status: 'PENDING',
-        expiresAt,
-        metadata,
+    return await prisma.$transaction(async (tx) => {
+      // Serialize duplicate checks for the logical invite identity (per tenant).
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+
+      const inviterMembership = await tx.usuarioConta.findFirst({
+        where: {
+          usuarioId: invitedById,
+          contaId: targetContaId,
+          status: 'ATIVO',
+          usuario: { status: 'ATIVO' },
+          conta: { status: 'ATIVO', deletedAt: null },
+        },
+        select: { id: true },
+      });
+      if (!inviterMembership) throw new MissingContaError();
+
+      if (role === Role.RESPONSAVEL) {
+        const studentIds = normalizeAlunoIds(metadata as Prisma.JsonValue | undefined);
+        if (!studentIds.length) throw new InvalidInviteError();
+        const linkedStudents = await tx.alunoResponsavel.findMany({
+          where: { contaId: targetContaId, alunoId: { in: studentIds } },
+          select: { alunoId: true },
+          distinct: ['alunoId'],
+        });
+        if (linkedStudents.length > 0) throw new StudentAlreadyLinkedError();
       }
+
+      // Expiração é terminal; limpar o estado antes de checar/reemitir dentro do tenant.
+      await tx.invite.updateMany({
+        where: { contaId: targetContaId, status: 'PENDING', expiresAt: { lte: now } },
+        data: { status: 'EXPIRED' },
+      });
+
+      // Um usuário global pode receber acesso a várias escolas, mas não duas vezes à mesma.
+      if (normalizedEmail) {
+        const existingUser = await tx.usuario.findFirst({
+          where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
+          select: { id: true },
+        });
+        if (existingUser) {
+          const membership = await tx.usuarioConta.findUnique({
+            where: { usuarioId_contaId: { usuarioId: existingUser.id, contaId: targetContaId } },
+            select: { id: true, status: true },
+          });
+          if (membership?.status === 'ATIVO') throw new UserAlreadyLinkedError();
+        }
+
+        const duplicate = await tx.invite.findFirst({
+          where: {
+            contaId: targetContaId,
+            email: { equals: normalizedEmail, mode: 'insensitive' },
+            status: 'PENDING',
+            expiresAt: { gt: now },
+          },
+        });
+        if (duplicate) throw new DuplicateInviteError();
+      } else if (role === Role.RESPONSAVEL && metadata) {
+        const pendingResponsavelInvites = await tx.invite.findMany({
+          where: { contaId: targetContaId, role: Role.RESPONSAVEL, status: 'PENDING' },
+          select: { id: true, metadata: true },
+        });
+
+        const duplicatedInvite = pendingResponsavelInvites.some((invite) =>
+          hasSameResponsavelInviteTarget(invite.metadata, metadata),
+        );
+
+        if (duplicatedInvite) throw new DuplicateInviteError();
+      }
+
+      const expiresAt = new Date(now.getTime() + 72 * 60 * 60 * 1000);
+      const token = randomUUID();
+      return tx.invite.create({
+        data: {
+          contaId: targetContaId,
+          email: normalizedEmail,
+          role,
+          token,
+          invitedById,
+          status: 'PENDING',
+          expiresAt,
+          metadata,
+        },
+      });
     });
-    return created;
   } catch (error) {
     // Protege contra duas criações concorrentes do mesmo convite.
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
@@ -197,8 +207,23 @@ export async function acceptInvite(
       if (!invite || invite.status !== 'PENDING') throw new InvalidInviteError();
       if (invite.expiresAt <= now) throw new ExpiredInviteError();
 
-      const contaId = invite.contaId ?? (await tx.usuario.findUnique({ where: { id: invite.invitedById }, select: { contaId: true } }))?.contaId;
+      const contaId = invite.contaId;
       if (!contaId) throw new InvalidInviteError();
+      const conta = await tx.conta.findFirst({
+        where: { id: contaId, status: 'ATIVO', deletedAt: null },
+        select: { id: true },
+      });
+      if (!conta) throw new InvalidInviteError();
+      const inviterMembership = await tx.usuarioConta.findFirst({
+        where: {
+          usuarioId: invite.invitedById,
+          contaId,
+          status: 'ATIVO',
+          usuario: { status: 'ATIVO' },
+        },
+        select: { id: true },
+      });
+      if (!inviterMembership) throw new InvalidInviteError();
       const invitedEmail = normalizeEmail(invite.email);
       if (invitedEmail && finalEmail !== invitedEmail) throw new InvalidInviteError();
       const acceptedEmail = invitedEmail ?? finalEmail;
@@ -212,7 +237,6 @@ export async function acceptInvite(
       if (authenticatedUserId && !user) throw new InvalidInviteError();
       if (user && String(user.status).toUpperCase() !== 'ATIVO') throw new UserInactiveError();
       if (user && !authenticatedUserId) throw new ExistingAccountAuthenticationRequiredError();
-      let isNewUser = false;
       if (!user) {
         user = await tx.usuario.create({
           data: {
@@ -224,18 +248,12 @@ export async function acceptInvite(
             ...(guardianProfile?.telefone ? { telefone: guardianProfile.telefone } : {}),
           },
         });
-        isNewUser = true;
       }
 
       const existingMembership = await tx.usuarioConta.findUnique({
         where: { usuarioId_contaId: { usuarioId: user.id, contaId } },
       });
-      if (
-        existingMembership?.status === 'ATIVO' ||
-        (!isNewUser && user.contaId === contaId && !existingMembership)
-      ) {
-        throw new UserAlreadyLinkedError();
-      }
+      if (existingMembership?.status === 'ATIVO') throw new UserAlreadyLinkedError();
 
       if (role === Role.RESPONSAVEL) {
         if (!guardianProfile?.cpf || !guardianProfile.telefone) throw new MissingGuardianDataError();

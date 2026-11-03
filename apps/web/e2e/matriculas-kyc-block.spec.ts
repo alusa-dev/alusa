@@ -15,20 +15,22 @@ async function seedAndAuthenticate(page: Parameters<Parameters<typeof test>[1]>[
     select: { id: true },
   });
 
-  const usuario = await prisma.usuario.create({
-    data: {
-      contaId: conta.id,
-      nome: 'Admin Teste',
-      email: 'admin@example.com',
-      senhaHash: 'hash_nao_usado_no_e2e',
-      role: 'ADMIN',
-    },
-    select: { id: true, email: true, nome: true, role: true, contaId: true },
-  });
-
-  await prisma.conta.update({
-    where: { id: conta.id },
-    data: { ownerUserId: usuario.id },
+  const usuario = await prisma.$transaction(async (tx) => {
+    const created = await tx.usuario.create({
+      data: {
+        contaId: conta.id,
+        nome: 'Admin Teste',
+        email: 'admin@example.com',
+        senhaHash: 'hash_nao_usado_no_e2e',
+        role: 'ADMIN',
+      },
+      select: { id: true, email: true, nome: true, role: true, contaId: true },
+    });
+    await tx.usuarioConta.create({
+      data: { usuarioId: created.id, contaId: conta.id, role: 'ADMIN', status: 'ATIVO' },
+    });
+    await tx.conta.update({ where: { id: conta.id }, data: { ownerUserId: created.id } });
+    return created;
   });
 
   const secret = process.env.NEXTAUTH_SECRET;

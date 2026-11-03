@@ -22,6 +22,7 @@ const {
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    usuarioConta: { findFirst: vi.fn() },
     $transaction: vi.fn(),
   },
   auditRecordMock: vi.fn(),
@@ -75,12 +76,13 @@ function buildRequest(body: unknown, origin = 'http://localhost:3000') {
 describe('PATCH /api/users/me/password', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getServerSessionMock.mockResolvedValue({ user: { id: 'user-1' } });
+    getServerSessionMock.mockResolvedValue({ user: { id: 'user-1', contaId: 'conta-1' } });
     rateLimitAsyncMock.mockResolvedValue({ ok: true, remaining: 9, resetAt: Date.now() });
     prismaMock.usuario.findUnique.mockResolvedValue({
       senhaHash: 'old-hash',
-      contaId: 'conta-1',
+      status: 'ATIVO',
     });
+    prismaMock.usuarioConta.findFirst.mockResolvedValue({ contaId: 'conta-1' });
     prismaMock.usuario.update.mockResolvedValue({ id: 'user-1' });
     prismaMock.$transaction.mockImplementation(async (callback: (_tx: typeof prismaMock) => unknown) => callback(prismaMock));
     comparePasswordMock.mockResolvedValue(true);

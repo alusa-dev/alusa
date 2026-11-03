@@ -151,6 +151,9 @@ export async function POST(req: Request) {
     } catch (e: unknown) {
       const msg = (e instanceof Error) ? e.message : 'Erro ao criar convite';
       const normalizedMessage = msg.toLocaleLowerCase('pt-BR');
+      if (e instanceof InviteUserService.MissingContaError) {
+        return NextResponse.json({ error: msg }, { status: 403 });
+      }
       if (e instanceof InviteUserService.StudentAlreadyLinkedError) {
         return NextResponse.json({ error: msg, code: 'STUDENT_ALREADY_LINKED' }, { status: 409 });
       }

@@ -79,6 +79,11 @@ export async function createTestInvite(input: { email: string; role: Role }) {
         status: 'ATIVO',
       },
     });
+    await Promise.all([owner, admin].map((usuario) => tx.usuarioConta.upsert({
+      where: { usuarioId_contaId: { usuarioId: usuario.id, contaId: conta.id } },
+      update: { role: usuario.role, status: usuario.status },
+      create: { usuarioId: usuario.id, contaId: conta.id, role: usuario.role, status: usuario.status },
+    })));
 
     return tx.invite.create({
       data: {

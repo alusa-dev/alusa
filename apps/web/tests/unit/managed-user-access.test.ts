@@ -7,7 +7,7 @@ type MembershipUpsertArgs = {
   create: MembershipRow;
 };
 
-const { prismaMock, transactionMock, membershipUpsertMock, auditCreateMock, membershipState } = vi.hoisted(() => {
+const { prismaMock, transactionMock, membershipUpsertMock, membershipUpdateManyMock, auditCreateMock, membershipState } = vi.hoisted(() => {
   const membershipState = new Map<string, MembershipRow>();
   const membershipUpsertMock = vi.fn(async (args: MembershipUpsertArgs) => {
     const { usuarioId, contaId } = args.where.usuarioId_contaId;
@@ -16,12 +16,25 @@ const { prismaMock, transactionMock, membershipUpsertMock, auditCreateMock, memb
     membershipState.set(key, { ...(current ?? args.create), ...args.update });
     return membershipState.get(key);
   });
+  const membershipUpdateManyMock = vi.fn(async (args: { where: { usuarioId: string; contaId: string }; data: { status: string } }) => {
+    const key = `${args.where.usuarioId}:${args.where.contaId}`;
+    const current = membershipState.get(key);
+    if (!current) return { count: 0 };
+    membershipState.set(key, { ...current, ...args.data });
+    return { count: 1 };
+  });
+  const userUpdateManyMock = vi.fn(async (args?: { where?: { id?: string; acessosConta?: { some?: { contaId?: string; status?: string } } } }) => {
+    const scope = args?.where?.acessosConta?.some;
+    if (scope && membershipState.get(`${args?.where?.id}:${scope.contaId}`)?.status !== scope.status) return { count: 0 };
+    return { count: 1 };
+  });
   const auditCreateMock = vi.fn();
   const transactionMock = vi.fn(async (callback: (tx: unknown) => Promise<unknown>) => {
     const snapshot = new Map(membershipState);
     try {
       return await callback({
-        usuarioConta: { upsert: membershipUpsertMock },
+        usuarioConta: { upsert: membershipUpsertMock, updateMany: membershipUpdateManyMock },
+        usuario: { updateMany: userUpdateManyMock },
         auditLog: { create: auditCreateMock },
       });
     } catch (error) {
@@ -32,6 +45,7 @@ const { prismaMock, transactionMock, membershipUpsertMock, auditCreateMock, memb
   });
   return {
     membershipUpsertMock,
+    membershipUpdateManyMock,
     auditCreateMock,
     transactionMock,
     membershipState,
@@ -50,9 +64,9 @@ const { prismaMock, transactionMock, membershipUpsertMock, auditCreateMock, memb
           if (!row || (where.status && row.status !== where.status)) return null;
           return { ...row, conta: { status: 'ATIVO', deletedAt: null } };
         }),
-        updateMany: vi.fn(),
+        updateMany: membershipUpdateManyMock,
       },
-      usuario: { findFirst: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn(), delete: vi.fn() },
+      usuario: { findFirst: vi.fn(), findUnique: vi.fn(), updateMany: userUpdateManyMock, delete: vi.fn() },
       colaborador: { updateMany: vi.fn() },
       responsavel: { updateMany: vi.fn() },
       aluno: { updateMany: vi.fn() },
@@ -79,7 +93,6 @@ describe('removeManagedUserAccess', () => {
     auditCreateMock.mockResolvedValue({});
     prismaMock.usuario.findFirst.mockResolvedValue(user);
     prismaMock.usuario.findUnique.mockResolvedValue({ ...user, emailVerifiedAt: null, sessionVersion: 1 });
-    prismaMock.usuarioConta.updateMany.mockResolvedValue({ count: 1 });
   });
 
   it('suspende a membership sem chamar operações que desvinculem relações ou excluam a identidade', async () => {
@@ -160,18 +173,29 @@ describe('removeManagedUserAccess', () => {
   });
 
   it('reativa o acesso da escola pelo PATCH autorizado existente', async () => {
+    membershipState.set(`${user.id}:school-a`, { usuarioId: user.id, contaId: 'school-a', role: 'PROFESSOR', status: 'INATIVO' });
     const updated = await updateManagedUser({
       userId: user.id,
       contaId: 'school-a',
-      viaMembership: true,
-      data: { status: 'ATIVO' },
       status: 'ATIVO',
     });
 
     expect(updated).toBe(true);
-    expect(prismaMock.usuarioConta.updateMany).toHaveBeenCalledWith({
+    expect(membershipUpdateManyMock).toHaveBeenCalledWith({
       where: { usuarioId: user.id, contaId: 'school-a' },
       data: { status: 'ATIVO' },
+    });
+  });
+
+  it('não permite que membership inativa altere nome global da identidade', async () => {
+    membershipState.set(`${user.id}:school-a`, { usuarioId: user.id, contaId: 'school-a', role: 'PROFESSOR', status: 'INATIVO' });
+
+    const updated = await updateManagedUser({ userId: user.id, contaId: 'school-a', name: 'Nome alterado' });
+
+    expect(updated).toBe(false);
+    expect(prismaMock.usuario.updateMany).toHaveBeenCalledWith({
+      where: { id: user.id, acessosConta: { some: { contaId: 'school-a', status: 'ATIVO' } } },
+      data: { nome: 'Nome alterado' },
     });
   });
 });

@@ -292,7 +292,6 @@ describe('verifyEmailByToken', () => {
 
     usuarioFindFirstMock.mockResolvedValueOnce({
       id: 'user_reset',
-      contaId: 'conta_reset',
       email: 'reset@example.com',
     });
     usuarioFindUniqueMock.mockResolvedValueOnce({
@@ -350,7 +349,7 @@ describe('verifyEmailByToken', () => {
     usuarioFindFirstMock.mockResolvedValueOnce({
       id: 'user_5',
       contaId: 'conta_5',
-      conta: { ownerUserId: 'user_5' },
+      conta: { id: 'conta_5', ownerUserId: 'user_5' },
     });
     createAuthActionTokenMock.mockResolvedValueOnce({
       token: 'plain-token-2',
@@ -387,13 +386,16 @@ describe('verifyEmailByToken', () => {
     expect(createAuthActionTokenMock).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'ACCOUNT_REACTIVATION', userId: 'user_5' }),
     );
+    expect(usuarioFindFirstMock).toHaveBeenCalledWith(expect.objectContaining({
+      select: expect.objectContaining({ contaId: true, conta: { select: { id: true, ownerUserId: true } } }),
+    }));
   });
 
   it('não emite reativação para usuário que não é proprietário da conta', async () => {
     usuarioFindFirstMock.mockResolvedValueOnce({
       id: 'user_member',
       contaId: 'conta_5',
-      conta: { ownerUserId: 'user_owner' },
+      conta: { id: 'conta_5', ownerUserId: 'user_owner' },
     });
 
     const { sendAccountReactivationForEmail } = await import('@/lib/auth-email-flow');

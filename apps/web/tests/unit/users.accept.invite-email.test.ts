@@ -31,6 +31,7 @@ const { prismaMock } = vi.hoisted(() => ({
     },
     usuarioConta: {
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
     },
   },
 }));
@@ -74,9 +75,11 @@ describe('/api/users/accept', () => {
       status: 'PENDING',
       expiresAt: new Date(Date.now() + 60_000),
       contaId: 'conta-1',
+      invitedById: 'admin-1',
     });
     prismaMock.usuario.findFirst.mockResolvedValue(null);
     prismaMock.usuarioConta.findUnique.mockResolvedValue(null);
+    prismaMock.usuarioConta.findFirst.mockResolvedValue({ id: 'admin-membership-1' });
     acceptInviteMock.mockResolvedValue({
       id: 'user-1',
       email: 'responsavel@example.com',

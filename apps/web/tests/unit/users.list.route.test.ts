@@ -6,10 +6,8 @@ vi.mock('next-auth', () => ({
 
 const { prismaMock } = vi.hoisted(() => ({
   prismaMock: {
-    usuario: {
-      findUnique: vi.fn(),
-      findMany: vi.fn(),
-    },
+    usuario: { findUnique: vi.fn(), findMany: vi.fn() },
+    usuarioConta: { findMany: vi.fn() },
     conta: {
       findUnique: vi.fn(),
     },
@@ -26,6 +24,7 @@ vi.mock('@/lib/prisma', () => ({
 
 import { getServerSession } from 'next-auth';
 import { GET } from '@/app/api/users/list/route';
+import { listManagedUsers } from '@/src/server/users/user-management.service';
 
 describe('GET /api/users/list', () => {
   beforeEach(() => {
@@ -50,24 +49,18 @@ describe('GET /api/users/list', () => {
     vi.mocked(getServerSession).mockResolvedValueOnce({
       user: { id: 'user-1', role: 'ADMIN', contaId: 'conta-1' },
     } as never);
-    prismaMock.usuario.findUnique.mockResolvedValueOnce({ contaId: 'conta-1' });
     prismaMock.conta.findUnique.mockResolvedValueOnce({ ownerUserId: 'owner-1' });
-    prismaMock.usuario.findMany.mockResolvedValueOnce([
+    prismaMock.usuarioConta.findMany.mockResolvedValueOnce([
       {
-        id: 'user-1',
-        nome: 'Admin',
-        email: 'admin@example.com',
-        role: 'ADMIN',
-        status: 'ATIVO',
-        createdAt: new Date('2025-01-01T00:00:00.000Z'),
+        usuarioId: 'user-1', role: 'ADMIN', status: 'ATIVO', createdAt: new Date('2025-01-01T00:00:00.000Z'),
+        usuario: { id: 'user-1', nome: 'Admin', email: 'admin@example.com', status: 'ATIVO', createdAt: new Date('2025-01-01T00:00:00.000Z') },
       },
       {
-        id: 'user-2',
-        nome: 'Removido',
-        email: 'removed-user+user-2@alusa.invalid',
-        role: 'RECEPCAO',
-        status: 'INATIVO',
-        createdAt: new Date('2025-01-02T00:00:00.000Z'),
+        usuarioId: 'user-2', role: 'RECEPCAO', status: 'INATIVO', createdAt: new Date('2025-01-02T00:00:00.000Z'),
+        usuario: {
+          id: 'user-2', nome: 'Removido', email: 'removed-user+user-2@alusa.invalid', status: 'ATIVO',
+          createdAt: new Date('2025-01-02T00:00:00.000Z'),
+        },
       },
     ]);
     prismaMock.invite.findMany.mockResolvedValueOnce([{ acceptedByUserId: 'user-1' }]);
@@ -92,5 +85,12 @@ describe('GET /api/users/list', () => {
       },
     });
     expect(response.headers.get('cache-control')).toContain('no-store');
+  });
+
+  it('não deriva a escola de Usuario.contaId quando não há conta ativa na sessão', async () => {
+    const result = await listManagedUsers({ sessionUserId: 'user-1', sessionContaId: null, isTest: false });
+
+    expect(result).toBeNull();
+    expect(prismaMock.usuario.findUnique).not.toHaveBeenCalled();
   });
 });

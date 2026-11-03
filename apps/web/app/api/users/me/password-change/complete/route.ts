@@ -51,7 +51,8 @@ export async function POST(req: Request) {
 
   const session = await getServerSession(authOptions).catch(() => null);
   const userId = await resolveUserId(session?.user?.id);
-  if (!userId) {
+  const contaId = session?.user?.contaId?.trim();
+  if (!userId || !contaId) {
     return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 });
   }
 
@@ -69,6 +70,7 @@ export async function POST(req: Request) {
   try {
     const result = await completePasswordChange({
       userId,
+      contaId,
       ...parsed.data,
       requestedByIp: ip,
       requestedByUserAgent: req.headers.get('user-agent'),

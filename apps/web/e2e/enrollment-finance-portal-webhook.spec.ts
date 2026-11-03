@@ -21,11 +21,17 @@ test.describe('fluxo acadêmico-financeiro até o portal', () => {
     const suffix = randomUUID();
     const webhookToken = `webhook-${suffix}`;
 
-    const responsavelUser = await prisma.usuario.create({
-      data: {
-        contaId, nome: 'Responsável E2E', email: `resp-${suffix}@example.com`,
-        senhaHash: 'not-used', role: 'RESPONSAVEL', status: 'ATIVO',
-      }, select: { id: true },
+    const responsavelUser = await prisma.$transaction(async (tx) => {
+      const user = await tx.usuario.create({
+        data: {
+          contaId, nome: 'Responsável E2E', email: `resp-${suffix}@example.com`,
+          senhaHash: 'not-used', role: 'RESPONSAVEL', status: 'ATIVO',
+        }, select: { id: true },
+      });
+      await tx.usuarioConta.create({
+        data: { usuarioId: user.id, contaId, role: 'RESPONSAVEL', status: 'ATIVO' },
+      });
+      return user;
     });
     const responsavel = await prisma.responsavel.create({
       data: {

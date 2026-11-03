@@ -102,58 +102,62 @@ export function mapUserWithConta(user: ProfileWithContaEntity) {
 }
 
 async function ensureTestUserId() {
-  const conta = await prisma.conta.upsert({
-    where: { id: 'conta-default' },
-    update: {},
-    create: {
-      id: 'conta-default',
-      nome: 'Alusa Demo',
-      cpfCnpj: '00000000000191',
-      status: 'ATIVO',
-    } as Prisma.ContaUncheckedCreateInput,
+  return prisma.$transaction(async (tx) => {
+    const conta = await tx.conta.upsert({
+      where: { id: 'conta-default' },
+      update: {},
+      create: {
+        id: 'conta-default',
+        nome: 'Alusa Demo',
+        cpfCnpj: '00000000000191',
+        status: 'ATIVO',
+      } as Prisma.ContaUncheckedCreateInput,
+    });
+
+    const owner = await tx.usuario.upsert({
+      where: { email: 'owner+users-me@example.com' },
+      update: { contaId: conta.id, role: 'ADMIN', status: 'ATIVO' },
+      create: {
+        id: 'owner-users-me',
+        contaId: conta.id,
+        nome: 'Owner Users Me',
+        email: 'owner+users-me@example.com',
+        senhaHash: 'x',
+        role: 'ADMIN',
+        status: 'ATIVO',
+        locale: PROFILE_LOCALE_VALUES[0],
+        theme: PROFILE_THEME_VALUES[0],
+      },
+      select: { id: true, role: true, status: true },
+    });
+
+    const admin = await tx.usuario.upsert({
+      where: { email: 'admin@example.com' },
+      update: { contaId: conta.id, role: 'ADMIN', status: 'ATIVO' },
+      create: {
+        contaId: conta.id,
+        nome: 'Admin Test',
+        email: 'admin@example.com',
+        telefone: null,
+        foto: null,
+        bio: null,
+        senhaHash: 'test',
+        role: 'ADMIN',
+        status: 'ATIVO',
+        locale: PROFILE_LOCALE_VALUES[0],
+        theme: PROFILE_THEME_VALUES[0],
+      },
+      select: { id: true, role: true, status: true },
+    });
+    await tx.conta.update({ where: { id: conta.id }, data: { ownerUserId: owner.id } });
+    await Promise.all([owner, admin].map((usuario) => tx.usuarioConta.upsert({
+      where: { usuarioId_contaId: { usuarioId: usuario.id, contaId: conta.id } },
+      update: { role: usuario.role, status: usuario.status },
+      create: { usuarioId: usuario.id, contaId: conta.id, role: usuario.role, status: usuario.status },
+    })));
+
+    return admin.id;
   });
-
-  const owner = await prisma.usuario.upsert({
-    where: { email: 'owner+users-me@example.com' },
-    update: {},
-    create: {
-      id: 'owner-users-me',
-      contaId: conta.id,
-      nome: 'Owner Users Me',
-      email: 'owner+users-me@example.com',
-      senhaHash: 'x',
-      role: 'ADMIN',
-      status: 'ATIVO',
-      locale: PROFILE_LOCALE_VALUES[0],
-      theme: PROFILE_THEME_VALUES[0],
-    },
-    select: { id: true },
-  });
-
-  if (conta.ownerUserId !== owner.id) {
-    await prisma.conta.update({ where: { id: conta.id }, data: { ownerUserId: owner.id } });
-  }
-
-  const admin = await prisma.usuario.upsert({
-    where: { email: 'admin@example.com' },
-    update: {},
-    create: {
-      contaId: conta.id,
-      nome: 'Admin Test',
-      email: 'admin@example.com',
-      telefone: null,
-      foto: null,
-      bio: null,
-      senhaHash: 'test',
-      role: 'ADMIN',
-      status: 'ATIVO',
-      locale: PROFILE_LOCALE_VALUES[0],
-      theme: PROFILE_THEME_VALUES[0],
-    },
-    select: { id: true },
-  });
-
-  return admin.id;
 }
 
 export async function resolveUserId(sessionUserId: string | undefined) {

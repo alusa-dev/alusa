@@ -26,17 +26,14 @@ export async function GET(req: Request) {
     });
     if (!context) return jsonNoStore({ error: 'Conta não localizada' }, { status: 400 });
 
-    const users = [
-      ...context.memberships.map((membership) => ({
+    const users = context.memberships.map((membership) => ({
         id: membership.usuario.id,
         nome: membership.usuario.nome,
         email: membership.usuario.email,
         role: membership.role,
         status: membership.status === 'ATIVO' && membership.usuario.status === 'ATIVO' ? 'ATIVO' : 'INATIVO',
         createdAt: membership.createdAt ?? membership.usuario.createdAt,
-      })),
-      ...context.legacyUsers,
-    ].filter((user) => !isRemovedUserEmail(user.email));
+      })).filter((user) => !isRemovedUserEmail(user.email));
 
     const items = users.map((user) => ({
       id: user.id,

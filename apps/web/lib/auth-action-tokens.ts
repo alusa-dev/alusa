@@ -20,7 +20,7 @@ export type ConsumeAuthActionTokenResult = {
   tokenId: string;
   user: {
     id: string;
-    contaId: string;
+    contaId: string | null;
     email: string;
     nome: string;
     emailVerifiedAt: Date | null;
@@ -34,7 +34,7 @@ export type AuthActionTokenLookupResult = {
   expiresAt: Date;
   user: {
     id: string;
-    contaId: string;
+    contaId: string | null;
     email: string;
     nome: string;
     emailVerifiedAt: Date | null;

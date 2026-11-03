@@ -47,19 +47,23 @@ async function seed(): Promise<SeedIds> {
     data: { id: contaId, nome: 'E2E Responsaveis', cpfCnpj: uniqueDigits(14) },
   });
 
-  await prisma.usuario.create({
-    data: {
-      id: userId,
-      contaId,
-      nome: 'Admin Responsaveis',
-      email: userEmail,
-      senhaHash: 'hash',
-      role: 'ADMIN',
-      status: 'ATIVO',
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.usuario.create({
+      data: {
+        id: userId,
+        contaId,
+        nome: 'Admin Responsaveis',
+        email: userEmail,
+        senhaHash: 'hash',
+        role: 'ADMIN',
+        status: 'ATIVO',
+      },
+    });
+    await tx.usuarioConta.create({
+      data: { usuarioId: userId, contaId, role: 'ADMIN', status: 'ATIVO' },
+    });
+    await tx.conta.update({ where: { id: contaId }, data: { ownerUserId: userId } });
   });
-
-  await prisma.conta.update({ where: { id: contaId }, data: { ownerUserId: userId } });
 
   const aluno = await prisma.aluno.create({
     data: {

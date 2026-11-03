@@ -10,13 +10,28 @@ export async function findPendingInviteForAcceptance(
     contaId: true,
   },
 ) {
-  return prisma.invite.findUnique({ where: { token }, select });
+  const invite = await prisma.invite.findUnique({
+    where: { token },
+    select: { ...select, contaId: true, invitedById: true },
+  });
+  if (!invite || invite.status !== 'PENDING' || !invite.contaId) return null;
+  const inviterMembership = await prisma.usuarioConta.findFirst({
+    where: {
+      usuarioId: invite.invitedById,
+      contaId: invite.contaId,
+      status: 'ATIVO',
+      usuario: { status: 'ATIVO' },
+      conta: { status: 'ATIVO', deletedAt: null },
+    },
+    select: { id: true },
+  });
+  return inviterMembership ? invite : null;
 }
 
 export async function findExistingUserForInvite(email: string) {
   return prisma.usuario.findFirst({
     where: { email: { equals: email, mode: 'insensitive' } },
-    select: { id: true, status: true, contaId: true },
+    select: { id: true, status: true },
   });
 }
 

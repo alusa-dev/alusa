@@ -22,7 +22,8 @@ vi.mock('@/lib/auth-email-flow', async (importOriginal) => {
 import { getServerSession } from 'next-auth';
 import prisma from '@/lib/prisma';
 import { hashPassword } from '@/lib/auth-password';
-import { deleteInviteById } from '@alusa/lib/server/services/invite-user-service';
+import { createInvite, deleteInviteById } from '@alusa/lib/server/services/invite-user-service';
+import { acceptInvite } from '@alusa/lib/server/services/invite-user-service';
 import { POST as invitePost } from '@/app/api/users/invite/route';
 import { POST as acceptPost } from '@/app/api/users/accept/route';
 
@@ -30,14 +31,17 @@ describe('convite multi-tenant por identidade global', () => {
   const fixtureContaIds = [
     'invite-flow-origin', 'invite-flow-existing', 'invite-flow-accept',
     'invite-flow-school-a', 'invite-flow-school-b', 'invite-flow-duplicate',
-    'invite-flow-delete', 'invite-flow-delete-other',
+    'invite-flow-delete', 'invite-flow-delete-other', 'invite-flow-no-membership',
+    'invite-flow-reactivate-a', 'invite-flow-reactivate-b', 'invite-flow-race',
   ];
   const fixtureEmails = [
     'invite-flow-admin-origin@example.com', 'invite-flow-owner-existing@example.com',
     'invite-flow-admin-accept@example.com', 'invite-flow-new-colleague@example.com',
     'invite-flow-admin-a@example.com', 'invite-flow-admin-b@example.com',
     'invite-flow-collaborator@example.com', 'invite-flow-admin-duplicate@example.com',
-    'invite-flow-duplicate-target@example.com',
+    'invite-flow-duplicate-target@example.com', 'invite-flow-orphan-admin@example.com',
+    'invite-flow-reactivate-admin@example.com', 'invite-flow-reactivate-user@example.com',
+    'invite-flow-race-admin@example.com', 'invite-flow-race-target@example.com',
   ];
 
   async function cleanupFixtures() {
@@ -230,6 +234,87 @@ describe('convite multi-tenant por identidade global', () => {
       })));
     }
     expect(results.map((result) => result.status)).toEqual([201, 201]);
+  });
+
+  it('recusa criar convite quando a identidade do convidador não tem membership ativa na escola', async () => {
+    const contaId = 'invite-flow-no-membership';
+    const adminEmail = 'invite-flow-orphan-admin@example.com';
+    await ensureConta(contaId, 'Escola sem membership do convidador');
+    const admin = await prisma.usuario.create({
+      data: {
+        contaId, nome: 'Admin sem vínculo', email: adminEmail,
+        senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO',
+      },
+    });
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: admin.id, role: 'ADMIN', contaId },
+    } as never);
+
+    const response = await invitePost(new Request('http://x/api/users/invite', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'target-without-inviter@example.test', role: 'RECEPCAO' }),
+    }));
+
+    expect(response.status).toBe(403);
+    await expect(prisma.invite.count({ where: { contaId } })).resolves.toBe(0);
+  });
+
+  it('reinvita e reativa membership inativa em A sem alterar vínculo, papel ou histórico de B', async () => {
+    const contaA = 'invite-flow-reactivate-a';
+    const contaB = 'invite-flow-reactivate-b';
+    await Promise.all([ensureConta(contaA, contaA), ensureConta(contaB, contaB)]);
+    const admin = await prisma.usuario.create({
+      data: { contaId: contaA, nome: 'Admin A', email: 'invite-flow-reactivate-admin@example.com', senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' },
+    });
+    const target = await prisma.usuario.create({
+      data: { contaId: contaA, nome: 'Usuário', email: 'invite-flow-reactivate-user@example.com', senhaHash: 'test', role: Role.PROFESSOR, status: 'ATIVO' },
+    });
+    await prisma.usuarioConta.createMany({ data: [
+      { usuarioId: admin.id, contaId: contaA, role: Role.ADMIN, status: 'ATIVO' },
+      { usuarioId: target.id, contaId: contaA, role: Role.PROFESSOR, status: 'INATIVO', createdAt: new Date('2020-01-02T00:00:00.000Z') },
+      { usuarioId: target.id, contaId: contaB, role: Role.FINANCEIRO, status: 'ATIVO', createdAt: new Date('2021-02-03T00:00:00.000Z') },
+    ] });
+    await prisma.auditLog.create({
+      data: { contaId: contaA, actorType: 'USER', actorId: admin.id, action: 'USER_TENANT_ACCESS_SUSPENDED', entityType: 'UsuarioConta', entityId: `${target.id}:${contaA}` },
+    });
+    const schoolBBefore = await prisma.usuarioConta.findUnique({
+      where: { usuarioId_contaId: { usuarioId: target.id, contaId: contaB } },
+      select: { role: true, status: true, createdAt: true, updatedAt: true, invitedById: true, inviteId: true },
+    });
+
+    const invite = await createInvite('invite-flow-reactivate-user@example.com', Role.RECEPCAO, admin.id, contaA);
+    await acceptInvite(invite.token, 'Usuário reativado', 'test', invite.email, target.id);
+
+    await expect(prisma.usuarioConta.findUnique({
+      where: { usuarioId_contaId: { usuarioId: target.id, contaId: contaA } },
+      select: { role: true, status: true, createdAt: true },
+    })).resolves.toMatchObject({ role: Role.RECEPCAO, status: 'ATIVO', createdAt: new Date('2020-01-02T00:00:00.000Z') });
+    await expect(prisma.usuarioConta.findUnique({
+      where: { usuarioId_contaId: { usuarioId: target.id, contaId: contaB } },
+      select: { role: true, status: true, createdAt: true, updatedAt: true, invitedById: true, inviteId: true },
+    })).resolves.toEqual(schoolBBefore);
+    await expect(prisma.auditLog.findFirst({
+      where: { contaId: contaA, action: 'USER_TENANT_ACCESS_SUSPENDED', entityId: `${target.id}:${contaA}` },
+      select: { id: true },
+    })).resolves.toBeTruthy();
+  });
+
+  it('serializa convites simultâneos para mesma conta e e-mail', async () => {
+    const contaId = 'invite-flow-race';
+    await ensureConta(contaId, contaId);
+    const admin = await prisma.usuario.create({
+      data: { contaId, nome: 'Admin Race', email: 'invite-flow-race-admin@example.com', senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' },
+    });
+    await prisma.usuarioConta.create({ data: { usuarioId: admin.id, contaId, role: Role.ADMIN, status: 'ATIVO' } });
+
+    const results = await Promise.allSettled([
+      createInvite('invite-flow-race-target@example.com', Role.FINANCEIRO, admin.id, contaId),
+      createInvite('INVITE-FLOW-RACE-TARGET@example.com', Role.FINANCEIRO, admin.id, contaId),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    await expect(prisma.invite.count({ where: { contaId, email: { equals: 'invite-flow-race-target@example.com', mode: 'insensitive' }, status: 'PENDING' } })).resolves.toBe(1);
   });
 
   it('mapeia convite pendente duplicado para 409 mesmo com capitalização diferente', async () => {

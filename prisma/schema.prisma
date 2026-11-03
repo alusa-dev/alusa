@@ -1383,8 +1383,9 @@ model Colaborador {
 
   // Acesso ao sistema
   temAcesso Boolean  @default(false)
-  usuarioId String?  @unique
-  usuario   Usuario? @relation(fields: [usuarioId], references: [id])
+  usuarioId  String?
+  usuario    Usuario?      @relation(fields: [usuarioId], references: [id])
+  membership UsuarioConta? @relation("ColaboradorUsuarioConta", fields: [usuarioId, contaId], references: [usuarioId, contaId], onDelete: Restrict)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1394,6 +1395,7 @@ model Colaborador {
   // Unicidade por conta (multi-tenant)
   @@unique([contaId, cpf])
   @@unique([contaId, email])
+  @@unique([contaId, usuarioId])
   @@index([contaId])
 }
 
@@ -1821,8 +1823,8 @@ model Usuario {
   id                   String    @id @default(cuid())
   // Conta padrão/legada do usuário. Para autorização multi-tenant, use UsuarioConta
   // e o activeContaId da sessão como fonte de verdade.
-  contaId              String
-  conta                Conta     @relation("ContaUsuarios", fields: [contaId], references: [id], onDelete: Cascade)
+  contaId              String?
+  conta                Conta?    @relation("ContaUsuarios", fields: [contaId], references: [id], onDelete: SetNull)
   // Backrelation: contas onde este usuário é o owner
   ownedContas          Conta[]   @relation("ContaOwner")
   deletedContas        Conta[]   @relation("ContaDeletedBy")
@@ -1850,7 +1852,7 @@ model Usuario {
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
 
-  colaborador                     Colaborador?
+  colaboradores                   Colaborador[]
   // Backrelation para vínculo opcional com Responsavel (1-1)
   responsaveis                    Responsavel[]                    @relation("UsuarioResponsaveis")
   // Backrelation para vínculo opcional com Aluno (1-1)
@@ -1916,6 +1918,7 @@ model UsuarioConta {
   conta     Conta    @relation(fields: [contaId], references: [id], onDelete: Cascade)
   invitedBy Usuario? @relation("UsuarioContaInvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
   invite    Invite?  @relation("UsuarioContaInvite", fields: [inviteId], references: [id], onDelete: SetNull)
+  colaboradores Colaborador[] @relation("ColaboradorUsuarioConta")
 
   @@unique([usuarioId, contaId])
   @@index([contaId, role, status], name: "idx_usuario_conta_conta_role_status")

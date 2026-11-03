@@ -108,7 +108,7 @@ export async function POST(req: Request) {
           }
           if (existingUser && invite.contaId) {
             const membership = await findUserMembershipForInvite(existingUser.id, invite.contaId);
-            if (membership?.status === 'ATIVO' || existingUser.contaId === invite.contaId) {
+            if (membership?.status === 'ATIVO') {
               return NextResponse.json({
                 error: 'Esta conta já está vinculada a esta escola. Fale com o administrador.',
                 code: 'USER_ALREADY_LINKED',

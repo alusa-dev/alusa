@@ -103,8 +103,22 @@ function toChallengeResponse(input: {
   };
 }
 
+async function hasActiveMembership(userId: string, contaId: string) {
+  return Boolean(await prisma.usuarioConta.findFirst({
+    where: {
+      usuarioId: userId,
+      contaId,
+      status: 'ATIVO',
+      usuario: { status: 'ATIVO' },
+      conta: { status: 'ATIVO', deletedAt: null },
+    },
+    select: { id: true },
+  }));
+}
+
 export async function requestPasswordChangeOtp(input: {
   userId: string;
+  contaId: string;
   channel: PasswordChangeChannel;
   requestedByIp?: string | null;
   requestedByUserAgent?: string | null;
@@ -113,21 +127,21 @@ export async function requestPasswordChangeOtp(input: {
 
   const user = await prisma.usuario.findUnique({
     where: { id: input.userId },
-    select: { id: true, nome: true, email: true, contaId: true, status: true },
+    select: { id: true, nome: true, email: true, status: true },
   });
 
-  if (!user || user.status !== 'ATIVO' || !user.contaId) {
+  if (!user || user.status !== 'ATIVO' || !(await hasActiveMembership(input.userId, input.contaId))) {
     throw new PasswordChangeOtpError('Usuário indisponível.', 'USER_UNAVAILABLE', 404);
   }
 
   const { challengeId, code, expiresAt, resendAvailableAt } = await runWithTenant(
-    user.contaId,
+    input.contaId,
     async (tx) => {
       const now = new Date();
       const activeChallenge = await tx.passwordChangeOtp.findFirst({
         where: {
           userId: user.id,
-          contaId: user.contaId,
+          contaId: input.contaId,
           usedAt: null,
           invalidatedAt: null,
           expiresAt: { gt: now },
@@ -154,7 +168,7 @@ export async function requestPasswordChangeOtp(input: {
       await tx.passwordChangeOtp.updateMany({
         where: {
           userId: user.id,
-          contaId: user.contaId,
+          contaId: input.contaId,
           usedAt: null,
           invalidatedAt: null,
         },
@@ -165,7 +179,7 @@ export async function requestPasswordChangeOtp(input: {
         data: {
           id: challengeId,
           userId: user.id,
-          contaId: user.contaId,
+          contaId: input.contaId,
           channel: 'EMAIL',
           codeHash: hashCode(challengeId, code),
           attempts: 0,
@@ -190,9 +204,9 @@ export async function requestPasswordChangeOtp(input: {
       expiresInLabel: `${PASSWORD_CHANGE_OTP_TTL_MINUTES} minutos`,
     });
 
-    await runWithTenant(user.contaId, async (tx) => {
+    await runWithTenant(input.contaId, async (tx) => {
       await tx.passwordChangeOtp.updateMany({
-        where: { id: challengeId, userId: user.id, contaId: user.contaId },
+        where: { id: challengeId, userId: user.id, contaId: input.contaId },
         data: { emailSentAt: new Date() },
       });
     });
@@ -208,9 +222,9 @@ export async function requestPasswordChangeOtp(input: {
       delivery: delivery.delivery,
     };
   } catch (error) {
-    await runWithTenant(user.contaId, async (tx) => {
+    await runWithTenant(input.contaId, async (tx) => {
       await tx.passwordChangeOtp.updateMany({
-        where: { id: challengeId, userId: user.id, contaId: user.contaId, usedAt: null },
+        where: { id: challengeId, userId: user.id, contaId: input.contaId, usedAt: null },
         data: { invalidatedAt: new Date() },
       });
     });
@@ -225,24 +239,21 @@ export async function requestPasswordChangeOtp(input: {
  */
 export async function verifyPasswordChangeOtp(input: {
   userId: string;
+  contaId: string;
   challengeId: string;
   code: string;
 }) {
-  const user = await prisma.usuario.findUnique({
-    where: { id: input.userId },
-    select: { id: true, contaId: true },
-  });
-
-  if (!user?.contaId) {
+  if (!(await hasActiveMembership(input.userId, input.contaId))) {
     throw new PasswordChangeOtpError('Código inválido ou expirado.', 'CHALLENGE_NOT_FOUND');
   }
 
-  return runWithTenant(user.contaId, async (tx) => {
+  return runWithTenant(input.contaId, async (tx) => {
     const challenge = await tx.passwordChangeOtp.findUnique({
       where: { id: input.challengeId },
       select: {
         id: true,
         userId: true,
+        contaId: true,
         codeHash: true,
         attempts: true,
         maxAttempts: true,
@@ -253,7 +264,13 @@ export async function verifyPasswordChangeOtp(input: {
       },
     });
 
-    if (!challenge || challenge.userId !== input.userId || challenge.invalidatedAt || challenge.usedAt) {
+    if (
+      !challenge ||
+      challenge.userId !== input.userId ||
+      challenge.contaId !== input.contaId ||
+      challenge.invalidatedAt ||
+      challenge.usedAt
+    ) {
       throw new PasswordChangeOtpError('Código inválido ou expirado.', 'CHALLENGE_NOT_FOUND');
     }
 
@@ -263,7 +280,7 @@ export async function verifyPasswordChangeOtp(input: {
         where: {
           id: challenge.id,
           userId: input.userId,
-          contaId: user.contaId,
+          contaId: input.contaId,
           invalidatedAt: null,
         },
         data: { invalidatedAt: now },
@@ -284,7 +301,7 @@ export async function verifyPasswordChangeOtp(input: {
         where: {
           id: challenge.id,
           userId: input.userId,
-          contaId: user.contaId,
+          contaId: input.contaId,
           usedAt: null,
           invalidatedAt: null,
           attempts: { lt: challenge.maxAttempts },
@@ -302,7 +319,7 @@ export async function verifyPasswordChangeOtp(input: {
       where: {
         id: challenge.id,
         userId: input.userId,
-        contaId: user.contaId,
+        contaId: input.contaId,
         verifiedAt: null,
         usedAt: null,
         invalidatedAt: null,
@@ -328,6 +345,7 @@ export async function verifyPasswordChangeOtp(input: {
 
 export async function completePasswordChange(input: {
   userId: string;
+  contaId: string;
   challengeId: string;
   verificationToken: string;
   newPassword: string;
@@ -339,13 +357,13 @@ export async function completePasswordChange(input: {
 
   const user = await prisma.usuario.findUnique({
     where: { id: input.userId },
-    select: { id: true, contaId: true, status: true },
+    select: { id: true, status: true },
   });
-  if (!user || user.status !== 'ATIVO' || !user.contaId) {
+  if (!user || user.status !== 'ATIVO' || !(await hasActiveMembership(input.userId, input.contaId))) {
     throw new PasswordChangeOtpError('Usuário indisponível.', 'USER_UNAVAILABLE', 404);
   }
 
-  const challenge = await runWithTenant(user.contaId, (tx) =>
+  const challenge = await runWithTenant(input.contaId, (tx) =>
     tx.passwordChangeOtp.findUnique({
       where: { id: input.challengeId },
       select: {
@@ -385,12 +403,12 @@ export async function completePasswordChange(input: {
 
   const senhaHash = await hashPassword(input.newPassword);
 
-  await runWithTenant(user.contaId, async (tx) => {
+  await runWithTenant(input.contaId, async (tx) => {
     const claimed = await tx.passwordChangeOtp.updateMany({
       where: {
         id: challenge.id,
         userId: input.userId,
-        contaId: user.contaId,
+        contaId: input.contaId,
         verifiedAt: { not: null },
         usedAt: null,
         invalidatedAt: null,
@@ -408,7 +426,7 @@ export async function completePasswordChange(input: {
     }
 
     const updatedUser = await tx.usuario.updateMany({
-      where: { id: user.id, contaId: user.contaId },
+      where: { id: user.id },
       data: { senhaHash, passwordChangedAt: now },
     });
     if (updatedUser.count !== 1) {
@@ -422,7 +440,7 @@ export async function completePasswordChange(input: {
 
   try {
     await auditLogService.record({
-      contaId: user.contaId,
+      contaId: input.contaId,
       action: 'auth.password_changed',
       entity: { type: 'Usuario', id: user.id },
       actor: { type: 'USER', id: user.id },

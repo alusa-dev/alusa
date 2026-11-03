@@ -64,7 +64,8 @@ export async function PATCH(req: Request) {
 
     const session = await getServerSession(authOptions);
     const userId = await resolveUserId(session?.user?.id);
-    if (!userId) {
+    const contaId = session?.user?.contaId?.trim();
+    if (!userId || !contaId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -81,6 +82,7 @@ export async function PATCH(req: Request) {
 
     const result = await changeUserPassword({
       userId,
+      contaId,
       currentPassword: parsed.data.currentPassword,
       newPassword: parsed.data.newPassword,
     });

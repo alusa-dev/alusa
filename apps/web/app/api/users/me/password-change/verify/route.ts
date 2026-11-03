@@ -42,7 +42,8 @@ export async function POST(req: Request) {
 
   const session = await getServerSession(authOptions).catch(() => null);
   const userId = await resolveUserId(session?.user?.id);
-  if (!userId) {
+  const contaId = session?.user?.contaId?.trim();
+  if (!userId || !contaId) {
     return NextResponse.json({ error: 'Não autenticado.' }, { status: 401 });
   }
 
@@ -58,7 +59,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await verifyPasswordChangeOtp({ userId, ...parsed.data });
+    const result = await verifyPasswordChangeOtp({ userId, contaId, ...parsed.data });
     return NextResponse.json(result, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
     return errorResponse(error, req);

@@ -54,15 +54,12 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return jsonError('Alterações no usuário Owner não são permitidas.', 403);
     }
 
-    const data: Parameters<typeof updateManagedUser>[0]['data'] = {};
-    if (typeof parsed.data.name !== 'undefined') data.nome = parsed.data.name;
-    if (typeof parsed.data.status !== 'undefined') data.status = parsed.data.status;
-    if (Object.keys(data).length === 0) return jsonError('Nada para atualizar', 400);
+    if (typeof parsed.data.name === 'undefined' && typeof parsed.data.status === 'undefined') {
+      return jsonError('Nada para atualizar', 400);
+    }
     const updated = await updateManagedUser({
       userId: rawParams.id,
       contaId: auth.contaId,
-      viaMembership: exists.viaMembership,
-      data,
       name: parsed.data.name,
       status: parsed.data.status,
     });

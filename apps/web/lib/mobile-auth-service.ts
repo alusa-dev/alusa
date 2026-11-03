@@ -72,7 +72,7 @@ type MobileMembership = {
   conta: { id: string; nome: string; status: string; deletedAt: Date | null };
 };
 
-async function loadMemberships(userId: string, fallbackContaId: string, fallbackRole: string) {
+async function loadMemberships(userId: string) {
   const memberships = await prisma.usuarioConta.findMany({
     where: {
       usuarioId: userId,
@@ -87,16 +87,7 @@ async function loadMemberships(userId: string, fallbackContaId: string, fallback
     },
   });
 
-  if (memberships.length > 0) return memberships as MobileMembership[];
-
-  const legacyConta = await prisma.conta.findFirst({
-    where: { id: fallbackContaId, status: 'ATIVO', deletedAt: null },
-    select: { id: true, nome: true, status: true, deletedAt: true },
-  });
-
-  return legacyConta
-    ? [{ contaId: legacyConta.id, role: fallbackRole, conta: legacyConta }]
-    : [];
+  return memberships as MobileMembership[];
 }
 
 function selectMembership(memberships: MobileMembership[], preferredContaId?: string | null) {
@@ -207,7 +198,7 @@ export async function loginMobile(
   }
   if (!result.user.emailVerifiedAt) throw new MobileAuthError('EMAIL_NOT_VERIFIED');
 
-  const memberships = await loadMemberships(result.user.id, result.user.contaId ?? '', result.user.role);
+  const memberships = await loadMemberships(result.user.id);
   const active = selectMembership(memberships, parsed.data.contaId);
   if (!active) throw new MobileAuthError('ACCOUNT_UNAVAILABLE');
 
@@ -256,8 +247,6 @@ export async function refreshMobileSession(
           foto: true,
           telefone: true,
           birthDate: true,
-          contaId: true,
-          role: true,
           emailVerifiedAt: true,
           sessionVersion: true,
           status: true,
@@ -283,7 +272,7 @@ export async function refreshMobileSession(
   if (!access.ok) throw new MobileAuthError('SESSION_REVOKED');
   if (!access.emailVerified) throw new MobileAuthError('EMAIL_NOT_VERIFIED');
 
-  const memberships = await loadMemberships(oldSession.user.id, oldSession.user.contaId, oldSession.user.role);
+  const memberships = await loadMemberships(oldSession.user.id);
   const active = selectMembership(memberships, parsed.data.contaId ?? access.contaId);
   if (!active) throw new MobileAuthError('ACCOUNT_UNAVAILABLE');
 

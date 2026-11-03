@@ -116,17 +116,30 @@ export async function changeUserEmail(input: {
 
 export async function changeUserPassword(input: {
   userId: string;
+  contaId: string;
   currentPassword: string;
   newPassword: string;
 }) {
   const user = await prisma.usuario.findUnique({
     where: { id: input.userId },
-    select: { senhaHash: true, contaId: true },
+    select: { senhaHash: true, status: true },
   });
-  if (!user?.senhaHash) return { status: 'NOT_FOUND' as const };
+  if (!user?.senhaHash || user.status !== 'ATIVO') return { status: 'NOT_FOUND' as const };
+
+  const membership = await prisma.usuarioConta.findFirst({
+    where: {
+      usuarioId: input.userId,
+      contaId: input.contaId,
+      status: 'ATIVO',
+      usuario: { status: 'ATIVO' },
+      conta: { status: 'ATIVO', deletedAt: null },
+    },
+    select: { contaId: true },
+  });
+  if (!membership) return { status: 'NOT_FOUND' as const };
 
   if (!(await comparePassword(input.currentPassword, user.senhaHash))) {
-    return { status: 'INVALID_PASSWORD' as const, contaId: user.contaId };
+    return { status: 'INVALID_PASSWORD' as const, contaId: membership.contaId };
   }
 
   const newHash = await hashPassword(input.newPassword);
@@ -137,7 +150,7 @@ export async function changeUserPassword(input: {
     });
     await revokeUserSessions(input.userId, tx);
   });
-  return { status: 'UPDATED' as const, contaId: user.contaId };
+  return { status: 'UPDATED' as const, contaId: membership.contaId };
 }
 
 export async function updateUserNotificationPreferences(input: {

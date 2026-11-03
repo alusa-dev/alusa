@@ -68,104 +68,27 @@ function isAccountDeactivated(status: string | null | undefined, deletedAt: Date
 async function resolveUserContaAccess(input: {
   userId: string;
   preferredContaId?: string | null;
-  legacyContaId?: string | null;
-  legacyRole?: string | null;
 }) {
-  const db = prisma as unknown as {
-    usuarioConta?: {
-      findFirst: (_args: unknown) => Promise<{
-        contaId: string;
-        role: string;
-        conta?: { status?: string | null; deletedAt?: Date | null } | null;
-      } | null>;
-      updateMany?: (_args: unknown) => Promise<unknown>;
-    };
-  };
-
-  const activeMembershipWhere = (contaId?: string | null) => ({
-    usuarioId: input.userId,
-    status: 'ATIVO',
-    ...(contaId ? { contaId } : {}),
+  const preferredContaId = input.preferredContaId?.trim() || null;
+  const membership = await prisma.usuarioConta.findFirst({
+    where: {
+      usuarioId: input.userId,
+      status: 'ATIVO',
+      ...(preferredContaId ? { contaId: preferredContaId } : {}),
+    },
+    ...(preferredContaId ? {} : { orderBy: [{ lastAccessedAt: 'desc' as const }, { createdAt: 'asc' as const }] }),
+    select: {
+      contaId: true,
+      role: true,
+      conta: { select: { status: true, deletedAt: true } },
+    },
   });
 
-  if (db.usuarioConta?.findFirst) {
-    const preferredContaId = input.preferredContaId?.trim() || null;
-    const legacyContaId = input.legacyContaId?.trim() || null;
-    const contaOrder = preferredContaId ? [preferredContaId] : legacyContaId ? [legacyContaId] : [];
-
-    for (const contaId of contaOrder) {
-      const membership = await db.usuarioConta.findFirst({
-        where: activeMembershipWhere(contaId),
-        select: {
-          contaId: true,
-          role: true,
-          conta: { select: { status: true, deletedAt: true } },
-        },
-      });
-
-      if (membership) {
-        if (isAccountDeactivated(membership.conta?.status, membership.conta?.deletedAt)) {
-          return { ok: false as const, reason: 'ACCOUNT_DEACTIVATED' as const };
-        }
-        return { ok: true as const, contaId: membership.contaId, role: membership.role };
-      }
-    }
-
-    if (!preferredContaId) {
-      const membership = await db.usuarioConta.findFirst({
-        where: activeMembershipWhere(),
-        orderBy: [{ lastAccessedAt: 'desc' }, { createdAt: 'asc' }],
-        select: {
-          contaId: true,
-          role: true,
-          conta: { select: { status: true, deletedAt: true } },
-        },
-      });
-
-      if (membership) {
-        if (isAccountDeactivated(membership.conta?.status, membership.conta?.deletedAt)) {
-          return { ok: false as const, reason: 'ACCOUNT_DEACTIVATED' as const };
-        }
-        return { ok: true as const, contaId: membership.contaId, role: membership.role };
-      }
-    }
-
-    // Usuario.contaId é apenas fallback para identidades legadas sem nenhum
-    // vínculo. Se há registros em UsuarioConta, a falta de vínculo ativo na
-    // escola solicitada significa acesso revogado — nunca reabrir pelo legado.
-    const anyMembership = await db.usuarioConta.findFirst({
-      where: { usuarioId: input.userId },
-      select: { contaId: true },
-    });
-    if (anyMembership) {
-      return { ok: false as const, reason: 'ACCOUNT_UNAVAILABLE' as const };
-    }
-  }
-
-  const legacyContaId = input.legacyContaId?.trim();
-  if (!legacyContaId) {
-    return { ok: false as const, reason: 'ACCOUNT_UNAVAILABLE' as const };
-  }
-
-  const conta = await prisma.conta.findUnique({
-    where: { id: legacyContaId },
-    select: { status: true, deletedAt: true },
-  });
-
-  if (!conta) {
-    return { ok: false as const, reason: 'ACCOUNT_UNAVAILABLE' as const };
-  }
-
-  const contaStatus = conta.status ? String(conta.status).toUpperCase() : null;
-  if (isAccountDeactivated(contaStatus, conta.deletedAt)) {
+  if (!membership || !membership.conta) return { ok: false as const, reason: 'ACCOUNT_UNAVAILABLE' as const };
+  if (isAccountDeactivated(membership.conta?.status, membership.conta?.deletedAt)) {
     return { ok: false as const, reason: 'ACCOUNT_DEACTIVATED' as const };
   }
-
-  return {
-    ok: true as const,
-    contaId: legacyContaId,
-    role: input.legacyRole ?? 'RESPONSAVEL',
-  };
+  return { ok: true as const, contaId: membership.contaId, role: membership.role };
 }
 
 export async function resolveSessionAccess(input: {
@@ -181,7 +104,7 @@ export async function resolveSessionAccess(input: {
 
   const user = await prisma.usuario.findUnique({
     where: { id: userId },
-    select: { id: true, status: true, contaId: true, role: true, emailVerifiedAt: true, sessionVersion: true },
+    select: { id: true, status: true, emailVerifiedAt: true, sessionVersion: true },
   });
 
   if (!user) {
@@ -201,8 +124,6 @@ export async function resolveSessionAccess(input: {
   const access = await resolveUserContaAccess({
     userId: user.id,
     preferredContaId: input.contaId,
-    legacyContaId: user.contaId,
-    legacyRole: user.role,
   });
   if (!access.ok) {
     return access;
@@ -229,10 +150,10 @@ export async function verifyCredentialsDetailed(
   }
 
   try {
-    type SelectedUser = Pick<Usuario, 'id' | 'email' | 'nome' | 'foto' | 'telefone' | 'birthDate' | 'role' | 'senhaHash' | 'status' | 'contaId' | 'emailVerifiedAt' | 'sessionVersion'>;
+    type SelectedUser = Pick<Usuario, 'id' | 'email' | 'nome' | 'foto' | 'telefone' | 'birthDate' | 'senhaHash' | 'status' | 'emailVerifiedAt' | 'sessionVersion'>;
     const user: SelectedUser | null = await prisma.usuario.findFirst({
       where: { email: { equals: inputEmail, mode: 'insensitive' } },
-      select: { id: true, email: true, nome: true, foto: true, telefone: true, birthDate: true, role: true, senhaHash: true, status: true, contaId: true, emailVerifiedAt: true, sessionVersion: true }
+      select: { id: true, email: true, nome: true, foto: true, telefone: true, birthDate: true, senhaHash: true, status: true, emailVerifiedAt: true, sessionVersion: true }
     });
     if (!user) {
       // Equaliza o custo do caminho "usuário inexistente" para reduzir enumeração por timing.
@@ -256,8 +177,6 @@ export async function verifyCredentialsDetailed(
     const access = await resolveUserContaAccess({
       userId: user.id,
       preferredContaId,
-      legacyContaId: user.contaId,
-      legacyRole: user.role,
     });
     if (!access.ok) {
       return { ok: false, reason: access.reason };

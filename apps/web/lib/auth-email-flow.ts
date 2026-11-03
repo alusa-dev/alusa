@@ -227,11 +227,13 @@ export async function sendAccountReactivationForEmail(
     select: {
       id: true,
       contaId: true,
-      conta: { select: { ownerUserId: true } },
+      conta: { select: { id: true, ownerUserId: true } },
     },
   });
 
-  if (!user?.contaId || user.conta.ownerUserId !== user.id) {
+  const contaId = user?.contaId;
+  const conta = user?.conta;
+  if (!user || !contaId || !conta || conta.id !== contaId || conta.ownerUserId !== user.id) {
     return;
   }
 
@@ -240,9 +242,9 @@ export async function sendAccountReactivationForEmail(
   });
 
   await auditLogService.record({
-    contaId: user.contaId,
+    contaId,
     action: 'conta.reactivation_requested',
-    entity: { type: 'Conta', id: user.contaId },
+    entity: { type: 'Conta', id: contaId },
     metadata: {
       channel: 'email',
       delivery: delivery.delivery,
@@ -264,12 +266,11 @@ export async function sendPasswordResetForEmail(
     },
     select: {
       id: true,
-      contaId: true,
       email: true,
     },
   });
 
-  if (!user?.contaId) {
+  if (!user) {
     return;
   }
 
@@ -333,12 +334,15 @@ export async function verifyEmailByToken(token: string) {
     consumed = { tokenId: existing.tokenId, user: existing.user };
   }
 
-  let reactivatedAccount = false;
+  let reactivatedContaId: string | null = null;
   await prisma.$transaction(async (tx) => {
-    const conta = await tx.conta.findUnique({
-      where: { id: consumed.user.contaId },
-      select: { status: true, deletedAt: true, ownerUserId: true },
-    });
+    const contaId = consumed.user.contaId;
+    const conta = contaId
+      ? await tx.conta.findUnique({
+          where: { id: contaId },
+          select: { status: true, deletedAt: true, ownerUserId: true },
+        })
+      : null;
 
     if (!consumed.user.emailVerifiedAt) {
       await tx.usuario.update({
@@ -349,12 +353,13 @@ export async function verifyEmailByToken(token: string) {
 
     if (
       tokenType === 'ACCOUNT_REACTIVATION' &&
+      contaId &&
       conta?.ownerUserId === consumed.user.id &&
       isAccountDeactivated(conta.status, conta.deletedAt)
     ) {
-      reactivatedAccount = true;
+      reactivatedContaId = contaId;
       await tx.conta.update({
-        where: { id: consumed.user.contaId },
+        where: { id: contaId },
         data: {
           status: 'ATIVO',
           deletedAt: null,
@@ -367,11 +372,11 @@ export async function verifyEmailByToken(token: string) {
     await invalidateAuthActionTokens(consumed.user.id, tokenType, tx);
   });
 
-  if (reactivatedAccount) {
+  if (reactivatedContaId) {
     await auditLogService.record({
-      contaId: consumed.user.contaId,
+      contaId: reactivatedContaId,
       action: 'conta.reactivated',
-      entity: { type: 'Conta', id: consumed.user.contaId },
+      entity: { type: 'Conta', id: reactivatedContaId },
       metadata: {
         channel: 'email_verification_link',
       },

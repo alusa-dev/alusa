@@ -63,19 +63,23 @@ async function seed(): Promise<SeedIds> {
     data: { id: contaId, nome: 'E2E Domain Rules', cpfCnpj: uniqueCpfCnpj() },
   });
 
-  await prisma.usuario.create({
-    data: {
-      id: userId,
-      contaId,
-      nome: 'Admin Domain',
-      email: userEmail,
-      senhaHash: 'hash',
-      role: 'ADMIN',
-      status: 'ATIVO',
-    },
+  await prisma.$transaction(async (tx) => {
+    await tx.usuario.create({
+      data: {
+        id: userId,
+        contaId,
+        nome: 'Admin Domain',
+        email: userEmail,
+        senhaHash: 'hash',
+        role: 'ADMIN',
+        status: 'ATIVO',
+      },
+    });
+    await tx.usuarioConta.create({
+      data: { usuarioId: userId, contaId, role: 'ADMIN', status: 'ATIVO' },
+    });
+    await tx.conta.update({ where: { id: contaId }, data: { ownerUserId: userId } });
   });
-
-  await prisma.conta.update({ where: { id: contaId }, data: { ownerUserId: userId } });
 
   await prisma.platformBillingAccount.create({
     data: {

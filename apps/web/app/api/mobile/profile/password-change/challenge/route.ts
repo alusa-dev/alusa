@@ -43,6 +43,7 @@ export async function POST(request: Request) {
   try {
     const result = await requestPasswordChangeOtp({
       userId: actor.userId,
+      contaId: actor.contaId,
       channel: parsed.data.channel,
       requestedByIp: ip,
       requestedByUserAgent: request.headers.get('user-agent'),

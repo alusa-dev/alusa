@@ -48,26 +48,28 @@ test('separa logout individual de revogação global entre dois dispositivos', a
     },
     select: { id: true },
   });
-  const user = await prisma.usuario.create({
-    data: {
-      contaId: conta.id,
-      nome: 'Usuário Auth E2E',
-      email: `auth-${suffix}@example.com`,
-      senhaHash: 'hash-nao-usado-no-e2e',
-      role: 'ADMIN',
-      status: 'ATIVO',
-    },
-    select: { id: true, email: true, contaId: true },
-  });
-
-  await prisma.usuarioConta.create({
-    data: {
-      usuarioId: user.id,
-      contaId: conta.id,
-      role: 'ADMIN',
-      status: 'ATIVO',
-      lastAccessedAt: new Date(),
-    },
+  const user = await prisma.$transaction(async (tx) => {
+    const created = await tx.usuario.create({
+      data: {
+        contaId: conta.id,
+        nome: 'Usuário Auth E2E',
+        email: `auth-${suffix}@example.com`,
+        senhaHash: 'hash-nao-usado-no-e2e',
+        role: 'ADMIN',
+        status: 'ATIVO',
+      },
+      select: { id: true, email: true, contaId: true },
+    });
+    await tx.usuarioConta.create({
+      data: {
+        usuarioId: created.id,
+        contaId: conta.id,
+        role: 'ADMIN',
+        status: 'ATIVO',
+        lastAccessedAt: new Date(),
+      },
+    });
+    return created;
   });
 
   const contextA = await browser.newContext();

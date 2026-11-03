@@ -216,6 +216,13 @@ operacional.
    destrutivas, usar expand/contract ou deploy em fases, preservando
    compatibilidade em cada fase.
 
+Para o cutover de autorização por `UsuarioConta`, rollback para um binário
+anterior à mudança da fonte de autorização não é suportado: essa versão pode
+voltar a autorizar pela coluna legada `Usuario.contaId`, inclusive para pares
+que o backfill omitiu por auditoria de suspensão. Reverter uma regressão exige
+um hotfix/versão compatível que mantenha autorização membership-only; não
+republique o binário pré-cutover.
+
 Falha de migration é falha real: não publicar código que dependa dela até
 corrigir e aplicar a migration com segurança. O fast path não remove essa
 salvaguarda.
@@ -234,6 +241,15 @@ antigo e logs sem erro novo de runtime.
 Em caso de regressão, interromper novas publicações e fazer rollback para a
 última implantação `Ready` pelo procedimento aprovado da Vercel. Não corrigir
 dados de produção manualmente sem identificar a causa e registrar a operação.
+Exceção: após o cutover de autorização por `UsuarioConta`, não voltar a um
+binário pré-cutover; publicar um hotfix ou uma versão compatível que mantenha a
+autorização membership-only, conforme a restrição descrita acima.
+Após substituir a unicidade global de `Colaborador.usuarioId` pela composta
+com `contaId`, não habilitar gravações que vinculem a mesma identidade a
+colaboradores de escolas diferentes durante a janela de rollback. Depois que
+esses pares existirem, a constraint global antiga pode não ser recriável; o
+rollback exigiria primeiro um plano explícito de reconciliação dos vínculos,
+sem apagar histórico.
 
 ## Diagnóstico de falhas
 
