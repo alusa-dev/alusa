@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 
 import { getPayment, getSubscription, listPayments } from '../packages/asaas/src';
 import { loadAsaasCredentials, prisma } from '@alusa/database';
-import type { Prisma } from '@prisma/client';
+import type { Prisma, FinanceReconciliationIssue } from '@prisma/client';
 import {
   classifyPreviewedExternalSubscription,
   previewExternalSubscriptionCandidates,
@@ -277,12 +277,12 @@ export async function resolveAbsentTerminalLagIssue(input: {
     throw new Error(`Issue de atraso ${input.issueManifest.id} não corresponde ao manifesto.`);
   }
   const resolution = 'Recurso Asaas terminal confirmado e ausência da entidade local validada; sem reconstrução financeira.';
-  if (issue.status === 'RESOLVED' && issue.resolution === resolution) return 'ALREADY_RESOLVED';
+  if (issue.status === 'RESOLVED') return 'ALREADY_RESOLVED';
   if (issue.status !== 'OPEN') return 'SKIPPED_STALE';
   const manifestIssue = input.manifest.openIssues.find((candidate) => candidate.id === input.issueManifest.id);
   if (!manifestIssue || manifestIssue.issueType !== 'WEBHOOK_LAG' || manifestIssue.asaasId !== issue.asaasId ||
       manifestIssue.lastSeenAt !== issue.lastSeenAt.toISOString()) {
-    throw new Error(`Issue ${issue.id} mudou desde a revisão do manifesto.`);
+    return 'SKIPPED_STALE';
   }
 
   let remoteTerminal = false;
@@ -350,26 +350,99 @@ export async function resolveAbsentTerminalLagIssue(input: {
   }, { isolationLevel: 'Serializable' });
 }
 
+function hasPriorRepairMarker(metadata: Record<string, unknown>): boolean {
+  return metadata.manualRepair === true || (typeof metadata.manualRepair === 'string' && metadata.manualRepair.trim().length > 0);
+}
+
+async function resolveCanonicalCyclePaymentIssue(input: {
+  manifest: Manifest; apiKey: string; auditContext: RecoveryAuditContext; apply: boolean;
+}, issue: FinanceReconciliationIssue): Promise<'READY' | 'RESOLVED' | 'SKIPPED_STALE'> {
+  const paymentId = issue.asaasId!;
+  const metadata = issue.metadata as Record<string, unknown>;
+  const loadProof = async (db: Prisma.TransactionClient) => {
+    const charge = await db.charge.findFirst({
+      where: { contaId: input.manifest.contaId, asaasPaymentId: paymentId },
+      select: { id: true, cobrancaId: true, externalReference: true, status: true, value: true, dueDate: true },
+    });
+    const match = charge?.externalReference.match(/^enrollment-op:([^:]+):subscription:payment:([^:]+)$/);
+    if (!charge || !match || match[2] !== paymentId || charge.status !== 'OPEN' || !charge.cobrancaId || !charge.dueDate) return null;
+    const parentReference = `enrollment-op:${match[1]}:subscription`;
+    const [cobranca, operation] = await Promise.all([
+      db.cobranca.findFirst({ where: { id: charge.cobrancaId, contaId: input.manifest.contaId },
+        select: { id: true, matriculaId: true, asaasPaymentId: true, asaasId: true, status: true, valor: true, vencimento: true } }),
+      db.enrollmentCreationOperation.findFirst({ where: { id: match[1], contaId: input.manifest.contaId },
+        select: { id: true, status: true, matriculaId: true, asaasSubscriptionId: true } }),
+    ]);
+    if (!cobranca || metadata.resolvedLocalEntityId !== cobranca.id ||
+        !['PENDENTE', 'A_VENCER'].includes(cobranca.status) ||
+        (cobranca.asaasPaymentId !== paymentId && cobranca.asaasId !== paymentId) ||
+        (cobranca.asaasPaymentId && cobranca.asaasPaymentId !== paymentId) || (cobranca.asaasId && cobranca.asaasId !== paymentId) ||
+        !operation || operation.status !== 'COMMITTED' || !operation.matriculaId || !operation.asaasSubscriptionId ||
+        operation.matriculaId !== cobranca.matriculaId || Number(charge.value) !== Number(cobranca.valor) || Number(cobranca.valor) <= 0 ||
+        charge.dueDate.toISOString().slice(0, 10) !== cobranca.vencimento.toISOString().slice(0, 10)) return null;
+    const [subscription, enrollment] = await Promise.all([
+      db.subscription.findFirst({ where: { contaId: input.manifest.contaId, asaasSubscriptionId: operation.asaasSubscriptionId },
+        select: { id: true, status: true, matriculaId: true, externalReference: true } }),
+      db.matricula.findFirst({ where: { id: operation.matriculaId, contaId: input.manifest.contaId }, select: { id: true } }),
+    ]);
+    if (!enrollment || !subscription || subscription.status !== 'ACTIVE' || subscription.matriculaId !== enrollment.id ||
+        subscription.externalReference !== parentReference) return null;
+    return { chargeId: charge.id, cobrancaId: cobranca.id, chargeStatus: charge.status, cobrancaStatus: cobranca.status,
+      externalReference: charge.externalReference, parentReference, operationId: operation.id,
+      enrollmentId: enrollment.id, subscriptionId: subscription.id, asaasSubscriptionId: operation.asaasSubscriptionId,
+      value: Number(cobranca.valor), dueDate: cobranca.vencimento.toISOString().slice(0, 10) };
+  };
+  const proof = await loadProof(prisma);
+  if (!proof) throw new Error(`Pagamento ${paymentId} não possui cadeia canônica de ciclo inequívoca.`);
+  const [payment, subscription] = await Promise.all([
+    getPayment({ apiKey: input.apiKey, paymentId }),
+    getSubscription({ apiKey: input.apiKey, subscriptionId: proof.asaasSubscriptionId }),
+  ]);
+  if (payment.id !== paymentId || payment.subscription !== proof.asaasSubscriptionId || payment.externalReference !== proof.parentReference ||
+      payment.status !== 'PENDING' || payment.deleted || Number(payment.value) !== proof.value || payment.dueDate !== proof.dueDate ||
+      subscription.id !== proof.asaasSubscriptionId || subscription.externalReference !== proof.parentReference ||
+      subscription.status !== 'ACTIVE' || subscription.deleted) throw new Error(`Snapshot remoto do ciclo ${paymentId} diverge da cadeia canônica.`);
+  if (!input.apply) return 'READY';
+  return prisma.$transaction(async (tx) => {
+    const current = await loadProof(tx);
+    if (!current || JSON.stringify(current) !== JSON.stringify(proof)) return 'SKIPPED_STALE';
+    const changed = await tx.financeReconciliationIssue.updateMany({ where: {
+      id: issue.id, contaId: input.manifest.contaId, issueType: issue.issueType, entityType: issue.entityType,
+      entityId: issue.entityId, asaasId: issue.asaasId, status: 'OPEN', lastSeenAt: issue.lastSeenAt,
+      remoteStatus: issue.remoteStatus, metadata: { equals: issue.metadata as Prisma.InputJsonValue },
+    }, data: { status: 'RESOLVED', resolvedAt: new Date(),
+      resolution: 'Ciclo recorrente existente confirmado pela cadeia canônica de matrícula e assinatura; sem reconstrução financeira.' } });
+    if (!changed.count) return 'SKIPPED_STALE';
+    await tx.auditLog.create({ data: {
+      contaId: input.manifest.contaId, ...auditFields(input.auditContext), action: 'finance.reconciliation_issue.resolved',
+      entityType: 'FinanceReconciliationIssue', entityId: issue.id,
+      metadata: { ...proof, asaasId: paymentId, resolution: 'EXISTING_CANONICAL_SUBSCRIPTION_CYCLE_CONFIRMED', ...auditMetadata(input.auditContext) },
+    } });
+    return 'RESOLVED';
+  }, { isolationLevel: 'Serializable' });
+}
+
 export async function resolveAlreadyLinkedPaymentIssue(input: {
   manifest: Manifest; issueManifest: Manifest['openIssues'][number]; apiKey: string; auditContext: RecoveryAuditContext; apply: boolean;
 }): Promise<'READY' | 'RESOLVED' | 'ALREADY_RESOLVED' | 'SKIPPED_STALE'> {
   const issue = await prisma.financeReconciliationIssue.findFirst({
     where: { id: input.issueManifest.id, contaId: input.manifest.contaId },
   });
-  if (!issue || issue.issueType !== 'PAYMENT_MISSING_LOCAL_ENTITY' || issue.asaasId !== input.issueManifest.asaasId || !issue.asaasId) {
+  if (!issue || issue.issueType !== 'PAYMENT_MISSING_LOCAL_ENTITY' || issue.entityType !== input.issueManifest.entityType ||
+      issue.entityId !== input.issueManifest.entityId || issue.asaasId !== input.issueManifest.asaasId || !issue.asaasId) {
     throw new Error(`Issue de entidade local ausente ${input.issueManifest.id} não corresponde ao manifesto.`);
   }
   const resolution = 'Entidade Charge/Cobranca existente confirmada pela referência canônica da operação de matrícula.';
-  if (issue.status === 'RESOLVED' && issue.resolution === resolution) return 'ALREADY_RESOLVED';
+  if (issue.status === 'RESOLVED') return 'ALREADY_RESOLVED';
   if (issue.status !== 'OPEN') return 'SKIPPED_STALE';
   const manifestIssue = input.manifest.openIssues.find((candidate) => candidate.id === input.issueManifest.id);
   if (!manifestIssue || manifestIssue.issueType !== 'PAYMENT_MISSING_LOCAL_ENTITY' || manifestIssue.asaasId !== issue.asaasId ||
       manifestIssue.lastSeenAt !== issue.lastSeenAt.toISOString()) {
-    throw new Error(`Issue ${issue.id} mudou desde a revisão do manifesto.`);
+    return 'SKIPPED_STALE';
   }
   const metadata = issue.metadata && typeof issue.metadata === 'object' && !Array.isArray(issue.metadata)
     ? issue.metadata as Record<string, unknown> : {};
-  if (metadata.manualRepair !== true || typeof metadata.resolvedLocalEntityId !== 'string') {
+  if (!hasPriorRepairMarker(metadata) || typeof metadata.resolvedLocalEntityId !== 'string') {
     throw new Error(`Issue ${issue.id} não contém decisão prévia de reparo manual validável.`);
   }
   const [charge, cobranca] = await Promise.all([
@@ -382,6 +455,7 @@ export async function resolveAlreadyLinkedPaymentIssue(input: {
       select: { id: true, asaasPaymentId: true, asaasId: true, status: true },
     }),
   ]);
+  if (charge?.externalReference.includes(':subscription:payment:')) return resolveCanonicalCyclePaymentIssue(input, issue);
   const referenceMatch = charge?.externalReference.match(/^enrollment-op:([^:]+):(subscription|fee)$/);
   if (!charge || !cobranca || charge.cobrancaId !== cobranca.id || metadata.resolvedLocalEntityId !== cobranca.id || !referenceMatch ||
       charge.status !== 'OPEN' || cobranca.status !== 'PENDENTE') {
@@ -428,7 +502,7 @@ export async function resolveAlreadyLinkedPaymentIssue(input: {
         lastSeenAt: issue.lastSeenAt,
         AND: [
           { metadata: { path: ['lastCauseId'], equals: causeId } },
-          { metadata: { path: ['manualRepair'], equals: true } },
+          { metadata: { equals: issue.metadata as Prisma.InputJsonValue } },
           { metadata: { path: ['resolvedLocalEntityId'], equals: cobranca.id } },
         ],
       },
@@ -461,21 +535,28 @@ export async function resolveVerifiedEventCancellation(input: {
       issue.asaasId !== input.issueManifest.asaasId || !issue.entityId || issue.entityId !== input.issueManifest.entityId) {
     throw new Error(`Issue de operação ${input.issueManifest.id} não corresponde ao manifesto.`);
   }
+  if (issue.status === 'RESOLVED') return 'ALREADY_RESOLVED';
+  if (issue.status !== 'OPEN') return 'SKIPPED_STALE';
   const metadata = issue.metadata && typeof issue.metadata === 'object' && !Array.isArray(issue.metadata)
     ? issue.metadata as Record<string, unknown> : {};
   const orderId = issue.entityId;
-  const paymentId = issue.asaasId;
+  const legacyCustomerAmbiguity = issue.asaasId === null && metadata.lookupError === 'MULTIPLE_BUYER_CUSTOMERS' &&
+    issue.remoteStatus === 'BUYER_CUSTOMER_NOT_CONFIRMED';
+  const legacyWithoutReason = metadata.reason === undefined && legacyCustomerAmbiguity && metadata.lastCauseId === undefined;
+  if (metadata.reason !== 'BUYER_CUSTOMER_NOT_CONFIRMED' && !legacyWithoutReason) {
+    throw new Error(`Issue ${issue.id} não possui motivo aprovado de ambiguidade de customer.`);
+  }
+  const paymentId = issue.asaasId ?? (legacyCustomerAmbiguity && typeof metadata.paymentId === 'string' ? metadata.paymentId : null);
   const externalReference = `event-map-order:${orderId}`;
   if (!paymentId || metadata.orderId !== orderId || metadata.paymentId !== paymentId || metadata.externalReference !== externalReference) {
     throw new Error(`Issue ${issue.id} não contém identidade exata de pedido e pagamento de evento.`);
   }
-  if (issue.status === 'RESOLVED' && issue.resolution === 'Pedido de evento cancelado e pagamento Asaas excluído confirmado por identidade exata.') return 'ALREADY_RESOLVED';
-  if (issue.status !== 'OPEN') return 'SKIPPED_STALE';
+  if (input.issueManifest.lastSeenAt !== issue.lastSeenAt.toISOString()) return 'SKIPPED_STALE';
   const order = await prisma.eventMapOrder.findFirst({
     where: { id: orderId, contaId: input.manifest.contaId },
-    select: { id: true, status: true, asaasPaymentId: true, paymentProvider: true },
+    select: { id: true, status: true, asaasPaymentId: true, paymentProvider: true, paymentStatus: true },
   });
-  if (!order || !['CANCELLED', 'EXPIRED'].includes(order.status) || order.asaasPaymentId !== paymentId || order.paymentProvider !== 'ASAAS') {
+  if (!order || !['CANCELLED', 'EXPIRED'].includes(order.status) || order.asaasPaymentId !== paymentId || order.paymentProvider !== 'ASAAS' || (legacyCustomerAmbiguity && (order.status !== 'CANCELLED' || order.paymentStatus !== 'DELETED'))) {
     throw new Error(`Pedido ${orderId} não está encerrado com o mesmo pagamento Asaas.`);
   }
   const payment = await getPayment({ apiKey: input.apiKey, paymentId });
@@ -487,33 +568,39 @@ export async function resolveVerifiedEventCancellation(input: {
   let totalCount: number | undefined;
   const referencePayments = [] as Awaited<ReturnType<typeof listPayments>>['data'];
   do {
-    const page = await listPayments({ apiKey: input.apiKey, externalReference, offset, limit: pageSize, includeDeleted: true });
+    const page = await listPayments({ apiKey: input.apiKey, externalReference, offset, limit: pageSize });
     totalCount = assertCompleteAsaasPage(page, offset, pageSize, totalCount);
     referencePayments.push(...page.data);
     offset += page.data.length;
     if (page.hasMore && page.data.length === 0) throw new Error('Busca completa da referência de evento retornou página vazia.');
     if (!page.hasMore) break;
   } while (offset < (totalCount ?? 0));
-  if (referencePayments.length !== 1 || referencePayments[0]?.id !== paymentId ||
-      (!referencePayments[0]?.deleted && referencePayments[0]?.status !== 'DELETED')) {
-    throw new Error(`A referência ${externalReference} não possui um único pagamento remoto excluído comprovado.`);
+  // The documented list endpoint may omit deleted payments. The direct GET
+  // above proves this known target exists and is deleted; an empty complete
+  // available listing only establishes that it exposes no alternative.
+  if (referencePayments.length > 1 || referencePayments.some((candidate) =>
+    candidate.id !== paymentId || candidate.externalReference !== externalReference ||
+    candidate.deleted !== payment.deleted || candidate.status !== payment.status ||
+    (!candidate.deleted && candidate.status !== 'DELETED'))) {
+    throw new Error(`A referência ${externalReference} possui alternativa ou snapshot inconsistente na listagem disponível.`);
   }
   if (!input.apply) return 'READY';
   const causeId = typeof metadata.lastCauseId === 'string' ? metadata.lastCauseId : null;
-  if (!causeId) throw new Error(`Issue ${issue.id} não possui causa para resolução condicional.`);
+  if (!causeId && !legacyCustomerAmbiguity) throw new Error(`Issue ${issue.id} não possui causa para resolução condicional.`);
   return prisma.$transaction(async (tx) => {
     const currentOrder = await tx.eventMapOrder.findFirst({
       where: { id: orderId, contaId: input.manifest.contaId },
-      select: { id: true, status: true, asaasPaymentId: true, paymentProvider: true },
+      select: { id: true, status: true, asaasPaymentId: true, paymentProvider: true, paymentStatus: true },
     });
     if (!currentOrder || !['CANCELLED', 'EXPIRED'].includes(currentOrder.status) ||
-        currentOrder.asaasPaymentId !== paymentId || currentOrder.paymentProvider !== 'ASAAS') return 'SKIPPED_STALE';
+        currentOrder.asaasPaymentId !== paymentId || currentOrder.paymentProvider !== 'ASAAS' ||
+        (legacyCustomerAmbiguity && (currentOrder.status !== 'CANCELLED' || currentOrder.paymentStatus !== 'DELETED'))) return 'SKIPPED_STALE';
     const changed = await tx.financeReconciliationIssue.updateMany({
       where: {
         id: issue.id, contaId: input.manifest.contaId, status: 'OPEN',
         issueType: 'BILLING_OPERATION_UNCERTAIN', entityType: 'PAYMENT',
-        entityId: orderId, asaasId: paymentId, lastSeenAt: issue.lastSeenAt,
-        AND: [{ metadata: { path: ['lastCauseId'], equals: causeId } }],
+        entityId: orderId, asaasId: issue.asaasId, lastSeenAt: issue.lastSeenAt, remoteStatus: issue.remoteStatus,
+        metadata: { equals: issue.metadata as Prisma.InputJsonValue },
       },
       data: {
         status: 'RESOLVED', resolvedAt: new Date(),
@@ -529,6 +616,8 @@ export async function resolveVerifiedEventCancellation(input: {
           issueType: issue.issueType, entityId: orderId, asaasId: paymentId,
           resolution: 'EXACT_CANCELED_EVENT_ORDER_AND_DELETED_PAYMENT', externalReference, causeId,
           orderStatus: order.status, paymentStatus: payment.status, paymentDeleted: payment.deleted,
+          providerEvidence: 'KNOWN_TARGET_GET_DELETED_AND_NO_AVAILABLE_ALTERNATIVE',
+          availableReferencePaymentCount: referencePayments.length,
           ...auditMetadata(input.auditContext),
         },
       },
@@ -603,7 +692,7 @@ export async function runRecovery(options: RecoveryOptions): Promise<void> {
       const issue = await prisma.financeReconciliationIssue.findFirst({ where: { id: issueRef.id, contaId: manifest.contaId } });
       const metadata = issue?.metadata && typeof issue.metadata === 'object' && !Array.isArray(issue.metadata)
         ? issue.metadata as Record<string, unknown> : {};
-      if (metadata.manualRepair === true && typeof metadata.resolvedLocalEntityId === 'string') manuallyRepairedIssues.push(issueRef);
+      if (hasPriorRepairMarker(metadata) && typeof metadata.resolvedLocalEntityId === 'string') manuallyRepairedIssues.push(issueRef);
     }
     for (const issue of manuallyRepairedIssues) {
       assertLease();
@@ -611,12 +700,13 @@ export async function runRecovery(options: RecoveryOptions): Promise<void> {
     }
     const eventCancellationIssues: Manifest['openIssues'] = [];
     for (const issueRef of manifest.openIssues) {
-      if (issueRef.issueType !== 'BILLING_OPERATION_UNCERTAIN' || issueRef.entityType !== 'PAYMENT' || !issueRef.asaasId || !issueRef.entityId) continue;
+      if (issueRef.issueType !== 'BILLING_OPERATION_UNCERTAIN' || issueRef.entityType !== 'PAYMENT' || !issueRef.entityId) continue;
       const issue = await prisma.financeReconciliationIssue.findFirst({ where: { id: issueRef.id, contaId: manifest.contaId } });
       const metadata = issue?.metadata && typeof issue.metadata === 'object' && !Array.isArray(issue.metadata)
         ? issue.metadata as Record<string, unknown> : {};
-      if (issue?.status === 'OPEN' && metadata.orderId === issueRef.entityId &&
-          metadata.paymentId === issueRef.asaasId && metadata.externalReference === `event-map-order:${issueRef.entityId}`) {
+      if (issue?.status === 'OPEN' && metadata.orderId === issueRef.entityId && typeof metadata.paymentId === 'string' && metadata.paymentId.length > 0 &&
+          (metadata.paymentId === issueRef.asaasId || (issueRef.asaasId === null && typeof metadata.paymentId === 'string' &&
+            metadata.lookupError === 'MULTIPLE_BUYER_CUSTOMERS' && issue.remoteStatus === 'BUYER_CUSTOMER_NOT_CONFIRMED')) && metadata.externalReference === `event-map-order:${issueRef.entityId}`) {
         eventCancellationIssues.push(issueRef);
       }
     }
