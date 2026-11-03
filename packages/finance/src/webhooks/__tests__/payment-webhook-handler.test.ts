@@ -206,6 +206,7 @@ vi.mock('@alusa/database', () => ({
     },
     auditLog: {
       findMany: vi.fn(),
+      create: vi.fn(),
     },
     pagamento: {
       findFirst: vi.fn(),
@@ -4536,6 +4537,84 @@ describe('handlePaymentWebhook', () => {
     expect(order).toMatchObject({ status: 'EXPIRED', paymentStatus: 'DELETED' });
     expect(issue).toMatchObject({ status: 'RESOLVED', remoteStatus: 'DELETED' });
     expect(mockConfirmEventMapOrderPayment).not.toHaveBeenCalled();
+  });
+
+  it('resolves only the exact known multiple-customer ambiguity after the matching canceled-order deletion', async () => {
+    const { prisma } = await import('@alusa/database');
+    const order = {
+      id: 'order-customer-ambiguity', status: 'EXPIRED', paymentStatus: 'DELETED',
+      paymentProvider: 'ASAAS', asaasPaymentId: 'pay-customer-ambiguity',
+    };
+    const issue = {
+      id: 'issue-customer-ambiguity', lastSeenAt: new Date('2026-10-01T00:00:00.000Z'),
+      metadata: {
+        reason: 'BUYER_CUSTOMER_NOT_CONFIRMED', orderId: order.id, paymentId: order.asaasPaymentId,
+        externalReference: `event-map-order:${order.id}`, lookupError: 'MULTIPLE_BUYER_CUSTOMERS',
+      },
+    };
+    vi.mocked(prisma.eventMapOrder.findFirst).mockImplementation(async () => ({ ...order }) as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockResolvedValue([{ ...order }] as never);
+    vi.mocked(prisma.financeReconciliationIssue.findFirst).mockImplementation(async ({ where }) => {
+      if (where.dedupeKey === `BILLING_OPERATION_UNCERTAIN:PAYMENT:${order.id}`) return issue as never;
+      return null as never;
+    });
+    vi.mocked(prisma.financeReconciliationIssue.updateMany).mockResolvedValue({ count: 1 } as never);
+
+    const result = await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_DELETED', eventId: 'evt-customer-ambiguity-deleted',
+      payment: {
+        id: order.asaasPaymentId, status: 'DELETED', deleted: true, value: 20,
+        externalReference: `event-map-order:${order.id}`,
+      },
+    } as never);
+
+    expect(result.success).toBe(true);
+    expect(prisma.financeReconciliationIssue.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        id: issue.id, contaId: 'conta-1', status: 'OPEN', entityId: order.id, asaasId: order.asaasPaymentId,
+        lastSeenAt: issue.lastSeenAt,
+        AND: expect.arrayContaining([
+          expect.objectContaining({ metadata: { path: ['lookupError'], equals: 'MULTIPLE_BUYER_CUSTOMERS' } }),
+        ]),
+      }),
+      data: expect.objectContaining({ status: 'RESOLVED' }),
+    }));
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ actorType: 'SYSTEM', actorId: null, correlationId: 'evt-customer-ambiguity-deleted' }),
+    }));
+  });
+
+  it('keeps unrelated event-payment uncertainty open after deletion', async () => {
+    const { prisma } = await import('@alusa/database');
+    const order = {
+      id: 'order-multiple-payments', status: 'EXPIRED', paymentStatus: 'DELETED',
+      paymentProvider: 'ASAAS', asaasPaymentId: 'pay-multiple-payments',
+    };
+    vi.mocked(prisma.eventMapOrder.findFirst).mockImplementation(async () => ({ ...order }) as never);
+    vi.mocked(prisma.eventMapOrder.findMany).mockResolvedValue([{ ...order }] as never);
+    vi.mocked(prisma.financeReconciliationIssue.findFirst).mockImplementation(async ({ where }) => {
+      if (where.dedupeKey !== `BILLING_OPERATION_UNCERTAIN:PAYMENT:${order.id}`) return null as never;
+      return {
+        id: 'issue-multiple-payments', lastSeenAt: new Date(),
+        metadata: {
+          reason: 'MULTIPLE_PAYMENTS', orderId: order.id, paymentId: order.asaasPaymentId,
+          externalReference: `event-map-order:${order.id}`, lookupError: 'MULTIPLE_PAYMENTS',
+        },
+      } as never;
+    });
+
+    await handlePaymentWebhook('conta-1', {
+      event: 'PAYMENT_DELETED', eventId: 'evt-multiple-payments-deleted',
+      payment: {
+        id: order.asaasPaymentId, status: 'DELETED', deleted: true, value: 20,
+        externalReference: `event-map-order:${order.id}`,
+      },
+    } as never);
+
+    expect(prisma.financeReconciliationIssue.updateMany).not.toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ dedupeKey: `BILLING_OPERATION_UNCERTAIN:PAYMENT:${order.id}` }),
+    }));
+    expect(prisma.auditLog.create).not.toHaveBeenCalled();
   });
 
   it('finalizes a persisted DELETE webhook received during cancellation intent', async () => {

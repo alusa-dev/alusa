@@ -337,6 +337,10 @@ describe('getWebhookOperationalDiagnostics', () => {
     });
 
     expect(result.status).toBe('ERROR');
+    expect(result.recommendations.find((item) => item.code === 'WEBHOOK_GAPS_DETECTED')).toMatchObject({
+      severity: 'info',
+      message: expect.stringContaining('idade sem evento não confirma divergência financeira'),
+    });
     expect(result.recommendations.map((item) => item.code)).toEqual(
       expect.arrayContaining([
         'WEBHOOK_SECRET_MISSING',

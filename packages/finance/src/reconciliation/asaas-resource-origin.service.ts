@@ -8,6 +8,7 @@ export type AsaasOriginClassification = {
   origin: AsaasResourceOriginValue;
   reason: string;
   actorId: string;
+  auditContext?: { actorType: 'SYSTEM'; operatorLabel: string; runId: string };
 };
 
 export class AsaasResourceOriginClassificationError extends Error {
@@ -18,6 +19,17 @@ export class AsaasResourceOriginClassificationError extends Error {
 }
 
 type Db = Prisma.TransactionClient;
+
+function auditActorFields(input: Pick<AsaasOriginClassification, 'actorId' | 'auditContext'>) {
+  return input.auditContext
+    ? { actorType: input.auditContext.actorType, actorId: null, correlationId: input.auditContext.runId }
+    : { actorType: 'ADMIN' as const, actorId: input.actorId };
+}
+
+function auditRunMetadata(input: Pick<AsaasOriginClassification, 'auditContext'>) {
+  return input.auditContext ? { operatorLabel: input.auditContext.operatorLabel, runId: input.auditContext.runId } : {};
+}
+
 const PENDING_ENTITY_EXHAUSTED_ERROR = 'Entidade local não encontrada após tentativas máximas';
 const DEFAULT_WEBHOOK_MAX_ATTEMPTS = 5;
 
@@ -320,8 +332,7 @@ async function closeExhaustedExternalInboxRows(db: Db, input: AsaasOriginClassif
         if (updated.count !== 1) continue;
         await db.auditLog.create({ data: {
           contaId: input.contaId,
-          actorType: 'ADMIN',
-          actorId: input.actorId,
+          ...auditActorFields(input),
           action: 'finance.pending_inbox.external_origin_resolved',
           entityType: 'PendingInboxNotification',
           entityId: row.id,
@@ -333,6 +344,7 @@ async function closeExhaustedExternalInboxRows(db: Db, input: AsaasOriginClassif
             dedupeKey: row.dedupeKey,
             previousError: row.lastError,
             resolution: 'EXTERNAL_ORIGIN_CLASSIFIED',
+            ...auditRunMetadata(input),
           },
         } });
         closed += 1;
@@ -360,8 +372,7 @@ async function closeExhaustedExternalInboxRows(db: Db, input: AsaasOriginClassif
     if (updated.count !== 1) continue;
     await db.auditLog.create({ data: {
       contaId: input.contaId,
-      actorType: 'ADMIN',
-      actorId: input.actorId,
+      ...auditActorFields(input),
       action: 'finance.pending_inbox.external_origin_resolved',
       entityType: 'PendingInboxNotification',
       entityId: row.id,
@@ -373,6 +384,7 @@ async function closeExhaustedExternalInboxRows(db: Db, input: AsaasOriginClassif
         dedupeKey: row.dedupeKey,
         previousError: row.lastError,
         resolution: 'EXTERNAL_ORIGIN_CLASSIFIED',
+        ...auditRunMetadata(input),
       },
     } });
     closed += 1;
@@ -492,8 +504,7 @@ async function reconcileUnknownPaymentOriginReview(db: Db, input: AsaasOriginCla
     if (queued.count === 1) {
       await db.auditLog.create({ data: {
         contaId: input.contaId,
-        actorType: 'ADMIN',
-        actorId: input.actorId,
+        ...auditActorFields(input),
         action: 'finance.asaas_resource_origin.webhook_requeued',
         entityType: 'WebhookAsaas',
         entityId: causeId,
@@ -502,6 +513,7 @@ async function reconcileUnknownPaymentOriginReview(db: Db, input: AsaasOriginCla
           asaasId: input.asaasId.trim(),
           eventId: causeId,
           resolution: 'ALUSA_ORIGIN_CLASSIFIED_REPLAY_PENDING',
+          ...auditRunMetadata(input),
         },
       } });
     }
@@ -533,8 +545,7 @@ async function reconcileUnknownPaymentOriginReview(db: Db, input: AsaasOriginCla
   if (resolved.count === 1) {
     await db.auditLog.create({ data: {
       contaId: input.contaId,
-      actorType: 'ADMIN',
-      actorId: input.actorId,
+      ...auditActorFields(input),
       action: 'finance.asaas_resource_origin.external_review_resolved',
       entityType: 'FinanceReconciliationIssue',
       entityId: issue.id,
@@ -542,6 +553,7 @@ async function reconcileUnknownPaymentOriginReview(db: Db, input: AsaasOriginCla
         resourceType: input.resourceType,
         asaasId: input.asaasId.trim(),
         resolution: 'EXTERNAL_ORIGIN_CLASSIFIED_NO_FINANCIAL_REPLAY',
+        ...auditRunMetadata(input),
       },
     } });
   }
@@ -595,8 +607,7 @@ async function reconcileUnknownSubscriptionOriginReview(db: Db, input: AsaasOrig
     if (queued.count === 1) {
       await db.auditLog.create({ data: {
         contaId: input.contaId,
-        actorType: 'ADMIN',
-        actorId: input.actorId,
+        ...auditActorFields(input),
         action: 'finance.asaas_resource_origin.webhook_requeued',
         entityType: 'WebhookAsaas',
         entityId: causeId,
@@ -605,6 +616,7 @@ async function reconcileUnknownSubscriptionOriginReview(db: Db, input: AsaasOrig
           asaasId,
           eventId: causeId,
           resolution: 'ALUSA_ORIGIN_CLASSIFIED_REPLAY_PENDING',
+          ...auditRunMetadata(input),
         },
       } });
     }
@@ -634,8 +646,7 @@ async function reconcileUnknownSubscriptionOriginReview(db: Db, input: AsaasOrig
   if (resolved.count === 1) {
     await db.auditLog.create({ data: {
       contaId: input.contaId,
-      actorType: 'ADMIN',
-      actorId: input.actorId,
+      ...auditActorFields(input),
       action: 'finance.asaas_resource_origin.external_review_resolved',
       entityType: 'FinanceReconciliationIssue',
       entityId: issue.id,
@@ -643,10 +654,99 @@ async function reconcileUnknownSubscriptionOriginReview(db: Db, input: AsaasOrig
         resourceType: input.resourceType,
         asaasId,
         resolution: 'EXTERNAL_ORIGIN_CLASSIFIED_NO_FINANCIAL_REPLAY',
+        ...auditRunMetadata(input),
       },
     } });
   }
   return { requeued: 0, resolved: resolved.count };
+}
+
+/**
+ * Resolves only unknown-origin child payment reviews whose exact persisted
+ * webhook links them to a subscription explicitly classified EXTERNAL.
+ * Missing externalReference is not used as evidence; the subscription parent
+ * and event identity are the evidence. Any local financial link fails closed.
+ */
+async function reconcileExternalSubscriptionChildPaymentReviews(db: Db, input: AsaasOriginClassification) {
+  if (input.resourceType !== 'SUBSCRIPTION' || input.origin !== 'EXTERNAL') return 0;
+  const subscriptionId = input.asaasId.trim();
+  const issues = await db.$queryRaw<Array<{
+    id: string; asaasId: string; entityId: string | null; issueType: string;
+    entityType: string; metadata: Prisma.JsonValue; lastSeenAt: Date;
+  }>>`
+    SELECT i.id, i."asaasId", i."entityId", i."issueType", i."entityType", i.metadata, i."lastSeenAt"
+    FROM "FinanceReconciliationIssue" i
+    WHERE i."contaId" = ${input.contaId}
+      AND i."entityType" = 'PAYMENT'
+      AND i."issueType" = 'PAYMENT_NEEDS_REVIEW'
+      AND i.status = 'OPEN'
+      AND i.metadata #>> '{reason}' = ${UNKNOWN_PAYMENT_ORIGIN_REASON}
+      AND i."asaasId" IS NOT NULL
+      AND NULLIF(BTRIM(i.metadata #>> '{lastCauseId}'), '') IS NOT NULL
+      AND (
+        EXISTS (
+          SELECT 1 FROM "WebhookAsaas" w
+          WHERE w."contaId" = i."contaId" AND w."asaasPaymentId" = i."asaasId"
+            AND w."eventId" = i.metadata #>> '{lastCauseId}'
+            AND w.payload #>> '{payment,subscription}' = ${subscriptionId}
+        ) OR EXISTS (
+          SELECT 1 FROM "WebhookAsaasArchive" w
+          WHERE w."contaId" = i."contaId" AND w."asaasPaymentId" = i."asaasId"
+            AND w."eventId" = i.metadata #>> '{lastCauseId}'
+            AND w.payload #>> '{payment,subscription}' = ${subscriptionId}
+        )
+      )
+    ORDER BY i."detectedAt" ASC
+    LIMIT 200
+  `;
+  let resolved = 0;
+  for (const issue of issues) {
+    const paymentId = issue.asaasId?.trim();
+    const metadata = issue.metadata && typeof issue.metadata === 'object' && !Array.isArray(issue.metadata)
+      ? issue.metadata as Record<string, unknown> : {};
+    const causeId = typeof metadata.lastCauseId === 'string' ? metadata.lastCauseId : null;
+    if (!paymentId || !causeId) continue;
+    const localLinks = await Promise.all([
+      db.charge.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } }),
+      db.cobranca.findFirst({ where: { contaId: input.contaId, OR: [{ asaasPaymentId: paymentId }, { asaasId: paymentId }], matricula: { contaId: input.contaId, aluno: { contaId: input.contaId } } }, select: { id: true } }),
+      db.pagamento.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } }),
+      db.eventMapOrder.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } }),
+      db.eventTicketSale.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } }),
+      db.eventFinancialEntry.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } }),
+      db.eventParticipant.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } }),
+      db.eventBillingGroup.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } }),
+    ]);
+    if (localLinks.some(Boolean)) continue;
+
+    const result = await db.financeReconciliationIssue.updateMany({
+      where: {
+        id: issue.id, contaId: input.contaId, entityType: 'PAYMENT',
+        issueType: 'PAYMENT_NEEDS_REVIEW', status: 'OPEN', asaasId: paymentId,
+        lastSeenAt: issue.lastSeenAt,
+        AND: [
+          { metadata: { path: ['reason'], equals: UNKNOWN_PAYMENT_ORIGIN_REASON } },
+          { metadata: { path: ['lastCauseId'], equals: causeId } },
+        ],
+      },
+      data: {
+        status: 'RESOLVED', resolvedAt: new Date(),
+        resolution: 'Pagamento vinculado à assinatura explicitamente classificada EXTERNAL; sem replay financeiro.',
+      },
+    });
+    if (result.count !== 1) continue;
+    await db.auditLog.create({ data: {
+      contaId: input.contaId, ...auditActorFields(input),
+      action: 'finance.reconciliation_issue.resolved', entityType: 'FinanceReconciliationIssue', entityId: issue.id,
+      metadata: {
+        issueType: issue.issueType, entityType: issue.entityType, entityId: issue.entityId,
+        asaasId: paymentId, resolution: 'EXTERNAL_SUBSCRIPTION_CHILD_NO_FINANCIAL_REPLAY',
+        subscriptionId, causeId,
+        ...auditRunMetadata(input),
+      },
+    } });
+    resolved += 1;
+  }
+  return resolved;
 }
 
 export type ExternalSubscriptionPreview = {
@@ -888,6 +988,7 @@ async function classifyInTransaction(db: Db, input: AsaasOriginClassification) {
     const pendingInboxClosed = await closeClassifiedInboxRows(db, input);
     const webhookReview = await reconcileUnknownPaymentOriginReview(db, input);
     const subscriptionWebhookReview = await reconcileUnknownSubscriptionOriginReview(db, input);
+    const childPaymentReviewsResolved = await reconcileExternalSubscriptionChildPaymentReviews(db, input);
     return {
       record: prior,
       changed: false,
@@ -895,6 +996,7 @@ async function classifyInTransaction(db: Db, input: AsaasOriginClassification) {
       pendingInboxClosed,
       requeued: webhookReview.requeued + subscriptionWebhookReview.requeued,
       resolved: webhookReview.resolved + subscriptionWebhookReview.resolved,
+      childPaymentReviewsResolved,
     };
   }
   if (prior && prior.origin !== input.origin && input.origin === 'EXTERNAL' && prior.origin === 'ALUSA') {
@@ -910,24 +1012,27 @@ async function classifyInTransaction(db: Db, input: AsaasOriginClassification) {
     where: { uq_asaas_resource_origin_tenant_resource: {
       contaId: input.contaId, resourceType: input.resourceType, asaasId: input.asaasId.trim(),
     } },
-    create: { ...input, asaasId: input.asaasId.trim(), reason, classifiedAt: now },
+    create: {
+      contaId: input.contaId, resourceType: input.resourceType, asaasId: input.asaasId.trim(),
+      origin: input.origin, reason, actorId: input.actorId, classifiedAt: now,
+    },
     update: { origin: input.origin, reason, actorId: input.actorId, classifiedAt: now, history },
   });
   const reclassified = Boolean(prior && prior.origin !== input.origin);
   await db.auditLog.create({ data: {
     contaId: input.contaId,
-    actorType: 'ADMIN',
-    actorId: input.actorId,
+    ...auditActorFields(input),
     action: reclassified ? 'finance.asaas_resource_origin.reclassified' : 'finance.asaas_resource_origin.classified',
     entityType: 'AsaasResourceOrigin',
     entityId: record.id,
     metadata: { resourceType: input.resourceType, asaasId: input.asaasId, origin: input.origin, reason,
-      previousOrigin: prior?.origin ?? null },
+      previousOrigin: prior?.origin ?? null, ...auditRunMetadata(input) },
   } });
   const pendingInboxClosed = await closeClassifiedInboxRows(db, input);
   const firstAlusaClassification = input.origin === 'ALUSA' && prior?.origin !== 'ALUSA';
   const webhookReview = await reconcileUnknownPaymentOriginReview(db, input, firstAlusaClassification);
   const subscriptionWebhookReview = await reconcileUnknownSubscriptionOriginReview(db, input, firstAlusaClassification);
+  const childPaymentReviewsResolved = await reconcileExternalSubscriptionChildPaymentReviews(db, input);
   return {
     record,
     changed: true,
@@ -935,6 +1040,7 @@ async function classifyInTransaction(db: Db, input: AsaasOriginClassification) {
     pendingInboxClosed,
     requeued: webhookReview.requeued + subscriptionWebhookReview.requeued,
     resolved: webhookReview.resolved + subscriptionWebhookReview.resolved,
+    childPaymentReviewsResolved,
   };
 }
 
@@ -944,11 +1050,13 @@ export async function classifyAsaasResourceOrigin(input: AsaasOriginClassificati
 }
 
 export async function classifyPreviewedExternalSubscription(input: {
-  contaId: string; subscriptionId: string; actorId: string; reason: string; db?: Db;
+  contaId: string; subscriptionId: string; actorId: string; reason: string;
+  auditContext?: AsaasOriginClassification['auditContext']; db?: Db;
 }) {
   return classifyAsaasResourceOrigin({
     contaId: input.contaId, resourceType: 'SUBSCRIPTION', asaasId: input.subscriptionId,
-    origin: 'EXTERNAL', reason: input.reason, actorId: input.actorId, db: input.db,
+    origin: 'EXTERNAL', reason: input.reason, actorId: input.actorId,
+    auditContext: input.auditContext, db: input.db,
   });
 }
 

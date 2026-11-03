@@ -486,6 +486,7 @@ export async function resolveEventMapPaymentAtExpiry(
         contaId: input.contaId,
         entityType: 'PAYMENT',
         entityId: input.orderId,
+        asaasId: remotePayment.id,
         issueType: 'BILLING_OPERATION_UNCERTAIN',
         severity: 'CRITICAL',
         localStatus: 'PAYMENT_PENDING',
@@ -494,6 +495,8 @@ export async function resolveEventMapPaymentAtExpiry(
           orderId: input.orderId,
           reservationId: input.reservationId,
           paymentId: remotePayment.id,
+          externalReference,
+          reason: 'BUYER_CUSTOMER_NOT_CONFIRMED',
           lookupError: error instanceof Error ? error.message : String(error),
         },
       });
