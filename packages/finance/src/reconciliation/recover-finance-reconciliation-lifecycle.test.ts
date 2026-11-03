@@ -16,6 +16,8 @@ const { prisma, tx, getPayment, getSubscription, auditCreate, issueUpdate } = vi
     standaloneSubscription: model(), billingAgreement: model(), matricula: model(),
     enrollmentCreationOperation: model(), acordoFinanceiroFuturo: model(),
     financeReconciliationIssue: { findFirst: vi.fn() },
+    asaasResourceOrigin: { findUnique: vi.fn() },
+    $queryRaw: vi.fn(),
     $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
   };
   return { prisma, tx, getPayment: vi.fn(), getSubscription: vi.fn(), auditCreate, issueUpdate };
@@ -33,6 +35,7 @@ vi.mock('../webhooks/webhook-reconciliation.service', () => ({ reconcileWithAsaa
 vi.mock('../use-cases/asaas-pagination', () => ({ assertCompleteAsaasPage: vi.fn() }));
 
 import {
+  resolveExternalChildReview,
   resolveAbsentTerminalLagIssue,
   resolveAlreadyLinkedPaymentIssue,
   resolveHistoricalPayment,
@@ -47,6 +50,31 @@ describe('finance recovery lifecycle race guards', () => {
       prisma.billingAgreement, prisma.matricula, prisma.enrollmentCreationOperation, prisma.acordoFinanceiroFuturo]) {
       vi.mocked(row.findFirst).mockResolvedValue(null);
     }
+  });
+
+  it.each([false, true])('validates legacy child proof without financial writes (ambiguous=%s)', async (ambiguous) => {
+    const evidence = { issueId: 'issue-child', paymentId: 'pay-child', subscriptionIds: ['sub-reviewed'], descriptions: [], externalReferences: [] };
+    vi.mocked(prisma.financeReconciliationIssue.findFirst).mockResolvedValue({
+      id: evidence.issueId, contaId: 'tenant-reviewed', issueType: 'PAYMENT_NEEDS_REVIEW', entityType: 'PAYMENT',
+      asaasId: evidence.paymentId, status: 'OPEN', metadata: {
+        reason: 'resource_origin_unknown', event: 'PAYMENT_RECEIVED', lastCauseId: 'evt-[REDACTED]',
+      },
+    });
+    const row = {
+      contaId: 'tenant-reviewed', eventId: 'evt-canonical', event: 'PAYMENT_RECEIVED', paymentId: 'pay-child',
+      payloadId: 'evt-[REDACTED]', payloadEvent: 'PAYMENT_RECEIVED', payloadPaymentId: 'pay-child', subscriptionId: 'sub-reviewed',
+    };
+    vi.mocked(prisma.$queryRaw).mockResolvedValue(ambiguous ? [row, { ...row, eventId: 'evt-other' }] : [row]);
+    vi.mocked(prisma.asaasResourceOrigin.findUnique).mockResolvedValue({ origin: 'EXTERNAL' });
+    const operation = resolveExternalChildReview({
+      manifest: { version: 1, contaId: 'tenant-reviewed', reviewedAt: '2026-11-03T00:00:00.000Z', reason: 'reviewed',
+        approvedExternalSubscriptionIds: ['sub-reviewed'], approvedExternalPaymentIds: ['pay-child'], openIssues: [], externalEvidence: [evidence] },
+      evidence,
+    });
+    if (ambiguous) await expect(operation).rejects.toThrow('não possui evento com vínculo exato');
+    else await expect(operation).resolves.toBe('READY');
+    expect(issueUpdate).not.toHaveBeenCalled();
+    expect(auditCreate).not.toHaveBeenCalled();
   });
 
   it('keeps a historical issue open if a local owner appears after preflight', async () => {

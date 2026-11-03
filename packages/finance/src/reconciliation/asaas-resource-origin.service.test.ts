@@ -91,8 +91,12 @@ describe('Asaas resource origin preview and classification', () => {
         id: 'issue-child-system', asaasId: 'pay-child-system', entityId: null,
         issueType: 'PAYMENT_NEEDS_REVIEW', entityType: 'PAYMENT',
         lastSeenAt: new Date('2026-10-01T00:00:00.000Z'),
-        metadata: { reason: 'resource_origin_unknown', lastCauseId: 'event-child-system' },
+        metadata: { reason: 'resource_origin_unknown', lastCauseId: 'event-child-system', event: 'PAYMENT_RECEIVED' },
       }] as never);
+    vi.mocked(txMock.$queryRaw).mockResolvedValueOnce([{
+      contaId: 'conta-a', eventId: 'event-child-system', event: 'PAYMENT_RECEIVED', paymentId: 'pay-child-system',
+      payloadId: 'event-child-system', payloadEvent: 'PAYMENT_RECEIVED', payloadPaymentId: 'pay-child-system', subscriptionId: 'sub-a',
+    }] as never);
     const result = await classifyPreviewedExternalSubscription({
       contaId: 'conta-a', subscriptionId: 'sub-a', actorId: 'system:finance-recovery:run-123',
       auditContext: { actorType: 'SYSTEM', operatorLabel: 'finance-ops', runId: 'run-123' },
@@ -117,9 +121,13 @@ describe('Asaas resource origin preview and classification', () => {
       .mockResolvedValueOnce([eligibleRow] as never)
       .mockResolvedValueOnce([{
         id: 'issue-child', asaasId: 'pay-child', entityId: null, issueType: 'PAYMENT_NEEDS_REVIEW',
-        entityType: 'PAYMENT', lastSeenAt: observedAt, metadata: { reason: 'resource_origin_unknown', lastCauseId: 'event-child' },
+        entityType: 'PAYMENT', lastSeenAt: observedAt, metadata: { reason: 'resource_origin_unknown', lastCauseId: 'event-child', event: 'PAYMENT_RECEIVED' },
       }] as never);
 
+    vi.mocked(txMock.$queryRaw).mockResolvedValueOnce([{
+      contaId: 'conta-a', eventId: 'event-child', event: 'PAYMENT_RECEIVED', paymentId: 'pay-child',
+      payloadId: 'event-child', payloadEvent: 'PAYMENT_RECEIVED', payloadPaymentId: 'pay-child', subscriptionId: 'sub-a',
+    }] as never);
     const result = await classifyPreviewedExternalSubscription({
       contaId: 'conta-a', subscriptionId: 'sub-a', actorId: 'admin-a', reason: 'Assinatura externa aprovada', db: txMock as never,
     });
@@ -143,6 +151,31 @@ describe('Asaas resource origin preview and classification', () => {
     }));
   });
 
+  it('keeps a newer child cause/version open when the legacy proof CAS no longer matches', async () => {
+    const lastSeenAt = new Date('2026-10-01T00:00:00.000Z');
+    vi.mocked(txMock.$queryRaw)
+      .mockResolvedValueOnce([eligibleRow] as never)
+      .mockResolvedValueOnce([{
+        id: 'issue-child-newer', asaasId: 'pay-child', entityId: null, issueType: 'PAYMENT_NEEDS_REVIEW', entityType: 'PAYMENT',
+        lastSeenAt, metadata: { reason: 'resource_origin_unknown', lastCauseId: 'evt-[REDACTED]', event: 'PAYMENT_RECEIVED' },
+      }] as never)
+      .mockResolvedValueOnce([{
+        contaId: 'conta-a', eventId: 'evt-canonical', event: 'PAYMENT_RECEIVED', paymentId: 'pay-child',
+        payloadId: 'evt-[REDACTED]', payloadEvent: 'PAYMENT_RECEIVED', payloadPaymentId: 'pay-child', subscriptionId: 'sub-a',
+      }] as never);
+    vi.mocked(txMock.financeReconciliationIssue.updateMany).mockResolvedValueOnce({ count: 0 });
+    const result = await classifyPreviewedExternalSubscription({
+      contaId: 'conta-a', subscriptionId: 'sub-a', actorId: 'admin-a', reason: 'Reviewed external', db: txMock as never,
+    });
+    expect(result.childPaymentReviewsResolved).toBe(0);
+    expect(txMock.financeReconciliationIssue.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ lastSeenAt, AND: expect.arrayContaining([
+        { metadata: { path: ['lastCauseId'], equals: 'evt-[REDACTED]' } },
+      ]) }),
+    }));
+    expect(txMock.auditLog.create).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ entityId: 'issue-child-newer' }) }));
+  });
+
   it('does not resolve a child review when the stored event points at another subscription', async () => {
     vi.mocked(txMock.$queryRaw)
       .mockResolvedValueOnce([eligibleRow] as never)
@@ -162,10 +195,14 @@ describe('Asaas resource origin preview and classification', () => {
       .mockResolvedValueOnce([eligibleRow] as never)
       .mockResolvedValueOnce([{
         id: 'issue-child', asaasId: 'pay-child', entityId: null, issueType: 'PAYMENT_NEEDS_REVIEW',
-        entityType: 'PAYMENT', lastSeenAt: observedAt, metadata: { reason: 'resource_origin_unknown', lastCauseId: 'event-child' },
+        entityType: 'PAYMENT', lastSeenAt: observedAt, metadata: { reason: 'resource_origin_unknown', lastCauseId: 'event-child', event: 'PAYMENT_RECEIVED' },
       }] as never);
     vi.mocked(txMock.charge.findFirst).mockResolvedValueOnce({ id: 'local-charge' } as never);
 
+    vi.mocked(txMock.$queryRaw).mockResolvedValueOnce([{
+      contaId: 'conta-a', eventId: 'event-child', event: 'PAYMENT_RECEIVED', paymentId: 'pay-child',
+      payloadId: 'event-child', payloadEvent: 'PAYMENT_RECEIVED', payloadPaymentId: 'pay-child', subscriptionId: 'sub-a',
+    }] as never);
     const result = await classifyPreviewedExternalSubscription({
       contaId: 'conta-a', subscriptionId: 'sub-a', actorId: 'admin-a', reason: 'Assinatura externa aprovada', db: txMock as never,
     });

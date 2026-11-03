@@ -13,6 +13,7 @@ import {
 import { acquireWebhookJobLock, releaseWebhookJobLock, renewWebhookJobLock } from '../packages/finance/src/foundation/webhook-job-lock.service';
 import { reconcileWithAsaas } from '../packages/finance/src/webhooks/webhook-reconciliation.service';
 import { assertCompleteAsaasPage } from '../packages/finance/src/use-cases/asaas-pagination';
+import { resolvePaymentSubscriptionWebhookEvidence } from '../packages/finance/src/reconciliation/payment-subscription-webhook-evidence';
 
 type Manifest = {
   version: 1;
@@ -155,25 +156,6 @@ async function validateApprovedExternalPayment(input: {
   }
 }
 
-async function hasExactSubscriptionWebhookEvidence(input: {
-  contaId: string; paymentId: string; subscriptionId: string; causeId: string;
-}): Promise<boolean> {
-  const rows = await prisma.$queryRaw<Array<{ found: boolean }>>`
-    SELECT EXISTS (
-      SELECT 1 FROM "WebhookAsaas" w
-      WHERE w."contaId" = ${input.contaId} AND w."asaasPaymentId" = ${input.paymentId}
-        AND w."eventId" = ${input.causeId}
-        AND w.payload #>> '{payment,subscription}' = ${input.subscriptionId}
-      UNION ALL
-      SELECT 1 FROM "WebhookAsaasArchive" w
-      WHERE w."contaId" = ${input.contaId} AND w."asaasPaymentId" = ${input.paymentId}
-        AND w."eventId" = ${input.causeId}
-        AND w.payload #>> '{payment,subscription}' = ${input.subscriptionId}
-    ) AS found
-  `;
-  return rows[0]?.found === true;
-}
-
 export async function resolveExternalChildReview(input: {
   manifest: Manifest; evidence: Manifest['externalEvidence'][number]; requireClassified?: boolean;
 }): Promise<'READY' | 'ALREADY_RESOLVED' | 'SKIPPED_STALE'> {
@@ -192,7 +174,11 @@ export async function resolveExternalChildReview(input: {
   const causeId = typeof metadata.lastCauseId === 'string' ? metadata.lastCauseId : null;
   if (metadata.reason !== 'resource_origin_unknown' || !causeId) throw new Error(`Issue ${issue.id} não é uma revisão de origem desconhecida válida.`);
   const subscriptionId = input.evidence.subscriptionIds[0];
-  if (!await hasExactSubscriptionWebhookEvidence({ contaId: input.manifest.contaId, paymentId: input.evidence.paymentId, subscriptionId, causeId })) {
+  const canonicalEventId = await resolvePaymentSubscriptionWebhookEvidence(prisma, {
+    contaId: input.manifest.contaId, paymentId: input.evidence.paymentId, subscriptionId, causeId,
+    event: typeof metadata.event === 'string' ? metadata.event : '',
+  });
+  if (!canonicalEventId) {
     throw new Error(`Issue ${issue.id} não possui evento com vínculo exato à assinatura aprovada.`);
   }
   const classification = await prisma.asaasResourceOrigin.findUnique({

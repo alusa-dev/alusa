@@ -1,5 +1,6 @@
 import { prisma } from '@alusa/database';
 import { Prisma, type AsaasResourceOriginType, type AsaasResourceOriginValue } from '@prisma/client';
+import { resolvePaymentSubscriptionWebhookEvidence } from './payment-subscription-webhook-evidence';
 
 export type AsaasOriginClassification = {
   contaId: string;
@@ -687,12 +688,12 @@ async function reconcileExternalSubscriptionChildPaymentReviews(db: Db, input: A
         EXISTS (
           SELECT 1 FROM "WebhookAsaas" w
           WHERE w."contaId" = i."contaId" AND w."asaasPaymentId" = i."asaasId"
-            AND w."eventId" = i.metadata #>> '{lastCauseId}'
+            AND (w."eventId" = i.metadata #>> '{lastCauseId}' OR w.payload ->> 'id' = i.metadata #>> '{lastCauseId}')
             AND w.payload #>> '{payment,subscription}' = ${subscriptionId}
         ) OR EXISTS (
           SELECT 1 FROM "WebhookAsaasArchive" w
           WHERE w."contaId" = i."contaId" AND w."asaasPaymentId" = i."asaasId"
-            AND w."eventId" = i.metadata #>> '{lastCauseId}'
+            AND (w."eventId" = i.metadata #>> '{lastCauseId}' OR w.payload ->> 'id' = i.metadata #>> '{lastCauseId}')
             AND w.payload #>> '{payment,subscription}' = ${subscriptionId}
         )
       )
@@ -706,6 +707,13 @@ async function reconcileExternalSubscriptionChildPaymentReviews(db: Db, input: A
       ? issue.metadata as Record<string, unknown> : {};
     const causeId = typeof metadata.lastCauseId === 'string' ? metadata.lastCauseId : null;
     if (!paymentId || !causeId) continue;
+    // The candidate SQL only narrows the batch. This shared proof also rejects
+    // aliases that collide across canonical IDs, parents or event types.
+    const canonicalEventId = await resolvePaymentSubscriptionWebhookEvidence(db, {
+      contaId: input.contaId, paymentId, subscriptionId, causeId,
+      event: typeof metadata.event === 'string' ? metadata.event : '',
+    });
+    if (!canonicalEventId) continue;
     const localLinks = await Promise.all([
       db.charge.findFirst({ where: { contaId: input.contaId, asaasPaymentId: paymentId }, select: { id: true } }),
       db.cobranca.findFirst({ where: { contaId: input.contaId, OR: [{ asaasPaymentId: paymentId }, { asaasId: paymentId }], matricula: { contaId: input.contaId, aluno: { contaId: input.contaId } } }, select: { id: true } }),
@@ -740,7 +748,7 @@ async function reconcileExternalSubscriptionChildPaymentReviews(db: Db, input: A
       metadata: {
         issueType: issue.issueType, entityType: issue.entityType, entityId: issue.entityId,
         asaasId: paymentId, resolution: 'EXTERNAL_SUBSCRIPTION_CHILD_NO_FINANCIAL_REPLAY',
-        subscriptionId, causeId,
+        subscriptionId, causeId, canonicalEventId,
         ...auditRunMetadata(input),
       },
     } });
