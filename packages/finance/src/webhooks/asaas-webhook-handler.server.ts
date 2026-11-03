@@ -1217,7 +1217,9 @@ export async function processAsaasWebhookQueue(params?: {
     });
     const payload = hook.payload as unknown as AsaasWebhookBody;
     // The persisted webhook row/event is stable across retries. Use it for
-    // business correlation while Sentry/requestId continue to identify each
+    // business correlation. The indexed ID comes from the validated envelope;
+    // the stored payload may have had ID-like digit sequences redacted.
+    // Sentry/requestId continue to identify each
     // technical attempt independently.
     const correlationId = `asaas-event:${hook.eventId ?? hook.id}`;
 
@@ -1226,7 +1228,7 @@ export async function processAsaasWebhookQueue(params?: {
         contaId: hook.contaId,
         webhookId: hook.id,
         event,
-        payload: { ...payload, event, id: payload?.id ?? hook.eventId ?? undefined },
+        payload: { ...payload, event, id: hook.eventId ?? payload?.id ?? undefined },
       }),
       correlationId,
     );

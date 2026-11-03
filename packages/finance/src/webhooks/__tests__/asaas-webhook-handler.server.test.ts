@@ -105,6 +105,19 @@ describe('processAsaasWebhookQueue notification timestamp', () => {
     })]);
   });
 
+  it.each([
+    ['evt-1', 'evt-1', 'evt-1'],
+    ['evt-1', 'evt-[REDACTED]', 'evt-1'],
+    ['evt-1', 'evt-other', 'evt-1'],
+    [null, 'evt-legacy', 'evt-legacy'],
+  ])('dispatches canonical indexed ID %s instead of stored body ID %s', async (eventId, payloadId, expected) => {
+    const [hook] = await mocks.findMany();
+    mocks.findMany.mockClear();
+    mocks.findMany.mockResolvedValue([{ ...hook, eventId, payload: { ...hook.payload, id: payloadId } }]);
+    await processAsaasWebhookQueue({ contaId: 'conta-a', limit: 1 });
+    expect(mocks.payment).toHaveBeenCalledWith('conta-a', expect.objectContaining({ eventId: expected }));
+  });
+
   it('does not create a billing notification candidate for an ignored external panel payment', async () => {
     mocks.payment.mockResolvedValue({ success: true, skipped: true, skipReason: 'EXTERNAL_PAYMENT_IGNORED' });
 
