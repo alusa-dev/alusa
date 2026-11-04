@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
 
     if (!auth.email) return json(401, { error: 'REAUTENTICACAO_INDISPONIVEL' });
 
-    const credentialCheck = await verifyCredentialsDetailed(auth.email, parsed.data.currentPassword, auth.contaId);
+    const credentialCheck = await verifyCredentialsDetailed(auth.email, parsed.data.currentPassword, auth.authContext ?? 'COLLABORATOR', auth.contaId);
     if (!credentialCheck.ok) {
       return json(401, { error: 'SENHA_INVALIDA' });
     }
