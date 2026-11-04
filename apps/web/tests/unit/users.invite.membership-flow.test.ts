@@ -24,8 +24,14 @@ import prisma from '@/lib/prisma';
 import { hashPassword } from '@/lib/auth-password';
 import { createInvite, deleteInviteById } from '@alusa/lib/server/services/invite-user-service';
 import { acceptInvite } from '@alusa/lib/server/services/invite-user-service';
-import { POST as invitePost } from '@/app/api/users/invite/route';
+import { GET as inviteGet, POST as invitePost } from '@/app/api/users/invite/route';
 import { POST as acceptPost } from '@/app/api/users/accept/route';
+
+function inviteTokenFromUrl(value: string) {
+  const token = new URL(value).searchParams.get('token');
+  if (!token) throw new Error('Resposta não contém um token no link autenticado de criação.');
+  return token;
+}
 
 describe('convite multi-tenant por identidade global', () => {
   const fixtureContaIds = [
@@ -33,6 +39,9 @@ describe('convite multi-tenant por identidade global', () => {
     'invite-flow-school-a', 'invite-flow-school-b', 'invite-flow-duplicate',
     'invite-flow-delete', 'invite-flow-delete-other', 'invite-flow-no-membership',
     'invite-flow-reactivate-a', 'invite-flow-reactivate-b', 'invite-flow-race',
+    'invite-flow-list',
+    'invite-flow-record-foreign', 'invite-flow-responsible-target', 'invite-flow-inactive-target',
+    'invite-flow-responsible-foreign',
   ];
   const fixtureEmails = [
     'invite-flow-admin-origin@example.com', 'invite-flow-owner-existing@example.com',
@@ -42,10 +51,20 @@ describe('convite multi-tenant por identidade global', () => {
     'invite-flow-duplicate-target@example.com', 'invite-flow-orphan-admin@example.com',
     'invite-flow-reactivate-admin@example.com', 'invite-flow-reactivate-user@example.com',
     'invite-flow-race-admin@example.com', 'invite-flow-race-target@example.com',
+    'invite-flow-list-admin@example.com',
+    'invite-flow-inactive-target@example.com', 'invite-flow-inactive-admin@example.com',
+    'invite-flow-responsible-admin@example.com',
   ];
+  const fixtureColaboradorIds = ['invite-flow-existing-record-collaborator', 'invite-flow-active-collaborator', 'invite-flow-foreign-collaborator', 'invite-flow-inactive-collaborator'];
+  const fixtureResponsavelIds = ['invite-flow-responsavel-record', 'invite-flow-responsavel-foreign-record'];
+  const fixtureStudentIds = ['invite-flow-responsavel-student', 'invite-flow-responsavel-foreign-student'];
 
   async function cleanupFixtures() {
     await prisma.invite.deleteMany({ where: { contaId: { in: fixtureContaIds } } });
+    await prisma.colaborador.deleteMany({ where: { id: { in: fixtureColaboradorIds } } });
+    await prisma.alunoResponsavel.deleteMany({ where: { contaId: { in: fixtureContaIds } } });
+    await prisma.responsavel.deleteMany({ where: { id: { in: fixtureResponsavelIds } } });
+    await prisma.aluno.deleteMany({ where: { id: { in: fixtureStudentIds } } });
     await prisma.usuarioConta.deleteMany({ where: { contaId: { in: fixtureContaIds } } });
     await prisma.conta.updateMany({ where: { id: { in: fixtureContaIds } }, data: { ownerUserId: null } });
     await prisma.usuario.deleteMany({ where: { email: { in: fixtureEmails } } });
@@ -129,7 +148,9 @@ describe('convite multi-tenant por identidade global', () => {
     const inviteJson = await inviteResponse.json();
 
     expect(inviteResponse.status).toBe(201);
-    const token = inviteJson.invite.token as string;
+    expect(inviteJson.invite).not.toHaveProperty('token');
+    expect(inviteJson.invite).not.toHaveProperty('metadata');
+    const token = inviteTokenFromUrl(inviteJson.invite.inviteUrl);
 
     await expect(
       prisma.usuario.count({ where: { email: existingOwnerEmail } }),
@@ -187,7 +208,7 @@ describe('convite multi-tenant por identidade global', () => {
     }));
     expect(inviteResponse.status).toBe(201);
     const inviteJson = await inviteResponse.json();
-    const token = inviteJson.invite.token as string;
+    const token = inviteTokenFromUrl(inviteJson.invite.inviteUrl);
 
     vi.mocked(getServerSession).mockResolvedValue(null as never);
     const acceptResponse = await acceptPost(new Request('http://x/api/users/accept', {
@@ -371,6 +392,204 @@ describe('convite multi-tenant por identidade global', () => {
     }));
     expect(renewed.status).toBe(201);
     await expect(prisma.invite.count({ where: { contaId, email: inviteEmail, status: 'EXPIRED' } })).resolves.toBe(1);
+  });
+
+  it('lista convites com projeção segura sem token, metadata ou link', async () => {
+    const contaId = 'invite-flow-list';
+    const adminEmail = 'invite-flow-list-admin@example.com';
+    await ensureConta(contaId, 'Escola listagem de convites');
+    const admin = await prisma.usuario.create({
+      data: { contaId, nome: 'Admin', email: adminEmail, senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' },
+    });
+    await prisma.usuarioConta.create({ data: { usuarioId: admin.id, contaId, role: Role.ADMIN, status: 'ATIVO' } });
+    const invite = await createInvite('invite-list-target@example.test', Role.RECEPCAO, admin.id, contaId, { secret: 'not-for-list' });
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: admin.id, role: 'ADMIN', contaId },
+    } as never);
+
+    const response = await inviteGet(new Request('http://x/api/users/invite'));
+    const json = await response.json();
+    const listed = json.items.find((item: { id: string }) => item.id === invite.id);
+
+    expect(response.status).toBe(200);
+    expect(listed).toMatchObject({ id: invite.id, email: 'invite-list-target@example.test', status: 'PENDING' });
+    expect(listed).not.toHaveProperty('token');
+    expect(listed).not.toHaveProperty('metadata');
+    expect(listed).not.toHaveProperty('inviteUrl');
+  });
+
+  it('cria convite para cadastro existente validado na Conta e bloqueia cadastro já ativo', async () => {
+    const contaId = 'invite-flow-list';
+    const adminEmail = 'invite-flow-list-admin@example.com';
+    await ensureConta(contaId, 'Escola alvo de cadastro existente');
+    const admin = await prisma.usuario.create({
+      data: { contaId, nome: 'Admin', email: adminEmail, senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' },
+    });
+    await prisma.usuarioConta.create({ data: { usuarioId: admin.id, contaId, role: Role.ADMIN, status: 'ATIVO' } });
+    await prisma.colaborador.create({
+      data: {
+        id: fixtureColaboradorIds[0], contaId, nome: 'Funcionário existente',
+        email: 'existing-record-target@example.test', cargo: 'ADMINISTRATIVO', status: 'ATIVO',
+      },
+    });
+    await prisma.colaborador.create({
+      data: {
+        id: fixtureColaboradorIds[1], contaId, nome: 'Funcionário já ativo',
+        email: adminEmail, usuarioId: admin.id, cargo: 'ADMINISTRATIVO', status: 'ATIVO',
+      },
+    });
+    vi.mocked(getServerSession).mockResolvedValue({ user: { id: admin.id, role: 'ADMIN', contaId } } as never);
+
+    const created = await invitePost(new Request('http://x/api/users/invite', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: {
+        kind: 'EXISTING_RECORD', recordType: 'COLABORADOR', recordId: fixtureColaboradorIds[0], role: 'RECEPCAO',
+      } }),
+    }));
+    const createdJson = await created.json();
+    const createdInvite = await prisma.invite.findUnique({ where: { token: new URL(createdJson.invite.inviteUrl).searchParams.get('token')! } });
+
+    expect(created.status).toBe(201);
+    expect(createdInvite?.email).toBe('existing-record-target@example.test');
+    expect(createdInvite?.metadata).toEqual({
+      target: { kind: 'EXISTING_RECORD', recordType: 'COLABORADOR', recordId: fixtureColaboradorIds[0] },
+    });
+
+    const activeTarget = await invitePost(new Request('http://x/api/users/invite', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: {
+        kind: 'EXISTING_RECORD', recordType: 'COLABORADOR', recordId: fixtureColaboradorIds[1], role: 'RECEPCAO',
+      } }),
+    }));
+    expect(activeTarget.status).toBe(409);
+  });
+
+  it('adapta seleção legada para um responsável único e cria convite sem email nem envio', async () => {
+    const contaId = 'invite-flow-responsible-target';
+    await ensureConta(contaId, 'Conta alvo responsável');
+    const admin = await prisma.usuario.create({
+      data: { contaId, nome: 'Admin', email: 'invite-flow-responsible-admin@example.com', senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' },
+    });
+    await prisma.usuarioConta.create({ data: { usuarioId: admin.id, contaId, role: Role.ADMIN, status: 'ATIVO' } });
+    const student = await prisma.aluno.create({
+      data: { id: fixtureStudentIds[0], contaId, nome: 'Aluno vinculado', dataNasc: new Date('2015-01-01T00:00:00.000Z') },
+    });
+    await prisma.responsavel.create({
+      data: { id: fixtureResponsavelIds[0], contaId, nome: 'Responsável sem e-mail', cpf: '52998224725', email: '   ', telefone: '11999999999' },
+    });
+    await prisma.alunoResponsavel.create({
+      data: { contaId, alunoId: student.id, responsavelId: fixtureResponsavelIds[0], tipoVinculo: 'RESPONSAVEL' },
+    });
+    vi.mocked(getServerSession).mockResolvedValue({ user: { id: admin.id, role: 'ADMIN', contaId } } as never);
+
+    const response = await invitePost(new Request('http://x/api/users/invite', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role: 'RESPONSAVEL', alunosIds: [student.id] }),
+    }));
+    const json = await response.json();
+    const token = new URL(json.invite.inviteUrl).searchParams.get('token');
+    const stored = await prisma.invite.findUnique({ where: { token: token! } });
+
+    expect(response.status).toBe(201);
+    expect(json.emailDelivery).toBe('not_applicable');
+    expect(json.invite.email).toBeNull();
+    expect(stored?.email).toBeNull();
+    expect(stored?.metadata).toEqual({
+      target: { kind: 'EXISTING_RECORD', recordType: 'RESPONSAVEL', recordId: fixtureResponsavelIds[0] },
+      alunosIds: [student.id],
+    });
+  });
+
+  it('responde 404 sem mutações para seleção legada com alunos de outra escola, isolados ou mistos', async () => {
+    const contaA = 'invite-flow-responsible-target';
+    const contaB = 'invite-flow-responsible-foreign';
+    await Promise.all([ensureConta(contaA, 'Conta A'), ensureConta(contaB, 'Conta B')]);
+    const admin = await prisma.usuario.create({
+      data: { contaId: contaA, nome: 'Admin A', email: 'invite-flow-responsible-admin@example.com', senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' },
+    });
+    await prisma.usuarioConta.create({ data: { usuarioId: admin.id, contaId: contaA, role: Role.ADMIN, status: 'ATIVO' } });
+    const [studentA, studentB] = await Promise.all([
+      prisma.aluno.create({ data: { id: fixtureStudentIds[0], contaId: contaA, nome: 'Aluno A', dataNasc: new Date('2015-01-01T00:00:00.000Z') } }),
+      prisma.aluno.create({ data: { id: fixtureStudentIds[1], contaId: contaB, nome: 'Aluno B', dataNasc: new Date('2015-01-01T00:00:00.000Z') } }),
+    ]);
+    await Promise.all([
+      prisma.responsavel.create({ data: { id: fixtureResponsavelIds[0], conta: { connect: { id: contaA } }, nome: 'Responsável A', cpf: '52998224725', email: '   ', telefone: '11999999999' } }),
+      prisma.responsavel.create({ data: { id: fixtureResponsavelIds[1], conta: { connect: { id: contaB } }, nome: 'Responsável B', cpf: '11144477735', email: '   ', telefone: '11999999998' } }),
+    ]);
+    await Promise.all([
+      prisma.alunoResponsavel.create({ data: { contaId: contaA, alunoId: studentA.id, responsavelId: fixtureResponsavelIds[0], tipoVinculo: 'RESPONSAVEL' } }),
+      prisma.alunoResponsavel.create({ data: { contaId: contaB, alunoId: studentB.id, responsavelId: fixtureResponsavelIds[1], tipoVinculo: 'RESPONSAVEL' } }),
+    ]);
+    vi.mocked(getServerSession).mockResolvedValue({ user: { id: admin.id, role: 'ADMIN', contaId: contaA } } as never);
+
+    const postLegacySelection = (alunosIds: string[]) => invitePost(new Request('http://x/api/users/invite', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role: 'RESPONSAVEL', alunosIds }),
+    }));
+    const foreignOnly = await postLegacySelection([studentB.id]);
+    const mixed = await postLegacySelection([studentA.id, studentB.id]);
+
+    expect(foreignOnly.status).toBe(404);
+    expect(mixed.status).toBe(404);
+    expect(await foreignOnly.json()).toEqual(await mixed.json());
+    await expect(prisma.invite.count({ where: { contaId: contaA } })).resolves.toBe(0);
+    await expect(prisma.responsavel.findMany({ where: { id: { in: fixtureResponsavelIds } }, select: { id: true, usuarioId: true } }))
+      .resolves.toEqual(expect.arrayContaining([
+        { id: fixtureResponsavelIds[0], usuarioId: null },
+        { id: fixtureResponsavelIds[1], usuarioId: null },
+      ]));
+    await expect(prisma.usuarioConta.count({ where: { usuarioId: admin.id, contaId: contaB } })).resolves.toBe(0);
+  });
+
+  it('recusa recordId de outra escola sem criar convite', async () => {
+    const contaA = 'invite-flow-list';
+    const contaB = 'invite-flow-record-foreign';
+    await Promise.all([ensureConta(contaA, 'Conta A'), ensureConta(contaB, 'Conta B')]);
+    const admin = await prisma.usuario.create({
+      data: { contaId: contaA, nome: 'Admin A', email: 'invite-flow-list-admin@example.com', senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' },
+    });
+    await prisma.usuarioConta.create({ data: { usuarioId: admin.id, contaId: contaA, role: Role.ADMIN, status: 'ATIVO' } });
+    await prisma.colaborador.create({
+      data: { id: fixtureColaboradorIds[2], contaId: contaB, nome: 'Cadastro B', email: 'foreign-record@example.test', cargo: 'ADMINISTRATIVO' },
+    });
+    vi.mocked(getServerSession).mockResolvedValue({ user: { id: admin.id, role: 'ADMIN', contaId: contaA } } as never);
+
+    const response = await invitePost(new Request('http://x/api/users/invite', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: {
+        kind: 'EXISTING_RECORD', recordType: 'COLABORADOR', recordId: fixtureColaboradorIds[2], role: 'RECEPCAO',
+      } }),
+    }));
+
+    expect(response.status).toBe(404);
+    await expect(prisma.invite.count({ where: { contaId: contaA } })).resolves.toBe(0);
+  });
+
+  it('mapeia identity global inativa para 409 ao convidar cadastro vinculado', async () => {
+    const contaId = 'invite-flow-inactive-target';
+    await ensureConta(contaId, 'Conta com usuário inativo');
+    const admin = await prisma.usuario.create({
+      data: { contaId, nome: 'Admin', email: 'invite-flow-inactive-admin@example.com', senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' },
+    });
+    const inactiveUser = await prisma.usuario.create({
+      data: { contaId, nome: 'Inativo', email: 'invite-flow-inactive-target@example.com', senhaHash: 'test', role: Role.RECEPCAO, status: 'INATIVO' },
+    });
+    await prisma.usuarioConta.createMany({ data: [admin, inactiveUser].map((user) => ({ usuarioId: user.id, contaId, role: user.role, status: user.id === inactiveUser.id ? 'INATIVO' as const : 'ATIVO' as const })) });
+    await prisma.colaborador.create({
+      data: { id: fixtureColaboradorIds[3], contaId, nome: 'Perfil vinculado', email: inactiveUser.email, usuarioId: inactiveUser.id, cargo: 'ADMINISTRATIVO' },
+    });
+    vi.mocked(getServerSession).mockResolvedValue({ user: { id: admin.id, role: 'ADMIN', contaId } } as never);
+
+    const response = await invitePost(new Request('http://x/api/users/invite', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target: {
+        kind: 'EXISTING_RECORD', recordType: 'COLABORADOR', recordId: fixtureColaboradorIds[3], role: 'RECEPCAO',
+      } }),
+    }));
+    const json = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(json.code).toBe('ACCOUNT_INACTIVE');
   });
 
   it('apaga fisicamente somente o convite dentro da conta solicitada', async () => {

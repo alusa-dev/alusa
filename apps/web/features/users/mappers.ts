@@ -1,5 +1,6 @@
 import {
   inviteSummaryDTOSchema,
+  createdInviteDTOSchema,
   listUsersItemDTOSchema,
   managedUserSummaryDTOSchema,
   userProfileDTOSchema,
@@ -45,10 +46,19 @@ export function mapManagedUserRecordToDTO(record: Record<string, unknown>) {
 
 export function mapInviteRecordToDTO(record: Record<string, unknown>) {
   return inviteSummaryDTOSchema.parse({
-    ...record,
+    id: record.id,
     email: record.email ? String(record.email) : null,
+    role: record.role,
+    status: record.status,
     createdAt: toIsoString(record.createdAt as Date | string | undefined),
     expiresAt: toIsoString(record.expiresAt as Date | string | undefined),
+  });
+}
+
+export function mapCreatedInviteRecordToDTO(record: Record<string, unknown>) {
+  return createdInviteDTOSchema.parse({
+    ...mapInviteRecordToDTO(record),
+    inviteUrl: record.inviteUrl,
   });
 }
 

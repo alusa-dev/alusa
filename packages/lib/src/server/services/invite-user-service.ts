@@ -23,6 +23,9 @@ export class ForbiddenRoleError extends Error {
 export class InvalidInviteError extends Error {
   constructor() { super('Convite inválido.'); }
 }
+export class InvalidInviteTargetError extends Error {
+  constructor() { super('Cadastro de convite inválido ou indisponível nesta escola.'); }
+}
 export class ExpiredInviteError extends Error {
   constructor() { super('Convite expirado.'); }
 }
@@ -64,6 +67,19 @@ function normalizeAlunoIds(metadata: Prisma.JsonValue | null | undefined) {
   }
 
   return [...new Set(rawAlunosIds.filter((item): item is string => typeof item === 'string' && item.trim().length > 0))].sort();
+}
+
+function readExistingRecordTarget(metadata: Prisma.JsonValue | Prisma.InputJsonValue | undefined) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const target = (metadata as { target?: unknown }).target;
+  if (!target || typeof target !== 'object' || Array.isArray(target)) return null;
+  const value = target as { kind?: unknown; recordType?: unknown; recordId?: unknown };
+  if (
+    value.kind !== 'EXISTING_RECORD' ||
+    (value.recordType !== 'COLABORADOR' && value.recordType !== 'RESPONSAVEL') ||
+    typeof value.recordId !== 'string' || !value.recordId.trim()
+  ) return null;
+  return { recordType: value.recordType, recordId: value.recordId.trim() } as const;
 }
 
 function hasSameResponsavelInviteTarget(
@@ -113,15 +129,67 @@ export async function createInvite(
       });
       if (!inviterMembership) throw new MissingContaError();
 
+      const recordTarget = readExistingRecordTarget(metadata);
+      if (recordTarget && ((role === Role.RESPONSAVEL) !== (recordTarget.recordType === 'RESPONSAVEL'))) {
+        throw new InvalidInviteTargetError();
+      }
+      if (recordTarget?.recordType === 'COLABORADOR') {
+        const collaborator = await tx.colaborador.findFirst({
+          where: { id: recordTarget.recordId, contaId: targetContaId, status: 'ATIVO' },
+          select: {
+            email: true,
+            usuario: { select: { email: true, status: true, acessosConta: { where: { contaId: targetContaId }, select: { status: true } } } },
+          },
+        });
+        if (
+          !collaborator?.email || normalizeEmail(collaborator.email) !== normalizedEmail || role === Role.RESPONSAVEL ||
+          (collaborator.usuario && normalizeEmail(collaborator.usuario.email) !== normalizedEmail)
+        ) {
+          throw new InvalidInviteTargetError();
+        }
+        if (collaborator.usuario && collaborator.usuario.status !== 'ATIVO') throw new UserInactiveError();
+        if (collaborator.usuario?.acessosConta.some((membership) => membership.status === 'ATIVO')) throw new UserAlreadyLinkedError();
+      }
+
+      let inviteMetadata: Prisma.InputJsonValue | undefined = metadata;
+
       if (role === Role.RESPONSAVEL) {
-        const studentIds = normalizeAlunoIds(metadata as Prisma.JsonValue | undefined);
+        let studentIds = normalizeAlunoIds(metadata as Prisma.JsonValue | undefined);
+        if (recordTarget?.recordType === 'RESPONSAVEL') {
+          const responsible = await tx.responsavel.findFirst({
+            where: { id: recordTarget.recordId, contaId: targetContaId },
+            select: {
+              usuario: { select: { status: true, acessosConta: { where: { contaId: targetContaId }, select: { status: true } } } },
+              alunos: { where: { contaId: targetContaId }, select: { alunoId: true, aluno: { select: { contaId: true } } }, orderBy: { alunoId: 'asc' } },
+            },
+          });
+          if (!responsible) throw new InvalidInviteTargetError();
+          if (responsible.usuario && responsible.usuario.status !== 'ATIVO') throw new UserInactiveError();
+          if (responsible.usuario?.acessosConta.some((membership) => membership.status === 'ATIVO')) throw new UserAlreadyLinkedError();
+          studentIds = [...new Set(responsible.alunos
+            .filter((link) => link.aluno.contaId === targetContaId)
+            .map(({ alunoId }) => alunoId))].sort();
+          if (!studentIds.length) throw new InvalidInviteTargetError();
+          inviteMetadata = {
+            target: { kind: 'EXISTING_RECORD', recordType: 'RESPONSAVEL', recordId: recordTarget.recordId },
+            alunosIds: studentIds,
+          };
+        }
         if (!studentIds.length) throw new InvalidInviteError();
         const linkedStudents = await tx.alunoResponsavel.findMany({
-          where: { contaId: targetContaId, alunoId: { in: studentIds } },
+          where: {
+            contaId: targetContaId,
+            alunoId: { in: studentIds },
+            ...(recordTarget?.recordType === 'RESPONSAVEL' ? { responsavelId: { not: recordTarget.recordId } } : {}),
+          },
           select: { alunoId: true },
           distinct: ['alunoId'],
         });
         if (linkedStudents.length > 0) throw new StudentAlreadyLinkedError();
+      } else if (recordTarget) {
+        inviteMetadata = {
+          target: { kind: 'EXISTING_RECORD', recordType: 'COLABORADOR', recordId: recordTarget.recordId },
+        };
       }
 
       // Expiração é terminal; limpar o estado antes de checar/reemitir dentro do tenant.
@@ -177,7 +245,7 @@ export async function createInvite(
           invitedById,
           status: 'PENDING',
           expiresAt,
-          metadata,
+          metadata: inviteMetadata,
         },
       });
     });
@@ -364,7 +432,11 @@ export async function expirePendingInvite(token: string) {
 export async function listInvitesByConta(contaId: string) {
   const now = new Date();
   await prisma.invite.updateMany({ where: { contaId, status: 'PENDING', expiresAt: { lte: now } }, data: { status: 'EXPIRED' } });
-  return prisma.invite.findMany({ where: { contaId, status: { in: ['PENDING', 'EXPIRED', 'ACCEPTED', 'REVOKED'] } }, orderBy: { createdAt: 'desc' } });
+  return prisma.invite.findMany({
+    where: { contaId, status: { in: ['PENDING', 'EXPIRED', 'ACCEPTED', 'REVOKED'] } },
+    select: { id: true, email: true, role: true, status: true, createdAt: true, expiresAt: true },
+    orderBy: { createdAt: 'desc' },
+  });
 }
 
 export async function deleteInviteById(id: string, contaId: string): Promise<boolean> {

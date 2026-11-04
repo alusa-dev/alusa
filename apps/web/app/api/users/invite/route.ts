@@ -7,11 +7,14 @@ import {
   type InviteRoleDTO,
   listInvitesResultDTOSchema,
 } from '@/features/users/dtos';
-import { mapInviteRecordToDTO } from '@/features/users/mappers';
+import { mapCreatedInviteRecordToDTO, mapInviteRecordToDTO } from '@/features/users/mappers';
 import { sendInviteEmail } from '@/lib/auth-email-flow';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getInviteBaseUrl } from '@/lib/app-url';
-import { findStudentsInContaForInvite } from '@/src/server/users/invite-scope.service';
+import {
+  findInviteTargetInConta,
+  findLegacyResponsibleTargetFromStudents,
+} from '@/src/server/users/invite-scope.service';
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 export async function POST(req: Request) {
@@ -30,11 +33,13 @@ export async function POST(req: Request) {
       );
     }
 
-    const { email, role, alunosIds } = parsed.data as {
-      email?: string | null;
-      role: InviteRoleDTO;
-      alunosIds?: string[];
-    };
+    const legacyInput = 'target' in parsed.data ? null : parsed.data;
+    const targetInput = 'target' in parsed.data
+      ? parsed.data.target
+      : legacyInput?.email
+        ? { kind: 'EMAIL' as const, email: legacyInput.email, role: legacyInput.role }
+        : null;
+    const role = targetInput?.role ?? legacyInput?.role;
     
     // Convites de ADMIN permanecem bloqueados; o cadastro público está fechado durante o piloto.
     if (role === 'ADMIN') {
@@ -43,14 +48,19 @@ export async function POST(req: Request) {
     }
     
     // Validações específicas por role
-    if (role === 'RESPONSAVEL') {
-      // RESPONSAVEL: não precisa de email, mas precisa de alunos
-      if (!alunosIds || alunosIds.length === 0) {
-        return NextResponse.json({ error: 'É necessário vincular ao menos um aluno ao responsável.' }, { status: 400 });
-      }
-    } else {
-      // Outras roles: email é obrigatório
-      if (!email) {
+    if (!role) return NextResponse.json({ error: 'Dados inválidos' }, { status: 400 });
+    if (targetInput?.kind === 'EMAIL' && role === 'RESPONSAVEL') {
+      return NextResponse.json({ error: 'Responsável deve ser selecionado a partir de um cadastro da escola.' }, { status: 400 });
+    }
+    if (legacyInput && role === 'RESPONSAVEL' && (!legacyInput.alunosIds || legacyInput.alunosIds.length === 0)) {
+      return NextResponse.json({ error: 'É necessário selecionar um cadastro de responsável existente.' }, { status: 400 });
+    }
+    if (targetInput?.kind === 'EXISTING_RECORD' &&
+      ((role === 'RESPONSAVEL') !== (targetInput.recordType === 'RESPONSAVEL'))) {
+      return NextResponse.json({ error: 'Tipo de cadastro incompatível com o papel solicitado.' }, { status: 400 });
+    }
+    if (role !== 'RESPONSAVEL' && targetInput?.kind !== 'EXISTING_RECORD' && !targetInput?.email) {
+      if (!legacyInput?.email) {
         return NextResponse.json({ error: 'Email é obrigatório para esta função.' }, { status: 400 });
       }
     }
@@ -91,28 +101,37 @@ export async function POST(req: Request) {
       );
     }
 
-    if (role === 'RESPONSAVEL' && alunosIds?.length) {
-      const uniqueAlunoIds = [...new Set(alunosIds)];
-      if (!inviterContaId) return NextResponse.json({ error: 'Conta inválida.' }, { status: 403 });
-      const scopedStudents = await findStudentsInContaForInvite(inviterContaId, uniqueAlunoIds);
-      if (scopedStudents.length !== uniqueAlunoIds.length) {
-        return NextResponse.json({ error: 'Um ou mais alunos não pertencem à sua escola.' }, { status: 404 });
-      }
-    }
-
     try {
+      if (!inviterContaId) return NextResponse.json({ error: 'Conta inválida.' }, { status: 403 });
       const inviteRole = role as Parameters<typeof InviteUserService.createInvite>[1];
-      // Convite de responsável fica deliberadamente sem e-mail: a identidade
-      // é escolhida pelo responsável no aceite e verificada por confirmação.
-      const inviteEmail = role === 'RESPONSAVEL' ? null : email;
+      let resolvedTarget: Awaited<ReturnType<typeof findInviteTargetInConta>> | null = null;
+      if (targetInput?.kind === 'EXISTING_RECORD') {
+        resolvedTarget = await findInviteTargetInConta(inviterContaId, targetInput);
+      } else if (legacyInput && role === 'RESPONSAVEL' && legacyInput.alunosIds) {
+        resolvedTarget = await findLegacyResponsibleTargetFromStudents(inviterContaId, legacyInput.alunosIds);
+      }
+      if ((targetInput?.kind === 'EXISTING_RECORD' || role === 'RESPONSAVEL') && !resolvedTarget) {
+        return NextResponse.json({ error: 'Cadastro não localizado nesta escola ou sem vínculos válidos.' }, { status: 404 });
+      }
+      if (resolvedTarget?.accessStatus === 'ACTIVE') {
+        return NextResponse.json({ error: 'Este cadastro já tem acesso ativo nesta escola.' }, { status: 409 });
+      }
+      const inviteEmail = resolvedTarget?.recordType === 'RESPONSAVEL'
+        ? null
+        : resolvedTarget?.email ?? (targetInput?.kind === 'EMAIL' ? targetInput.email : legacyInput?.email ?? null);
+      if (!inviteEmail && role !== 'RESPONSAVEL') return NextResponse.json({ error: 'Email é obrigatório para esta função.' }, { status: 400 });
+      const metadata = resolvedTarget
+        ? {
+            target: { kind: 'EXISTING_RECORD' as const, recordType: resolvedTarget.recordType, recordId: resolvedTarget.recordId },
+            ...(resolvedTarget.recordType === 'RESPONSAVEL' ? { alunosIds: resolvedTarget.alunosIds } : {}),
+          }
+        : undefined;
       const invite = await InviteUserService.createInvite(
-        inviteEmail ?? undefined,
+        inviteEmail,
         inviteRole,
         invitedById,
         inviterContaId,
-        role === 'RESPONSAVEL' && alunosIds?.length
-          ? { alunosIds: [...new Set(alunosIds)].sort() }
-          : undefined,
+        metadata,
       );
 
       // Construir link de registro (mesma rota para todos)
@@ -140,7 +159,7 @@ export async function POST(req: Request) {
       
       return NextResponse.json(
         createInviteResultDTOSchema.parse({
-          invite: mapInviteRecordToDTO({
+          invite: mapCreatedInviteRecordToDTO({
             ...invite,
             inviteUrl: inviteLink,
           }),
@@ -156,6 +175,12 @@ export async function POST(req: Request) {
       }
       if (e instanceof InviteUserService.StudentAlreadyLinkedError) {
         return NextResponse.json({ error: msg, code: 'STUDENT_ALREADY_LINKED' }, { status: 409 });
+      }
+      if (e instanceof InviteUserService.InvalidInviteTargetError) {
+        return NextResponse.json({ error: msg, code: 'INVALID_TARGET' }, { status: 404 });
+      }
+      if (e instanceof InviteUserService.UserInactiveError) {
+        return NextResponse.json({ error: msg, code: 'ACCOUNT_INACTIVE' }, { status: 409 });
       }
       if (normalizedMessage.includes('já existe') || normalizedMessage.includes('cadastrado') || normalizedMessage.includes('vinculado')) {
         logApiOperationalEvent({ severity: 'warn', eventName: 'api.users.request.rejected', route: '/api/users/invite', method: 'POST', requestId: getRequestId(req) });
@@ -187,6 +212,7 @@ export async function GET(req: Request) {
           .filter((invite) => role === 'ADMIN' || invite.role === 'RESPONSAVEL')
           .map((invite) => mapInviteRecordToDTO(invite as Record<string, unknown>)),
       }),
+      { headers: { 'Cache-Control': 'no-store' } },
     );
   } catch (error) {
     logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/invite', method: 'GET', requestId: getRequestId(req), error });
