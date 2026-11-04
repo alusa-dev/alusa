@@ -284,12 +284,13 @@ export async function sendInviteEmail(input: {
   role: Role;
   invitedByName?: string | null;
   expiresAt?: Date | string | null;
+  idempotencyKey?: string;
 }) {
   return sendTransactionalEmail({
     to: input.email,
     subject: 'Seu convite para acessar a Alusa',
     category: 'invite_user',
-    idempotencyKey: `invite-user/${input.inviteId}`,
+    idempotencyKey: input.idempotencyKey ?? `invite-user/${input.inviteId}`,
     actionUrl: input.inviteUrl,
     template: {
       id: INVITE_TEMPLATE_ID,

@@ -29,7 +29,12 @@ type UserPermissions = {
   canDelete: boolean;
 };
 
-type InviteRow = { id: string; email: string | null; role: Role; createdAt: string; status: InviteStatus };
+type InviteRow = {
+  id: string; email: string | null; role: Role; createdAt: string; status: InviteStatus;
+  emailDeliveryStatus: 'UNKNOWN' | 'PENDING' | 'SENT' | 'LOGGED' | 'FAILED' | 'NOT_APPLICABLE';
+  deliveryAttempts: number;
+  lastDeliveryErrorCode: 'DELIVERY_FAILED' | 'DELIVERY_TIMEOUT' | null;
+};
 type UserRow = {
   id: string;
   name: string;
@@ -43,6 +48,7 @@ type UsersListItem = UserRow;
 export default function ConfigUsuariosPage() {
   const { data: session } = useSession();
   const isReceptionist = String(session?.user?.role ?? '').toUpperCase() === 'RECEPCAO';
+  const isAdmin = String(session?.user?.role ?? '').toUpperCase() === 'ADMIN';
   // Toast
   const [toast, setToast] = useState<{
     title: string;
@@ -58,6 +64,8 @@ export default function ConfigUsuariosPage() {
   const [submitting, setSubmitting] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [inviteModalTitle, setInviteModalTitle] = useState('Convite criado');
+  const [inviteExpiresInHours, setInviteExpiresInHours] = useState(72);
   const [lastInviteEmail, setLastInviteEmail] = useState<string | undefined>(undefined);
   
   // Tabs & busca
@@ -94,6 +102,9 @@ export default function ConfigUsuariosPage() {
         email: it.email ?? null,
         role: it.role,
         status: (it.status as InviteStatus) || 'PENDING',
+        emailDeliveryStatus: it.emailDeliveryStatus,
+        deliveryAttempts: it.deliveryAttempts,
+        lastDeliveryErrorCode: it.lastDeliveryErrorCode,
         createdAt:
           typeof it.createdAt === 'string'
             ? it.createdAt
@@ -160,6 +171,8 @@ export default function ConfigUsuariosPage() {
     setSubmitting(true);
     try {
       setInviteUrl(null);
+      setInviteModalTitle('Convite criado');
+      setInviteExpiresInHours(72);
       setLastInviteEmail(targetEmail);
       setInviteOpen(true);
       
@@ -264,6 +277,40 @@ export default function ConfigUsuariosPage() {
     setDeleteInviteOpen(true);
   }, []);
 
+  async function handleResendInvite(invite: InviteRow) {
+    try {
+      const response = await fetch(`/api/users/invite/${encodeURIComponent(invite.id)}`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': crypto.randomUUID() },
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const cooldown = Number(result?.retryAfterSeconds);
+        throw new Error(cooldown > 0 ? `Aguarde ${cooldown} segundos para tentar novamente.` : result?.error || 'Não foi possível recuperar o convite.');
+      }
+      if (typeof result.inviteUrl === 'string') {
+        setLastInviteEmail(invite.email ?? undefined);
+        setInviteModalTitle('Link pronto para compartilhar');
+        setInviteExpiresInHours(Math.max(1, Math.ceil((Date.parse(result.expiresAt) - Date.now()) / 3_600_000)));
+        setInviteUrl(result.inviteUrl);
+        setInviteOpen(true);
+        setToast({ title: 'Link do convite pronto para compartilhar.', variant: 'success' });
+      } else {
+        const message = result.deliveryStatus === 'SENT'
+          ? 'Convite reenviado por e-mail.'
+          : result.deliveryStatus === 'LOGGED'
+            ? 'Reenvio registrado; o ambiente atual não enviou o e-mail.'
+            : 'O e-mail não foi enviado. Tente novamente após o intervalo informado.';
+        setToast({ title: message, variant: result.deliveryStatus === 'FAILED' ? 'warning' : 'success' });
+      }
+      await loadInvites();
+    } catch (error) {
+      setToast({ title: 'Não foi possível reenviar o convite', description: error instanceof Error ? error.message : 'Tente novamente.', variant: 'error' });
+    } finally {
+      setTimeout(() => setToast(null), 4000);
+    }
+  }
+
   async function handleConfirmDeleteInvite() {
     if (!deleteInviteId) return;
     setDeleteInviteLoading(true);
@@ -274,7 +321,7 @@ export default function ConfigUsuariosPage() {
         throw new Error(json?.error || 'Falha ao excluir convite');
       }
       await loadInvites();
-      setToast({ title: 'Convite excluído permanentemente', variant: 'success' });
+      setToast({ title: 'Convite revogado. O histórico foi preservado.', variant: 'success' });
       setDeleteInviteOpen(false);
     } catch (error) {
       setToast({
@@ -486,7 +533,7 @@ export default function ConfigUsuariosPage() {
             <div className="col-span-2 text-left">Função</div>
             <div className="col-span-3 text-left">Data de envio</div>
             <div className="col-span-2 text-center">Status</div>
-            <div className="col-span-1 text-center">Excluir</div>
+            <div className="col-span-1 text-center">Ações</div>
           </div>
         </div>
         <div className="divide-y alusa-dark:divide-[color:var(--color-border-default)]">
@@ -507,17 +554,36 @@ export default function ConfigUsuariosPage() {
                   <div className="col-span-3 text-sm text-gray-700 text-left alusa-dark:text-[color:var(--color-text-secondary)]">
                     {formatDateTime(i.createdAt)}
                   </div>
-                  <div className="col-span-2 flex justify-center">{statusBadge(i.status)}</div>
-                  <div className="col-span-1 flex justify-center">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 alusa-dark:text-red-300 alusa-dark:hover:bg-red-500/10 alusa-dark:hover:text-red-200"
-                      aria-label="Excluir convite"
-                      onClick={() => onDeleteInvite(i)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                  <div className="col-span-2 flex flex-col items-center justify-center gap-1">
+                    {statusBadge(i.status)}
+                    {i.status === 'PENDING' && (
+                      <span className="text-xs text-gray-500" aria-label="Status de entrega do e-mail">
+                        {i.emailDeliveryStatus === 'SENT' ? 'E-mail enviado' :
+                          i.emailDeliveryStatus === 'LOGGED' ? 'E-mail registrado' :
+                            i.emailDeliveryStatus === 'FAILED' ? 'Falha no envio' :
+                            i.emailDeliveryStatus === 'NOT_APPLICABLE' ? 'Link para compartilhar' :
+                              i.emailDeliveryStatus === 'UNKNOWN' ? 'Envio anterior não registrado' : 'Envio pendente'}
+                      </span>
+                    )}
+                    {i.status === 'EXPIRED' && <span className="text-xs text-gray-500">Crie um novo convite para continuar</span>}
+                  </div>
+                  <div className="col-span-1 flex justify-center gap-1">
+                    {isAdmin && i.status === 'PENDING' && (
+                      <Button variant="ghost" size="sm" onClick={() => void handleResendInvite(i)} aria-label={i.email ? 'Reenviar convite' : 'Recuperar link do convite'}>
+                        {i.email ? 'Reenviar' : 'Link'}
+                      </Button>
+                    )}
+                    {isAdmin && i.status === 'PENDING' && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 alusa-dark:text-red-300 alusa-dark:hover:bg-red-500/10 alusa-dark:hover:text-red-200"
+                        aria-label="Revogar convite"
+                        onClick={() => onDeleteInvite(i)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -690,13 +756,13 @@ export default function ConfigUsuariosPage() {
             setDeleteInviteEmail(null);
           }
         }}
-        title="Excluir convite permanentemente"
+        title="Revogar convite"
         description={(
           <span>
-            O convite{deleteInviteEmail ? <> de <strong>{deleteInviteEmail}</strong></> : ''} será apagado definitivamente e não aparecerá mais no histórico desta lista. Convites já aceitos não terão o acesso do usuário removido; apenas o vínculo com o registro do convite será apagado.
+            O convite{deleteInviteEmail ? <> de <strong>{deleteInviteEmail}</strong></> : ''} será revogado e permanecerá no histórico. Convites expirados não podem ser reenviados; crie um novo convite para continuar.
           </span>
         )}
-        confirmLabel={deleteInviteLoading ? 'Excluindo…' : 'Excluir permanentemente'}
+        confirmLabel={deleteInviteLoading ? 'Revogando…' : 'Revogar convite'}
         onConfirm={handleConfirmDeleteInvite}
       />
       <UserEditDialog
@@ -713,7 +779,8 @@ export default function ConfigUsuariosPage() {
         onOpenChange={setInviteOpen}
         inviteUrl={inviteUrl}
         email={lastInviteEmail}
-        expiresInHours={72}
+        expiresInHours={inviteExpiresInHours}
+        title={inviteModalTitle}
       />
     </div>
   );
@@ -724,6 +791,9 @@ type InviteApi = {
   email: string | null;
   role: Role;
   status?: InviteStatus | string;
+  emailDeliveryStatus: InviteRow['emailDeliveryStatus'];
+  deliveryAttempts: number;
+  lastDeliveryErrorCode: 'DELIVERY_FAILED' | 'DELIVERY_TIMEOUT' | null;
   createdAt?: string | Date;
   created_at?: string;
 };

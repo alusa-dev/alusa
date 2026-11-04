@@ -22,6 +22,7 @@ export type InviteLinkModalProps = {
   inviteUrl: string | null;
   email?: string;
   expiresInHours?: number;
+  title?: string;
 };
 
 export function InviteLinkModal({
@@ -30,6 +31,7 @@ export function InviteLinkModal({
   inviteUrl,
   email,
   expiresInHours = 72,
+  title = 'Convite criado',
 }: InviteLinkModalProps) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [copied, setCopied] = React.useState(false);
@@ -84,7 +86,7 @@ export function InviteLinkModal({
             >
               <DialogHeader className="space-y-1 text-left">
                 <DialogTitle className="text-lg font-semibold">
-                  Convite criado
+                  {title}
                 </DialogTitle>
                 <DialogDescription className="text-sm text-muted-foreground">
                   {email ? (

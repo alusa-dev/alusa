@@ -159,6 +159,23 @@ enum PlatformSchoolInvitationStatus {
   EXPIRED
 }
 
+enum InviteEmailDeliveryStatus {
+  UNKNOWN
+  PENDING
+  SENT
+  LOGGED
+  FAILED
+  NOT_APPLICABLE
+}
+
+enum InviteResendRequestStatus {
+  PROCESSING
+  SENT
+  LOGGED
+  FAILED
+  NOT_APPLICABLE
+}
+
 enum PlatformSchoolInvitationCondition {
   STANDARD
   CUSTOM
@@ -1433,6 +1450,7 @@ model Conta {
   usuarios                          Usuario[]                           @relation("ContaUsuarios")
   usuariosConta                     UsuarioConta[]
   invites                           Invite[]
+  inviteResendRequests              InviteResendRequest[]
   alunos                            Aluno[]
   turmas                            Turma[]
   planos                            Plano[]
@@ -4758,9 +4776,15 @@ model Invite {
   invitedById      String
   status           String    @default("PENDING")
   expiresAt        DateTime
+  emailDeliveryStatus InviteEmailDeliveryStatus @default(UNKNOWN)
+  deliveryAttempts Int       @default(0)
+  lastDeliveryAttemptAt DateTime?
+  lastDeliveryErrorCode String? @db.VarChar(64)
+  resendAvailableAt DateTime?
   // Auditoria de aceite
   acceptedByUserId String?
   acceptedAt       DateTime?
+  revokedAt        DateTime?
   metadata         Json? // Armazena dados extras como alunosIds para RESPONSAVEL
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
@@ -4768,11 +4792,31 @@ model Invite {
   // Relação opcional para garantir integridade sem quebrar convites antigos
   conta        Conta?        @relation(fields: [contaId], references: [id], onDelete: Cascade)
   usuarioConta UsuarioConta? @relation("UsuarioContaInvite")
+  resendRequests InviteResendRequest[]
 
+  @@unique([id, contaId], name: "uq_invite_id_conta", map: "uq_invite_id_conta")
   @@index([email, status], name: "idx_invite_email_status")
   @@index([expiresAt], name: "idx_invite_expires")
   @@index([contaId], name: "idx_invite_conta")
   @@index([contaId, status, expiresAt], map: "idx_invite_tenant_status_expiry")
+}
+
+model InviteResendRequest {
+  id                      String                    @id @default(cuid())
+  inviteId                String
+  contaId                 String
+  requestKeyFingerprint   String                    @db.VarChar(64)
+  status                  InviteResendRequestStatus @default(PROCESSING)
+  deliveryErrorCode       String?                   @db.VarChar(64)
+  leaseExpiresAt          DateTime?
+  createdAt               DateTime                  @default(now())
+  completedAt             DateTime?
+
+  invite Invite @relation(fields: [inviteId, contaId], references: [id, contaId], onDelete: Restrict)
+  conta  Conta  @relation(fields: [contaId], references: [id], onDelete: Restrict)
+
+  @@unique([inviteId, requestKeyFingerprint], name: "uq_invite_resend_request_key", map: "uq_invite_resend_request_key")
+  @@index([contaId, inviteId, createdAt], name: "idx_invite_resend_conta_invite_created")
 }
 
 model AuthActionToken {

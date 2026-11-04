@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   log: vi.fn(),
   findMembership: vi.fn(),
   findPendingInvite: vi.fn(),
+  recordDelivery: vi.fn(),
 }));
 
 vi.mock('@alusa/lib/server/services/invite-user-service', () => ({
@@ -18,6 +19,7 @@ vi.mock('@alusa/lib/server/services/invite-user-service', () => ({
   MissingContaError: class MissingContaError extends Error {},
   UserAlreadyLinkedError: class UserAlreadyLinkedError extends Error {},
   UserInactiveError: class UserInactiveError extends Error {},
+  recordInviteEmailDelivery: mocks.recordDelivery,
 }));
 vi.mock('@/src/server/users/invite-scope.service', () => ({ findInviteTargetInConta: mocks.findTarget }));
 vi.mock('@/lib/auth-email-flow', () => ({ sendInviteEmail: mocks.sendEmail }));
@@ -34,6 +36,7 @@ describe('inviteEmployeeAccess', () => {
     mocks.findTarget.mockResolvedValue({ email: 'staff@example.com', accessStatus: 'NONE' });
     mocks.findMembership.mockResolvedValue({ role: 'ADMIN' });
     mocks.findPendingInvite.mockResolvedValue([]);
+    mocks.recordDelivery.mockResolvedValue({ count: 1 });
     mocks.getBaseUrl.mockReturnValue('https://app.example.com');
     mocks.createInvite.mockResolvedValue({ id: 'invite-1', token: 'secret-token', expiresAt: new Date('2030-01-01') });
     mocks.sendEmail.mockResolvedValue({ delivery: 'sent' });
@@ -62,6 +65,7 @@ describe('inviteEmployeeAccess', () => {
       { target: { kind: 'EXISTING_RECORD', recordType: 'COLABORADOR', recordId: 'employee-a' } },
     );
     expect(result).toMatchObject({ status: 'failed', inviteUrl: 'https://app.example.com/auth/register?token=secret-token' });
+    expect(mocks.recordDelivery).toHaveBeenCalledWith({ inviteId: 'invite-1', contaId: 'school-a', delivery: 'FAILED' });
   });
 
   it('does not create a second invite for an already active local access', async () => {
@@ -108,6 +112,7 @@ describe('inviteEmployeeAccess', () => {
     const retry = await inviteEmployeeAccess(input);
 
     expect(first.status).toBe('failed');
+    expect(mocks.recordDelivery).toHaveBeenCalledWith({ inviteId: 'invite-1', contaId: 'school-a', delivery: 'FAILED' });
     expect(retry).toMatchObject({
       status: 'pending',
       inviteUrl: 'https://app.example.com/auth/register?token=same-token',

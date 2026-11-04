@@ -7,6 +7,7 @@ import {
   MissingContaError,
   UserAlreadyLinkedError,
   UserInactiveError,
+  recordInviteEmailDelivery,
 } from '@alusa/lib/server/services/invite-user-service';
 import { findInviteTargetInConta } from '@/src/server/users/invite-scope.service';
 import prisma from '@/lib/prisma';
@@ -148,6 +149,15 @@ export async function inviteEmployeeAccess(input: {
       invitedByName: input.invitedByName ?? undefined,
       expiresAt: invite.expiresAt,
     });
+    await recordInviteEmailDelivery({
+      inviteId: invite.id,
+      contaId: input.contaId,
+      delivery: delivery.delivery === 'sent' ? 'SENT' : 'LOGGED',
+    }).catch(() => {
+      if (input.request) {
+        logApiOperationalEvent({ severity: 'warn', eventName: 'api.employees.access_invite.failed', route: new URL(input.request.url).pathname, method: input.request.method, requestId: getRequestId(input.request) });
+      }
+    });
     if (delivery.delivery === 'sent') {
       return { status: 'sent', message: 'Colaborador salvo e convite enviado por e-mail.' };
     }
@@ -164,8 +174,17 @@ export async function inviteEmployeeAccess(input: {
       message: 'Colaborador salvo, mas o e-mail não foi enviado. O convite continua pendente; compartilhe o link abaixo.',
       inviteUrl: url,
     };
-  } catch (error) {
-    logInviteFailure(input.request, error);
+  } catch {
+    await recordInviteEmailDelivery({ inviteId: invite.id, contaId: input.contaId, delivery: 'FAILED' }).catch(() => undefined);
+    if (input.request) {
+      logApiOperationalEvent({
+        severity: 'warn',
+        eventName: 'api.employees.access_invite.failed',
+        route: new URL(input.request.url).pathname,
+        method: input.request.method,
+        requestId: getRequestId(input.request),
+      });
+    }
     return {
       status: 'failed',
       message: 'Colaborador salvo, mas o e-mail não foi enviado. O convite continua pendente; compartilhe o link abaixo.',

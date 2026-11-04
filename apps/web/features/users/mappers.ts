@@ -52,6 +52,10 @@ export function mapInviteRecordToDTO(record: Record<string, unknown>) {
     status: record.status,
     createdAt: toIsoString(record.createdAt as Date | string | undefined),
     expiresAt: toIsoString(record.expiresAt as Date | string | undefined),
+    emailDeliveryStatus: record.emailDeliveryStatus ?? 'UNKNOWN',
+    deliveryAttempts: record.deliveryAttempts ?? 0,
+    lastDeliveryAttemptAt: record.lastDeliveryAttemptAt ? toIsoString(record.lastDeliveryAttemptAt as Date | string) : null,
+    lastDeliveryErrorCode: record.lastDeliveryErrorCode === 'DELIVERY_FAILED' || record.lastDeliveryErrorCode === 'DELIVERY_TIMEOUT' ? record.lastDeliveryErrorCode : null,
   });
 }
 

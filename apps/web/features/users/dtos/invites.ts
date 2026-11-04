@@ -30,6 +30,10 @@ export const inviteSummaryDTOSchema = z.object({
   id: z.string(), email: z.string().email().nullable(), role: inviteRoleDTOSchema,
   status: z.enum(['PENDING', 'EXPIRED', 'ACCEPTED', 'REVOKED']),
   createdAt: dateLikeDTOSchema, expiresAt: dateLikeDTOSchema,
+  emailDeliveryStatus: z.enum(['UNKNOWN', 'PENDING', 'SENT', 'LOGGED', 'FAILED', 'NOT_APPLICABLE']),
+  deliveryAttempts: z.number().int().nonnegative(),
+  lastDeliveryAttemptAt: dateLikeDTOSchema.nullable(),
+  lastDeliveryErrorCode: z.enum(['DELIVERY_FAILED', 'DELIVERY_TIMEOUT']).nullable(),
 }).strict();
 export type InviteSummaryDTO = z.infer<typeof inviteSummaryDTOSchema>;
 
@@ -86,5 +90,15 @@ export const acceptInviteResultDTOSchema = z.object({
 });
 export type AcceptInviteResultDTO = z.infer<typeof acceptInviteResultDTOSchema>;
 
-export const deleteInviteResultDTOSchema = z.object({ ok: z.literal(true) });
+export const deleteInviteResultDTOSchema = z.object({ ok: z.literal(true), status: z.literal('REVOKED') }).strict();
 export type DeleteInviteResultDTO = z.infer<typeof deleteInviteResultDTOSchema>;
+
+export const resendInviteResultDTOSchema = z.object({
+  ok: z.literal(true),
+  deliveryStatus: z.enum(['SENT', 'LOGGED', 'FAILED', 'NOT_APPLICABLE', 'PENDING']),
+  deliveryErrorCode: z.enum(['DELIVERY_FAILED', 'DELIVERY_TIMEOUT']).nullable(),
+  expiresAt: z.string().datetime(),
+  inviteUrl: z.string().url().optional(),
+  replayed: z.boolean().optional(),
+}).strict();
+export type ResendInviteResultDTO = z.infer<typeof resendInviteResultDTOSchema>;

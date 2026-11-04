@@ -1,5 +1,5 @@
-import { Prisma, Role } from '@prisma/client';
-import { randomUUID } from 'crypto';
+import { InviteEmailDeliveryStatus, InviteResendRequestStatus, Prisma, Role } from '@prisma/client';
+import { createHash, randomUUID } from 'crypto';
 import { prisma } from '../../prisma';
 
 export class DuplicateInviteError extends Error {
@@ -50,6 +50,23 @@ export class GuardianProfileConflictError extends Error {
 export class InviteEmailNotVerifiedError extends Error {
   constructor() { super('Confirme o e-mail antes de aceitar este convite.'); }
 }
+export class InviteNotFoundError extends Error {
+  constructor() { super('Convite não encontrado.'); }
+}
+export class InviteNotResendableError extends Error {
+  readonly status: string;
+  constructor(status: string) { super('Este convite não pode ser reenviado neste estado.'); this.status = status; }
+}
+export class InviteResendRateLimitError extends Error {
+  readonly availableAt: Date;
+  constructor(availableAt: Date) { super('Aguarde antes de solicitar outro envio deste convite.'); this.availableAt = availableAt; }
+}
+export class InviteDeliveryInProgressError extends Error {
+  constructor() { super('O envio do convite está em andamento. Tente revogar novamente em alguns minutos.'); }
+}
+
+const INVITE_RESEND_COOLDOWN_MS = 60_000;
+const INVITE_RESEND_PROCESSING_LEASE_MS = 10 * 60_000;
 
 function normalizeEmail(email: string | undefined | null) {
   const normalized = email?.trim().toLowerCase() ?? null;
@@ -246,6 +263,7 @@ export async function createInvite(
           status: 'PENDING',
           expiresAt,
           metadata: inviteMetadata,
+          emailDeliveryStatus: normalizedEmail ? InviteEmailDeliveryStatus.PENDING : InviteEmailDeliveryStatus.NOT_APPLICABLE,
         },
       });
     });
@@ -433,19 +451,284 @@ export async function expirePendingInvite(token: string) {
   });
 }
 
+export async function recordInviteEmailDelivery(input: {
+  inviteId: string;
+  contaId: string;
+  delivery: 'SENT' | 'LOGGED' | 'FAILED';
+}) {
+  const now = new Date();
+  return prisma.invite.updateMany({
+    where: { id: input.inviteId, contaId: input.contaId, status: 'PENDING' },
+    data: {
+      emailDeliveryStatus: input.delivery,
+      deliveryAttempts: { increment: 1 },
+      lastDeliveryAttemptAt: now,
+      lastDeliveryErrorCode: input.delivery === 'FAILED' ? 'DELIVERY_FAILED' : null,
+    },
+  });
+}
+
+export async function revokeInviteById(id: string, contaId: string, actorUserId: string) {
+  const now = new Date();
+  return prisma.$transaction(async (tx) => {
+    const lockKey = `invite-resend:${contaId}:${id}`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+    const invite = await tx.invite.findFirst({
+      where: { id, contaId },
+      select: { id: true, status: true, expiresAt: true },
+    });
+    if (!invite) return 'NOT_FOUND' as const;
+    if (invite.status === 'REVOKED') return 'REVOKED' as const;
+    if (invite.status !== 'PENDING') return invite.status === 'EXPIRED' ? 'EXPIRED' as const : 'NOT_REVOCABLE' as const;
+    const activeDelivery = await tx.inviteResendRequest.findFirst({
+      where: {
+        inviteId: id,
+        contaId,
+        status: InviteResendRequestStatus.PROCESSING,
+        leaseExpiresAt: { gt: now },
+      },
+      select: { id: true },
+    });
+    if (activeDelivery) return 'DELIVERY_IN_PROGRESS' as const;
+    const timedOutDeliveries = await tx.inviteResendRequest.updateMany({
+      where: {
+        inviteId: id,
+        contaId,
+        status: InviteResendRequestStatus.PROCESSING,
+        OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { lte: now } }],
+      },
+      data: {
+        status: InviteResendRequestStatus.FAILED,
+        deliveryErrorCode: 'DELIVERY_TIMEOUT',
+        leaseExpiresAt: null,
+        completedAt: now,
+      },
+    });
+    if (timedOutDeliveries.count > 0) {
+      await tx.invite.updateMany({
+        where: { id, contaId, status: 'PENDING' },
+        data: { emailDeliveryStatus: InviteEmailDeliveryStatus.FAILED, lastDeliveryAttemptAt: now, lastDeliveryErrorCode: 'DELIVERY_TIMEOUT' },
+      });
+    }
+    if (invite.expiresAt <= now) {
+      await tx.invite.updateMany({ where: { id, contaId, status: 'PENDING', expiresAt: { lte: now } }, data: { status: 'EXPIRED' } });
+      return 'EXPIRED' as const;
+    }
+
+    const changed = await tx.invite.updateMany({
+      where: { id, contaId, status: 'PENDING', expiresAt: { gt: now } },
+      data: { status: 'REVOKED', revokedAt: now },
+    });
+    if (changed.count !== 1) return 'NOT_REVOCABLE' as const;
+    await tx.auditLog.create({
+      data: {
+        contaId,
+        actorType: 'USER',
+        actorId: actorUserId,
+        action: 'USER_INVITE_REVOKED',
+        entityType: 'Invite',
+        entityId: id,
+        metadata: { previousStatus: 'PENDING', nextStatus: 'REVOKED' },
+      },
+    });
+    return 'REVOKED' as const;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export type InviteResendReservation =
+  | { kind: 'RESERVED'; attemptId: string; inviteId: string; contaId: string; token: string; email: string; role: Role; expiresAt: Date; leaseExpiresAt: Date; invitedByName: string | null }
+  | { kind: 'REPLAY'; attemptStatus: InviteResendRequestStatus; inviteId: string; contaId: string; token: string; email: string | null; role: Role; expiresAt: Date }
+  | { kind: 'MANUAL'; attemptId: string; inviteId: string; contaId: string; token: string; email: null; role: Role; expiresAt: Date }
+  | { kind: 'MANUAL_REPLAY'; attemptId: string; inviteId: string; contaId: string; token: string; email: null; role: Role; expiresAt: Date };
+
+export async function reserveInviteResend(input: {
+  id: string;
+  contaId: string;
+  actorUserId: string;
+  idempotencyKey: string;
+}): Promise<InviteResendReservation> {
+  const normalizedKey = input.idempotencyKey.trim();
+  const fingerprint = createHash('sha256').update(normalizedKey).digest('hex');
+  const now = new Date();
+  const result = await prisma.$transaction(async (tx) => {
+    const lockKey = `invite-resend:${input.contaId}:${input.id}`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`;
+    const invite = await tx.invite.findFirst({
+      where: { id: input.id, contaId: input.contaId },
+      select: {
+        id: true, contaId: true, status: true, expiresAt: true, token: true, email: true, role: true,
+        resendAvailableAt: true,
+        invitedById: true,
+      },
+    });
+    if (!invite) throw new InviteNotFoundError();
+    const inviter = await tx.usuario.findUnique({ where: { id: invite.invitedById }, select: { nome: true } });
+    if (invite.status !== 'PENDING') throw new InviteNotResendableError(invite.status);
+    if (invite.expiresAt <= now) return { kind: 'EXPIRED' as const };
+
+    const compoundKey = { uq_invite_resend_request_key: { inviteId: invite.id, requestKeyFingerprint: fingerprint } };
+    const existingAttempt = await tx.inviteResendRequest.findUnique({
+      where: compoundKey,
+      select: { id: true, status: true, leaseExpiresAt: true },
+    });
+    if (existingAttempt) {
+      const staleProcessing = existingAttempt.status === InviteResendRequestStatus.PROCESSING &&
+        (!existingAttempt.leaseExpiresAt || existingAttempt.leaseExpiresAt <= now);
+      if (staleProcessing) {
+        const reclaimed = await tx.inviteResendRequest.updateMany({
+          where: {
+            id: existingAttempt.id,
+            inviteId: invite.id,
+            contaId: input.contaId,
+            status: InviteResendRequestStatus.PROCESSING,
+            OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { lte: now } }],
+          },
+          data: { leaseExpiresAt: new Date(now.getTime() + INVITE_RESEND_PROCESSING_LEASE_MS) },
+        });
+        if (reclaimed.count === 1 && invite.email) {
+          const leaseExpiresAt = new Date(now.getTime() + INVITE_RESEND_PROCESSING_LEASE_MS);
+          await tx.invite.update({
+            where: { id: invite.id },
+            data: {
+              emailDeliveryStatus: InviteEmailDeliveryStatus.PENDING,
+              deliveryAttempts: { increment: 1 },
+              lastDeliveryAttemptAt: now,
+              lastDeliveryErrorCode: null,
+              resendAvailableAt: new Date(now.getTime() + INVITE_RESEND_COOLDOWN_MS),
+            },
+          });
+          return {
+            kind: 'RESERVED' as const, attemptId: existingAttempt.id, ...invite,
+            inviteId: invite.id, contaId: input.contaId, email: invite.email,
+            leaseExpiresAt, invitedByName: inviter?.nome ?? null,
+          };
+        }
+      }
+      if (!invite.email) {
+        return { kind: 'MANUAL_REPLAY' as const, attemptId: existingAttempt.id, ...invite, inviteId: invite.id, contaId: input.contaId, email: null };
+      }
+      return { kind: 'REPLAY' as const, attemptStatus: existingAttempt.status, ...invite, inviteId: invite.id, contaId: input.contaId };
+    }
+    const expiredAttempts = await tx.inviteResendRequest.updateMany({
+      where: {
+        inviteId: invite.id,
+        contaId: input.contaId,
+        status: InviteResendRequestStatus.PROCESSING,
+        OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { lte: now } }],
+      },
+      data: {
+        status: InviteResendRequestStatus.FAILED,
+        deliveryErrorCode: 'DELIVERY_TIMEOUT',
+        leaseExpiresAt: null,
+        completedAt: now,
+      },
+    });
+    if (expiredAttempts.count > 0) {
+      await tx.invite.update({
+        where: { id: invite.id },
+        data: { emailDeliveryStatus: InviteEmailDeliveryStatus.FAILED, lastDeliveryAttemptAt: now, lastDeliveryErrorCode: 'DELIVERY_TIMEOUT' },
+      });
+    }
+    const activeAttempt = await tx.inviteResendRequest.findFirst({
+      where: { inviteId: invite.id, contaId: input.contaId, status: InviteResendRequestStatus.PROCESSING, leaseExpiresAt: { gt: now } },
+      select: { leaseExpiresAt: true },
+    });
+    if (activeAttempt?.leaseExpiresAt) throw new InviteResendRateLimitError(activeAttempt.leaseExpiresAt);
+    if (invite.resendAvailableAt && invite.resendAvailableAt > now) {
+      throw new InviteResendRateLimitError(invite.resendAvailableAt);
+    }
+
+    const manual = !invite.email;
+    const attempt = await tx.inviteResendRequest.create({
+      data: {
+        inviteId: invite.id,
+        contaId: input.contaId,
+        requestKeyFingerprint: fingerprint,
+        status: manual ? InviteResendRequestStatus.NOT_APPLICABLE : InviteResendRequestStatus.PROCESSING,
+        leaseExpiresAt: manual ? null : new Date(now.getTime() + INVITE_RESEND_PROCESSING_LEASE_MS),
+        completedAt: manual ? now : null,
+      },
+      select: { id: true },
+    });
+    await tx.invite.update({
+      where: { id: invite.id },
+      data: {
+        ...(manual ? { emailDeliveryStatus: InviteEmailDeliveryStatus.NOT_APPLICABLE } : {
+          emailDeliveryStatus: InviteEmailDeliveryStatus.PENDING,
+          deliveryAttempts: { increment: 1 },
+          lastDeliveryAttemptAt: now,
+          lastDeliveryErrorCode: null,
+        }),
+        resendAvailableAt: new Date(now.getTime() + INVITE_RESEND_COOLDOWN_MS),
+      },
+    });
+    await tx.auditLog.create({
+      data: {
+        contaId: input.contaId,
+        actorType: 'USER',
+        actorId: input.actorUserId,
+        action: 'USER_INVITE_RESEND_REQUESTED',
+        entityType: 'Invite',
+        entityId: invite.id,
+        correlationId: attempt.id,
+        metadata: { deliveryMode: manual ? 'MANUAL' : 'EMAIL' },
+      },
+    });
+    if (manual) return { kind: 'MANUAL' as const, attemptId: attempt.id, ...invite, inviteId: invite.id, contaId: input.contaId, email: null };
+    return {
+      kind: 'RESERVED' as const, attemptId: attempt.id, ...invite, inviteId: invite.id,
+      contaId: input.contaId, email: invite.email!,
+      leaseExpiresAt: new Date(now.getTime() + INVITE_RESEND_PROCESSING_LEASE_MS),
+      invitedByName: inviter?.nome ?? null,
+    };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+
+  if (result.kind === 'EXPIRED') {
+    await prisma.invite.updateMany({
+      where: { id: input.id, contaId: input.contaId, status: 'PENDING', expiresAt: { lte: now } },
+      data: { status: 'EXPIRED' },
+    });
+    throw new ExpiredInviteError();
+  }
+  return result;
+}
+
+export async function completeInviteResend(input: {
+  inviteId: string;
+  contaId: string;
+  attemptId: string;
+  leaseExpiresAt: Date;
+  delivery: 'SENT' | 'LOGGED' | 'FAILED';
+}) {
+  const now = new Date();
+  return prisma.$transaction(async (tx) => {
+    const attemptStatus = input.delivery as InviteResendRequestStatus;
+    const attempt = await tx.inviteResendRequest.updateMany({
+      where: { id: input.attemptId, inviteId: input.inviteId, contaId: input.contaId, status: 'PROCESSING', leaseExpiresAt: input.leaseExpiresAt },
+      data: { status: attemptStatus, deliveryErrorCode: input.delivery === 'FAILED' ? 'DELIVERY_FAILED' : null, leaseExpiresAt: null, completedAt: now },
+    });
+    if (attempt.count !== 1) return false;
+    await tx.invite.updateMany({
+      where: { id: input.inviteId, contaId: input.contaId, status: 'PENDING' },
+      data: {
+        emailDeliveryStatus: input.delivery,
+        lastDeliveryAttemptAt: now,
+        lastDeliveryErrorCode: input.delivery === 'FAILED' ? 'DELIVERY_FAILED' : null,
+      },
+    });
+    return true;
+  });
+}
+
 export async function listInvitesByConta(contaId: string) {
   const now = new Date();
   await prisma.invite.updateMany({ where: { contaId, status: 'PENDING', expiresAt: { lte: now } }, data: { status: 'EXPIRED' } });
   return prisma.invite.findMany({
     where: { contaId, status: { in: ['PENDING', 'EXPIRED', 'ACCEPTED', 'REVOKED'] } },
-    select: { id: true, email: true, role: true, status: true, createdAt: true, expiresAt: true },
+    select: {
+      id: true, email: true, role: true, status: true, createdAt: true, expiresAt: true,
+      emailDeliveryStatus: true, deliveryAttempts: true, lastDeliveryErrorCode: true, lastDeliveryAttemptAt: true,
+    },
     orderBy: { createdAt: 'desc' },
   });
-}
-
-export async function deleteInviteById(id: string, contaId: string): Promise<boolean> {
-  const result = await prisma.invite.deleteMany({
-    where: { id, contaId },
-  });
-  return result.count === 1;
 }

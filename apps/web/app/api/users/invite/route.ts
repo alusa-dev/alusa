@@ -4,7 +4,6 @@ import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import {
   createInviteInputDTOSchema,
   createInviteResultDTOSchema,
-  type InviteRoleDTO,
   listInvitesResultDTOSchema,
 } from '@/features/users/dtos';
 import { mapCreatedInviteRecordToDTO, mapInviteRecordToDTO } from '@/features/users/mappers';
@@ -151,9 +150,19 @@ export async function POST(req: Request) {
             expiresAt: invite.expiresAt,
           });
           emailDelivery = delivery.delivery;
-        } catch (emailError) {
-          logApiOperationalEvent({ severity: 'warn', eventName: 'api.users.invite.delivery.failed', route: '/api/users/invite', method: 'POST', requestId: getRequestId(req), error: emailError });
+        } catch {
+          logApiOperationalEvent({ severity: 'warn', eventName: 'api.users.invite.delivery.failed', route: '/api/users/invite', method: 'POST', requestId: getRequestId(req) });
           emailDelivery = 'failed';
+        }
+        try {
+          await InviteUserService.recordInviteEmailDelivery({
+            inviteId: invite.id,
+            contaId: inviterContaId,
+            delivery: emailDelivery === 'sent' ? 'SENT' : emailDelivery === 'logged' ? 'LOGGED' : 'FAILED',
+          });
+        } catch {
+          // The invitation remains pending; never log provider payloads or URLs.
+          logApiOperationalEvent({ severity: 'warn', eventName: 'api.users.invite.delivery.failed', route: '/api/users/invite', method: 'POST', requestId: getRequestId(req) });
         }
       }
       
@@ -161,6 +170,10 @@ export async function POST(req: Request) {
         createInviteResultDTOSchema.parse({
           invite: mapCreatedInviteRecordToDTO({
             ...invite,
+            emailDeliveryStatus: emailDelivery === 'sent' ? 'SENT' : emailDelivery === 'logged' ? 'LOGGED' : emailDelivery === 'failed' ? 'FAILED' : 'NOT_APPLICABLE',
+            deliveryAttempts: inviteEmail ? 1 : 0,
+            lastDeliveryAttemptAt: inviteEmail ? new Date() : null,
+            lastDeliveryErrorCode: emailDelivery === 'failed' ? 'DELIVERY_FAILED' : null,
             inviteUrl: inviteLink,
           }),
           emailDelivery,

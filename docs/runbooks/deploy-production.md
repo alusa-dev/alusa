@@ -216,6 +216,18 @@ operacional.
    destrutivas, usar expand/contract ou deploy em fases, preservando
    compatibilidade em cada fase.
 
+Para o primeiro deploy do ciclo de vida de convites, aplicar e verificar as
+migrations `20261103180000_invite_resend_delivery_history`,
+`20261104100000_invite_resend_processing_lease` e
+`20261104103000_invite_resend_processing_lease_backfill` antes do código. A
+última dá uma janela de 10 minutos às reservas `PROCESSING` antigas sem lease;
+verificar que nenhuma linha `PROCESSING` ficou com `leaseExpiresAt IS NULL`.
+Esse backfill é necessário mesmo quando a versão anterior nunca reservou leases.
+Não executar uma versão capaz de criar reservas `PROCESSING` sem lease entre o
+backfill e a verificação. Em upgrades futuros que incluam um writer antigo,
+drená-lo antes do backfill ou repetir o backfill e a verificação depois que ele
+parar e antes de iniciar o writer com lease.
+
 Para o cutover de autorização por `UsuarioConta`, rollback para um binário
 anterior à mudança da fonte de autorização não é suportado: essa versão pode
 voltar a autorizar pela coluna legada `Usuario.contaId`, inclusive para pares
@@ -241,6 +253,15 @@ antigo e logs sem erro novo de runtime.
 Em caso de regressão, interromper novas publicações e fazer rollback para a
 última implantação `Ready` pelo procedimento aprovado da Vercel. Não corrigir
 dados de produção manualmente sem identificar a causa e registrar a operação.
+Após habilitar o ciclo de vida com revogação histórica de convites, não voltar
+para um binário cujo `DELETE /api/users/invite/[id]` remove fisicamente linhas
+de `Invite`: isso apagaria a trilha de revogação e a reserva de reenvio. Corrigir
+com hotfix/versão compatível que mantenha os convites e as tentativas históricas.
+Uma reserva de envio `PROCESSING` bloqueia revogação por até 10 minutos; após
+interrupção do processo, a chave idempotente pode reabrir a mesma tentativa.
+Como a entrega de e-mail ocorre fora da transação, uma operação que exceda esse
+lease pode concluir após uma revogação posterior; aceite sempre rejeita o convite
+revogado e a conclusão não altera seus campos terminais.
 Exceção: após o cutover de autorização por `UsuarioConta`, não voltar a um
 binário pré-cutover; publicar um hotfix ou uma versão compatível que mantenha a
 autorização membership-only, conforme a restrição descrita acima.

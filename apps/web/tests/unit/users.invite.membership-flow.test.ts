@@ -22,10 +22,11 @@ vi.mock('@/lib/auth-email-flow', async (importOriginal) => {
 import { getServerSession } from 'next-auth';
 import prisma from '@/lib/prisma';
 import { hashPassword } from '@/lib/auth-password';
-import { sendEmailVerificationForUser } from '@/lib/auth-email-flow';
-import { createInvite, deleteInviteById } from '@alusa/lib/server/services/invite-user-service';
+import { sendEmailVerificationForUser, sendInviteEmail } from '@/lib/auth-email-flow';
+import { completeInviteResend, createInvite, reserveInviteResend, revokeInviteById } from '@alusa/lib/server/services/invite-user-service';
 import { acceptInvite, ExpiredInviteError, InviteEmailNotVerifiedError, InvalidInviteError, InvalidInviteTargetError } from '@alusa/lib/server/services/invite-user-service';
 import { GET as inviteGet, POST as invitePost } from '@/app/api/users/invite/route';
+import { DELETE as inviteDelete, POST as inviteResend } from '@/app/api/users/invite/[id]/route';
 import { POST as acceptPost } from '@/app/api/users/accept/route';
 
 function inviteTokenFromUrl(value: string) {
@@ -43,6 +44,7 @@ describe('convite multi-tenant por identidade global', () => {
     'invite-flow-list',
     'invite-flow-record-foreign', 'invite-flow-responsible-target', 'invite-flow-inactive-target',
     'invite-flow-responsible-foreign',
+    'invite-flow-resend-a', 'invite-flow-resend-b',
   ];
   const fixtureEmails = [
     'invite-flow-admin-origin@example.com', 'invite-flow-owner-existing@example.com',
@@ -57,12 +59,16 @@ describe('convite multi-tenant por identidade global', () => {
     'invite-flow-responsible-admin@example.com',
     'guardian.identity@example.com',
     'guardian.foreign@example.com',
+    'invite-flow-delete-admin@example.com',
+    'invite-flow-resend-admin-a@example.com', 'invite-flow-resend-admin-b@example.com',
+    'resend-failure@example.com', 'resend-revoked@example.com', 'resend-accepted@example.com', 'resend-stale@example.com', 'resend-recovery@example.com',
   ];
   const fixtureColaboradorIds = ['invite-flow-existing-record-collaborator', 'invite-flow-active-collaborator', 'invite-flow-foreign-collaborator', 'invite-flow-inactive-collaborator'];
   const fixtureResponsavelIds = ['invite-flow-responsavel-record', 'invite-flow-responsavel-foreign-record'];
   const fixtureStudentIds = ['invite-flow-responsavel-student', 'invite-flow-responsavel-foreign-student'];
 
   async function cleanupFixtures() {
+    await prisma.inviteResendRequest.deleteMany({ where: { contaId: { in: fixtureContaIds } } });
     await prisma.invite.deleteMany({ where: { contaId: { in: fixtureContaIds } } });
     await prisma.colaborador.deleteMany({ where: { id: { in: fixtureColaboradorIds } } });
     await prisma.alunoResponsavel.deleteMany({ where: { contaId: { in: fixtureContaIds } } });
@@ -875,7 +881,7 @@ describe('convite multi-tenant por identidade global', () => {
     expect(json.code).toBe('ACCOUNT_INACTIVE');
   });
 
-  it('apaga fisicamente somente o convite dentro da conta solicitada', async () => {
+  it('revoga o convite somente dentro da conta solicitada e preserva seu histórico', async () => {
     const contaId = 'invite-flow-delete';
     const outraContaId = 'invite-flow-delete-other';
     await Promise.all([
@@ -883,22 +889,186 @@ describe('convite multi-tenant por identidade global', () => {
       ensureConta(outraContaId, 'Outra conta'),
     ]);
 
-    const invite = await prisma.invite.create({
-      data: {
-        contaId,
-        email: 'invite-flow-delete-target@example.com',
-        role: Role.RECEPCAO,
-        token: randomUUID(),
-        invitedById: 'admin-teste',
-        status: 'REVOKED',
-        expiresAt: new Date(Date.now() + 60_000),
-      },
+    const admin = await prisma.usuario.create({
+      data: { contaId, nome: 'Admin revoke', email: 'invite-flow-delete-admin@example.com', senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' },
     });
+    await prisma.usuarioConta.create({ data: { usuarioId: admin.id, contaId, role: Role.ADMIN, status: 'ATIVO' } });
+    const invite = await createInvite('invite-flow-delete-target@example.com', Role.RECEPCAO, admin.id, contaId);
 
-    await expect(deleteInviteById(invite.id, outraContaId)).resolves.toBe(false);
+    vi.mocked(getServerSession).mockResolvedValue({ user: { id: admin.id, role: 'ADMIN', contaId: outraContaId } } as never);
+    const crossTenant = await inviteDelete(new Request(`http://x/api/users/invite/${invite.id}`, { method: 'DELETE' }), { params: Promise.resolve({ id: invite.id }) });
+    expect(crossTenant.status).toBe(404);
     await expect(prisma.invite.findUnique({ where: { id: invite.id } })).resolves.not.toBeNull();
 
-    await expect(deleteInviteById(invite.id, contaId)).resolves.toBe(true);
-    await expect(prisma.invite.findUnique({ where: { id: invite.id } })).resolves.toBeNull();
+    vi.mocked(getServerSession).mockResolvedValue({ user: { id: admin.id, role: 'ADMIN', contaId } } as never);
+    const revoked = await inviteDelete(new Request(`http://x/api/users/invite/${invite.id}`, { method: 'DELETE' }), { params: Promise.resolve({ id: invite.id }) });
+    expect(revoked.status).toBe(200);
+    await expect(prisma.invite.findUnique({ where: { id: invite.id }, select: { status: true, revokedAt: true } }))
+      .resolves.toMatchObject({ status: 'REVOKED', revokedAt: expect.any(Date) });
+    await expect(revokeInviteById(invite.id, contaId, admin.id)).resolves.toBe('REVOKED');
+  });
+
+  it('reenvia com ledger idempotente, limita nova tentativa e impede recuperação entre contas', async () => {
+    const contaA = 'invite-flow-resend-a';
+    const contaB = 'invite-flow-resend-b';
+    await Promise.all([ensureConta(contaA, 'Escola A'), ensureConta(contaB, 'Escola B')]);
+    const [adminA, adminB] = await Promise.all([
+      prisma.usuario.create({ data: { contaId: contaA, nome: 'Admin A', email: 'invite-flow-resend-admin-a@example.com', senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' } }),
+      prisma.usuario.create({ data: { contaId: contaB, nome: 'Admin B', email: 'invite-flow-resend-admin-b@example.com', senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' } }),
+    ]);
+    await prisma.usuarioConta.createMany({ data: [
+      { usuarioId: adminA.id, contaId: contaA, role: Role.ADMIN, status: 'ATIVO' },
+      { usuarioId: adminB.id, contaId: contaB, role: Role.ADMIN, status: 'ATIVO' },
+    ] });
+    const inviteA = await createInvite('resend-target-a@example.com', Role.RECEPCAO, adminA.id, contaA);
+    const inviteB = await createInvite('resend-target-b@example.com', Role.RECEPCAO, adminB.id, contaB);
+    vi.mocked(getServerSession).mockResolvedValue({ user: { id: adminA.id, role: 'ADMIN', contaId: contaA, name: 'Admin A' } } as never);
+
+    const postResend = (id: string, key: string) => inviteResend(
+      new Request(`http://x/api/users/invite/${id}`, { method: 'POST', headers: { 'Idempotency-Key': key } }),
+      { params: Promise.resolve({ id }) },
+    );
+    vi.mocked(getServerSession).mockResolvedValue({ user: { id: adminA.id, role: 'RECEPCAO', contaId: contaA } } as never);
+    expect((await postResend(inviteA.id, 'request-key-denied-01')).status).toBe(403);
+    await expect(prisma.inviteResendRequest.count({ where: { inviteId: inviteA.id } })).resolves.toBe(0);
+    vi.mocked(getServerSession).mockResolvedValue({ user: { id: adminA.id, role: 'ADMIN', contaId: contaA, name: 'Admin A' } } as never);
+    let finishDelivery!: (_value: Awaited<ReturnType<typeof sendInviteEmail>>) => void;
+    const deliveryPromise = new Promise<Awaited<ReturnType<typeof sendInviteEmail>>>((resolve) => { finishDelivery = resolve; });
+    vi.mocked(sendInviteEmail).mockImplementationOnce(() => deliveryPromise);
+    const firstPromise = postResend(inviteA.id, 'request-key-a-0001');
+    for (let attempt = 0; attempt < 30 && vi.mocked(sendInviteEmail).mock.calls.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(vi.mocked(sendInviteEmail)).toHaveBeenCalledTimes(1);
+    const concurrent = await postResend(inviteA.id, 'request-key-a-0001');
+    const inFlightRevoke = await inviteDelete(
+      new Request(`http://x/api/users/invite/${inviteA.id}`, { method: 'DELETE' }),
+      { params: Promise.resolve({ id: inviteA.id }) },
+    );
+    expect(inFlightRevoke.status).toBe(409);
+    expect(await inFlightRevoke.json()).toMatchObject({ code: 'DELIVERY_IN_PROGRESS' });
+    await expect(prisma.invite.findUnique({ where: { id: inviteA.id }, select: { status: true } })).resolves.toEqual({ status: 'PENDING' });
+    expect((await postResend(inviteA.id, 'request-key-a-other')).status).toBe(429);
+    expect(vi.mocked(sendInviteEmail)).toHaveBeenCalledTimes(1);
+    finishDelivery({ delivery: 'sent', emailId: 'provider-email-id' });
+    const first = await firstPromise;
+    expect(first.status).toBe(200);
+    expect(concurrent.status).toBe(200);
+    const firstBody = await first.json();
+    const concurrentBody = await concurrent.json();
+    expect(firstBody).toMatchObject({ ok: true });
+    expect(firstBody).toMatchObject({ deliveryStatus: 'SENT' });
+    expect(concurrentBody).toMatchObject({ ok: true, deliveryStatus: 'PENDING', replayed: true });
+    expect(vi.mocked(sendInviteEmail)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sendInviteEmail).mock.calls[0]?.[0].idempotencyKey).toContain(`/resend/`);
+
+    const replay = await postResend(inviteA.id, 'request-key-a-0001');
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toMatchObject({ deliveryStatus: 'SENT', replayed: true });
+    expect(vi.mocked(sendInviteEmail)).toHaveBeenCalledTimes(1);
+
+    const cooldown = await postResend(inviteA.id, 'request-key-a-0002');
+    expect(cooldown.status).toBe(429);
+    const foreign = await postResend(inviteB.id, 'request-key-b-0001');
+    expect(foreign.status).toBe(404);
+    expect(vi.mocked(sendInviteEmail)).toHaveBeenCalledTimes(1);
+    await expect(prisma.invite.findUnique({ where: { id: inviteB.id }, select: { status: true, deliveryAttempts: true } }))
+      .resolves.toEqual({ status: 'PENDING', deliveryAttempts: 0 });
+    await expect(prisma.inviteResendRequest.count({ where: { inviteId: inviteA.id } })).resolves.toBe(1);
+    await expect(prisma.inviteResendRequest.findFirst({ where: { inviteId: inviteA.id }, select: { status: true, requestKeyFingerprint: true } }))
+      .resolves.toMatchObject({ status: 'SENT', requestKeyFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) });
+    const revokedAfterDelivery = await inviteDelete(
+      new Request(`http://x/api/users/invite/${inviteA.id}`, { method: 'DELETE' }),
+      { params: Promise.resolve({ id: inviteA.id }) },
+    );
+    expect(revokedAfterDelivery.status).toBe(200);
+    await expect(prisma.invite.findUnique({ where: { id: inviteA.id }, select: { status: true, emailDeliveryStatus: true } }))
+      .resolves.toEqual({ status: 'REVOKED', emailDeliveryStatus: 'SENT' });
+  });
+
+  it('marca falha de envio sem consumir convite e recupera link manual sem enviar email', async () => {
+    const contaId = 'invite-flow-resend-a';
+    await ensureConta(contaId, 'Escola A');
+    const admin = await prisma.usuario.create({ data: { contaId, nome: 'Admin', email: 'invite-flow-resend-admin-a@example.com', senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' } });
+    await prisma.usuarioConta.create({ data: { usuarioId: admin.id, contaId, role: Role.ADMIN, status: 'ATIVO' } });
+    const emailInvite = await createInvite('resend-failure@example.com', Role.RECEPCAO, admin.id, contaId);
+    vi.mocked(getServerSession).mockResolvedValue({ user: { id: admin.id, role: 'ADMIN', contaId } } as never);
+    vi.mocked(sendInviteEmail).mockRejectedValueOnce(new Error('provider detail with secret URL'));
+    const request = (inviteId: string, key: string) => inviteResend(
+      new Request(`http://x/api/users/invite/${inviteId}`, { method: 'POST', headers: { 'Idempotency-Key': key } }),
+      { params: Promise.resolve({ id: inviteId }) },
+    );
+
+    const failed = await request(emailInvite.id, 'request-key-fail-001');
+    expect(failed.status).toBe(200);
+    expect(await failed.json()).toMatchObject({ deliveryStatus: 'FAILED', deliveryErrorCode: 'DELIVERY_FAILED' });
+    await expect(prisma.invite.findUnique({ where: { id: emailInvite.id }, select: { status: true, emailDeliveryStatus: true } }))
+      .resolves.toEqual({ status: 'PENDING', emailDeliveryStatus: 'FAILED' });
+
+    const manualInvite = await createInvite(null, Role.RESPONSAVEL, admin.id, contaId, { alunosIds: ['manual-student-id'] });
+    vi.mocked(sendInviteEmail).mockClear();
+    const manual = await request(manualInvite.id, 'request-key-manual-01');
+    expect(manual.status).toBe(200);
+    const manualBody = await manual.json();
+    expect(manualBody).toMatchObject({ deliveryStatus: 'NOT_APPLICABLE', replayed: false });
+    expect(new URL(manualBody.inviteUrl).searchParams.get('token')).toBe(manualInvite.token);
+    expect(vi.mocked(sendInviteEmail)).not.toHaveBeenCalled();
+
+    await prisma.invite.update({ where: { id: emailInvite.id }, data: { expiresAt: new Date(Date.now() - 1) } });
+    const expired = await request(emailInvite.id, 'request-key-expired-1');
+    expect(expired.status).toBe(410);
+    await expect(prisma.invite.findUnique({ where: { id: emailInvite.id }, select: { status: true } })).resolves.toEqual({ status: 'EXPIRED' });
+
+    const revokedInvite = await createInvite('resend-revoked@example.com', Role.RECEPCAO, admin.id, contaId);
+    await prisma.invite.update({ where: { id: revokedInvite.id }, data: { status: 'REVOKED', revokedAt: new Date() } });
+    expect((await request(revokedInvite.id, 'request-key-revoked-1')).status).toBe(409);
+    const acceptedInvite = await createInvite('resend-accepted@example.com', Role.RECEPCAO, admin.id, contaId);
+    await prisma.invite.update({ where: { id: acceptedInvite.id }, data: { status: 'ACCEPTED', acceptedAt: new Date() } });
+    expect((await request(acceptedInvite.id, 'request-key-accepted-1')).status).toBe(409);
+
+    const staleInvite = await createInvite('resend-stale@example.com', Role.RECEPCAO, admin.id, contaId);
+    const staleReservation = await reserveInviteResend({
+      id: staleInvite.id, contaId, actorUserId: admin.id, idempotencyKey: 'request-key-stale-01',
+    });
+    expect(staleReservation.kind).toBe('RESERVED');
+    if (staleReservation.kind !== 'RESERVED') throw new Error('Esperava reserva de email para o caso de lease expirado.');
+    await prisma.inviteResendRequest.update({
+      where: { id: staleReservation.attemptId },
+      data: { leaseExpiresAt: new Date(Date.now() - 1) },
+    });
+    await prisma.invite.update({ where: { id: staleInvite.id }, data: { resendAvailableAt: new Date(Date.now() - 1) } });
+    const staleLeaseRevoke = await inviteDelete(
+      new Request(`http://x/api/users/invite/${staleInvite.id}`, { method: 'DELETE' }),
+      { params: Promise.resolve({ id: staleInvite.id }) },
+    );
+    expect(staleLeaseRevoke.status).toBe(200);
+    await expect(prisma.invite.findUnique({ where: { id: staleInvite.id }, select: { status: true, emailDeliveryStatus: true } }))
+      .resolves.toEqual({ status: 'REVOKED', emailDeliveryStatus: 'FAILED' });
+    await expect(prisma.inviteResendRequest.findUnique({ where: { id: staleReservation.attemptId }, select: { status: true, deliveryErrorCode: true, leaseExpiresAt: true } }))
+      .resolves.toEqual({ status: 'FAILED', deliveryErrorCode: 'DELIVERY_TIMEOUT', leaseExpiresAt: null });
+    await expect(completeInviteResend({
+      inviteId: staleInvite.id, contaId, attemptId: staleReservation.attemptId,
+      leaseExpiresAt: staleReservation.leaseExpiresAt, delivery: 'SENT',
+    })).resolves.toBe(false);
+
+    const recoveryInvite = await createInvite('resend-recovery@example.com', Role.RECEPCAO, admin.id, contaId);
+    const firstAttempt = await reserveInviteResend({
+      id: recoveryInvite.id, contaId, actorUserId: admin.id, idempotencyKey: 'request-key-recovery-old',
+    });
+    if (firstAttempt.kind !== 'RESERVED') throw new Error('Esperava a primeira tentativa de reenvio.');
+    await prisma.inviteResendRequest.update({ where: { id: firstAttempt.attemptId }, data: { leaseExpiresAt: new Date(Date.now() - 1) } });
+    await prisma.invite.update({ where: { id: recoveryInvite.id }, data: { resendAvailableAt: new Date(Date.now() - 1) } });
+    const secondAttempt = await reserveInviteResend({
+      id: recoveryInvite.id, contaId, actorUserId: admin.id, idempotencyKey: 'request-key-recovery-new',
+    });
+    if (secondAttempt.kind !== 'RESERVED') throw new Error('Esperava nova tentativa após expiração do lease.');
+    await expect(prisma.inviteResendRequest.findUnique({ where: { id: firstAttempt.attemptId }, select: { status: true, deliveryErrorCode: true } }))
+      .resolves.toEqual({ status: 'FAILED', deliveryErrorCode: 'DELIVERY_TIMEOUT' });
+    await expect(completeInviteResend({
+      inviteId: recoveryInvite.id, contaId, attemptId: secondAttempt.attemptId,
+      leaseExpiresAt: secondAttempt.leaseExpiresAt, delivery: 'LOGGED',
+    })).resolves.toBe(true);
+    await expect(prisma.invite.findUnique({ where: { id: recoveryInvite.id }, select: { deliveryAttempts: true, emailDeliveryStatus: true } }))
+      .resolves.toEqual({ deliveryAttempts: 2, emailDeliveryStatus: 'LOGGED' });
   });
 });
