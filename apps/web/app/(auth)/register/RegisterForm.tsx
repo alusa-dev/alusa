@@ -89,6 +89,7 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
   const mode: RegisterMode = inviteData ? 'invite' : 'first';
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [verificationNotice, setVerificationNotice] = useState<string | null>(null);
+  const [awaitingInviteVerification, setAwaitingInviteVerification] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [passwordValue, setPasswordValue] = useState('');
@@ -213,7 +214,7 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
         ) : isExistingInviteAccount ? (
           <span>
             Este e-mail já possui uma conta.{' '}
-            <a href={`/auth/login?callbackUrl=${encodeURIComponent(`/auth/register?token=${inviteData!.token}`)}`} className="underline">Entre para aceitar o convite</a>.
+            <a href={`/auth/login?context=${inviteData!.role === 'RESPONSAVEL' ? 'portal' : 'collaborator'}&callbackUrl=${encodeURIComponent(`/auth/register?token=${inviteData!.token}`)}`} className="underline">Entre para aceitar o convite</a>.
           </span>
         ) : isDeactivatedAccount ? (
           <span>
@@ -243,8 +244,28 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
 
       if (mode === 'invite' && responsePayload.verificationRequired) {
         setVerificationNotice(responsePayload.verificationEmailSent
-          ? `Enviamos uma confirmação para ${responsePayload.user?.email ?? data.email}. Confirme o endereço e volte por este convite para concluir o acesso.`
+          ? `Enviamos uma confirmação para ${responsePayload.user?.email ?? data.email}. Ao confirmar o endereço, o convite será aceito automaticamente.`
           : 'Não foi possível enviar a confirmação. Envie novamente este formulário para tentar outra vez. Nenhum acesso foi concedido.');
+        if (responsePayload.verificationEmailSent) setAwaitingInviteVerification(true);
+        return;
+      }
+
+      if (mode !== 'invite' && responsePayload.verificationRequired) {
+        setVerificationNotice(responsePayload.verificationEmailSent
+          ? `Enviamos uma confirmação para ${responsePayload.user?.email ?? data.email}. Confirme o e-mail para concluir o cadastro da escola.`
+          : 'O cadastro foi criado, mas não foi possível enviar a confirmação. Tente solicitar outro e-mail de confirmação.');
+        const pendingLogin = await signIn('credentials', {
+          redirect: false,
+          email: responsePayload.user?.email ?? data.email,
+          password: data.senha,
+          authContext: 'OWNER',
+          contaId: responsePayload.user?.contaId,
+        });
+        if (!pendingLogin?.error) {
+          window.location.href = `/auth/confirm-email?callbackUrl=${encodeURIComponent(postRegisterRedirect)}`;
+          return;
+        }
+        setAwaitingInviteVerification(true);
         return;
       }
 
@@ -253,6 +274,7 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
         redirect: false,
         email: loginEmail,
         password: data.senha,
+        authContext: mode === 'invite' && inviteData?.role === 'RESPONSAVEL' ? 'PORTAL' : mode === 'invite' ? 'COLLABORATOR' : 'OWNER',
         contaId: responsePayload.user?.contaId,
       });
       if (login?.error) {
@@ -270,14 +292,17 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
         return;
       }
 
-      toast.custom((t) => (
-        <CustomToast
-          variant="success"
-          title="Conta criada"
-          description="Redirecionando para confirmar seu e-mail..."
-          onClose={() => { toast.dismiss(t); }}
-        />
-      ), { duration: 3000 });
+      const inviteAlreadyVerified = mode === 'invite' && responsePayload.user?.emailVerified;
+      if (inviteAlreadyVerified) {
+        toast.custom((t) => (
+          <CustomToast
+            variant="success"
+            title="Convite aceito"
+            description="Redirecionando para a Alusa..."
+            onClose={() => { toast.dismiss(t); }}
+          />
+        ), { duration: 3000 });
+      }
       setTimeout(() => {
         window.location.href =
           mode === 'invite' && responsePayload.user?.emailVerified
@@ -331,8 +356,18 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
 
   return (
     <AuthShell
-      hideHero
-      heroImageSrc="/images/auth/login.webp"
+      hideHero={mode === 'invite'}
+      heroPosition="right"
+      heroImageSrc={mode === 'invite' ? '/images/auth/login.webp' : ''}
+      desktopFooter={mode === 'first' ? (
+        <nav aria-label="Informações e suporte" className="flex items-center gap-2 text-center text-xs text-[#717171]">
+          <a href="mailto:contato@alusa.app" className="hover:underline">Suporte</a>
+          <span aria-hidden="true">-</span>
+          <a href="/termos" className="hover:underline">Termos de Uso</a>
+          <span aria-hidden="true">-</span>
+          <a href="/privacidade" className="hover:underline">Política de Privacidade</a>
+        </nav>
+      ) : undefined}
       heroContent={(
         <div className="flex w-full justify-start">
           <p className="max-w-[360px] text-left text-3xl font-normal leading-tight text-[#3d3a3f]">
@@ -341,12 +376,14 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
         </div>
       )}
     >
-      <div data-layer="form register" className="auth-card auth-login-card flex w-[min(100%,21.5rem)] min-[400px]:w-[min(100%,24rem)] flex-col items-stretch self-center text-left lg:w-full lg:self-auto">
-        <header className="mb-6 w-full space-y-2 text-left lg:mb-8 lg:text-center">
-          <h1 className="w-full text-left text-[1.25rem] font-medium leading-snug tracking-tight text-brand-primary min-[400px]:text-[1.375rem] lg:text-center lg:text-[1.625rem] lg:font-semibold lg:leading-tight">
-            {mode === 'invite' ? 'Aceitar convite' : 'Crie sua conta Alusa'}
+      <div data-layer="form register" className={mode === 'first'
+        ? 'flex w-full max-w-[24rem] flex-col items-stretch self-center p-0 text-left lg:max-h-[calc(100svh-7rem)] lg:w-[355px] lg:max-w-[355px] lg:self-auto lg:overflow-y-auto'
+        : 'auth-card auth-login-card flex w-[min(100%,21.5rem)] min-[400px]:w-[min(100%,24rem)] flex-col items-stretch self-center text-left lg:w-full lg:self-auto'}>
+        <header className={`w-full space-y-2 text-left ${mode === 'first' ? '' : 'mb-6 lg:mb-8 lg:text-center'}`}>
+          <h1 className={`w-full text-left text-[1.25rem] font-medium leading-snug tracking-tight text-brand-primary min-[400px]:text-[1.375rem] ${mode === 'first' ? 'lg:text-[1.625rem] lg:font-semibold lg:leading-tight' : 'lg:text-center lg:text-[1.625rem] lg:font-semibold lg:leading-tight'}`}>
+            {awaitingInviteVerification ? 'Aguardando confirmação do e-mail' : mode === 'invite' ? 'Aceitar convite' : 'Crie sua conta Alusa'}
           </h1>
-          {mode === 'invite' && inviteData ? (
+          {!awaitingInviteVerification && mode === 'invite' && inviteData ? (
             <p className="text-left text-sm font-medium leading-relaxed text-brand-muted lg:text-center lg:text-[12px]">
               Você recebeu um convite para acessar a Alusa com o perfil de{' '}
               <strong className="font-semibold text-brand-primary">
@@ -354,26 +391,26 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
               </strong>.
             </p>
           ) : null}
-          {mode === 'invite' ? (
-            <p className="text-left text-xs leading-relaxed text-muted-foreground lg:text-center">
-              Se já tem uma conta com este e-mail, informe a senha que já usa. Para uma conta nova, escolha uma senha; o acesso só é liberado depois da confirmação do e-mail.
-            </p>
-          ) : null}
           {globalError && (
             <p data-testid="register-error" className="text-left text-sm text-red-600 lg:text-[12px]" role="alert">
               {globalError}
             </p>
           )}
-          {verificationNotice && (
+          {verificationNotice && !awaitingInviteVerification && (
             <p data-testid="invite-verification-notice" className="text-left text-sm text-brand-muted" role="status">
               {verificationNotice}
             </p>
           )}
         </header>
 
-        <form
+        {awaitingInviteVerification ? (
+          <section className="text-sm text-brand-muted" role="status" data-testid="invite-awaiting-verification">
+            <p>{verificationNotice}</p>
+            {!inviteData && <a className="mt-4 inline-flex underline" href="/auth/login?context=owner">Voltar para Minha conta</a>}
+          </section>
+        ) : <form
           onSubmit={(e) => { void handleSubmit(onSubmit, onError)(e); }}
-          className="flex w-full flex-col items-stretch gap-4 lg:items-start"
+          className={`flex w-full flex-col items-stretch gap-4 ${mode === 'first' ? 'mt-6' : 'lg:items-start'}`}
           data-testid="register-form"
           data-sentry-mask
           noValidate
@@ -536,7 +573,9 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
                       }
                       field.onChange(false);
                     }}
-                    className="mt-0.5 lg:mt-0"
+                    className={mode === 'first'
+                      ? 'h-[18px] w-[18px] rounded-[4px] border-[#d0d5dd] shadow-none'
+                      : 'mt-0.5 lg:mt-0'}
                   />
                 )}
               />
@@ -554,12 +593,12 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
             {isSubmitting ? 'Processando...' : (mode === 'invite' ? 'Aceitar Convite' : 'Criar conta')}
           </button>
           {mode === 'first' ? (
-            <p className="mt-6 w-full pb-4 text-center text-[0.8125rem] font-medium min-[400px]:text-sm lg:mt-8 lg:pb-0 lg:text-[11px]">
+            <p className="mt-6 w-full pb-4 text-center text-[0.8125rem] font-medium min-[400px]:text-sm lg:mt-6 lg:pb-0 lg:text-left lg:text-[12px]">
               <span className="text-[#686868]">Já tenho uma conta! </span>
-              <a href="/auth/login" className="text-brand-accent hover:underline">Fazer login</a>
+              <a href="/auth/login?context=owner" className="text-brand-accent hover:underline">Fazer login</a>
             </p>
           ) : null}
-        </form>
+        </form>}
         <LegalAcceptanceModal
           open={legalModalOpen}
           onOpenChange={setLegalModalOpen}

@@ -140,7 +140,10 @@ body:has([data-area='public']) {
 .site-site-actions { display: flex; align-items: center; margin-left: auto; gap: 8px; }
 .site-site-actions a { color: #3d3a3f; font-family: var(--font-inter), Inter, sans-serif; font-size: 14px; font-weight: 500; line-height: 20px; }
 .site-site-header .site-site-actions a:not(.site-header-signup) { color: #3d3a3f !important; }
-.site-header-login { height: 36px !important; padding: 0 10px !important; }
+.site-header-login { height: 36px !important; min-width: 96px; padding: 0 14px !important; }
+.site-login-menu[open] > summary.site-header-login { background: #e2d1f8 !important; color: #3d3a3f !important; }
+.site-login-menu[open] > summary.site-header-login span { color: #3d3a3f !important; }
+.site-login-menu > summary.site-header-login:focus-visible { outline: 2px solid #5f3895; outline-offset: 2px; }
 .site-header-signup { height: 36px !important; padding: 0 16px !important; border-radius: 999px !important; background: #3d3a3f !important; color: #f6f3f7 !important; }
 .site-header-login:hover { border-radius: 999px; background: #e2d1f8 !important; color: #3d3a3f !important; }
 .site-header-signup:hover { border-color: #e2d1f8 !important; background: #e2d1f8 !important; color: #3d3a3f !important; box-shadow: none !important; }

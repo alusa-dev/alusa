@@ -16,6 +16,7 @@ export default function ResetPasswordPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
+  const [resetContext, setResetContext] = useState<'OWNER' | 'COLLABORATOR' | 'PORTAL' | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
@@ -31,7 +32,7 @@ export default function ResetPasswordPage() {
         body: JSON.stringify({ token, password, confirmPassword }),
       });
 
-      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      const body = (await response.json().catch(() => ({}))) as { error?: string; context?: 'OWNER' | 'COLLABORATOR' | 'PORTAL' | null };
       if (!response.ok) {
         toast.custom((t) => (
           <CustomToast
@@ -47,6 +48,7 @@ export default function ResetPasswordPage() {
       }
 
       setDone(true);
+      setResetContext(body.context ?? null);
       toast.custom((t) => (
         <CustomToast
           variant="success"
@@ -83,7 +85,7 @@ export default function ResetPasswordPage() {
                 Sua senha foi alterada com sucesso.
               </div>
               <Link
-                href="/auth/login?reset=success"
+                href={`/auth/login?context=${resetContext === 'OWNER' ? 'owner' : resetContext === 'PORTAL' ? 'portal' : 'collaborator'}&reset=success`}
                 className="inline-flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] bg-[#3e1f63] text-[0.9375rem] font-medium text-white transition-colors hover:opacity-95 min-[400px]:text-base lg:h-12"
               >
                 Fazer login

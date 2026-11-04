@@ -8,6 +8,11 @@ interface AuthShellProps {
     heroImageSrc?: string;
     heroContent?: React.ReactNode;
     hideHero?: boolean;
+    hideHeroCopy?: boolean;
+    heroLogoVariant?: 'purple' | 'white' | 'offWhite';
+    heroSealVariant?: 'positivo' | 'negativo-preto' | 'negativo-branco';
+    heroPosition?: 'left' | 'right';
+    desktopFooter?: React.ReactNode;
 }
 
 const SIDEBAR_WORDMARK_COLOR = '#3e1f63';
@@ -25,32 +30,34 @@ export default function AuthShell({
     heroImageSrc = '/images/auth/login.webp',
     heroContent = defaultHeroContent,
     hideHero = false,
+    hideHeroCopy = false,
+    heroLogoVariant = 'purple',
+    heroSealVariant = 'negativo-preto',
+    heroPosition = 'left',
+    desktopFooter,
 }: AuthShellProps) {
+    const hero = !hideHero ? <aside className={`relative hidden bg-[#331858] lg:sticky lg:top-0 lg:block lg:h-screen lg:w-1/2 lg:flex-shrink-0 lg:overflow-hidden ${heroPosition === 'right' ? 'order-2' : 'order-1'}`}>
+                {heroImageSrc ? <img src={heroImageSrc} alt="" aria-hidden="true" className="absolute inset-0 h-full w-full object-cover" /> : null}
+                {heroImageSrc ? <div className="absolute inset-0 z-10 flex flex-col justify-start px-12 py-12 xl:px-14 xl:py-14">
+                    <div className="flex flex-col gap-16">
+                        <div><BrandWordmark variant={heroLogoVariant} className={`${heroLogoVariant === 'purple' ? 'auth-brand-logo' : ''} h-8`} /></div>
+                        {!hideHeroCopy ? heroContent : null}
+                    </div>
+                </div> : null}
+                {heroImageSrc ? (
+                    <div className="absolute bottom-12 left-12 right-12 z-20 flex items-center gap-6 xl:bottom-14 xl:left-14 xl:right-14">
+                        <AsaasSeal variant={heroSealVariant} className="shrink-0" />
+                        <p className="w-[280px] min-w-0 text-pretty text-left text-xs leading-[1.6] text-white/90">
+                            Os pagamentos da Alusa são processados pelo Asaas IP S.A., instituição de pagamento autorizada pelo Banco Central do Brasil.
+                        </p>
+                    </div>
+                ) : null}
+            </aside> : null;
     return (
         <div className={`auth-mobile-viewport flex w-full overflow-hidden ${hideHero ? 'bg-white lg:bg-[#f6f3f7]' : 'bg-white'} lg:min-h-screen`}>
-            {/* Esquerda: desktop */}
-            {!hideHero ? <aside className="hidden lg:sticky lg:top-0 lg:block lg:h-screen lg:w-1/2 lg:flex-shrink-0 lg:overflow-hidden">
-                <img
-                    src={heroImageSrc}
-                    alt=""
-                    aria-hidden="true"
-                    className="absolute inset-0 h-full w-full object-cover"
-                />
-                <div className="absolute inset-0 z-10 flex flex-col justify-start px-12 py-12 xl:px-14 xl:py-14">
-                    <div className="flex flex-col gap-16">
-                        <div>
-                            <BrandWordmark variant="purple" className="auth-brand-logo h-8" />
-                        </div>
-                        {heroContent}
-                    </div>
-                </div>
-                <AsaasSeal
-                    variant="negativo-preto"
-                    className="absolute bottom-12 left-12 z-20 xl:bottom-14 xl:left-14"
-                />
-            </aside> : null}
+            {heroPosition === 'left' ? hero : null}
             {/* Direita: mobile + desktop */}
-            <section className={`auth-mobile-viewport flex min-h-0 flex-1 flex-col ${hideHero ? 'bg-white lg:bg-[#f6f3f7]' : 'bg-white'} lg:min-h-screen ${hideHero ? 'lg:w-full' : 'lg:flex-none lg:w-1/2'}`}>
+            <section className={`auth-mobile-viewport relative order-1 flex min-h-0 flex-1 flex-col ${hideHero ? 'bg-white lg:bg-[#f6f3f7]' : 'bg-white'} lg:min-h-screen ${hideHero ? 'lg:w-full' : 'lg:flex-none lg:w-1/2'} ${heroPosition === 'right' ? 'lg:order-1' : 'lg:order-2'}`}>
                 <div className="auth-mobile-scroll flex min-h-0 flex-1 flex-col overflow-y-auto px-4 lg:overflow-visible lg:px-0 lg:pb-0">
                     <div className="flex min-h-0 flex-1 flex-col justify-start lg:min-h-screen lg:justify-center lg:px-8 lg:py-16">
                         <header className="shrink-0 lg:hidden">
@@ -64,7 +71,9 @@ export default function AuthShell({
                         </div>
                     </div>
                 </div>
+                {desktopFooter ? <div className="absolute inset-x-0 bottom-8 hidden justify-center lg:flex">{desktopFooter}</div> : null}
             </section>
+            {heroPosition === 'right' ? hero : null}
         </div>
     );
 }

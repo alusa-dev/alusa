@@ -1,4 +1,5 @@
 import type { AuthActionTokenType, Role } from '@prisma/client';
+import type { AuthContext } from './auth-service';
 import prisma from '@/lib/prisma';
 import { buildPublicAppUrl } from '@/lib/app-url';
 import { safeRedirect } from '@/lib/safe-redirect';
@@ -23,6 +24,7 @@ type RequestMetadata = {
 
 type AuthEmailOptions = {
   callbackUrl?: string | null;
+  context?: AuthContext | null;
 };
 
 const INVITE_TEMPLATE_ID =
@@ -112,16 +114,26 @@ async function issueAuthEmail(
     throw new Error('Usuário não encontrado.');
   }
 
+  const credential = options.context
+    ? await prisma.authCredential.findUnique({
+        where: { uq_auth_credential_context_user: { context: options.context, userId: user.id } },
+        select: { normalizedEmail: true, emailVerifiedAt: true },
+      })
+    : null;
+  if (options.context && !credential) throw new Error('Credencial do contexto não encontrada.');
+
   const isReactivationEmail = type === 'ACCOUNT_REACTIVATION';
 
-  if (type === 'VERIFY_EMAIL' && user.emailVerifiedAt) {
+  const emailVerifiedAt = options.context ? credential?.emailVerifiedAt : user.emailVerifiedAt;
+  if (type === 'VERIFY_EMAIL' && emailVerifiedAt) {
     return { delivery: 'sent' as const, emailId: null, actionUrl: null };
   }
 
   const { token, record } = await createAuthActionToken({
     userId: user.id,
-    email: user.email,
+    email: credential?.normalizedEmail ?? user.email,
     type,
+    context: options.context,
     requestedByIp: metadata.ip,
     requestedByUserAgent: metadata.userAgent,
   });
@@ -257,24 +269,23 @@ export async function sendAccountReactivationForEmail(
 export async function sendPasswordResetForEmail(
   email: string,
   metadata: RequestMetadata = {},
+  context: AuthContext = 'COLLABORATOR',
 ): Promise<void> {
   const normalizedEmail = email.trim().toLowerCase();
-  const user = await prisma.usuario.findFirst({
+  const credential = await prisma.authCredential.findFirst({
     where: {
-      email: { equals: normalizedEmail, mode: 'insensitive' },
-      status: 'ATIVO',
+      context,
+      normalizedEmail,
+      user: { status: 'ATIVO' },
     },
-    select: {
-      id: true,
-      email: true,
-    },
+    select: { userId: true },
   });
 
-  if (!user) {
+  if (!credential) {
     return;
   }
 
-  await issueAuthEmail('RESET_PASSWORD', user.id, metadata);
+  await issueAuthEmail('RESET_PASSWORD', credential.userId, metadata, { context });
 }
 
 export async function sendInviteEmail(input: {
@@ -331,8 +342,16 @@ export async function verifyEmailByToken(token: string) {
     // In dev Strict Mode, retries, or a process interruption, the token may
     // already be claimed while emailVerifiedAt is still null. Finish safely.
     tokenType = existingVerification ? 'VERIFY_EMAIL' : 'ACCOUNT_REACTIVATION';
-    if (existing.user.emailVerifiedAt) return existing.user;
-    consumed = { tokenId: existing.tokenId, user: existing.user };
+    if (existing.context) {
+      const credential = await prisma.authCredential.findUnique({
+        where: { uq_auth_credential_context_user: { context: existing.context, userId: existing.user.id } },
+        select: { emailVerifiedAt: true },
+      });
+      if (credential?.emailVerifiedAt) return { ...existing.user, context: existing.context };
+    } else if (existing.user.emailVerifiedAt) {
+      return { ...existing.user, context: null };
+    }
+    consumed = { tokenId: existing.tokenId, user: existing.user, context: existing.context };
   }
 
   let reactivatedContaId: string | null = null;
@@ -345,9 +364,15 @@ export async function verifyEmailByToken(token: string) {
         })
       : null;
 
-    if (!consumed.user.emailVerifiedAt) {
+    if (!consumed.context && !consumed.user.emailVerifiedAt) {
       await tx.usuario.update({
         where: { id: consumed.user.id },
+        data: { emailVerifiedAt: new Date() },
+      });
+    }
+    if (consumed.context === 'OWNER' || consumed.context === 'COLLABORATOR' || consumed.context === 'PORTAL') {
+      await tx.authCredential.updateMany({
+        where: { context: consumed.context, userId: consumed.user.id },
         data: { emailVerifiedAt: new Date() },
       });
     }
@@ -370,7 +395,7 @@ export async function verifyEmailByToken(token: string) {
       });
     }
 
-    await invalidateAuthActionTokens(consumed.user.id, tokenType, tx);
+    await invalidateAuthActionTokens(consumed.user.id, tokenType, tx, consumed.context);
   });
 
   if (reactivatedContaId) {
@@ -385,28 +410,37 @@ export async function verifyEmailByToken(token: string) {
     });
   }
 
-  return consumed.user;
+  return { ...consumed.user, context: consumed.context };
 }
 
 export async function resetPasswordByToken(input: { token: string; password: string }) {
   assertPasswordPolicy(input.password);
-
-  const consumed = await consumeAuthActionToken('RESET_PASSWORD', input.token);
-  if (!consumed) {
-    return null;
-  }
-
   const senhaHash = await hashPassword(input.password);
 
-  await prisma.$transaction(async (tx) => {
-    await tx.usuario.update({
-      where: { id: consumed.user.id },
-      data: { senhaHash, passwordChangedAt: new Date() },
-    });
-    await revokeUserSessions(consumed.user.id, tx);
+  const consumed = await prisma.$transaction(async (tx) => {
+    const consumed = await consumeAuthActionToken('RESET_PASSWORD', input.token, tx);
+    if (!consumed) return null;
 
-    await invalidateAuthActionTokens(consumed.user.id, 'RESET_PASSWORD', tx);
+    if (consumed.context) {
+      const now = new Date();
+      await tx.authCredential.update({
+        where: { uq_auth_credential_context_user: { context: consumed.context, userId: consumed.user.id } },
+        data: { passwordHash: senhaHash, sessionVersion: { increment: 1 } },
+      });
+      await tx.mobileAuthSession.updateMany({
+        where: { userId: consumed.user.id, authContext: consumed.context, revokedAt: null },
+        data: { revokedAt: now, lastUsedAt: now },
+      });
+    } else {
+      await tx.usuario.update({ where: { id: consumed.user.id }, data: { senhaHash, passwordChangedAt: new Date() } });
+      await revokeUserSessions(consumed.user.id, tx);
+    }
+
+    await invalidateAuthActionTokens(consumed.user.id, 'RESET_PASSWORD', tx, consumed.context);
+
+    return consumed;
   });
 
-  return consumed.user;
+  if (!consumed) return null;
+  return { ...consumed.user, context: consumed.context };
 }

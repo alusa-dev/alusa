@@ -7,9 +7,35 @@ import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-lo
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { getInviteBaseUrl } from '@/lib/app-url';
 import { sendInviteEmail } from '@/lib/auth-email-flow';
+import prisma from '@/lib/prisma';
 
 const ParamsSchema = z.object({ id: z.string().min(1) });
 type RouteContext = { params: Promise<{ id: string }> };
+
+export async function GET(req: Request, ctx: RouteContext) {
+  try {
+    const parsed = ParamsSchema.safeParse(await ctx.params);
+    if (!parsed.success) return NextResponse.json({ error: 'Parâmetros inválidos' }, { status: 400 });
+    const auth = await resolveTenantSession();
+    if (!auth.ok) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (String(auth.role).toUpperCase() !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+
+    const invite = await prisma.invite.findFirst({
+      where: { id: parsed.data.id, contaId: auth.contaId, status: 'PENDING', expiresAt: { gt: new Date() } },
+      select: { token: true, expiresAt: true },
+    });
+    if (!invite) return NextResponse.json({ error: 'Convite pendente não encontrado.' }, { status: 404 });
+
+    const inviteUrl = new URL('/auth/register', `${getInviteBaseUrl()}/`);
+    inviteUrl.searchParams.set('token', invite.token);
+    return NextResponse.json({ inviteUrl: inviteUrl.toString(), expiresAt: invite.expiresAt.toISOString() }, {
+      headers: { 'Cache-Control': 'no-store' },
+    });
+  } catch (error) {
+    logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/invite/[id]', method: 'GET', requestId: getRequestId(req), error });
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
 
 export async function DELETE(_req: Request, ctx: RouteContext) {
   try {

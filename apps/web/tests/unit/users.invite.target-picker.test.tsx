@@ -63,7 +63,6 @@ describe('InviteTargetPicker', () => {
     fetchMock.mockResolvedValue(response([candidate({ inviteStatus: 'PENDING', canInvite: false })]));
     render(<InviteTargetPicker role="RECEPCAO" onTargetChange={onTargetChange} />);
     const input = screen.getByRole('combobox', { name: 'Buscar cadastro de colaborador' });
-    fireEvent.focus(input);
     fireEvent.change(input, { target: { value: 'Ana' } });
 
     expect(await screen.findByText('Convite pendente. Consulte a aba Convites pendentes.')).toBeInTheDocument();
@@ -77,7 +76,7 @@ describe('InviteTargetPicker', () => {
   ] as const)('blocks unavailable access states and explains the next action', async (record, nextAction) => {
     fetchMock.mockResolvedValue(response([record]));
     render(<InviteTargetPicker role="PROFESSOR" onTargetChange={onTargetChange} />);
-    fireEvent.focus(screen.getByRole('combobox', { name: 'Buscar cadastro de colaborador' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Buscar cadastro de colaborador' }), { target: { value: 'Ana' } });
     expect(await screen.findByText(nextAction)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('option', { name: /Ana Professora/ }));
     expect(onTargetChange).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'EXISTING_RECORD' }), expect.anything());
@@ -106,18 +105,18 @@ describe('InviteTargetPicker', () => {
     let resolveFetch: ((_value: ReturnType<typeof response>) => void) | undefined;
     fetchMock.mockImplementationOnce(() => new Promise((resolve) => { resolveFetch = resolve; }));
     render(<InviteTargetPicker role="PROFESSOR" onTargetChange={onTargetChange} />);
-    fireEvent.focus(screen.getByRole('combobox', { name: 'Buscar cadastro de colaborador' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Buscar cadastro de colaborador' }), { target: { value: 'Sem resultado' } });
     expect(await screen.findByText('Buscando cadastros…')).toBeInTheDocument();
     resolveFetch?.(response([]));
-    expect(await screen.findByText('Digite um nome ou e-mail para buscar colaboradores.')).toBeInTheDocument();
+    expect(await screen.findByText('Nenhum colaborador disponível para convite.')).toBeInTheDocument();
 
     cleanup();
     fetchMock.mockRejectedValueOnce(new Error('Falha transitória.')).mockResolvedValueOnce(response([]));
     render(<InviteTargetPicker role="PROFESSOR" onTargetChange={onTargetChange} />);
-    fireEvent.focus(screen.getByRole('combobox', { name: 'Buscar cadastro de colaborador' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Buscar cadastro de colaborador' }), { target: { value: 'Ana' } });
     expect(await screen.findByRole('alert')).toHaveTextContent('Falha transitória.');
     fireEvent.click(screen.getByRole('button', { name: 'Tentar novamente' }));
-    expect(await screen.findByText('Digite um nome ou e-mail para buscar colaboradores.')).toBeInTheDocument();
+    expect(await screen.findByText('Nenhum colaborador disponível para convite.')).toBeInTheDocument();
   });
 
   it('shows scoped students and selects a responsible record without binding its stored email', async () => {
@@ -128,13 +127,13 @@ describe('InviteTargetPicker', () => {
     fetchMock.mockResolvedValue(response([responsible]));
     render(<InviteTargetPicker role="RESPONSAVEL" onTargetChange={onTargetChange} />);
     const input = screen.getByRole('combobox', { name: 'Buscar responsável cadastrado' });
-    fireEvent.focus(input);
     fireEvent.change(input, { target: { value: 'Responsável' } });
+    expect(await screen.findByRole('option', { name: /Responsável A/ })).toHaveTextContent('Alunos: Aluno A');
     fireEvent.click(await screen.findByRole('option', { name: /Responsável A/ }));
 
-    expect(screen.getByText('Contato cadastrado (não usado para envio): stored@example.test')).toBeInTheDocument();
-    expect(screen.getByText(/informará e confirmará o próprio e-mail/)).toBeInTheDocument();
-    expect(screen.getByText('Aluno A')).toBeInTheDocument();
+    expect(screen.getByText('Responsável A')).toBeInTheDocument();
+    expect(screen.queryByText('stored@example.test')).not.toBeInTheDocument();
+    expect(screen.queryByText('Aluno A')).not.toBeInTheDocument();
     expect(onTargetChange).toHaveBeenLastCalledWith({
       kind: 'EXISTING_RECORD', recordType: 'RESPONSAVEL', recordId: 'guardian-1', role: 'RESPONSAVEL',
     }, expect.objectContaining({ students: [{ id: 'student-a', name: 'Aluno A' }] }));

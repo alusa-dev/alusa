@@ -1,7 +1,7 @@
 import prisma from '@/lib/prisma';
+import { listAuthContextAccounts, type AuthContext } from '@/lib/auth-service';
 import { Prisma } from '@prisma/client';
 import { comparePassword, hashPassword } from '@/lib/auth-password';
-import { revokeUserSessions } from '@/lib/auth-service';
 
 const schoolSummarySelect = {
   id: true,
@@ -89,29 +89,55 @@ export async function changeUserEmail(input: {
   userId: string;
   newEmail: string;
   currentPassword: string;
+  authContext: AuthContext;
 }) {
   const user = await prisma.usuario.findUnique({
     where: { id: input.userId },
-    select: { email: true, senhaHash: true },
+    select: { email: true },
   });
   if (!user) return { status: 'NOT_FOUND' as const };
-  if (user.email.toLowerCase() === input.newEmail) return { status: 'SAME_EMAIL' as const };
+  const normalizedEmail = input.newEmail.trim().toLowerCase();
+  if (user.email.toLowerCase() === normalizedEmail) return { status: 'SAME_EMAIL' as const };
 
-  const emailInUse = await prisma.usuario.findUnique({
-    where: { email: input.newEmail },
-    select: { id: true },
+  const credential = await prisma.authCredential.findUnique({
+    where: { uq_auth_credential_context_user: { context: input.authContext, userId: input.userId } },
+    select: { passwordHash: true },
   });
-  if (emailInUse && emailInUse.id !== input.userId) return { status: 'EMAIL_IN_USE' as const };
+  if (!credential) return { status: 'NOT_FOUND' as const };
 
-  if (!(await comparePassword(input.currentPassword, user.senhaHash))) {
+  const [emailInUse, credentialEmailInUse] = await Promise.all([
+    prisma.usuario.findFirst({
+      where: { email: { equals: normalizedEmail, mode: 'insensitive' }, id: { not: input.userId } },
+      select: { id: true },
+    }),
+    prisma.authCredential.findFirst({
+      where: { normalizedEmail, userId: { not: input.userId } },
+      select: { userId: true },
+    }),
+  ]);
+  if (emailInUse || credentialEmailInUse) return { status: 'EMAIL_IN_USE' as const };
+
+  if (!(await comparePassword(input.currentPassword, credential.passwordHash))) {
     return { status: 'INVALID_PASSWORD' as const };
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.usuario.update({ where: { id: input.userId }, data: { email: input.newEmail } });
-    await revokeUserSessions(input.userId, tx);
+    const now = new Date();
+    await tx.usuario.update({ where: { id: input.userId }, data: { email: normalizedEmail } });
+    await tx.authCredential.updateMany({
+      where: { userId: input.userId },
+      data: { normalizedEmail, emailVerifiedAt: null, sessionVersion: { increment: 1 } },
+    });
+    await tx.mobileAuthSession.updateMany({
+      where: { userId: input.userId, revokedAt: null },
+      data: { revokedAt: now, lastUsedAt: now },
+    });
+    await tx.authActionToken.updateMany({
+      where: { userId: input.userId, usedAt: null, invalidatedAt: null },
+      data: { invalidatedAt: now },
+    });
   });
-  return { status: 'UPDATED' as const, email: input.newEmail };
+  return { status: 'UPDATED' as const, email: normalizedEmail };
 }
 
 export async function changeUserPassword(input: {
@@ -119,38 +145,35 @@ export async function changeUserPassword(input: {
   contaId: string;
   currentPassword: string;
   newPassword: string;
+  authContext: AuthContext;
 }) {
-  const user = await prisma.usuario.findUnique({
-    where: { id: input.userId },
-    select: { senhaHash: true, status: true },
-  });
-  if (!user?.senhaHash || user.status !== 'ATIVO') return { status: 'NOT_FOUND' as const };
+  const [user, credential] = await Promise.all([
+    prisma.usuario.findUnique({ where: { id: input.userId }, select: { status: true } }),
+    prisma.authCredential.findUnique({ where: { uq_auth_credential_context_user: { context: input.authContext, userId: input.userId } }, select: { passwordHash: true } }),
+  ]);
+  if (!user || !credential || user.status !== 'ATIVO') return { status: 'NOT_FOUND' as const };
 
-  const membership = await prisma.usuarioConta.findFirst({
-    where: {
-      usuarioId: input.userId,
-      contaId: input.contaId,
-      status: 'ATIVO',
-      usuario: { status: 'ATIVO' },
-      conta: { status: 'ATIVO', deletedAt: null },
-    },
-    select: { contaId: true },
-  });
-  if (!membership) return { status: 'NOT_FOUND' as const };
+  const accounts = await listAuthContextAccounts(input.userId, input.authContext);
+  const account = accounts.find(({ id }) => id === input.contaId);
+  if (!account) return { status: 'NOT_FOUND' as const };
 
-  if (!(await comparePassword(input.currentPassword, user.senhaHash))) {
-    return { status: 'INVALID_PASSWORD' as const, contaId: membership.contaId };
+  if (!(await comparePassword(input.currentPassword, credential.passwordHash))) {
+    return { status: 'INVALID_PASSWORD' as const, contaId: account.id };
   }
 
   const newHash = await hashPassword(input.newPassword);
   await prisma.$transaction(async (tx) => {
-    await tx.usuario.update({
-      where: { id: input.userId },
-      data: { senhaHash: newHash, passwordChangedAt: new Date() },
+    const now = new Date();
+    await tx.authCredential.update({
+      where: { uq_auth_credential_context_user: { context: input.authContext, userId: input.userId } },
+      data: { passwordHash: newHash, sessionVersion: { increment: 1 } },
     });
-    await revokeUserSessions(input.userId, tx);
+    await tx.mobileAuthSession.updateMany({
+      where: { userId: input.userId, authContext: input.authContext, revokedAt: null },
+      data: { revokedAt: now, lastUsedAt: now },
+    });
   });
-  return { status: 'UPDATED' as const, contaId: membership.contaId };
+  return { status: 'UPDATED' as const, contaId: account.id };
 }
 
 export async function updateUserNotificationPreferences(input: {

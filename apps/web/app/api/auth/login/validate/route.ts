@@ -8,6 +8,7 @@ import { rateLimitResponse } from '@/lib/security/rate-limit-response';
 const bodySchema = z.object({
   email: z.string().email().max(320),
   password: z.string().min(1).max(256),
+  authContext: z.enum(['OWNER', 'COLLABORATOR', 'PORTAL']),
 });
 
 const GENERIC_FAILURE = { ok: false as const, reason: 'INVALID_CREDENTIALS' as const };
@@ -32,7 +33,7 @@ export async function POST(req: Request) {
       return rateLimitResponse(!ipLimit.ok ? ipLimit : emailLimit, !ipLimit.ok ? 10 : 5);
     }
 
-    const result = await verifyCredentialsDetailed(parsed.data.email, parsed.data.password);
+    const result = await verifyCredentialsDetailed(parsed.data.email, parsed.data.password, parsed.data.authContext);
     if (!result.ok) {
       if (result.reason === 'ACCOUNT_DEACTIVATED') {
         await sendAccountReactivationForEmail(parsed.data.email, {
@@ -51,7 +52,8 @@ export async function POST(req: Request) {
       });
     }
 
-    return NextResponse.json({ ok: true });
+    if (!result.user.availableAccounts.length) return NextResponse.json(GENERIC_FAILURE, { status: 401, headers: { 'Cache-Control': 'no-store' } });
+    return NextResponse.json({ ok: true, accounts: result.user.availableAccounts }, { headers: { 'Cache-Control': 'no-store' } });
   } catch {
     return NextResponse.json({ ok: false, reason: 'UNEXPECTED_ERROR' }, { status: 500 });
   }

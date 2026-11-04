@@ -38,6 +38,50 @@ describeIf('createFirstUser', () => {
     expect(await prisma.hubSpotAccountCreatedOutbox.count({ where: { conta: { is: { usuarios: { some: { email: base.email } } } } } })).toBe(0);
   });
 
+  it('permite criar acesso de proprietário separado para e-mail já usado por um colaborador', async () => {
+    const contaColaborador = await prisma.conta.create({ data: { nome: 'Escola do convite' }, select: { id: true } });
+    const collaborator = await prisma.usuario.create({
+      data: {
+        contaId: contaColaborador.id,
+        nome: 'João Colaborador',
+        email: 'joao.contexto@example.com',
+        senhaHash: 'legacy-hash',
+        role: 'RECEPCAO',
+        status: 'ATIVO',
+      },
+      select: { id: true },
+    });
+    await prisma.usuarioConta.create({
+      data: { usuarioId: collaborator.id, contaId: contaColaborador.id, role: 'RECEPCAO', status: 'ATIVO' },
+    });
+    await prisma.authCredential.create({
+      data: {
+        context: 'COLLABORATOR',
+        normalizedEmail: 'joao.contexto@example.com',
+        userId: collaborator.id,
+        passwordHash: 'collaborator-password-hash',
+        emailVerifiedAt: new Date(),
+      },
+    });
+
+    const owner = await createFirstUser({
+      escolaNome: 'Nova escola do João',
+      nome: 'João Proprietário',
+      email: 'joao.contexto@example.com',
+      senha: 'SenhaFort3!',
+    });
+
+    expect(owner.id).toBe(collaborator.id);
+    expect(owner.contaId).not.toBe(contaColaborador.id);
+    expect(await prisma.conta.findUnique({ where: { id: owner.contaId }, select: { ownerUserId: true, nome: true } }))
+      .toEqual({ ownerUserId: collaborator.id, nome: 'Nova escola do João' });
+    expect(await prisma.usuario.count({ where: { email: 'joao.contexto@example.com' } })).toBe(1);
+    const credentials = await prisma.authCredential.findMany({ where: { userId: collaborator.id } });
+    expect(credentials.map((credential) => credential.context)).toEqual(expect.arrayContaining(['OWNER', 'COLLABORATOR']));
+    expect(credentials.find((credential) => credential.context === 'OWNER')?.passwordHash)
+      .not.toBe(credentials.find((credential) => credential.context === 'COLLABORATOR')?.passwordHash);
+  });
+
   it('enfileira uma notificação de conta criada apenas para cadastro self-service público', async () => {
     const user = await createFirstUser({ ...base, email: 'public-signup@example.com', registrationSource: 'PUBLIC_SELF_SERVICE' });
     const events = await prisma.hubSpotAccountCreatedOutbox.findMany({ where: { contaId: user.contaId } });

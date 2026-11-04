@@ -83,6 +83,7 @@ async function findUserByEmail(email: string, database: typeof prisma = prisma) 
     select: {
       id: true,
       email: true,
+      status: true,
       conta: {
         select: {
           status: true,
@@ -100,16 +101,23 @@ export async function checkFirstUserRegistrationAvailability(input: {
   const existingEmail = await findUserByEmail(normalizedEmail);
 
   if (!existingEmail) return { available: true };
-  if (isAccountDeactivated(existingEmail.conta?.status, existingEmail.conta?.deletedAt)) {
-    return {
-      available: false,
-      reason: 'LOCAL_DEACTIVATED',
-      userId: existingEmail.id,
-      email: existingEmail.email,
-    };
+  const ownerCredential = await prisma.authCredential.findFirst({
+    where: { context: 'OWNER', userId: existingEmail.id },
+    select: { id: true },
+  });
+  if (ownerCredential) {
+    if (isAccountDeactivated(existingEmail.conta?.status, existingEmail.conta?.deletedAt)) {
+      return {
+        available: false,
+        reason: 'LOCAL_DEACTIVATED',
+        userId: existingEmail.id,
+        email: existingEmail.email,
+      };
+    }
+    return { available: false, reason: 'LOCAL_ACTIVE' };
   }
-
-  return { available: false, reason: 'LOCAL_ACTIVE' };
+  if (existingEmail.status !== 'ATIVO') return { available: false, reason: 'LOCAL_ACTIVE' };
+  return { available: true };
 }
 
 export async function createFirstUser(data: FirstUserInput, database: typeof prisma = prisma): Promise<Usuario> {
@@ -140,12 +148,13 @@ export async function createFirstUser(data: FirstUserInput, database: typeof pri
   if (!passwordPolicyRegex.test(data.senha)) throw new PasswordPolicyError();
   // Unicidade email
   const existingEmail = await findUserByEmail(data.email, database);
-  if (existingEmail) {
+  if (existingEmail && await database.authCredential.findFirst({ where: { context: 'OWNER', userId: existingEmail.id }, select: { id: true } })) {
     if (isAccountDeactivated(existingEmail.conta?.status, existingEmail.conta?.deletedAt)) {
       throw new InactiveAccountEmailError(existingEmail.id, existingEmail.email);
     }
     throw new EmailInUseError();
   }
+  if (existingEmail && existingEmail.status !== 'ATIVO') throw new EmailInUseError();
   // Unicidade CPF/CNPJ para Conta (apenas se fornecido)
   if (cpfCnpjDigits) {
     const existingConta = await database.conta.findFirst({ where: { cpfCnpj: cpfCnpjDigits } });
@@ -168,8 +177,9 @@ export async function createFirstUser(data: FirstUserInput, database: typeof pri
         },
         select: { id: true },
       });
-      const user = await tx.usuario.create({
-        data: {
+      const user = existingEmail
+        ? await tx.usuario.findUniqueOrThrow({ where: { id: existingEmail.id } })
+        : await tx.usuario.create({ data: {
           contaId: conta.id,
           nome: data.nome,
           email: data.email,
@@ -177,8 +187,7 @@ export async function createFirstUser(data: FirstUserInput, database: typeof pri
           senhaHash,
           role: Role.ADMIN,
           status: 'ATIVO',
-        },
-      });
+        } });
       await tx.usuarioConta.create({
         data: {
           usuarioId: user.id,
@@ -189,6 +198,14 @@ export async function createFirstUser(data: FirstUserInput, database: typeof pri
         },
       });
       await tx.conta.update({ where: { id: conta.id }, data: { ownerUserId: user.id } });
+      await tx.authCredential.create({
+        data: {
+          context: 'OWNER',
+          normalizedEmail: data.email.trim().toLowerCase(),
+          userId: user.id,
+          passwordHash: senhaHash,
+        },
+      });
 
       if (data.registrationSource === 'PUBLIC_SELF_SERVICE' && !invitation) {
         await tx.hubSpotAccountCreatedOutbox.create({ data: { contaId: conta.id, availableAt: new Date() } });
@@ -243,7 +260,10 @@ export async function createFirstUser(data: FirstUserInput, database: typeof pri
         });
       }
 
-      return user;
+      // An existing global identity may already belong to a collaborator or
+      // portal context. Return the owner tenant created here so auto-login
+      // selects the correct account without changing the legacy user pointer.
+      return { ...user, contaId: conta.id };
     });
     return result;
   } catch (e: unknown) {

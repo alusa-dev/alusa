@@ -175,7 +175,7 @@ export default function InviteTargetPicker({ role, onTargetChange }: Props) {
     setPage(1);
     setHasMore(false);
     setError(null);
-    setOpen(true);
+    setOpen(false);
     onTargetChange(null);
   }
 
@@ -198,7 +198,7 @@ export default function InviteTargetPicker({ role, onTargetChange }: Props) {
     setLoadingMore(false);
     setActiveIndex(-1);
     setQuery(value);
-    setOpen(true);
+    setOpen(Boolean(value.trim()));
   }
 
   function returnToSearch() {
@@ -212,7 +212,7 @@ export default function InviteTargetPicker({ role, onTargetChange }: Props) {
     setError(null);
     setLoading(false);
     setQuery('');
-    setOpen(true);
+    setOpen(false);
   }
 
   async function loadMore() {
@@ -271,21 +271,9 @@ export default function InviteTargetPicker({ role, onTargetChange }: Props) {
           Buscar responsável cadastrado
         </label>
         {selected ? (
-          <div className="rounded-md border border-violet-200 bg-violet-50 p-3 text-sm alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">{selected.name}</p>
-                <p className="mt-0.5 text-xs text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
-                  {selected.email ? `Contato cadastrado (não usado para envio): ${selected.email}` : 'Contato indisponível; a pessoa informará o e-mail no acesso.'}
-                </p>
-                <p className="mt-2 text-xs font-medium text-gray-700 alusa-dark:text-[color:var(--color-text-secondary)]">Alunos vinculados</p>
-                <ul className="mt-1 list-disc pl-5 text-xs text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
-                  {selected.students.map((student) => <li key={student.id}>{student.name}</li>)}
-                </ul>
-                <p className="mt-2 text-xs text-gray-600 alusa-dark:text-[color:var(--color-text-secondary)]">
-                  Compartilhe o link com a pessoa responsável; ela informará e confirmará o próprio e-mail ao entrar.
-                </p>
-              </div>
+          <div className="flex min-h-10 flex-wrap items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-2 text-sm shadow-none alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+            <span className="shrink-0 text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">{selected.name}</span>
+            <div className="ml-auto flex shrink-0 items-center gap-2">
               <button ref={selectedActionRef} type="button" className="shrink-0 text-xs font-medium text-violet-700 underline" onClick={returnToSearch}>
                 Trocar
               </button>
@@ -306,10 +294,11 @@ export default function InviteTargetPicker({ role, onTargetChange }: Props) {
                 autoComplete="off"
                 value={query}
                 onChange={(event) => changeSearchQuery(event.target.value)}
-                onFocus={() => setOpen(true)}
+                onFocus={() => setOpen(Boolean(query.trim()))}
+                onBlur={() => setOpen(false)}
                 onKeyDown={handleKeyDown}
                 placeholder="Digite o nome do responsável"
-                className="h-10"
+                className="h-10 rounded-md shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
               />
               {open && (
                 <CandidateResults
@@ -319,9 +308,6 @@ export default function InviteTargetPicker({ role, onTargetChange }: Props) {
                 />
               )}
             </div>
-            <p className="text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">
-              O link será compartilhado com a pessoa responsável, que informará e confirmará o próprio e-mail. Para outro responsável, faça o cadastro primeiro no módulo Responsáveis.
-            </p>
           </>
         )}
       </div>
@@ -338,15 +324,15 @@ export default function InviteTargetPicker({ role, onTargetChange }: Props) {
           <Input
             id={inputId} ref={manualEmailInputRef} type="email" autoComplete="email" value={manualEmail}
             onChange={(event) => changeManualEmail(event.target.value)}
-            placeholder="email@exemplo.com" className="h-10"
+            placeholder="email@exemplo.com" className="h-10 rounded-md shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
           />
           <button type="button" className="text-xs font-medium text-violet-700 underline" onClick={returnToCandidateSearch}>
             Buscar cadastro existente
           </button>
         </>
       ) : selected ? (
-        <div className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-sm alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
-          <span className="min-w-0 truncate"><strong>{selected.name}</strong><span className="ml-2 text-xs text-gray-600">{selected.email}</span></span>
+        <div className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-gray-200 bg-white px-3 py-2 text-sm alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card-soft)]">
+          <span className="min-w-0 truncate">{selected.name}</span>
           <button ref={selectedActionRef} type="button" className="shrink-0 text-xs font-medium text-violet-700 underline" onClick={returnToSearch}>
             Trocar
           </button>
@@ -366,10 +352,11 @@ export default function InviteTargetPicker({ role, onTargetChange }: Props) {
               autoComplete="off"
               value={query}
               onChange={(event) => changeSearchQuery(event.target.value)}
-              onFocus={() => setOpen(true)}
+              onFocus={() => setOpen(Boolean(query.trim()))}
+              onBlur={() => setOpen(false)}
               onKeyDown={handleKeyDown}
               placeholder="Digite o nome ou e-mail"
-              className="h-10"
+              className="h-10 rounded-md shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
             />
             {open && (
               <CandidateResults
@@ -415,8 +402,8 @@ function CandidateResults(props: {
         <p className="px-3 py-3 text-sm text-gray-500" role="status">
           {query.trim()
             ? recordType === 'RESPONSAVEL'
-              ? 'Nenhum responsável encontrado. Cadastre primeiro no módulo Responsáveis.'
-              : 'Nenhum cadastro encontrado.'
+              ? 'Nenhum responsável disponível para convite.'
+              : 'Nenhum colaborador disponível para convite.'
             : recordType === 'RESPONSAVEL'
               ? 'Digite um nome para buscar responsáveis cadastrados.'
               : 'Digite um nome ou e-mail para buscar colaboradores.'}

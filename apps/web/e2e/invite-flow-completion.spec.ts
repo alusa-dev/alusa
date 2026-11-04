@@ -16,6 +16,22 @@ async function installSession(
 ) {
   const secret = process.env.NEXTAUTH_SECRET;
   if (!secret) throw new Error('NEXTAUTH_SECRET ausente no ambiente de teste');
+  const authContext = user.role === Role.RESPONSAVEL
+    ? 'PORTAL'
+    : user.role === Role.ADMIN
+      ? 'OWNER'
+      : 'COLLABORATOR';
+  await prisma.authCredential.upsert({
+    where: { uq_auth_credential_context_user: { context: authContext, userId: user.id } },
+    create: {
+      context: authContext,
+      normalizedEmail: user.email.trim().toLowerCase(),
+      userId: user.id,
+      passwordHash: 'not-used-in-e2e',
+      emailVerifiedAt: emailVerified ? new Date() : null,
+    },
+    update: { emailVerifiedAt: emailVerified ? new Date() : null },
+  });
   const token = await encode({
     secret,
     token: {
@@ -24,6 +40,7 @@ async function installSession(
       name: user.name,
       role: user.role,
       contaId: user.contaId,
+      authContext,
       emailVerified,
       accountActive: true,
       sessionVersion: 0,
@@ -58,6 +75,15 @@ async function createReceptionist(contaId: string) {
   });
   await prisma.usuarioConta.create({
     data: { usuarioId: user.id, contaId, role: Role.RECEPCAO, status: 'ATIVO' },
+  });
+  await prisma.authCredential.create({
+    data: {
+      context: 'COLLABORATOR',
+      normalizedEmail: user.email.toLowerCase(),
+      userId: user.id,
+      passwordHash: 'not-used-in-e2e',
+      emailVerifiedAt: new Date(),
+    },
   });
   return user;
 }
@@ -195,21 +221,6 @@ test.describe('convites — validação ponta a ponta complementar', () => {
     const context = await browser.newContext();
     const guest = await context.newPage();
     await guest.goto('/');
-    const [identityPreparationOne, identityPreparationTwo] = await Promise.all([
-      postJson(guest, '/api/users/accept', payload),
-      postJson(guest, '/api/users/accept', payload),
-    ]);
-    expect([identityPreparationOne.response.status(), identityPreparationTwo.response.status()], JSON.stringify([identityPreparationOne.body, identityPreparationTwo.body])).toEqual([202, 202]);
-    const user = await prisma.usuario.findUniqueOrThrow({ where: { email } });
-    expect(user.emailVerifiedAt).toBeNull();
-    expect(await prisma.usuarioConta.count({ where: { usuarioId: user.id } })).toBe(0);
-    const verification = await sendEmailVerificationForUser(user.id, { ip: '127.0.0.1', userAgent: 'playwright' }, {
-      callbackUrl: `/auth/login?callbackUrl=${encodeURIComponent(`/auth/register?token=${encodeURIComponent(token)}`)}`,
-    });
-    const verificationToken = new URL(verification.actionUrl).searchParams.get('token');
-    expect(verificationToken).toBeTruthy();
-    await guest.goto(`/auth/verify-email?token=${encodeURIComponent(verificationToken!)}`);
-    await expect(guest.getByRole('heading', { name: 'E-mail confirmado' })).toBeVisible({ timeout: 10_000 });
     const [acceptOne, acceptTwo] = await Promise.all([
       postJson(guest, '/api/users/accept', payload),
       postJson(guest, '/api/users/accept', payload),
@@ -217,6 +228,12 @@ test.describe('convites — validação ponta a ponta complementar', () => {
     const acceptStatuses = [acceptOne.response.status(), acceptTwo.response.status()];
     expect(acceptStatuses.filter((status) => status === 200).length).toBeGreaterThanOrEqual(1);
     expect(acceptStatuses.every((status) => [200, 409].includes(status)), JSON.stringify({ acceptStatuses, bodies: [acceptOne.body, acceptTwo.body] })).toBe(true);
+    const user = await prisma.usuario.findUniqueOrThrow({ where: { email } });
+    expect(await prisma.usuarioConta.count({ where: { usuarioId: user.id } })).toBe(1);
+    expect(await prisma.authCredential.findUnique({
+      where: { uq_auth_credential_context_user: { context: 'PORTAL', userId: user.id } },
+      select: { emailVerifiedAt: true },
+    })).toMatchObject({ emailVerifiedAt: expect.any(Date) });
     const completedReplay = await postJson(guest, '/api/users/accept', payload);
     expect(completedReplay.response.status(), JSON.stringify(completedReplay.body)).toBe(200);
     expect(await prisma.usuario.count({ where: { email } })).toBe(1);
@@ -233,7 +250,10 @@ test.describe('convites — validação ponta a ponta complementar', () => {
     const bcryptModule = await import('bcryptjs');
     const bcrypt = bcryptModule.default;
     const password = 'Aa!23456';
-    await prisma.usuario.update({ where: { id: receptionist.id }, data: { senhaHash: await bcrypt.hash(password, 10) } });
+    await prisma.authCredential.update({
+      where: { uq_auth_credential_context_user: { context: 'COLLABORATOR', userId: receptionist.id } },
+      data: { passwordHash: await bcrypt.hash(password, 10) },
+    });
 
     await page.context().clearCookies();
     await page.goto('/auth/login');
@@ -264,7 +284,7 @@ test.describe('convites — validação ponta a ponta complementar', () => {
         select: { id: true, nome: true, email: true },
       });
       await prisma.usuarioConta.create({ data: { usuarioId: createdUser.id, contaId: schoolB.contaId, role: Role.ADMIN, status: 'ATIVO' } });
-      await installSession(schoolBPage, { ...createdUser, role: Role.ADMIN, contaId: schoolB.contaId });
+      await installSession(schoolBPage, { ...createdUser, role: Role.RECEPCAO, contaId: schoolB.contaId });
       const invited = await postJson(page, '/api/users/invite', { email: inviteeEmail, role: 'RECEPCAO' });
       expect(invited.response.status()).toBe(201);
       const accepted = await postJson(schoolBPage, '/api/users/accept', { token: inviteFrom(invited.body).token });
@@ -273,7 +293,7 @@ test.describe('convites — validação ponta a ponta complementar', () => {
       const removalResponse = await page.request.delete(new URL(`/api/users/${createdUser.id}`, page.url()).toString(), { data: { reason: 'Teste de isolamento E2E' } });
       expect(removalResponse.status(), await removalResponse.text()).toBe(200);
       expect(await prisma.usuario.findUnique({ where: { id: createdUser.id } })).not.toBeNull();
-      expect(await prisma.usuarioConta.findUnique({ where: { usuarioId_contaId: { usuarioId: createdUser.id, contaId: schoolA.contaId } } })).toMatchObject({ status: 'INATIVO' });
+      expect(await prisma.usuarioConta.findUnique({ where: { usuarioId_contaId: { usuarioId: createdUser.id, contaId: schoolA.contaId } } })).toBeNull();
       expect(await prisma.usuarioConta.findUnique({ where: { usuarioId_contaId: { usuarioId: createdUser.id, contaId: schoolB.contaId } } })).toMatchObject({ status: 'ATIVO', role: Role.ADMIN });
 
       await installSession(schoolBPage, { ...createdUser, role: Role.RECEPCAO, contaId: schoolA.contaId }, true, false);
@@ -281,7 +301,7 @@ test.describe('convites — validação ponta a ponta complementar', () => {
       expect(removedAccess.status()).toBe(403);
       expect(await removedAccess.json()).toMatchObject({ ok: false, reason: 'ACCOUNT_UNAVAILABLE' });
 
-      await installSession(schoolBPage, { ...createdUser, role: Role.ADMIN, contaId: schoolB.contaId });
+      await installSession(schoolBPage, { ...createdUser, role: Role.RECEPCAO, contaId: schoolB.contaId });
       const stillAllowed = await schoolBPage.request.get(new URL('/api/auth/account-access', schoolBPage.url()).toString());
       expect(stillAllowed.status()).toBe(200);
     } finally {

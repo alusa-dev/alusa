@@ -45,6 +45,7 @@ export async function POST(req: Request) {
       userAgent: req.headers.get('user-agent'),
     }, {
       callbackUrl,
+      context: (session.user as { authContext?: 'OWNER' | 'COLLABORATOR' | 'PORTAL' }).authContext ?? null,
     });
 
     return NextResponse.json({ ok: true });

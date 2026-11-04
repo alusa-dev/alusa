@@ -3,7 +3,7 @@
 import type { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import { z } from 'zod';
-import { resolveSessionAccess, verifyCredentialsDetailed } from './auth-service';
+import { resolveSessionAccess, verifyCredentialsDetailed, type AuthContext } from './auth-service';
 import prisma from '@/lib/prisma';
 
 declare module 'next-auth/jwt' {
@@ -18,6 +18,7 @@ declare module 'next-auth/jwt' {
     emailVerified?: boolean;
     accountActive?: boolean;
     sessionVersion?: number;
+    authContext?: AuthContext;
   }
 }
 
@@ -60,6 +61,7 @@ async function loadContaAuthState(contaId: string | null) {
 const creds = z.object({
   email: z.string().email().max(320),
   password: z.string().min(6).max(256),
+  authContext: z.enum(['OWNER', 'COLLABORATOR', 'PORTAL']),
   contaId: z.string().max(191).optional().nullable(),
 });
 const secret =
@@ -76,6 +78,8 @@ export const authOptions: NextAuthOptions = {
       credentials: {
         email: { label: 'Email', type: 'text' },
         password: { label: 'Senha', type: 'password' },
+        authContext: { label: 'Contexto de autenticação', type: 'text' },
+        contaId: { label: 'Escola', type: 'text' },
       },
       async authorize(raw) {
         const parsed = creds.safeParse(raw);
@@ -85,9 +89,10 @@ export const authOptions: NextAuthOptions = {
         const result = await verifyCredentialsDetailed(
           parsed.data.email,
           parsed.data.password,
+          parsed.data.authContext,
           parsed.data.contaId,
         );
-        if (!result.ok) {
+        if (!result.ok || !parsed.data.contaId || !result.user.availableAccounts.some((account) => account.id === parsed.data.contaId)) {
           return null;
         }
         const u = result.user;
@@ -100,6 +105,7 @@ export const authOptions: NextAuthOptions = {
           emailVerified: Boolean(u.emailVerifiedAt),
           accountActive: true,
           sessionVersion: u.sessionVersion,
+          authContext: u.authContext,
         } as any;
       },
     }) as any,
@@ -120,6 +126,7 @@ export const authOptions: NextAuthOptions = {
         (token as any).emailVerified = Boolean((user as any).emailVerified);
         (token as any).accountActive = (user as any).accountActive !== false;
         (token as any).sessionVersion = (user as any).sessionVersion;
+        (token as any).authContext = (user as any).authContext;
       }
 
       const tokenUserId =
@@ -141,6 +148,7 @@ export const authOptions: NextAuthOptions = {
               userId: tokenUserId,
               contaId: requestedContaId,
               sessionVersion: typeof (token as any).sessionVersion === 'number' ? (token as any).sessionVersion : null,
+              authContext: (token as any).authContext,
             });
             if (requestedAccess.ok) {
               tokenContaId = requestedAccess.contaId;
@@ -156,6 +164,7 @@ export const authOptions: NextAuthOptions = {
             userId: tokenUserId,
             contaId: tokenContaId,
             sessionVersion: tokenSessionVersion,
+            authContext: (token as any).authContext,
           });
           (token as any).accountActive = access.ok;
 
@@ -165,6 +174,7 @@ export const authOptions: NextAuthOptions = {
             (token as any).contaId = access.contaId;
             (token as any).role = access.role;
             (token as any).sessionVersion = access.sessionVersion;
+            (token as any).authContext = access.authContext;
 
             const contaState = await loadContaAuthState(access.contaId);
             (token as any).financeStatus = contaState.financeStatus;
@@ -205,6 +215,7 @@ export const authOptions: NextAuthOptions = {
         tokenContaId == null || tokenContaId === '' ? null : tokenContaId;
       (session.user as any).emailVerified = Boolean((token as any).emailVerified);
       (session.user as any).accountActive = (token as any).accountActive !== false;
+      (session.user as any).authContext = (token as any).authContext ?? null;
       (session.user as any).financeStatus = (token as any).financeStatus ?? 'FINANCE_NOT_STARTED';
       (session.user as any).financeIntegrationMode =
         (token as any).financeIntegrationMode ?? 'WHITELABEL_BAAS';

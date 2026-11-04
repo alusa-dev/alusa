@@ -54,6 +54,11 @@ if (!skipDatabaseSetup && !process.env.DATABASE_URL?.includes('alusa_test')) {
   );
 }
 
+// Vitest's `env` option populates import.meta.env but does not consistently
+// set Node's process.env across forks. Keep resetDb's destructive-operation
+// guard aligned with this already-validated test database.
+if (!skipDatabaseSetup) process.env.NODE_ENV = 'test';
+
 if (!skipDatabaseSetup) {
   console.log('✅ Usando banco de teste:', process.env.DATABASE_URL?.replace(/:[^:]*@/, ':***@'));
 }

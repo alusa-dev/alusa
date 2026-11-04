@@ -1,14 +1,24 @@
 import { test, expect } from '@playwright/test';
 
-test('tela de autenticação usa o contrato atual', async ({ page }) => {
-  await page.goto('/auth/login');
-  await expect(page.getByRole('heading', { name: 'Bem-vindo de volta!' })).toBeVisible();
+test('login shows the access contexts, credentials, and context-aware password recovery', async ({ page }) => {
+  await page.goto('/auth/login?context=owner');
+
+  await expect(page.getByRole('heading', { name: 'Bem-vindo de volta' })).toBeVisible();
+  const accessNav = page.getByRole('navigation', { name: 'Tipo de acesso' });
+  await expect(accessNav.getByRole('link', { name: 'Acesso do diretor' })).toBeVisible();
+  await expect(accessNav.getByRole('link', { name: 'Acesso do colaborador' })).toBeVisible();
   await expect(page.getByTestId('email')).toBeVisible();
   await expect(page.getByTestId('password')).toBeVisible();
-  await expect(page.getByTestId('login-button')).toBeVisible();
-});
+  await expect(page.getByRole('button', { name: 'Entrar' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Esqueceu a senha?' })).toHaveAttribute(
+    'href',
+    '/auth/forgot-password?context=owner',
+  );
 
-test('login direciona quem não tem conta ao contato durante o piloto', async ({ page }) => {
-  await page.goto('/auth/login');
-  await expect(page.getByRole('link', { name: 'Fale conosco' })).toHaveAttribute('href', 'mailto:contato@alusa.app');
+  await accessNav.getByRole('link', { name: 'Acesso do colaborador' }).click();
+  await expect(page).toHaveURL(/\/auth\/login\?context=collaborator$/);
+  await expect(page.getByRole('link', { name: 'Esqueceu a senha?' })).toHaveAttribute(
+    'href',
+    '/auth/forgot-password?context=collaborator',
+  );
 });

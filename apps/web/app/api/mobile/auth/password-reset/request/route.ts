@@ -9,6 +9,7 @@ export const runtime = 'nodejs';
 
 const requestSchema = z.object({
   email: z.string().trim().email().max(320),
+  authContext: z.enum(['OWNER', 'COLLABORATOR', 'PORTAL']).default('COLLABORATOR'),
 });
 
 export async function POST(request: Request) {
@@ -41,7 +42,7 @@ export async function POST(request: Request) {
     await sendPasswordResetForEmail(parsed.data.email, {
       ip,
       userAgent: request.headers.get('user-agent'),
-    });
+    }, parsed.data.authContext);
   } catch (error) {
     logApiOperationalEvent({ severity: 'error', eventName: 'api.mobile_auth.request.failed', route: '/api/mobile/auth/password-reset/request', method: 'POST', requestId: getRequestId(request), error });
     return NextResponse.json(

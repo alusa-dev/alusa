@@ -145,7 +145,7 @@ describe('RegisterForm', () => {
     expect(payload).not.toHaveProperty('cpf');
     expect(payload).not.toHaveProperty('telefone');
     expect(signInMock).not.toHaveBeenCalled();
-    expect(await screen.findByTestId('invite-verification-notice')).toHaveTextContent('Confirme o endereço');
+    expect(await screen.findByTestId('invite-awaiting-verification')).toHaveTextContent('Ao confirmar o endereço, o convite será aceito automaticamente');
   });
 
   it('mostra como toast, sem erro inline, quando o e-mail já está vinculado à escola', async () => {

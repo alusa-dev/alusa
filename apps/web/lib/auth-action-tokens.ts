@@ -1,6 +1,7 @@
 import { randomBytes, createHash } from 'node:crypto';
 import type { AuthActionTokenType, Prisma } from '@prisma/client';
 import prisma from '@/lib/prisma';
+import type { AuthContext } from './auth-service';
 
 const expiryByType: Record<AuthActionTokenType, number> = {
   VERIFY_EMAIL: Number(process.env.AUTH_VERIFY_EMAIL_TTL_MINUTES || 60 * 24),
@@ -12,6 +13,7 @@ export type CreateAuthActionTokenInput = {
   userId: string;
   email: string;
   type: AuthActionTokenType;
+  context?: AuthContext | null;
   requestedByIp?: string | null;
   requestedByUserAgent?: string | null;
 };
@@ -25,6 +27,7 @@ export type ConsumeAuthActionTokenResult = {
     nome: string;
     emailVerifiedAt: Date | null;
   };
+  context: AuthContext | null;
 };
 
 export type AuthActionTokenLookupResult = {
@@ -39,6 +42,7 @@ export type AuthActionTokenLookupResult = {
     nome: string;
     emailVerifiedAt: Date | null;
   };
+  context: AuthContext | null;
 };
 
 function hashToken(token: string): string {
@@ -74,6 +78,7 @@ export async function createAuthActionToken(input: CreateAuthActionTokenInput) {
       where: {
         userId: input.userId,
         type: input.type,
+        ...(input.context ? { context: input.context } : {}),
         usedAt: null,
         invalidatedAt: null,
       },
@@ -86,6 +91,7 @@ export async function createAuthActionToken(input: CreateAuthActionTokenInput) {
       data: {
         userId: input.userId,
         type: input.type,
+        context: input.context ?? null,
         tokenHash,
         email: input.email,
         expiresAt,
@@ -111,10 +117,11 @@ export async function markAuthActionTokenEmailSent(
 export async function consumeAuthActionToken(
   type: AuthActionTokenType,
   plainToken: string,
+  db?: Prisma.TransactionClient,
 ): Promise<ConsumeAuthActionTokenResult | null> {
   const tokenHash = hashToken(plainToken);
 
-  return prisma.$transaction(async (tx) => {
+  const consume = async (tx: Prisma.TransactionClient) => {
     const claimed = await tx.authActionToken.updateMany({
       where: {
         tokenHash,
@@ -162,8 +169,11 @@ export async function consumeAuthActionToken(
     return {
       tokenId: token.id,
       user: token.user,
+      context: token.context,
     };
-  });
+  };
+
+  return db ? consume(db) : prisma.$transaction(consume);
 }
 
 export async function findAuthActionTokenByPlainToken(
@@ -197,6 +207,7 @@ export async function findAuthActionTokenByPlainToken(
     invalidatedAt: token.invalidatedAt,
     expiresAt: token.expiresAt,
     user: token.user,
+    context: token.context,
   };
 }
 
@@ -204,11 +215,13 @@ export async function invalidateAuthActionTokens(
   userId: string,
   type: AuthActionTokenType,
   db: Prisma.TransactionClient | typeof prisma = prisma,
+  context?: AuthContext | null,
 ): Promise<void> {
   await db.authActionToken.updateMany({
     where: {
       userId,
       type,
+      ...(context ? { context } : {}),
       usedAt: null,
       invalidatedAt: null,
     },

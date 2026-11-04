@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import prisma from '@/lib/prisma';
 import {
   checkFirstUserRegistrationAvailability,
   createFirstUser,
@@ -76,13 +77,15 @@ export async function POST(request: Request) {
       legalAcceptanceEvidence: requestEvidence(request),
     });
 
+    let verificationEmailSent = true;
     try {
       const studentCount = parsed.data.onboardingStudentCount;
       const callbackUrl = studentCount
         ? `/finance/wizard?studentCount=${studentCount}`
         : '/finance/wizard';
-      await sendEmailVerificationForUser(user.id, { ip, userAgent: request.headers.get('user-agent') }, { callbackUrl });
+      await sendEmailVerificationForUser(user.id, { ip, userAgent: request.headers.get('user-agent') }, { callbackUrl, context: 'OWNER' });
     } catch (error) {
+      verificationEmailSent = false;
       // Account creation succeeded; record mail delivery failure for recovery.
       logApiOperationalEvent({
         severity: 'error',
@@ -95,14 +98,22 @@ export async function POST(request: Request) {
       });
     }
 
+    const ownerCredential = await prisma.authCredential.findUnique({
+      where: { uq_auth_credential_context_user: { context: 'OWNER', userId: user.id } },
+      select: { emailVerifiedAt: true },
+    });
+    const ownerEmailVerified = Boolean(ownerCredential?.emailVerifiedAt);
+
     return NextResponse.json(
       firstRegisterResultDTOSchema.parse({
+        verificationRequired: !ownerEmailVerified,
+        verificationEmailSent,
         user: {
           id: user.id,
           email: user.email,
           role: user.role,
           contaId: user.contaId,
-          emailVerified: Boolean(user.emailVerifiedAt),
+          emailVerified: ownerEmailVerified,
         },
       }),
       { status: 201, headers: noStore },

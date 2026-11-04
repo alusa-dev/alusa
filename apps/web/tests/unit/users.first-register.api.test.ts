@@ -7,7 +7,10 @@ const mocks = vi.hoisted(() => ({
   strictRateLimit: vi.fn(),
   rateLimitSubject: vi.fn(),
   logApiEvent: vi.fn(),
+  findOwnerCredential: vi.fn(),
 }));
+
+vi.mock('@/lib/prisma', () => ({ default: { authCredential: { findUnique: mocks.findOwnerCredential } } }));
 
 vi.mock('@/lib/first-user-service', () => {
   class EmailInUseError extends Error {}
@@ -77,6 +80,7 @@ describe('POST /api/users/first-register', () => {
       emailVerifiedAt: null,
     });
     mocks.sendVerification.mockResolvedValue(undefined);
+    mocks.findOwnerCredential.mockResolvedValue({ emailVerifiedAt: null });
     mocks.rateLimitSubject.mockResolvedValue('hashed-ip');
     mocks.strictRateLimit.mockResolvedValue({ ok: true, source: 'memory' });
   });
@@ -90,6 +94,8 @@ describe('POST /api/users/first-register', () => {
     expect(response.status).toBe(201);
     expect(response.headers.get('cache-control')).toBe('no-store');
     await expect(response.json()).resolves.toEqual({
+      verificationRequired: true,
+      verificationEmailSent: true,
       user: {
         id: 'user-id',
         email: 'school@example.test',
@@ -108,7 +114,7 @@ describe('POST /api/users/first-register', () => {
     expect(mocks.sendVerification).toHaveBeenCalledWith(
       'user-id',
       { ip: '127.0.0.1', userAgent: 'vitest' },
-      { callbackUrl: '/finance/wizard' },
+      { callbackUrl: '/finance/wizard', context: 'OWNER' },
     );
   });
 

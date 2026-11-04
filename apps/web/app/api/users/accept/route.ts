@@ -68,6 +68,7 @@ export async function POST(req: Request) {
       userAgent: req.headers.get('user-agent'),
       authenticatedUserId: session?.user?.id || undefined,
       sessionEmail: session?.user?.email,
+      sessionAuthContext: (session?.user as { authContext?: 'OWNER' | 'COLLABORATOR' | 'PORTAL' } | undefined)?.authContext,
     });
     if (result.deliveryWarning) {
       logApiOperationalEvent({ severity: 'warn', eventName: 'api.users.invite.delivery.failed', route: '/api/users/accept', method: 'POST', requestId: getRequestId(req) });

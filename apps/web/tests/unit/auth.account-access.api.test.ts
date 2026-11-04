@@ -31,7 +31,7 @@ describe('GET /api/auth/account-access', () => {
   });
 
   it('retorna 403 quando a conta está desativada', async () => {
-    getTokenMock.mockResolvedValueOnce({ id: 'user_1', contaId: 'conta_1', sessionVersion: 3 });
+    getTokenMock.mockResolvedValueOnce({ id: 'user_1', contaId: 'conta_1', sessionVersion: 3, authContext: 'COLLABORATOR' });
     resolveSessionAccessMock.mockResolvedValueOnce({ ok: false, reason: 'ACCOUNT_DEACTIVATED' });
 
     const response = await GET(new NextRequest('http://localhost:3000/api/auth/account-access'));
@@ -41,14 +41,16 @@ describe('GET /api/auth/account-access', () => {
   });
 
   it('retorna 200 quando a sessão segue ativa', async () => {
-    getTokenMock.mockResolvedValueOnce({ id: 'user_1', contaId: 'conta_1', sessionVersion: 3 });
+    getTokenMock.mockResolvedValueOnce({ id: 'user_1', contaId: 'conta_1', sessionVersion: 3, authContext: 'COLLABORATOR' });
     resolveSessionAccessMock.mockResolvedValueOnce({ ok: true });
 
     const response = await GET(new NextRequest('http://localhost:3000/api/auth/account-access'));
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
-    expect(resolveSessionAccessMock).toHaveBeenCalledWith({ userId: 'user_1', contaId: 'conta_1', sessionVersion: 3 });
+    expect(resolveSessionAccessMock).toHaveBeenCalledWith({
+      userId: 'user_1', contaId: 'conta_1', sessionVersion: 3, authContext: 'COLLABORATOR',
+    });
   });
 
   it('falha fechado quando a validação de acesso fica indisponível', async () => {

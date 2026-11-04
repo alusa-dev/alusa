@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { prismaMock, verifyCredentialsDetailedMock, resolveSessionAccessMock, jwtVerifyMock } = vi.hoisted(() => ({
+const { prismaMock, verifyCredentialsDetailedMock, resolveSessionAccessMock, listAuthContextAccountsMock, jwtVerifyMock } = vi.hoisted(() => ({
   prismaMock: {
     usuarioConta: { findMany: vi.fn(), updateMany: vi.fn() },
+    authCredential: { findUnique: vi.fn() },
     mobileAuthSession: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     $transaction: vi.fn(),
     conta: { findFirst: vi.fn() },
   },
   verifyCredentialsDetailedMock: vi.fn(),
   resolveSessionAccessMock: vi.fn(),
+  listAuthContextAccountsMock: vi.fn(),
   jwtVerifyMock: vi.fn(),
 }));
 
@@ -29,6 +31,7 @@ vi.mock('@/lib/prisma', () => ({ __esModule: true, default: prismaMock }));
 vi.mock('@/lib/auth-service', () => ({
   verifyCredentialsDetailed: verifyCredentialsDetailedMock,
   resolveSessionAccess: resolveSessionAccessMock,
+  listAuthContextAccounts: listAuthContextAccountsMock,
 }));
 
 import { loginMobile, refreshMobileSession, verifyMobileAccessToken } from '@/lib/mobile-auth-service';
@@ -36,6 +39,7 @@ import { loginMobile, refreshMobileSession, verifyMobileAccessToken } from '@/li
 const verifiedUser = {
   id: 'user-1', email: 'multi@example.test', nome: 'Multi Tenant',
   role: 'ADMIN', contaId: 'school-a', emailVerifiedAt: new Date(), sessionVersion: 1,
+  authContext: 'COLLABORATOR', availableAccounts: [],
 };
 const schoolBMembership = {
   contaId: 'school-b', role: 'FINANCEIRO',
@@ -46,6 +50,7 @@ describe('mobile auth tenant membership', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.NEXTAUTH_SECRET = 'mobile-auth-test-secret';
+    process.env.MOBILE_AUTH_SECRET = 'mobile-auth-test-secret';
     verifyCredentialsDetailedMock.mockResolvedValue({ ok: true, user: verifiedUser });
     prismaMock.mobileAuthSession.create.mockResolvedValue({ id: 'mobile-session-1' });
     prismaMock.usuarioConta.updateMany.mockResolvedValue({ count: 1 });
@@ -57,12 +62,16 @@ describe('mobile auth tenant membership', () => {
     }));
     prismaMock.mobileAuthSession.findUnique.mockResolvedValue({
       id: 'session-a', userId: verifiedUser.id, expiresAt: new Date(Date.now() + 60_000), revokedAt: null,
+      authContext: 'COLLABORATOR', activeContaId: 'school-a',
       user: { ...verifiedUser, status: 'ATIVO' },
     });
     prismaMock.mobileAuthSession.update.mockResolvedValue({});
+    prismaMock.authCredential.findUnique.mockResolvedValue({ sessionVersion: 1, emailVerifiedAt: new Date() });
+    listAuthContextAccountsMock.mockResolvedValue([]);
     jwtVerifyMock.mockImplementation(async (token: string) => ({ payload: {
       sub: verifiedUser.id, sid: token === 'token-a' ? 'session-a' : 'session-b', sv: 1,
       contaId: token === 'token-a' ? 'school-a' : 'school-b',
+      authContext: 'COLLABORATOR',
     } }));
   });
 
@@ -81,6 +90,10 @@ describe('mobile auth tenant membership', () => {
 
   it('denies suspended school A while allowing active school B with its membership role', async () => {
     prismaMock.usuarioConta.findMany.mockResolvedValue([schoolBMembership]);
+    verifyCredentialsDetailedMock.mockResolvedValue({ ok: true, user: {
+      ...verifiedUser,
+      availableAccounts: [{ id: 'school-b', name: 'School B', role: 'FINANCEIRO' }],
+    } });
 
     await expect(loginMobile({
       email: verifiedUser.email,
@@ -99,12 +112,14 @@ describe('mobile auth tenant membership', () => {
 
   it('revokes already-issued mobile access and refresh for A while preserving B', async () => {
     prismaMock.usuarioConta.findMany.mockResolvedValue([schoolBMembership]);
+    listAuthContextAccountsMock.mockResolvedValue([{ id: 'school-b', name: 'School B', role: 'FINANCEIRO' }]);
     resolveSessionAccessMock.mockImplementation(async ({ contaId }: { contaId?: string }) =>
       contaId === 'school-b'
         ? { ok: true, contaId: 'school-b', role: 'FINANCEIRO', emailVerified: true }
         : { ok: false, reason: 'ACCOUNT_UNAVAILABLE' });
     prismaMock.mobileAuthSession.findUnique.mockImplementation(async ({ where }: { where: { id?: string } }) => ({
       id: where.id ?? 'session-a', userId: verifiedUser.id, expiresAt: new Date(Date.now() + 60_000), revokedAt: null,
+      authContext: 'COLLABORATOR', activeContaId: 'school-a',
       user: { ...verifiedUser, status: 'ATIVO' },
     }));
 

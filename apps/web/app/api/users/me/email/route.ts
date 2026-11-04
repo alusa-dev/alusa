@@ -28,7 +28,11 @@ export async function PATCH(req: Request) {
     }
 
     const { newEmail, currentPassword } = parsed.data;
-    const result = await changeUserEmail({ userId, newEmail, currentPassword });
+    const authContext = session?.user && 'authContext' in session.user ? session.user.authContext : null;
+    if (authContext !== 'OWNER' && authContext !== 'COLLABORATOR' && authContext !== 'PORTAL') {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const result = await changeUserEmail({ userId, newEmail, currentPassword, authContext });
     if (result.status === 'NOT_FOUND') {
       return NextResponse.json({ error: 'Usuario nao encontrado' }, { status: 404 });
     }

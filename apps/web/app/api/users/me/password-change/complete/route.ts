@@ -71,6 +71,7 @@ export async function POST(req: Request) {
     const result = await completePasswordChange({
       userId,
       contaId,
+      authContext: (session?.user as { authContext?: 'OWNER' | 'COLLABORATOR' | 'PORTAL' } | undefined)?.authContext ?? 'COLLABORATOR',
       ...parsed.data,
       requestedByIp: ip,
       requestedByUserAgent: req.headers.get('user-agent'),

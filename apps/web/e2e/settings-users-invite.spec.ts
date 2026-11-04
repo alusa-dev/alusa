@@ -1,23 +1,24 @@
 import { test, expect } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
+import { seedAdminAndAuthenticate } from './utils/auth';
 
 test.describe('Configurações - Usuários e Convites', () => {
   test('fluxo básico de convite (smoke)', async ({ page }) => {
-    // Pré-condição: usuário já autenticado (dependendo do projeto, trocar por helper de login)
-    // Aqui navegamos direto para a rota de settings
+    await seedAdminAndAuthenticate(page, { email: `invite-settings-${randomUUID()}@e2e.test` });
     await page.goto('/admin/settings');
-    await expect(page).toHaveURL(/\/admin\/settings\/account/);
+    await expect(page).toHaveURL(/\/admin\/settings\/users/);
 
-    await page.goto('/admin/settings/users');
-    await expect(page.getByText('Usuários e Convites')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Usuários e Convites' })).toBeVisible();
 
-    await page.getByTestId('open-invite-modal').click();
-    await page.getByTestId('invite-email').fill('john@example.com');
-    await page.getByTestId('invite-role').selectOption('RECEPCAO');
-    await page.getByTestId('invite-submit').click();
+    const inviteEmail = `john-${randomUUID()}@example.test`;
+    await page.getByRole('button', { name: 'Não encontrou? Convidar por e-mail' }).click();
+    await page.getByRole('textbox', { name: 'E-mail do convidado' }).fill(inviteEmail);
+    await page.getByRole('button', { name: 'Gerar convite' }).click();
 
-    // O toast pode ser checado conforme a lib em uso; aqui validamos presença na lista após um tempo
-    await page.waitForTimeout(500);
-    await page.reload();
-    await expect(page.getByTestId('invite-list')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Convite criado' })).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'link de convite' })).toHaveValue(/token=/);
+    await page.getByRole('button', { name: 'fechar modal' }).click();
+    await page.getByRole('tab', { name: 'Pendentes' }).click();
+    await expect(page.getByText(inviteEmail)).toBeVisible();
   });
 });

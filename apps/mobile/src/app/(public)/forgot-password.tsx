@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { router } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
 import { ChevronLeftIcon } from 'react-native-heroicons/outline';
@@ -12,6 +13,8 @@ import { isApiError } from '@/lib/api/errors';
 import { colors, spacing } from '@/theme/tokens';
 
 export default function ForgotPasswordScreen() {
+  const params = useLocalSearchParams<{ authContext?: 'OWNER' | 'COLLABORATOR' | 'PORTAL' }>();
+  const authContext = params.authContext === 'OWNER' || params.authContext === 'PORTAL' ? params.authContext : 'COLLABORATOR';
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<'idle' | 'success'>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -21,7 +24,7 @@ export default function ForgotPasswordScreen() {
     setError(null);
     setIsSubmitting(true);
     try {
-      await authService.requestPasswordReset({ email: email.trim() });
+      await authService.requestPasswordReset({ email: email.trim(), authContext });
       setStatus('success');
     } catch (requestError) {
       setError(isApiError(requestError) ? requestError.message : 'Não foi possível continuar agora.');

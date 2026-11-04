@@ -4,9 +4,11 @@ import { authRateLimitAsync, ipFromRequest, rateLimitSubject } from '@/lib/rate-
 import { verifyEmailByToken } from '@/lib/auth-email-flow';
 import { rateLimitResponse } from '@/lib/security/rate-limit-response';
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
+import { acceptInviteApplication } from '@/src/server/users/invite-acceptance.application-service';
 
 const bodySchema = z.object({
   token: z.string().min(20),
+  inviteToken: z.string().min(1).max(512).optional(),
 });
 
 export async function POST(req: Request) {
@@ -40,7 +42,29 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Link inválido ou expirado.' }, { status: 400 });
     }
 
-    return NextResponse.json({ ok: true, email: verified.email });
+    if (!parsed.data.inviteToken) {
+      return NextResponse.json({ ok: true, email: verified.email, context: verified.context });
+    }
+
+    const inviteResult = await acceptInviteApplication({
+      input: { token: parsed.data.inviteToken, email: verified.email },
+      ip,
+      userAgent: req.headers.get('user-agent'),
+      authenticatedUserId: verified.id,
+      sessionEmail: verified.email,
+      sessionAuthContext: verified.context,
+    });
+    if (inviteResult.status !== 200) {
+      const errorBody = inviteResult.body;
+      return NextResponse.json({
+        ok: true,
+        email: verified.email,
+        inviteAccepted: false,
+        inviteError: typeof errorBody.error === 'string' ? errorBody.error : 'Não foi possível concluir o convite.',
+      });
+    }
+
+    return NextResponse.json({ ok: true, email: verified.email, inviteAccepted: true, context: verified.context });
   } catch (error) {
     logApiOperationalEvent({
       severity: 'error',

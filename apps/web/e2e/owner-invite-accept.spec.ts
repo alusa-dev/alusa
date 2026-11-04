@@ -12,8 +12,7 @@ test.describe('Owner + Invite + Accept — fluxo ponta-a-ponta', () => {
   });
 
   test('Owner válido preserva bloqueios, convida e aceita usuário', async ({ page, browser }) => {
-    // 1) Usa a fixture canônica para o usuário owner; o cadastro público e a
-    // confirmação de e-mail são cobertos pelos E2Es de autenticação.
+    // 1) Usa a fixture canônica para o usuário owner.
     await seedAdminAndAuthenticate(page, { email: `owner-${randomUUID()}@e2e.test` });
 
     // 2) Obter ID do usuário atual (Owner)
@@ -54,7 +53,8 @@ test.describe('Owner + Invite + Accept — fluxo ponta-a-ponta', () => {
       return { status: r.status, json };
     }, { email: recepEmail, role: 'RECEPCAO' });
     expect(inviteResp.status).toBe(201);
-  const token = (inviteResp.json as { invite?: { token?: string } } | undefined)?.invite?.token;
+    const inviteUrl = (inviteResp.json as { invite?: { inviteUrl?: string } } | undefined)?.invite?.inviteUrl;
+    const token = inviteUrl ? new URL(inviteUrl).searchParams.get('token') : null;
     expect(token).toBeTruthy();
 
     // 7) Convite duplicado deve retornar 409
@@ -78,8 +78,7 @@ test.describe('Owner + Invite + Accept — fluxo ponta-a-ponta', () => {
       await p2.getByTestId('legal-acceptance-inner-checkbox').click();
       await p2.getByRole('button', { name: /Aceitar e continuar/i }).click();
       await p2.getByTestId('register-submit').click();
-      await p2.waitForURL('**/auth/confirm-email?callbackUrl=%2Fdashboard');
-      await expect(p2.getByRole('heading', { name: 'Confirme seu e-mail' })).toBeVisible();
+      await p2.waitForURL('**/dashboard', { timeout: 15_000 });
     } finally {
       await ctx.close();
     }

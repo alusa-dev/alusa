@@ -85,6 +85,7 @@ export async function PATCH(req: Request) {
       contaId,
       currentPassword: parsed.data.currentPassword,
       newPassword: parsed.data.newPassword,
+      authContext: (session?.user as { authContext?: 'OWNER' | 'COLLABORATOR' | 'PORTAL' } | undefined)?.authContext ?? 'COLLABORATOR',
     });
     if (result.status === 'NOT_FOUND') {
       return NextResponse.json({ error: 'Usuario nao encontrado' }, { status: 404 });

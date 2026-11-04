@@ -3,9 +3,10 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { usePathname, useSearchParams } from 'next/navigation';
+import { ChevronDownIcon } from '@heroicons/react/24/outline';
 import { Menu, X } from '@/features/site/components/icons/icons';
 import { SiteSectionLink } from '@/features/site/components/navigation/SiteSectionLink';
-import { appLoginUrl, primaryNavigation } from '@/features/site/content/navigation';
+import { primaryNavigation } from '@/features/site/content/navigation';
 import { isSiteSectionNavItem, siteNavItemKey } from '@/features/site/lib/nav-items';
 import { scrollToSiteTop } from '@/features/site/lib/scroll-to-section';
 import { ButtonLink } from '@/features/site/components/ui/ButtonLink';
@@ -39,6 +40,54 @@ function PrimaryNavItem({
     <Link href={item.href} onClick={onNavigate} className={className}>
       {item.label}
     </Link>
+  );
+}
+
+function LoginMenu({ mobile = false, onNavigate }: { mobile?: boolean; onNavigate?: () => void }) {
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const triggerClass = mobile
+    ? 'site-header-login inline-flex h-9 w-full items-center justify-center gap-2 rounded-full border border-[#3d3a3f]/25 bg-transparent px-4 text-sm font-medium text-[#3d3a3f] transition-colors hover:bg-[#e2d1f8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#5f3895] focus-visible:outline-offset-2'
+    : 'site-header-login inline-flex h-9 items-center justify-center gap-2 rounded-full border border-transparent bg-transparent px-[14px] text-sm font-medium text-[#3d3a3f] transition-colors hover:bg-[#e2d1f8] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#5f3895] focus-visible:outline-offset-2';
+
+  useEffect(() => {
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const details = detailsRef.current;
+      if (details?.open && event.target instanceof Node && !details.contains(event.target)) {
+        details.open = false;
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && detailsRef.current?.open) {
+        detailsRef.current.open = false;
+      }
+    };
+
+    document.addEventListener('pointerdown', closeOnOutsidePointer);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, []);
+
+  const closeOnNavigate = () => {
+    if (detailsRef.current) detailsRef.current.open = false;
+    onNavigate?.();
+  };
+
+  return (
+    <details ref={detailsRef} className={mobile ? 'site-login-menu group' : 'site-login-menu group relative'}>
+      <summary className={`${triggerClass} cursor-pointer list-none marker:content-none [&::-webkit-details-marker]:hidden`}>
+        Entrar
+        <span aria-hidden="true" className="inline-flex h-[14px] w-[14px] shrink-0 items-center justify-center transition-transform group-open:rotate-180">
+          <ChevronDownIcon className="block h-[14px] w-[14px]" />
+        </span>
+      </summary>
+      <div className={`${mobile ? 'mt-2 grid gap-1 rounded-lg border border-[#e4dfea] bg-white p-1 shadow-sm' : 'absolute right-0 top-full z-50 mt-3 grid min-w-56 gap-1 rounded-xl border border-[#e4dfea] bg-white p-2 shadow-lg'}`}>
+        <Link href="/auth/login?context=owner" onClick={closeOnNavigate} className="rounded-lg px-3 py-2.5 text-sm text-[#3d3a3f] hover:bg-[#f6f3f7]">Gerenciar minha escola</Link>
+        <Link href="/auth/login?context=portal" onClick={closeOnNavigate} className="rounded-lg px-3 py-2.5 text-sm text-[#3d3a3f] hover:bg-[#f6f3f7]">Portal do aluno</Link>
+      </div>
+    </details>
   );
 }
 
@@ -113,9 +162,7 @@ export function SiteHeader({ selfServiceEnabled = true }: { selfServiceEnabled?:
 
         {showHeaderNavigation && (
           <div className="site-site-actions hidden items-center gap-2 lg:flex">
-            <ButtonLink href={appLoginUrl} variant="ghost" tone="dark" showArrow={false} className="site-header-login text-white">
-              Entrar
-            </ButtonLink>
+            <LoginMenu />
             <ButtonLink
               href={headerCtaHref}
               variant="primary"
@@ -172,9 +219,7 @@ export function SiteHeader({ selfServiceEnabled = true }: { selfServiceEnabled?:
               />
             ))}
             <div className="grid gap-2 pt-3 sm:grid-cols-2">
-              <ButtonLink href={appLoginUrl} variant="secondary" tone="dark" showArrow={false}>
-                Entrar
-              </ButtonLink>
+              <LoginMenu mobile onNavigate={() => setOpen(false)} />
               <ButtonLink href={headerCtaHref} variant="primary" tone="dark" event={headerCtaIsSpecialist ? 'sales_cta_clicked' : 'hero_cta_clicked'} showArrow={false}>
                 {headerCtaLabel}
               </ButtonLink>

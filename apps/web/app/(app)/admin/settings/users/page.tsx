@@ -11,9 +11,10 @@ import {
 } from '@/components/ui/select';
 import { Badge, type StatusType } from '@/components/ui/badge';
 import { CustomToast } from '@/components/ui/toast';
-import { Edit3, Trash2, Search } from '@/components/icons/icons';
+import { Edit3, Trash2, Search, MoreVertical, Mail, ExternalLink, Copy } from '@/components/icons/icons';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import ActionConfirmationDialog from '@/components/dialogs/ActionConfirmationDialog';
 import UserEditDialog from '@/features/users/components/UserEditDialog';
 import InviteLinkModal from '@/features/users/components/invite/InviteLinkModal';
@@ -311,6 +312,20 @@ export default function ConfigUsuariosPage() {
     }
   }
 
+  async function handleCopyInviteLink(invite: InviteRow) {
+    try {
+      const response = await fetch(`/api/users/invite/${encodeURIComponent(invite.id)}`, { cache: 'no-store' });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || typeof result.inviteUrl !== 'string') {
+        throw new Error(result.error || 'Não foi possível copiar o link do convite.');
+      }
+      await navigator.clipboard.writeText(result.inviteUrl);
+      setToast({ title: 'Link do convite copiado.', variant: 'success' });
+    } catch (error) {
+      setToast({ title: error instanceof Error ? error.message : 'Não foi possível copiar o link do convite.', variant: 'error' });
+    }
+  }
+
   async function handleConfirmDeleteInvite() {
     if (!deleteInviteId) return;
     setDeleteInviteLoading(true);
@@ -558,7 +573,7 @@ export default function ConfigUsuariosPage() {
                     {statusBadge(i.status)}
                     {i.status === 'PENDING' && (
                       <span className="text-xs text-gray-500" aria-label="Status de entrega do e-mail">
-                        {i.emailDeliveryStatus === 'SENT' ? 'E-mail enviado' :
+                        {i.emailDeliveryStatus === 'SENT' ? null :
                           i.emailDeliveryStatus === 'LOGGED' ? 'E-mail registrado' :
                             i.emailDeliveryStatus === 'FAILED' ? 'Falha no envio' :
                             i.emailDeliveryStatus === 'NOT_APPLICABLE' ? 'Link para compartilhar' :
@@ -567,22 +582,29 @@ export default function ConfigUsuariosPage() {
                     )}
                     {i.status === 'EXPIRED' && <span className="text-xs text-gray-500">Crie um novo convite para continuar</span>}
                   </div>
-                  <div className="col-span-1 flex justify-center gap-1">
+                  <div className="col-span-1 flex justify-center">
                     {isAdmin && i.status === 'PENDING' && (
-                      <Button variant="ghost" size="sm" onClick={() => void handleResendInvite(i)} aria-label={i.email ? 'Reenviar convite' : 'Recuperar link do convite'}>
-                        {i.email ? 'Reenviar' : 'Link'}
-                      </Button>
-                    )}
-                    {isAdmin && i.status === 'PENDING' && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-red-600 hover:text-red-700 hover:bg-red-50 alusa-dark:text-red-300 alusa-dark:hover:bg-red-500/10 alusa-dark:hover:text-red-200"
-                        aria-label="Revogar convite"
-                        onClick={() => onDeleteInvite(i)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Ações do convite">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onSelect={() => void handleResendInvite(i)}>
+                            {i.email ? <Mail className="mr-2 h-4 w-4" /> : <ExternalLink className="mr-2 h-4 w-4" />}
+                            {i.email ? 'Reenviar convite' : 'Copiar link do convite'}
+                          </DropdownMenuItem>
+                          {i.email && (
+                            <DropdownMenuItem onSelect={() => void handleCopyInviteLink(i)}>
+                              <Copy className="mr-2 h-4 w-4" /> Copiar link
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem className="text-red-600 focus:text-red-700" onSelect={() => onDeleteInvite(i)}>
+                            <Trash2 className="mr-2 h-4 w-4" /> Revogar convite
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     )}
                   </div>
                 </div>
@@ -604,48 +626,50 @@ export default function ConfigUsuariosPage() {
 
       {/* Card: Enviar convite */}
       <section className="mt-4 rounded-md border border-gray-200 p-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]" aria-label="Enviar convite">
-        <div className="grid grid-cols-12 gap-3 items-end">
+        <div className="grid grid-cols-12 gap-3 items-start">
           {/* Busca de cadastro existente ou fallback explícito por e-mail */}
           <div className="col-span-12 md:col-span-5">
             <InviteTargetPicker key={`${role}-${pickerResetKey}`} role={role as Exclude<Role, 'ADMIN'>} onTargetChange={handleInviteTargetChange} />
           </div>
           
           <div className="col-span-12 md:col-span-3">
-            <label htmlFor="invite-role" className="block text-sm font-medium text-gray-700 alusa-dark:text-[color:var(--color-text-secondary)]">
-              Função
-            </label>
-            <Select value={role} onValueChange={(v: Role) => {
-              setRole(v);
-              setInviteTarget(null);
-              setTargetEmail(undefined);
-              setPickerResetKey((key) => key + 1);
-            }}>
-              <SelectTrigger
-                aria-label="Função do convidado"
-                id="invite-role"
-                className="mt-1 h-10"
-              >
-                <SelectValue placeholder="Selecione" />
-              </SelectTrigger>
-              {/* Popover com largura do trigger */}
-              <SelectContent className="w-[var(--radix-select-trigger-width)]">
-                {isReceptionist ? <SelectItem value="RESPONSAVEL">Responsável</SelectItem> : (
-                  <>
-                    <SelectItem value="PROFESSOR">Professor</SelectItem>
-                    <SelectItem value="RECEPCAO">Recepção</SelectItem>
-                    <SelectItem value="FINANCEIRO">Financeiro</SelectItem>
-                    <SelectItem value="RESPONSAVEL">Responsável</SelectItem>
-                  </>
-                )}
-              </SelectContent>
-            </Select>
+            <div className="space-y-2">
+              <label htmlFor="invite-role" className="block text-sm font-medium text-gray-700 alusa-dark:text-[color:var(--color-text-secondary)]">
+                Função
+              </label>
+              <Select value={role} onValueChange={(v: Role) => {
+                setRole(v);
+                setInviteTarget(null);
+                setTargetEmail(undefined);
+                setPickerResetKey((key) => key + 1);
+              }}>
+                <SelectTrigger
+                  aria-label="Função do convidado"
+                  id="invite-role"
+                  className="h-10 rounded-md shadow-none focus:ring-0 focus:ring-offset-0 focus:border-violet-400 data-[state=open]:ring-0"
+                >
+                  <SelectValue placeholder="Selecione" />
+                </SelectTrigger>
+                {/* Popover com largura do trigger */}
+                <SelectContent className="w-[var(--radix-select-trigger-width)]">
+                  {isReceptionist ? <SelectItem value="RESPONSAVEL">Responsável</SelectItem> : (
+                    <>
+                      <SelectItem value="PROFESSOR">Professor</SelectItem>
+                      <SelectItem value="RECEPCAO">Recepção</SelectItem>
+                      <SelectItem value="FINANCEIRO">Financeiro</SelectItem>
+                      <SelectItem value="RESPONSAVEL">Responsável</SelectItem>
+                    </>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           
           <div className="col-span-12 md:col-span-4">
             <Button
               onClick={onGenerateInvite}
               disabled={submitting || !inviteTarget || inviteTarget.role !== role}
-              className="mt-6 md:mt-0 w-full h-10 rounded-md bg-violet-600 hover:bg-violet-700 text-white"
+              className="mt-6 md:mt-7 w-full h-10 rounded-md bg-violet-600 hover:bg-violet-700 text-white"
               aria-label="Gerar convite"
             >
               {submitting ? 'Gerando…' : 'Gerar convite'}
@@ -731,7 +755,7 @@ export default function ConfigUsuariosPage() {
         title="Excluir usuário"
         description={(() => {
           if (!deleteUserName) {
-            return 'Tem certeza que deseja remover permanentemente o acesso deste usuário? Auditorias e logs serão preservados.';
+            return 'Tem certeza que deseja excluir permanentemente o acesso deste usuário nesta instituição? O vínculo com perfis de responsável será removido, mas os cadastros e históricos acadêmicos e financeiros serão preservados.';
           }
           const parts = deleteUserName.trim().split(/\s+/);
           const first = parts[0];
@@ -740,7 +764,7 @@ export default function ConfigUsuariosPage() {
             last && last.toLowerCase() !== first.toLowerCase() ? `${first} ${last}` : first;
           return (
             <span>
-              Tem certeza que deseja remover permanentemente o acesso do usuário <strong>{display}</strong>? Auditorias e logs do que ele já fez na plataforma serão preservados.
+              Tem certeza que deseja excluir permanentemente o acesso de <strong>{display}</strong> nesta instituição? O vínculo com perfis de responsável será removido para permitir um novo convite. Os cadastros, históricos, dados acadêmicos e financeiros serão preservados; outros acessos não serão afetados.
             </span>
           );
         })()}

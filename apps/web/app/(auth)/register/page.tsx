@@ -39,17 +39,26 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
       redirect('/auth/login?error=invalid_token');
     }
 
+    const inviteContext = invite.role === 'RESPONSAVEL' ? 'PORTAL' : 'COLLABORATOR';
     const session = await getServerSession(authOptions);
     if (session?.user?.id) {
       const sessionEmail = session.user.email?.trim().toLowerCase();
-      if (invite.email && invite.email.trim().toLowerCase() !== sessionEmail) {
+      const sessionContext = (session.user as { authContext?: string }).authContext;
+      const emailMismatch = Boolean(invite.email && invite.email.trim().toLowerCase() !== sessionEmail);
+      const contextMismatch = sessionContext !== inviteContext;
+      if (emailMismatch || contextMismatch) {
+        const targetContext = inviteContext === 'PORTAL' ? 'responsável/aluno' : 'colaborador';
         return (
           <AuthPageContainer>
             <main className="flex min-h-svh items-center justify-center px-4 py-8">
               <div className="w-full max-w-lg rounded-2xl border bg-background p-6 text-center shadow-sm">
-                <h1 className="text-xl font-semibold">Convite válido para outro e-mail</h1>
+                <h1 className="text-xl font-semibold">
+                  {contextMismatch ? 'Este convite usa outro tipo de acesso' : 'Convite destinado a outro e-mail'}
+                </h1>
                 <p role="status" className="mt-2 text-sm text-muted-foreground">
-                  Este convite foi enviado para <strong>{invite.email}</strong>, mas você está conectado como <strong>{session.user.email}</strong>. Para aceitá-lo na conta correta, saia desta sessão e entre com o e-mail do convite.
+                  {contextMismatch
+                    ? `Você entrou como ${sessionContext === 'OWNER' ? 'responsável pela escola' : 'outro perfil'}, mas este convite concede acesso como ${targetContext}. Encerre esta sessão e entre com as credenciais desse perfil para manter os acessos separados.`
+                    : `Este convite foi enviado para ${invite.email}, mas você entrou como ${session.user.email}. Encerre esta sessão e entre com o e-mail do convite.`}
                 </p>
                 <SignOutForInviteButton token={token} />
               </div>
@@ -73,10 +82,10 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
     if (invite.email) {
       const existingUser = await prisma.usuario.findFirst({
         where: { email: { equals: invite.email, mode: 'insensitive' }, status: 'ATIVO' },
-        select: { id: true, acessosConta: { where: { status: 'ATIVO', conta: { status: 'ATIVO', deletedAt: null } }, select: { id: true }, take: 1 } },
+        select: { id: true, authCredentials: { where: { context: inviteContext }, select: { id: true }, take: 1 } },
       });
-      if (existingUser?.acessosConta.length) {
-        redirect(`/auth/login?callbackUrl=${encodeURIComponent(`/auth/register?token=${token}`)}`);
+      if (existingUser?.authCredentials.length) {
+        redirect(`/auth/login?context=${inviteContext === 'PORTAL' ? 'portal' : 'collaborator'}&callbackUrl=${encodeURIComponent(`/auth/register?token=${token}`)}`);
       }
     }
 

@@ -1,11 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const usuarioFindFirstMock = vi.hoisted(() => vi.fn());
+const { usuarioFindFirstMock, authCredentialFindFirstMock } = vi.hoisted(() => ({
+  usuarioFindFirstMock: vi.fn(),
+  authCredentialFindFirstMock: vi.fn(),
+}));
 
 vi.mock('@/lib/prisma', () => ({
   default: {
     usuario: {
       findFirst: usuarioFindFirstMock,
+    },
+    authCredential: {
+      findFirst: authCredentialFindFirstMock,
     },
   },
 }));
@@ -14,6 +20,7 @@ describe('checkFirstUserRegistrationAvailability', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     usuarioFindFirstMock.mockResolvedValue(null);
+    authCredentialFindFirstMock.mockResolvedValue(null);
   });
 
   it('permite e-mail que ainda não existe no cadastro local', async () => {
@@ -25,7 +32,7 @@ describe('checkFirstUserRegistrationAvailability', () => {
 
     expect(usuarioFindFirstMock).toHaveBeenCalledWith({
       where: { email: { equals: 'new@example.com', mode: 'insensitive' } },
-      select: { id: true, email: true, conta: { select: { status: true, deletedAt: true } } },
+      select: { id: true, email: true, status: true, conta: { select: { status: true, deletedAt: true } } },
     });
   });
 
@@ -33,8 +40,10 @@ describe('checkFirstUserRegistrationAvailability', () => {
     usuarioFindFirstMock.mockResolvedValueOnce({
       id: 'user_1',
       email: 'used@example.com',
+      status: 'ATIVO',
       conta: { status: 'ATIVO', deletedAt: null },
     });
+    authCredentialFindFirstMock.mockResolvedValueOnce({ id: 'owner-credential' });
     const { checkFirstUserRegistrationAvailability } = await import('@/lib/first-user-service');
 
     await expect(
@@ -46,8 +55,10 @@ describe('checkFirstUserRegistrationAvailability', () => {
     usuarioFindFirstMock.mockResolvedValueOnce({
       id: 'user_2',
       email: 'inactive@example.com',
+      status: 'ATIVO',
       conta: { status: 'INATIVO', deletedAt: null },
     });
+    authCredentialFindFirstMock.mockResolvedValueOnce({ id: 'owner-credential' });
     const { checkFirstUserRegistrationAvailability } = await import('@/lib/first-user-service');
 
     await expect(
@@ -57,6 +68,24 @@ describe('checkFirstUserRegistrationAvailability', () => {
       reason: 'LOCAL_DEACTIVATED',
       userId: 'user_2',
       email: 'inactive@example.com',
+    });
+  });
+
+  it('allows an e-mail used only by a collaborator credential to register a new owner context', async () => {
+    usuarioFindFirstMock.mockResolvedValueOnce({
+      id: 'collaborator-user',
+      email: 'staff@example.com',
+      status: 'ATIVO',
+      conta: { status: 'ATIVO', deletedAt: null },
+    });
+    authCredentialFindFirstMock.mockResolvedValueOnce(null);
+    const { checkFirstUserRegistrationAvailability } = await import('@/lib/first-user-service');
+
+    await expect(checkFirstUserRegistrationAvailability({ email: 'staff@example.com' }))
+      .resolves.toEqual({ available: true });
+    expect(authCredentialFindFirstMock).toHaveBeenCalledWith({
+      where: { context: 'OWNER', userId: 'collaborator-user' },
+      select: { id: true },
     });
   });
 });

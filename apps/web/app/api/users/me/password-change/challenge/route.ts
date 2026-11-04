@@ -62,6 +62,7 @@ export async function POST(req: Request) {
       userId,
       contaId,
       channel: parsed.data.channel,
+      authContext: (session?.user as { authContext?: 'OWNER' | 'COLLABORATOR' | 'PORTAL' } | undefined)?.authContext ?? 'COLLABORATOR',
       requestedByIp: ip,
       requestedByUserAgent: req.headers.get('user-agent'),
     });

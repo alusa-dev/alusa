@@ -58,6 +58,15 @@ export async function seedAdminAndAuthenticate(page: Page, params: { email: stri
       },
     });
     await tx.conta.update({ where: { id: conta.id }, data: { ownerUserId: created.id } });
+    await tx.authCredential.create({
+      data: {
+        context: 'OWNER',
+        normalizedEmail: params.email.trim().toLowerCase(),
+        userId: created.id,
+        passwordHash: 'hash_nao_usado_no_e2e',
+        emailVerifiedAt: new Date(),
+      },
+    });
     return created;
   });
 
@@ -72,6 +81,9 @@ export async function seedAdminAndAuthenticate(page: Page, params: { email: stri
       name: 'Admin E2E',
       role: 'ADMIN',
       contaId: conta.id,
+      authContext: 'OWNER',
+      emailVerified: true,
+      accountActive: true,
       sessionVersion: 0,
     },
   });

@@ -1335,6 +1335,12 @@ enum Role {
   RESPONSAVEL
 }
 
+enum AuthContext {
+  OWNER
+  COLLABORATOR
+  PORTAL
+}
+
 enum Genero {
   MASCULINO
   FEMININO
@@ -1914,8 +1920,29 @@ model Usuario {
   acessosConta                    UsuarioConta[]                   @relation("UsuarioContaUsuario")
   acessosConvidados               UsuarioConta[]                   @relation("UsuarioContaInvitedBy")
   mobileAuthSessions               MobileAuthSession[]
+  authCredentials                  AuthCredential[]
 
   @@index([contaId])
+}
+
+// Credentials are separated by product surface while Usuario remains the
+// canonical actor referenced by academic, financial, and audit records.
+model AuthCredential {
+  id              String      @id @default(cuid())
+  context         AuthContext
+  normalizedEmail String
+  userId          String
+  passwordHash    String
+  emailVerifiedAt DateTime?
+  sessionVersion  Int         @default(0)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  user Usuario @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([context, normalizedEmail], name: "uq_auth_credential_context_email")
+  @@unique([context, userId], name: "uq_auth_credential_context_user")
+  @@index([userId], name: "idx_auth_credential_user")
 }
 
 model UsuarioConta {
@@ -1946,6 +1973,8 @@ model UsuarioConta {
 model MobileAuthSession {
   id         String    @id @default(cuid())
   userId     String
+  authContext AuthContext @default(COLLABORATOR)
+  activeContaId String?
   tokenHash  String    @unique
   deviceId   String?
   deviceName String?
@@ -4824,6 +4853,7 @@ model AuthActionToken {
   userId               String
   user                 Usuario             @relation(fields: [userId], references: [id], onDelete: Cascade)
   type                 AuthActionTokenType
+  context              AuthContext?
   tokenHash            String              @unique
   email                String
   expiresAt            DateTime
@@ -4844,6 +4874,7 @@ model PasswordChangeOtp {
   id                    String                   @id @default(cuid())
   userId                String
   contaId               String
+  authContext           AuthContext @default(COLLABORATOR)
   channel               PasswordChangeOtpChannel
   codeHash              String
   verificationTokenHash String?

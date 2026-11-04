@@ -39,10 +39,14 @@ export async function POST(request: Request) {
     const status = mobileAuthErrorStatus(error);
     const message = error instanceof MobileAuthError && error.code === 'INVALID_INPUT'
       ? 'Informe um e-mail e uma senha válidos.'
+      : error instanceof MobileAuthError && error.code === 'ACCOUNT_SELECTION_REQUIRED'
+        ? 'Escolha uma escola para continuar.'
       : error instanceof MobileAuthError && error.code === 'EMAIL_NOT_VERIFIED'
         ? 'Confirme seu e-mail antes de entrar.'
         : 'E-mail ou senha inválidos.';
-    const code = error instanceof MobileAuthError && error.code === 'EMAIL_NOT_VERIFIED'
+    const code = error instanceof MobileAuthError && error.code === 'ACCOUNT_SELECTION_REQUIRED'
+      ? 'ACCOUNT_SELECTION_REQUIRED'
+      : error instanceof MobileAuthError && error.code === 'EMAIL_NOT_VERIFIED'
       ? 'EMAIL_NOT_VERIFIED'
       : status === 400 ? 'VALIDATION_ERROR' : 'UNAUTHORIZED';
 
@@ -51,7 +55,7 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json(
-      { error: { code, message } },
+      { error: { code, message, ...(error instanceof MobileAuthError && error.accounts ? { details: { accounts: error.accounts } } : {}) } },
       { status, headers: { 'Cache-Control': 'no-store' } },
     );
   }

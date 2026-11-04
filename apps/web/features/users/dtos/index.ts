@@ -14,6 +14,8 @@ export const firstRegisterInputDTOSchema = authRegisterInputSchema;
 export type FirstRegisterInputDTO = z.input<typeof firstRegisterInputDTOSchema>;
 
 export const firstRegisterResultDTOSchema = z.object({
+  verificationRequired: z.boolean(),
+  verificationEmailSent: z.boolean(),
   user: z.object({
     id: z.string(),
     email: z.string().email(),

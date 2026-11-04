@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { revokeUserSessions } from '@/lib/auth-service';
 import { removeManagedUserAccess } from '@/features/users/managed-user-access';
 import {
   deleteManagedUserInputDTOSchema,
@@ -41,7 +40,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const exists = await findManagedUser({ userId: rawParams.id, contaId: auth.contaId });
     if (!exists) return jsonError('Usuário não encontrado', 404);
-    const shouldRevokeSessions = parsed.data.status === 'INATIVO' && exists.status !== 'INATIVO';
     if (rawParams.id === auth.currentUserId && typeof parsed.data.status !== 'undefined' && parsed.data.status !== exists.status) {
       return jsonError('Você não pode alterar o próprio status por esta tela.', 400);
     }
@@ -60,7 +58,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       status: parsed.data.status,
     });
     if (!updated) return jsonError('Usuário não encontrado', 404);
-    if (shouldRevokeSessions) await revokeUserSessions(rawParams.id);
+    // Status here belongs to one tenant membership. JWT validation rechecks
+    // access for its contaId, so global session revocation would also evict
+    // this user's independent access to other schools in the same context.
 
     const current = await findManagedUser({ userId: rawParams.id, contaId: auth.contaId });
     if (!current) return jsonError('Usuário não encontrado', 404);

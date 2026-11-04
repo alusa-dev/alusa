@@ -13,9 +13,10 @@ test('login -> dashboard e bloqueio de retorno ao /login', async ({ page }) => {
   await resetDb(prisma);
   await seedAdminAndAuthenticate(page, { email: 'login-redirect@example.com' });
   await page.goto('/dashboard');
-  await expect(page.getByText('Que bom ter você por aqui!')).toBeVisible();
+  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page.getByRole('link', { name: 'Dashboard' })).toBeVisible();
   // tentar voltar para login
-  await page.goto('/auth/login');
+  await page.goto('/auth/login?context=owner');
   // Deve redirecionar de novo para dashboard (guard SSR faz redirect server-side)
   await expect(page).toHaveURL(/\/dashboard$/);
 });

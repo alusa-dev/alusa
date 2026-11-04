@@ -37,7 +37,7 @@ describe('POST /api/auth/login/validate', () => {
         'content-type': 'application/json',
         'user-agent': 'vitest',
       },
-      body: JSON.stringify({ email: 'inactive@example.com', password: 'SenhaFort3!' }),
+      body: JSON.stringify({ email: 'inactive@example.com', password: 'SenhaFort3!', authContext: 'COLLABORATOR' }),
     });
 
     const response = await POST(req);
@@ -60,7 +60,7 @@ describe('POST /api/auth/login/validate', () => {
       const response = await POST(new Request('http://localhost/api/auth/login/validate', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: 'user@example.com', password: 'SenhaFort3!' }),
+        body: JSON.stringify({ email: 'user@example.com', password: 'SenhaFort3!', authContext: 'COLLABORATOR' }),
       }));
 
       expect(response.status).toBe(401);
@@ -75,7 +75,7 @@ describe('POST /api/auth/login/validate', () => {
     const response = await POST(new Request('http://localhost/api/auth/login/validate', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ email: 'user@example.com', password: 'SenhaFort3!' }),
+      body: JSON.stringify({ email: 'user@example.com', password: 'SenhaFort3!', authContext: 'COLLABORATOR' }),
     }));
 
     expect(response.status).toBe(429);

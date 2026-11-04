@@ -33,7 +33,7 @@ test('aceite de convite no cadastro consolidado', async ({ page, baseURL }) => {
   await acceptLegalTerms(page);
   await page.getByTestId('register-submit').click();
 
-  // Convites também exigem confirmação de e-mail antes do primeiro acesso.
-  await page.waitForURL('**/auth/confirm-email?callbackUrl=%2Fdashboard');
-  await expect(page.getByRole('heading', { name: 'Confirme seu e-mail' })).toBeVisible();
+  // O link pessoal do convite confirma o e-mail vinculado e concede acesso
+  // assim que a pessoa define a senha do contexto convidado.
+  await page.waitForURL('**/dashboard', { timeout: 15_000 });
 });

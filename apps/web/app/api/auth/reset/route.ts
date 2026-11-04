@@ -45,7 +45,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Link inválido ou expirado.' }, { status: 400 });
       }
 
-      return NextResponse.json({ ok: true });
+      return NextResponse.json({ ok: true, context: result.context });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Não foi possível redefinir a senha.';
       return NextResponse.json({ error: message }, { status: 400 });

@@ -54,6 +54,7 @@ export async function POST(request: Request) {
     const result = await completePasswordChange({
       userId: actor.userId,
       contaId: actor.contaId,
+      authContext: actor.authContext,
       ...parsed.data,
       requestedByIp: ip,
       requestedByUserAgent: request.headers.get('user-agent'),

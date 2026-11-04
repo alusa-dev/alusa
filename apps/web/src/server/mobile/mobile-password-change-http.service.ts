@@ -8,6 +8,7 @@ import { prisma } from '@/lib/prisma';
 export type MobilePasswordChangeActor = {
   userId: string;
   contaId: string;
+  authContext: 'OWNER' | 'COLLABORATOR' | 'PORTAL';
 };
 
 function bearerToken(request: Request) {
@@ -34,7 +35,7 @@ export async function getMobilePasswordChangeActor(request: Request) {
     select: { id: true },
   });
 
-  return membership ? { userId: actor.userId, contaId: actor.contaId } satisfies MobilePasswordChangeActor : null;
+  return membership ? { userId: actor.userId, contaId: actor.contaId, authContext: actor.authContext } satisfies MobilePasswordChangeActor : null;
 }
 
 export function unauthorized() {

@@ -8,7 +8,7 @@ vi.mock('@/lib/auth-options', () => ({
   authOptions: {},
 }));
 
-const { prismaMock, removeManagedUserAccessMock } = vi.hoisted(() => ({
+const { prismaMock, removeManagedUserAccessMock, revokeUserSessionsMock } = vi.hoisted(() => ({
   prismaMock: {
     usuario: {
       findUnique: vi.fn(),
@@ -22,9 +22,16 @@ const { prismaMock, removeManagedUserAccessMock } = vi.hoisted(() => ({
     auditLog: {
       create: vi.fn(),
     },
+    $transaction: vi.fn(async (callback: (_tx: unknown) => Promise<unknown>) => callback({
+      usuario: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+      usuarioConta: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    })),
   },
   removeManagedUserAccessMock: vi.fn(),
+  revokeUserSessionsMock: vi.fn(),
 }));
+
+vi.mock('@/lib/auth-service', () => ({ revokeUserSessions: revokeUserSessionsMock }));
 
 vi.mock('@/lib/prisma', () => ({
   __esModule: true,
@@ -46,6 +53,8 @@ describe('/api/users/[id]', () => {
     } as never);
     prismaMock.usuario.findUnique.mockResolvedValue({ contaId: 'conta-1', id: 'admin-1' });
     prismaMock.usuarioConta.findUnique.mockResolvedValue(null);
+    prismaMock.auditLog.create.mockResolvedValue({});
+    revokeUserSessionsMock.mockResolvedValue(1);
   });
 
   it('bloqueia remoção do próprio acesso', async () => {
@@ -57,15 +66,14 @@ describe('/api/users/[id]', () => {
     expect(removeManagedUserAccessMock).not.toHaveBeenCalled();
   });
 
-  it('suspende somente o acesso do usuário alvo na conta autenticada', async () => {
+  it('remove permanentemente somente o acesso do usuário alvo na conta autenticada', async () => {
     prismaMock.usuarioConta.findUnique.mockResolvedValueOnce({
       role: 'RECEPCAO', status: 'ATIVO', usuario: { id: 'user-2', nome: 'User', email: 'user@example.com', status: 'ATIVO' },
     });
     prismaMock.conta.findUnique.mockResolvedValueOnce({ ownerUserId: 'owner-1' });
     removeManagedUserAccessMock.mockResolvedValueOnce({
       id: 'user-2',
-      hard: false,
-      alreadyRemoved: false,
+      hard: true,
     });
 
     const response = await DELETE(new Request('http://x/api/users/user-2', { method: 'DELETE' }), {
@@ -74,7 +82,7 @@ describe('/api/users/[id]', () => {
     const json = await response.json();
 
     expect(response.status).toBe(200);
-    expect(json).toEqual({ ok: true, id: 'user-2', hard: false });
+    expect(json).toEqual({ ok: true, id: 'user-2', hard: true });
     expect(removeManagedUserAccessMock).toHaveBeenCalledWith({
       userId: 'user-2',
       contaId: 'conta-1',
@@ -83,7 +91,7 @@ describe('/api/users/[id]', () => {
     });
   });
 
-  it('bloqueia suspensão do owner', async () => {
+  it('bloqueia exclusão do owner', async () => {
     prismaMock.usuarioConta.findUnique.mockResolvedValueOnce({
       role: 'ADMIN', status: 'ATIVO', usuario: { id: 'owner-1', nome: 'Owner', email: 'owner@example.com', status: 'ATIVO' },
     });
@@ -128,5 +136,25 @@ describe('/api/users/[id]', () => {
     expect(response.status).toBe(400);
     expect(json.error).toContain('próprio status');
     expect(prismaMock.usuario.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('inativa o vínculo desta escola sem revogar as sessões das outras escolas', async () => {
+    prismaMock.usuarioConta.findUnique
+      .mockResolvedValueOnce({ role: 'RECEPCAO', status: 'ATIVO', usuario: {
+        id: 'user-2', nome: 'User', email: 'user@example.com', status: 'ATIVO',
+      } })
+      .mockResolvedValueOnce({ role: 'RECEPCAO', status: 'INATIVO', usuario: {
+        id: 'user-2', nome: 'User', email: 'user@example.com', status: 'ATIVO',
+      } });
+    prismaMock.conta.findUnique.mockResolvedValueOnce({ ownerUserId: 'owner-1' });
+
+    const response = await PATCH(new Request('http://x/api/users/user-2', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'INATIVO' }),
+    }), { params: { id: 'user-2' } });
+
+    expect(response.status).toBe(200);
+    expect(revokeUserSessionsMock).not.toHaveBeenCalled();
   });
 });

@@ -59,7 +59,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await verifyPasswordChangeOtp({ userId, contaId, ...parsed.data });
+    const result = await verifyPasswordChangeOtp({ userId, contaId, authContext: (session?.user as { authContext?: 'OWNER' | 'COLLABORATOR' | 'PORTAL' } | undefined)?.authContext ?? 'COLLABORATOR', ...parsed.data });
     return NextResponse.json(result, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
     return errorResponse(error, req);

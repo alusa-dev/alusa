@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { encode } from 'next-auth/jwt';
+import { resetDb } from './utils/reset-db';
 
 const prisma = new PrismaClient();
 
@@ -21,6 +22,9 @@ async function authenticate(context: import('@playwright/test').BrowserContext, 
       name: 'Auth E2E',
       role: 'ADMIN',
       contaId: user.contaId,
+        authContext: 'OWNER',
+        emailVerified: true,
+        accountActive: true,
       sessionVersion: 0,
     },
   });
@@ -69,6 +73,16 @@ test('separa logout individual de revogação global entre dois dispositivos', a
         lastAccessedAt: new Date(),
       },
     });
+    await tx.authCredential.create({
+      data: {
+        context: 'OWNER',
+        normalizedEmail: created.email.toLowerCase(),
+        userId: created.id,
+        passwordHash: 'hash-nao-usado-no-e2e',
+        emailVerifiedAt: new Date(),
+      },
+    });
+    await tx.conta.update({ where: { id: conta.id }, data: { ownerUserId: created.id } });
     return created;
   });
 
@@ -114,6 +128,8 @@ test('separa logout individual de revogação global entre dois dispositivos', a
     await expect((await contextB.request.get('/api/auth/account-access')).status()).toBe(401);
   } finally {
     await Promise.all([contextA.close(), contextB.close(), contextC.close()]);
-    await prisma.conta.delete({ where: { id: conta.id } });
+    // A revogação global registra histórico append-only. O reset da base E2E
+    // limpa esses registros de teste sem tentar apagá-los individualmente.
+    await resetDb(prisma);
   }
 });

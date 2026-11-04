@@ -11,6 +11,7 @@ type SessionUser = {
   email?: string | null;
   name?: string | null;
   financeIntegrationMode?: string | null;
+  authContext?: 'OWNER' | 'COLLABORATOR' | 'PORTAL' | null;
 };
 
 export type TenantSessionContext = {
@@ -28,6 +29,7 @@ export type TenantSessionResolution =
       email?: string | null;
       name?: string | null;
       financeIntegrationMode?: string | null;
+      authContext?: 'OWNER' | 'COLLABORATOR' | 'PORTAL' | null;
     }
   | { ok: false; reason: 'UNAUTHENTICATED' | 'CONTA_MISMATCH' };
 
@@ -69,6 +71,7 @@ export async function resolveTenantSession(
     email: user?.email ?? null,
     name: user?.name ?? null,
     financeIntegrationMode: user?.financeIntegrationMode ?? null,
+    authContext: user?.authContext ?? null,
   };
 }
 

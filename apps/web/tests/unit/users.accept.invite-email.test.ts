@@ -1,44 +1,40 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getServerSession } from 'next-auth';
 
-const { acceptInviteMock, prepareInviteIdentityMock, sendEmailVerificationForUserMock, hashPasswordMock, comparePasswordMock, serviceErrors } = vi.hoisted(() => ({
-  acceptInviteMock: vi.fn(),
-  prepareInviteIdentityMock: vi.fn(),
-  sendEmailVerificationForUserMock: vi.fn(),
-  hashPasswordMock: vi.fn(),
-  comparePasswordMock: vi.fn(),
-  serviceErrors: {
-    ExpiredInviteError: class extends Error {},
-    InvalidInviteError: class extends Error {},
-    MissingInviteEmailError: class extends Error {},
-    UserAlreadyLinkedError: class extends Error {},
-    DuplicateInviteError: class extends Error {},
-    InviteStateConflictError: class extends Error {},
-    ExistingAccountAuthenticationRequiredError: class extends Error {},
-    MissingGuardianRecordError: class extends Error {},
-    InvalidGuardianStudentsError: class extends Error {},
-    StudentAlreadyLinkedError: class extends Error {},
-    GuardianProfileConflictError: class extends Error {},
-    MissingGuardianDataError: class extends Error {},
-    InviteEmailNotVerifiedError: class extends Error {},
-    UserInactiveError: class extends Error {},
-  },
-}));
-
-const { prismaMock } = vi.hoisted(() => ({
-  prismaMock: {
-    invite: {
-      findUnique: vi.fn(),
+const { acceptInviteMock, prepareInviteIdentityMock, hashPasswordMock, comparePasswordMock, inviteLookups, prismaMock, serviceErrors } = vi.hoisted(() => {
+  const invite = {
+    id: 'invite-1', token: 'invite-token', email: 'target@example.com', role: 'RECEPCAO',
+    status: 'PENDING', expiresAt: new Date(Date.now() + 60_000), contaId: 'conta-1', invitedById: 'admin-1',
+  };
+  return {
+    acceptInviteMock: vi.fn(),
+    prepareInviteIdentityMock: vi.fn(),
+    hashPasswordMock: vi.fn(),
+    comparePasswordMock: vi.fn(),
+    inviteLookups: { current: invite },
+    serviceErrors: {
+      ExpiredInviteError: class extends Error {},
+      InvalidInviteError: class extends Error {},
+      MissingInviteEmailError: class extends Error {},
+      UserAlreadyLinkedError: class extends Error {},
+      DuplicateInviteError: class extends Error {},
+      InviteStateConflictError: class extends Error {},
+      ExistingAccountAuthenticationRequiredError: class extends Error {},
+      MissingGuardianRecordError: class extends Error {},
+      InvalidGuardianStudentsError: class extends Error {},
+      StudentAlreadyLinkedError: class extends Error {},
+      GuardianProfileConflictError: class extends Error {},
+      MissingGuardianDataError: class extends Error {},
+      InviteEmailNotVerifiedError: class extends Error {},
+      UserInactiveError: class extends Error {},
     },
-    usuario: {
-      findFirst: vi.fn(),
+    prismaMock: {
+      authCredential: { findUnique: vi.fn(), upsert: vi.fn(), update: vi.fn() },
+      usuario: { findFirst: vi.fn() },
+      usuarioConta: { findUnique: vi.fn(), findFirst: vi.fn() },
     },
-    usuarioConta: {
-      findUnique: vi.fn(),
-      findFirst: vi.fn(),
-    },
-  },
-}));
+  };
+});
 
 vi.mock('@alusa/lib/server/services/invite-user-service', () => ({
   acceptInvite: acceptInviteMock,
@@ -47,147 +43,94 @@ vi.mock('@alusa/lib/server/services/invite-user-service', () => ({
   ...serviceErrors,
 }));
 
+vi.mock('@/src/server/users/invite-acceptance.service', () => ({
+  findInviteForAcceptance: vi.fn(async () => inviteLookups.current),
+  findPendingInviteForAcceptance: vi.fn(async () => inviteLookups.current),
+  findExistingUserForInvite: vi.fn(async () => null),
+}));
+
 vi.mock('next-auth', () => ({ getServerSession: vi.fn().mockResolvedValue(null) }));
-
-vi.mock('@/lib/rate-limit', () => ({
-  ipFromRequest: vi.fn(() => '127.0.0.1'),
-  rateLimit: vi.fn(() => ({ ok: true })),
-}));
-
-vi.mock('@/lib/auth-password', () => ({
-  hashPassword: hashPasswordMock,
-  comparePassword: comparePasswordMock,
-  passwordPolicyMessage: 'Senha inválida',
-}));
-
-vi.mock('@/lib/auth-email-flow', () => ({
-  sendEmailVerificationForUser: sendEmailVerificationForUserMock,
-}));
-
-vi.mock('@/lib/prisma', () => ({
-  __esModule: true,
-  default: prismaMock,
-}));
+vi.mock('@/lib/rate-limit', () => ({ ipFromRequest: vi.fn(() => '127.0.0.1'), rateLimit: vi.fn(() => ({ ok: true })) }));
+vi.mock('@/lib/auth-password', () => ({ hashPassword: hashPasswordMock, comparePassword: comparePasswordMock, passwordPolicyMessage: 'Senha inválida' }));
+vi.mock('@/lib/prisma', () => ({ __esModule: true, default: prismaMock }));
 
 import { POST } from '@/app/api/users/accept/route';
 
-describe('/api/users/accept', () => {
+function request(body: Record<string, unknown>) {
+  return new Request('http://x/api/users/accept', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+}
+
+describe('/api/users/accept auth context isolation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    inviteLookups.current = {
+      id: 'invite-1', token: 'invite-token', email: 'target@example.com', role: 'RECEPCAO',
+      status: 'PENDING', expiresAt: new Date(Date.now() + 60_000), contaId: 'conta-1', invitedById: 'admin-1',
+    };
     vi.mocked(getServerSession).mockResolvedValue(null as never);
     hashPasswordMock.mockResolvedValue('hashed-password');
     comparePasswordMock.mockResolvedValue(true);
-    prismaMock.invite.findUnique.mockResolvedValue({
-      email: null,
-      role: 'RESPONSAVEL',
-      status: 'PENDING',
-      expiresAt: new Date(Date.now() + 60_000),
-      contaId: 'conta-1',
-      invitedById: 'admin-1',
-    });
+    prismaMock.authCredential.findUnique.mockResolvedValue(null);
+    prismaMock.authCredential.upsert.mockResolvedValue({} as never);
     prismaMock.usuario.findFirst.mockResolvedValue(null);
-    prismaMock.usuarioConta.findUnique.mockResolvedValue(null);
-    prismaMock.usuarioConta.findFirst.mockResolvedValue({ id: 'admin-membership-1' });
-    acceptInviteMock.mockResolvedValue({
-      id: 'user-1',
-      email: 'responsavel@example.com',
-      role: 'RESPONSAVEL',
-      contaId: 'conta-1',
-      emailVerifiedAt: new Date(),
-    });
-    prepareInviteIdentityMock.mockResolvedValue({ id: 'user-1', email: 'responsavel@example.com', role: 'RESPONSAVEL', contaId: null, emailVerifiedAt: null });
+    acceptInviteMock.mockResolvedValue({ id: 'user-1', email: 'target@example.com', role: 'RECEPCAO', contaId: 'conta-1', emailVerifiedAt: new Date() });
+    prepareInviteIdentityMock.mockResolvedValue({ id: 'user-1', email: 'target@example.com', role: 'RECEPCAO', contaId: null, emailVerifiedAt: null });
   });
 
-  it('cria apenas identidade global não verificada para RESPONSAVEL e preserva token no callback', async () => {
-    const response = await POST(
-      new Request('http://x/api/users/accept', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token: 'invite-token',
-          name: 'Responsável Teste',
-          password: 'Abcdef1!',
-          email: 'responsavel@example.com',
-        }),
-      }),
-    );
-    const json = await response.json();
-
-    expect(response.status).toBe(202);
-    expect(prepareInviteIdentityMock).toHaveBeenCalledWith(
-      'invite-token',
-      'Responsável Teste',
-      'hashed-password',
-      'responsavel@example.com',
-    );
-    expect(acceptInviteMock).not.toHaveBeenCalled();
-    expect(json).toMatchObject({ verificationRequired: true, verificationEmailSent: true, user: { email: 'responsavel@example.com', contaId: null, emailVerified: false } });
-    expect(sendEmailVerificationForUserMock).toHaveBeenCalledWith(
-      'user-1',
-      expect.any(Object),
-      { callbackUrl: '/auth/login?callbackUrl=%2Fauth%2Fregister%3Ftoken%3Dinvite-token' },
-    );
-  });
-
-  it('exige senha e e-mail verificado antes de concluir; reusa identidade confirmada', async () => {
-    prismaMock.usuario.findFirst.mockResolvedValue({
-      id: 'user-1',
-      email: 'responsavel@example.com',
-      status: 'ATIVO',
-      emailVerifiedAt: new Date(),
-      senhaHash: 'password-hash',
-    });
-
-    const response = await POST(
-      new Request('http://x/api/users/accept', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token: 'invite-token',
-          name: 'Responsável Teste',
-          password: 'Abcdef1!',
-          email: 'responsavel@example.com',
-        }),
-      }),
-    );
-    const json = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(comparePasswordMock).toHaveBeenCalledWith('Abcdef1!', 'password-hash');
-    expect(acceptInviteMock).toHaveBeenCalledWith('invite-token', 'responsavel@example.com', 'user-1');
-    expect(json.user.email).toBe('responsavel@example.com');
-  });
-
-  it('rejeita troca de sessão ou e-mail contra convite vinculado antes de criar identidade', async () => {
-    prismaMock.invite.findUnique.mockResolvedValue({
-      email: 'target@example.com', role: 'RECEPCAO', status: 'PENDING', expiresAt: new Date(Date.now() + 60_000), contaId: 'conta-1', invitedById: 'admin-1',
-    });
-    vi.mocked(getServerSession).mockResolvedValue({ user: { id: 'foreign-user', email: 'foreign@example.com' } } as never);
-
-    const response = await POST(new Request('http://x/api/users/accept', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: 'invite-token', email: 'target@example.com', password: 'Aa!23456', name: 'Pessoa' }),
-    }));
-
-    expect(response.status).toBe(403);
-    expect(prepareInviteIdentityMock).not.toHaveBeenCalled();
-    expect(acceptInviteMock).not.toHaveBeenCalled();
-  });
-
-  it('não aceita identidade verificada com senha incorreta', async () => {
-    prismaMock.usuario.findFirst.mockResolvedValue({
-      id: 'user-1', email: 'responsavel@example.com', status: 'ATIVO', emailVerifiedAt: new Date(), senhaHash: 'password-hash',
-    });
-    comparePasswordMock.mockResolvedValue(false);
-
-    const response = await POST(new Request('http://x/api/users/accept', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: 'invite-token', email: 'responsavel@example.com', password: 'Wrong123!' }),
-    }));
+  it('creates a verified COLLABORATOR credential and accepts the invite using its bound token', async () => {
+    const response = await POST(request({ token: 'invite-token', name: 'Pessoa', password: 'Abcdef1!', email: 'target@example.com' }));
     const body = await response.json();
 
-    expect(response.status).toBe(401);
-    expect(body.code).toBe('INVALID_CREDENTIALS');
+    expect(response.status).toBe(200);
+    expect(prismaMock.authCredential.findUnique).toHaveBeenCalledWith({
+      where: { uq_auth_credential_context_email: { context: 'COLLABORATOR', normalizedEmail: 'target@example.com' } },
+      select: { passwordHash: true, user: { select: { id: true, email: true, status: true } }, emailVerifiedAt: true },
+    });
+    expect(prismaMock.authCredential.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { uq_auth_credential_context_user: { context: 'COLLABORATOR', userId: 'user-1' } },
+      create: expect.objectContaining({ context: 'COLLABORATOR', emailVerifiedAt: expect.any(Date) }),
+    }));
+    expect(body).toMatchObject({ verificationRequired: false, user: { email: 'target@example.com', contaId: 'conta-1', emailVerified: true } });
+    expect(acceptInviteMock).toHaveBeenCalledWith('invite-token', 'target@example.com', 'user-1');
+  });
+
+  it('rejects OWNER sessions for a collaborator invite without changing either context credential', async () => {
+    vi.mocked(getServerSession).mockResolvedValue({ user: { id: 'user-1', email: 'target@example.com', authContext: 'OWNER' } } as never);
+    prismaMock.authCredential.findUnique.mockResolvedValue({
+      userId: 'user-1', emailVerifiedAt: new Date(), user: { id: 'user-1', email: 'target@example.com', status: 'ATIVO' },
+    } as never);
+
+    const response = await POST(request({ token: 'invite-token', email: 'target@example.com' }));
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.code).toBe('AUTH_CONTEXT_REQUIRED');
+    expect(prismaMock.authCredential.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { uq_auth_credential_context_email: { context: 'COLLABORATOR', normalizedEmail: 'target@example.com' } },
+    }));
+    expect(prismaMock.authCredential.upsert).not.toHaveBeenCalled();
     expect(acceptInviteMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { role: 'RECEPCAO', context: 'COLLABORATOR' },
+    { role: 'RESPONSAVEL', context: 'PORTAL' },
+  ] as const)('accepts a $role invite only in its mapped $context session', async ({ role, context }) => {
+    inviteLookups.current = { ...inviteLookups.current, role };
+    vi.mocked(getServerSession).mockResolvedValue({ user: { id: 'user-1', email: 'target@example.com', authContext: context } } as never);
+    prismaMock.authCredential.findUnique.mockResolvedValue({
+      userId: 'user-1', emailVerifiedAt: new Date(), user: { id: 'user-1', email: 'target@example.com', status: 'ATIVO' },
+    } as never);
+
+    const response = await POST(request({ token: 'invite-token', email: 'target@example.com' }));
+
+    expect(response.status).toBe(200);
+    expect(prismaMock.authCredential.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { uq_auth_credential_context_email: { context, normalizedEmail: 'target@example.com' } },
+    }));
+    expect(acceptInviteMock).toHaveBeenCalledWith('invite-token', 'target@example.com', 'user-1');
+    expect(prismaMock.authCredential.upsert).not.toHaveBeenCalled();
   });
 });

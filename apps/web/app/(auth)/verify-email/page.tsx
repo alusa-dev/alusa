@@ -39,10 +39,12 @@ export default function VerifyEmailPage() {
   const { data: session, update } = useSession();
   const [state, setState] = useState<VerificationState>('loading');
   const [message, setMessage] = useState('Validando seu link...');
+  const [verifiedContext, setVerifiedContext] = useState<'OWNER' | 'COLLABORATOR' | 'PORTAL' | null>(null);
   const redirectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const updateRef = useRef(update);
 
   const token = searchParams.get('token');
+  const inviteToken = searchParams.get('inviteToken');
   const callbackUrl = resolvePostVerificationRedirect(
     searchParams.get('callbackUrl'),
     session?.user?.role,
@@ -51,6 +53,9 @@ export default function VerifyEmailPage() {
     (session?.user as { externalAsaasOnboardingStatus?: string | null } | undefined)?.externalAsaasOnboardingStatus,
   );
   const isReactivationFlow = callbackUrl.includes('reactivated=1');
+  const destination = inviteToken
+    ? `/auth/login?context=${verifiedContext === 'PORTAL' ? 'portal' : verifiedContext === 'OWNER' ? 'owner' : 'collaborator'}`
+    : callbackUrl;
 
   useEffect(() => {
     updateRef.current = update;
@@ -72,14 +77,14 @@ export default function VerifyEmailPage() {
           fetch('/api/auth/verify-email', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token }),
+            body: JSON.stringify({ token, ...(inviteToken ? { inviteToken } : {}) }),
             signal: controller.signal,
           }),
           VERIFY_EMAIL_TIMEOUT_MS,
           () => controller.abort(),
         );
 
-        const body = (await response.json().catch(() => ({}))) as { error?: string };
+        const body = (await response.json().catch(() => ({}))) as { error?: string; inviteAccepted?: boolean; inviteError?: string; context?: 'OWNER' | 'COLLABORATOR' | 'PORTAL' | null };
 
         if (!response.ok) {
           if (cancelled) {
@@ -97,12 +102,20 @@ export default function VerifyEmailPage() {
           // seguir mesmo sem atualizar a sessão em memória
         }
 
+        if (body.context === 'OWNER' || body.context === 'COLLABORATOR' || body.context === 'PORTAL') setVerifiedContext(body.context);
+
         if (cancelled) {
           return;
         }
 
         setState('success');
-        setMessage(isReactivationFlow ? 'Conta reativada com sucesso.' : 'E-mail confirmado com sucesso.');
+        setMessage(isReactivationFlow
+          ? 'Conta reativada com sucesso.'
+          : body.inviteAccepted
+            ? 'E-mail confirmado e convite aceito. Faça login para acessar sua conta.'
+            : body.inviteError
+              ? `E-mail confirmado. ${body.inviteError}`
+              : 'E-mail confirmado com sucesso.');
       } catch (error) {
         if (cancelled) {
           return;
@@ -121,7 +134,7 @@ export default function VerifyEmailPage() {
       cancelled = true;
       controller.abort();
     };
-  }, [isReactivationFlow, token]);
+  }, [inviteToken, isReactivationFlow, token]);
 
   useEffect(() => {
     if (state !== 'success') {
@@ -129,7 +142,7 @@ export default function VerifyEmailPage() {
     }
 
     redirectTimeoutRef.current = setTimeout(() => {
-      window.location.replace(callbackUrl);
+      window.location.replace(destination);
     }, SUCCESS_REDIRECT_DELAY_MS);
 
     return () => {
@@ -138,14 +151,22 @@ export default function VerifyEmailPage() {
         redirectTimeoutRef.current = null;
       }
     };
-  }, [callbackUrl, state]);
+  }, [destination, state]);
 
   return (
     <AuthPageContainer>
-      <AuthShell>
-        <div className="flex w-full max-w-[min(100%,22.5rem)] min-[400px]:max-w-[min(100%,26rem)] flex-col items-center gap-5 text-center min-[400px]:gap-6 lg:max-w-[360px] lg:items-start lg:gap-5 lg:text-left">
-          <div className="space-y-2 min-[400px]:space-y-3 lg:space-y-2">
-            <h1 className="text-[1.75rem] font-semibold leading-[1.15] tracking-tight text-pretty min-[400px]:text-[2rem] lg:text-[30px] lg:leading-tight lg:tracking-tight lg:text-left">
+      <AuthShell heroPosition="right" heroImageSrc="" desktopFooter={
+        <nav aria-label="Informações e suporte" className="flex items-center gap-2 text-center text-xs text-[#717171]">
+          <a href="mailto:contato@alusa.app" className="hover:underline">Suporte</a>
+          <span aria-hidden="true">-</span>
+          <a href="/termos" className="hover:underline">Termos de Uso</a>
+          <span aria-hidden="true">-</span>
+          <a href="/privacidade" className="hover:underline">Política de Privacidade</a>
+        </nav>
+      }>
+        <div className="flex w-full max-w-[24rem] flex-col items-stretch gap-6 self-center p-0 text-left lg:w-[355px] lg:max-w-[355px] lg:self-auto">
+          <div className="space-y-2">
+            <h1 className="text-[1.25rem] font-semibold leading-tight tracking-tight text-pretty min-[400px]:text-[1.375rem] lg:text-[1.625rem]">
               {state === 'success'
                 ? isReactivationFlow
                   ? 'Conta reativada'
@@ -154,23 +175,23 @@ export default function VerifyEmailPage() {
                   ? 'Falha na confirmação'
                   : 'Confirmando e-mail'}
             </h1>
-            <p className="text-[0.8125rem] font-medium leading-relaxed text-[#5c5c5c] text-pretty min-[400px]:text-[0.9375rem] lg:text-left lg:text-[12px] lg:text-brand-muted">
+            <p className="text-sm font-medium leading-5 text-brand-muted">
               {message}
             </p>
           </div>
 
           {state !== 'loading' && (
-            <div className="flex w-full flex-col gap-3 min-[400px]:gap-3.5 lg:gap-3">
+            <div className="flex w-full flex-col gap-4">
               <Link
-                href={state === 'success' ? callbackUrl : '/auth/confirm-email'}
-                className="inline-flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] bg-[#3e1f63] text-[0.9375rem] font-medium text-white transition-colors hover:opacity-95 min-[400px]:text-base lg:h-12"
+                href={state === 'success' ? destination : '/auth/confirm-email'}
+                className="inline-flex h-12 w-full items-center justify-center rounded-[12px] bg-[#3e1f63] text-sm font-medium text-white transition-colors hover:bg-[#4b217a]"
               >
-                {state === 'success' ? (isReactivationFlow ? 'Ir para login' : 'Continuar') : 'Voltar'}
+                {state === 'success' ? (isReactivationFlow || inviteToken ? 'Fazer login' : 'Continuar') : 'Voltar'}
               </Link>
               {state === 'error' && (
                 <Link
                   href="/auth/login"
-                  className="inline-flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] border border-[#d8cec2] bg-white text-[0.9375rem] font-medium text-[#4a3f35] transition-colors hover:bg-[#f6f0e8] min-[400px]:text-base lg:h-12"
+                  className="inline-flex h-12 w-full items-center justify-center rounded-[12px] border border-gray-300 bg-white text-sm font-medium text-gray-900 transition-colors hover:bg-[#f6f3f7]"
                 >
                   Fazer login
                 </Link>

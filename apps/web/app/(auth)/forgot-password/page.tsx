@@ -7,8 +7,13 @@ import { CustomToast } from '@/components/ui/toast';
 import AuthPageContainer from '@/components/auth/AuthPageContainer';
 import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import AuthShell from '@/components/auth/AuthShell';
+import { useSearchParams } from 'next/navigation';
 
 export default function ForgotPasswordPage() {
+  const searchParams = useSearchParams();
+  const requestedContext = searchParams.get('context');
+  const authContext = requestedContext === 'owner' ? 'OWNER' : requestedContext === 'portal' ? 'PORTAL' : 'COLLABORATOR';
+  const loginHref = `/auth/login?context=${authContext === 'OWNER' ? 'owner' : authContext === 'PORTAL' ? 'portal' : 'collaborator'}`;
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -31,7 +36,7 @@ export default function ForgotPasswordPage() {
       const res = await fetch('/api/auth/forgot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email })
+        body: JSON.stringify({ email, authContext })
       });
 
       if (res.status === 501) {
@@ -82,19 +87,27 @@ export default function ForgotPasswordPage() {
 
   return (
     <AuthPageContainer>
-      <AuthShell hideHero>
-        <div className="auth-card auth-login-card flex w-[min(100%,21.5rem)] min-[400px]:w-[min(100%,24rem)] flex-col items-stretch self-center text-left lg:w-full lg:self-auto">
-          <header className="mb-6 w-full space-y-2 text-left lg:mb-8 lg:text-center">
-            <h1 className="w-full text-left text-[1.25rem] font-medium leading-snug tracking-tight text-brand-primary min-[400px]:text-[1.375rem] lg:text-center lg:text-[1.625rem] lg:font-semibold lg:leading-tight">
-              Recuperar Senha
+      <AuthShell heroPosition="right" heroImageSrc="" desktopFooter={
+        <nav aria-label="Informações e suporte" className="flex items-center gap-2 text-center text-xs text-[#717171]">
+          <a href="mailto:contato@alusa.app" className="hover:underline">Suporte</a>
+          <span aria-hidden="true">-</span>
+          <a href="/termos" className="hover:underline">Termos de Uso</a>
+          <span aria-hidden="true">-</span>
+          <a href="/privacidade" className="hover:underline">Política de Privacidade</a>
+        </nav>
+      }>
+        <div className="flex w-full max-w-[24rem] flex-col items-stretch self-center p-0 text-left lg:w-[355px] lg:max-w-[355px] lg:self-auto">
+          <header className="w-full space-y-2 text-left">
+            <h1 className="w-full text-left text-[1.25rem] font-medium leading-snug tracking-tight text-brand-primary min-[400px]:text-[1.375rem] lg:text-[1.625rem] lg:font-semibold lg:leading-tight">
+              Recuperar senha
             </h1>
-            <p className="text-left text-justify text-sm font-medium leading-relaxed text-brand-muted lg:text-center lg:text-[12px]">
+            <p className="text-left text-sm font-medium leading-5 text-brand-muted">
               Informe o e-mail associado à sua conta para receber um link de redefinição de senha.
             </p>
           </header>
           <form
             onSubmit={(e) => { void onSubmit(e); }}
-            className="flex w-full flex-col items-stretch gap-4 lg:items-start"
+            className="mt-6 flex w-full flex-col items-stretch gap-4"
             noValidate
           >
             <div className="relative h-12 w-full lg:h-12">
@@ -102,7 +115,7 @@ export default function ForgotPasswordPage() {
               <input
                 id="email"
                 type="email"
-                placeholder="Digite seu E-mail"
+                placeholder="Digite seu e-mail"
                 autoComplete="email"
                 required
                 value={email}
@@ -121,10 +134,9 @@ export default function ForgotPasswordPage() {
             >
               {loading ? 'Enviando...' : 'Enviar link'}
             </button>
-            <p className="mt-8 w-full text-left text-[0.8125rem] font-medium min-[400px]:text-sm lg:text-center lg:text-[11px]">
-              <span className="text-[#686868]">Tenho uma conta? </span>
-              <a href="/auth/login" className="text-brand-accent hover:underline">
-                Fazer login
+            <p className="mt-2 w-full text-left text-[0.8125rem] font-medium min-[400px]:text-sm lg:text-[12px]">
+              <a href={loginHref} className="text-brand-accent hover:underline">
+                Voltar para o login
               </a>
             </p>
           </form>

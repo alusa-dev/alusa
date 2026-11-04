@@ -4,6 +4,8 @@ import { runWithTenant } from '@/lib/prisma-tenant';
 import { auditLogService } from '@alusa/finance';
 import { hashPassword, assertPasswordPolicy } from '@/lib/auth-password';
 import { revokeUserSessions } from '@/lib/auth-service';
+import type { AuthContext } from '@/lib/auth-service';
+import { listAuthContextAccounts } from '@/lib/auth-service';
 import { sendPasswordChangeOtpEmail } from '@/lib/email/password-change-otp-email';
 import { logRuntimeOperationalEvent } from '@/lib/observability/runtime-operational-log';
 
@@ -103,23 +105,16 @@ function toChallengeResponse(input: {
   };
 }
 
-async function hasActiveMembership(userId: string, contaId: string) {
-  return Boolean(await prisma.usuarioConta.findFirst({
-    where: {
-      usuarioId: userId,
-      contaId,
-      status: 'ATIVO',
-      usuario: { status: 'ATIVO' },
-      conta: { status: 'ATIVO', deletedAt: null },
-    },
-    select: { id: true },
-  }));
+async function hasActiveMembership(userId: string, contaId: string, authContext: AuthContext) {
+  const accounts = await listAuthContextAccounts(userId, authContext);
+  return accounts.some((account) => account.id === contaId);
 }
 
 export async function requestPasswordChangeOtp(input: {
   userId: string;
   contaId: string;
   channel: PasswordChangeChannel;
+  authContext: AuthContext;
   requestedByIp?: string | null;
   requestedByUserAgent?: string | null;
 }) {
@@ -130,9 +125,14 @@ export async function requestPasswordChangeOtp(input: {
     select: { id: true, nome: true, email: true, status: true },
   });
 
-  if (!user || user.status !== 'ATIVO' || !(await hasActiveMembership(input.userId, input.contaId))) {
+  if (!user || user.status !== 'ATIVO' || !(await hasActiveMembership(input.userId, input.contaId, input.authContext))) {
     throw new PasswordChangeOtpError('Usuário indisponível.', 'USER_UNAVAILABLE', 404);
   }
+  const credential = await prisma.authCredential.findUnique({
+    where: { uq_auth_credential_context_user: { context: input.authContext, userId: user.id } },
+    select: { normalizedEmail: true, emailVerifiedAt: true },
+  });
+  if (!credential?.emailVerifiedAt) throw new PasswordChangeOtpError('Credencial indisponível.', 'USER_UNAVAILABLE', 404);
 
   const { challengeId, code, expiresAt, resendAvailableAt } = await runWithTenant(
     input.contaId,
@@ -142,6 +142,7 @@ export async function requestPasswordChangeOtp(input: {
         where: {
           userId: user.id,
           contaId: input.contaId,
+          authContext: input.authContext,
           usedAt: null,
           invalidatedAt: null,
           expiresAt: { gt: now },
@@ -169,6 +170,7 @@ export async function requestPasswordChangeOtp(input: {
         where: {
           userId: user.id,
           contaId: input.contaId,
+          authContext: input.authContext,
           usedAt: null,
           invalidatedAt: null,
         },
@@ -180,6 +182,7 @@ export async function requestPasswordChangeOtp(input: {
           id: challengeId,
           userId: user.id,
           contaId: input.contaId,
+          authContext: input.authContext,
           channel: 'EMAIL',
           codeHash: hashCode(challengeId, code),
           attempts: 0,
@@ -199,14 +202,14 @@ export async function requestPasswordChangeOtp(input: {
     const delivery = await sendPasswordChangeOtpEmail({
       challengeId,
       recipientName: user.nome,
-      email: user.email,
+      email: credential.normalizedEmail,
       code,
       expiresInLabel: `${PASSWORD_CHANGE_OTP_TTL_MINUTES} minutos`,
     });
 
     await runWithTenant(input.contaId, async (tx) => {
       await tx.passwordChangeOtp.updateMany({
-        where: { id: challengeId, userId: user.id, contaId: input.contaId },
+        where: { id: challengeId, userId: user.id, contaId: input.contaId, authContext: input.authContext },
         data: { emailSentAt: new Date() },
       });
     });
@@ -215,7 +218,7 @@ export async function requestPasswordChangeOtp(input: {
       ...toChallengeResponse({
         id: challengeId,
         channel: input.channel,
-        email: user.email,
+        email: credential.normalizedEmail,
         expiresAt,
         resendAvailableAt,
       }),
@@ -242,8 +245,9 @@ export async function verifyPasswordChangeOtp(input: {
   contaId: string;
   challengeId: string;
   code: string;
+  authContext: AuthContext;
 }) {
-  if (!(await hasActiveMembership(input.userId, input.contaId))) {
+  if (!(await hasActiveMembership(input.userId, input.contaId, input.authContext))) {
     throw new PasswordChangeOtpError('Código inválido ou expirado.', 'CHALLENGE_NOT_FOUND');
   }
 
@@ -261,6 +265,7 @@ export async function verifyPasswordChangeOtp(input: {
         verifiedAt: true,
         usedAt: true,
         invalidatedAt: true,
+        authContext: true,
       },
     });
 
@@ -268,6 +273,7 @@ export async function verifyPasswordChangeOtp(input: {
       !challenge ||
       challenge.userId !== input.userId ||
       challenge.contaId !== input.contaId ||
+      challenge.authContext !== input.authContext ||
       challenge.invalidatedAt ||
       challenge.usedAt
     ) {
@@ -281,6 +287,7 @@ export async function verifyPasswordChangeOtp(input: {
           id: challenge.id,
           userId: input.userId,
           contaId: input.contaId,
+          authContext: input.authContext,
           invalidatedAt: null,
         },
         data: { invalidatedAt: now },
@@ -302,6 +309,7 @@ export async function verifyPasswordChangeOtp(input: {
           id: challenge.id,
           userId: input.userId,
           contaId: input.contaId,
+          authContext: input.authContext,
           usedAt: null,
           invalidatedAt: null,
           attempts: { lt: challenge.maxAttempts },
@@ -320,6 +328,7 @@ export async function verifyPasswordChangeOtp(input: {
         id: challenge.id,
         userId: input.userId,
         contaId: input.contaId,
+        authContext: input.authContext,
         verifiedAt: null,
         usedAt: null,
         invalidatedAt: null,
@@ -349,6 +358,7 @@ export async function completePasswordChange(input: {
   challengeId: string;
   verificationToken: string;
   newPassword: string;
+  authContext: AuthContext;
   revokeAllSessions: boolean;
   requestedByIp?: string | null;
   requestedByUserAgent?: string | null;
@@ -359,7 +369,7 @@ export async function completePasswordChange(input: {
     where: { id: input.userId },
     select: { id: true, status: true },
   });
-  if (!user || user.status !== 'ATIVO' || !(await hasActiveMembership(input.userId, input.contaId))) {
+  if (!user || user.status !== 'ATIVO' || !(await hasActiveMembership(input.userId, input.contaId, input.authContext))) {
     throw new PasswordChangeOtpError('Usuário indisponível.', 'USER_UNAVAILABLE', 404);
   }
 
@@ -375,6 +385,7 @@ export async function completePasswordChange(input: {
         expiresAt: true,
         usedAt: true,
         invalidatedAt: true,
+        authContext: true,
       },
     }),
   );
@@ -383,6 +394,7 @@ export async function completePasswordChange(input: {
   if (
     !challenge ||
     challenge.userId !== input.userId ||
+    challenge.authContext !== input.authContext ||
     !challenge.verifiedAt ||
     !challenge.verificationExpiresAt ||
     challenge.verificationExpiresAt <= now ||
@@ -425,13 +437,18 @@ export async function completePasswordChange(input: {
       );
     }
 
-    const updatedUser = await tx.usuario.updateMany({
-      where: { id: user.id },
-      data: { senhaHash, passwordChangedAt: now },
+    const updatedCredential = await tx.authCredential.updateMany({
+      where: { userId: user.id, context: input.authContext },
+      data: { passwordHash: senhaHash, sessionVersion: { increment: 1 } },
     });
-    if (updatedUser.count !== 1) {
+    if (updatedCredential.count !== 1) {
       throw new PasswordChangeOtpError('Usuário indisponível.', 'USER_UNAVAILABLE', 404);
     }
+
+    await tx.mobileAuthSession.updateMany({
+      where: { userId: user.id, authContext: input.authContext, revokedAt: null },
+      data: { revokedAt: now, lastUsedAt: now },
+    });
 
     if (input.revokeAllSessions) {
       await revokeUserSessions(user.id, tx);

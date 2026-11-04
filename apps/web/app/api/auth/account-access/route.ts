@@ -15,13 +15,14 @@ export async function GET(req: NextRequest) {
   const userId = typeof token?.id === 'string' ? token.id : null;
   const contaId = typeof token?.contaId === 'string' ? token.contaId : null;
   const sessionVersion = typeof token?.sessionVersion === 'number' ? token.sessionVersion : null;
+  const authContext = token?.authContext === 'OWNER' || token?.authContext === 'PORTAL' || token?.authContext === 'COLLABORATOR' ? token.authContext : null;
 
   if (!userId) {
     return json(401, { ok: false, reason: 'UNAUTHENTICATED' });
   }
 
   try {
-    const access = await resolveSessionAccess({ userId, contaId, sessionVersion });
+    const access = await resolveSessionAccess({ userId, contaId, sessionVersion, authContext });
     if (!access.ok) {
       return json(403, { ok: false, reason: access.reason });
     }

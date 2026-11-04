@@ -84,7 +84,8 @@ describe('admin users invitation picker integration', () => {
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: 'Responsável' } });
     fireEvent.click(await screen.findByRole('option', { name: /Responsável A/ }));
-    expect(screen.getByText('Contato cadastrado (não usado para envio): stored@example.test')).toBeInTheDocument();
+    expect(screen.getByText('Responsável A')).toBeInTheDocument();
+    expect(screen.queryByText('stored@example.test')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Gerar convite' }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/users/invite', expect.objectContaining({

@@ -86,27 +86,35 @@ export default function ConfirmEmailPage() {
 
   return (
     <AuthPageContainer>
-      <AuthShell>
-        <div className="flex w-full max-w-[min(100%,22.5rem)] min-[400px]:max-w-[min(100%,26rem)] flex-col items-center gap-5 text-center min-[400px]:gap-6 lg:max-w-[360px] lg:items-start lg:gap-5 lg:text-left">
-          <div className="space-y-2 min-[400px]:space-y-3 lg:space-y-2">
-            <h1 className="text-[1.75rem] font-semibold leading-[1.15] tracking-tight text-pretty min-[400px]:text-[2rem] lg:text-[30px] lg:leading-tight lg:tracking-tight lg:text-left">
+      <AuthShell heroPosition="right" heroImageSrc="" desktopFooter={
+        <nav aria-label="Informações e suporte" className="flex items-center gap-2 text-center text-xs text-[#717171]">
+          <a href="mailto:contato@alusa.app" className="hover:underline">Suporte</a>
+          <span aria-hidden="true">-</span>
+          <a href="/termos" className="hover:underline">Termos de Uso</a>
+          <span aria-hidden="true">-</span>
+          <a href="/privacidade" className="hover:underline">Política de Privacidade</a>
+        </nav>
+      }>
+        <div className="flex w-full max-w-[24rem] flex-col items-stretch gap-6 self-center p-0 text-left lg:w-[355px] lg:max-w-[355px] lg:self-auto">
+          <div className="space-y-2">
+            <h1 className="text-[1.25rem] font-semibold leading-tight tracking-tight text-pretty min-[400px]:text-[1.375rem] lg:text-[1.625rem]">
               Confirme seu e-mail
             </h1>
-            <p className="text-[0.8125rem] font-medium leading-relaxed text-[#5c5c5c] text-pretty min-[400px]:text-[0.9375rem] lg:text-left lg:text-[12px] lg:text-brand-muted">
+            <p className="text-sm font-medium leading-5 text-brand-muted">
               Enviamos um link de confirmação para{' '}
               <span className="font-semibold text-[#4a3f35]">{session?.user?.email || 'seu e-mail'}</span>.
               Abra a mensagem para validar seu endereço e concluir a criação da conta.
             </p>
           </div>
 
-          <div className="flex w-full flex-col gap-3 min-[400px]:gap-3.5 lg:gap-3">
+          <div className="flex w-full flex-col gap-4">
             <button
               type="button"
               onClick={() => {
                 void handleResend();
               }}
               disabled={sending || status !== 'authenticated'}
-              className="flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] bg-[#3e1f63] text-[0.9375rem] font-medium text-white transition-colors hover:opacity-95 disabled:opacity-50 min-[400px]:text-base lg:h-12"
+              className="flex h-12 w-full items-center justify-center rounded-[12px] bg-[#3e1f63] text-sm font-medium text-white transition-colors hover:bg-[#4b217a] disabled:opacity-50"
             >
               {sending ? 'Reenviando...' : 'Reenviar e-mail'}
             </button>
@@ -116,16 +124,16 @@ export default function ConfirmEmailPage() {
               onClick={() => {
                 void logoutCurrentSession('/auth/login');
               }}
-              className="flex h-12 w-full min-[400px]:h-14 items-center justify-center rounded-[12px] border border-[#d8cec2] bg-white text-[0.9375rem] font-medium text-[#4a3f35] transition-colors hover:bg-[#f6f0e8] min-[400px]:text-base lg:h-12"
+              className="flex h-12 w-full items-center justify-center rounded-[12px] border border-gray-300 bg-white text-sm font-medium text-gray-900 transition-colors hover:bg-[#f6f3f7]"
             >
               Sair da conta
             </button>
           </div>
 
-          <p className="w-full text-center text-[0.8125rem] font-medium min-[400px]:text-sm lg:text-left lg:text-[11px]">
+          <p className="w-full text-left text-sm font-medium">
             <span className="text-[#686868]">Entrou com o e-mail errado? </span>
             <Link href="/auth/login" className="text-brand-accent hover:underline">
-              Voltar para login
+              Voltar para o login
             </Link>
           </p>
         </div>

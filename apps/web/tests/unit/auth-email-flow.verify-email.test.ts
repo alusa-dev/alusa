@@ -12,6 +12,8 @@ const contaFindUniqueMock = vi.fn();
 const contaUpdateMock = vi.fn();
 const usuarioFindUniqueMock = vi.fn();
 const usuarioFindFirstMock = vi.fn();
+const authCredentialFindFirstMock = vi.fn();
+const authCredentialFindUniqueMock = vi.fn();
 const sendTransactionalEmailMock = vi.fn();
 const buildAccountReactivationTemplateMock = vi.fn();
 const originalNextAuthUrl = process.env.NEXTAUTH_URL;
@@ -33,6 +35,10 @@ vi.mock('@/lib/prisma', () => ({
     usuario: {
       findUnique: usuarioFindUniqueMock,
       findFirst: usuarioFindFirstMock,
+    },
+    authCredential: {
+      findFirst: authCredentialFindFirstMock,
+      findUnique: authCredentialFindUniqueMock,
     },
     conta: {
       findUnique: contaFindUniqueMock,
@@ -62,6 +68,8 @@ describe('verifyEmailByToken', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    authCredentialFindFirstMock.mockResolvedValue({ userId: 'user_reset' });
+    authCredentialFindUniqueMock.mockResolvedValue({ normalizedEmail: 'reset@example.com', emailVerifiedAt: new Date() });
     prismaTransactionMock.mockImplementation(
       async (
         callback: (_tx: {
@@ -108,7 +116,7 @@ describe('verifyEmailByToken', () => {
     const { verifyEmailByToken } = await import('@/lib/auth-email-flow');
     const result = await verifyEmailByToken('plain-token');
 
-    expect(result).toEqual(user);
+    expect(result).toEqual({ ...user, context: null });
     expect(prismaTransactionMock).not.toHaveBeenCalled();
   });
 
@@ -142,6 +150,7 @@ describe('verifyEmailByToken', () => {
       'user_verify_race',
       'VERIFY_EMAIL',
       expect.any(Object),
+      undefined,
     );
   });
 
@@ -173,6 +182,7 @@ describe('verifyEmailByToken', () => {
       'user_2',
       'VERIFY_EMAIL',
       expect.any(Object),
+      undefined,
     );
   });
 
@@ -232,6 +242,7 @@ describe('verifyEmailByToken', () => {
       'user_owner',
       'VERIFY_EMAIL',
       expect.any(Object),
+      undefined,
     );
   });
 
@@ -290,10 +301,7 @@ describe('verifyEmailByToken', () => {
     process.env.NEXT_PUBLIC_APP_URL = 'http://localhost:3000';
     process.env.EMAIL_SUPPORT_URL = 'http://localhost:3000';
 
-    usuarioFindFirstMock.mockResolvedValueOnce({
-      id: 'user_reset',
-      email: 'reset@example.com',
-    });
+    authCredentialFindFirstMock.mockResolvedValueOnce({ userId: 'user_reset' });
     usuarioFindUniqueMock.mockResolvedValueOnce({
       id: 'user_reset',
       nome: 'Reset User',

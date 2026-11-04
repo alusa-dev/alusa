@@ -45,6 +45,7 @@ export async function POST(request: Request) {
       userId: actor.userId,
       contaId: actor.contaId,
       channel: parsed.data.channel,
+      authContext: actor.authContext,
       requestedByIp: ip,
       requestedByUserAgent: request.headers.get('user-agent'),
     });

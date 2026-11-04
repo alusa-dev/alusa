@@ -7,6 +7,7 @@ import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-lo
 
 const bodySchema = z.object({
   email: z.string().email(),
+  authContext: z.enum(['OWNER', 'COLLABORATOR', 'PORTAL']),
 });
 
 export async function POST(req: Request) {
@@ -30,7 +31,7 @@ export async function POST(req: Request) {
       await sendPasswordResetForEmail(parsed.data.email, {
         ip,
         userAgent: req.headers.get('user-agent'),
-      });
+      }, parsed.data.authContext);
     } catch (error) {
       logApiOperationalEvent({
         severity: 'warn',

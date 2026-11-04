@@ -353,12 +353,13 @@ export async function acceptInvite(
       if (completedInvite?.status === 'ACCEPTED') {
         if (completedInvite.acceptedByUserId !== authenticatedUserId || !completedInvite.contaId) throw new InvalidInviteError();
         const completedUser = await tx.usuario.findFirst({
-          where: { id: authenticatedUserId, email: { equals: finalEmail ?? '', mode: 'insensitive' }, status: 'ATIVO', emailVerifiedAt: { not: null } },
+          where: { id: authenticatedUserId, email: { equals: finalEmail ?? '', mode: 'insensitive' }, status: 'ATIVO' },
         });
         const completedMembership = await tx.usuarioConta.findUnique({
           where: { usuarioId_contaId: { usuarioId: authenticatedUserId, contaId: completedInvite.contaId } },
         });
-        if (!completedUser || completedMembership?.status !== 'ATIVO' || completedMembership.inviteId !== completedInvite.id) throw new InvalidInviteError();
+        const contextCredential = completedUser ? await tx.authCredential.findUnique({ where: { uq_auth_credential_context_user: { context: completedInvite.role === Role.RESPONSAVEL ? 'PORTAL' : 'COLLABORATOR', userId: completedUser.id } }, select: { emailVerifiedAt: true } }) : null;
+        if (!completedUser || !contextCredential?.emailVerifiedAt || completedMembership?.status !== 'ATIVO' || completedMembership.inviteId !== completedInvite.id) throw new InvalidInviteError();
         return { ...completedUser, contaId: completedInvite.contaId, role: completedMembership.role };
       }
       const invite = await loadAcceptableInvite(tx, token, now);
@@ -374,7 +375,12 @@ export async function acceptInvite(
       });
       if (!user) throw new InvalidInviteError();
       if (user && String(user.status).toUpperCase() !== 'ATIVO') throw new UserInactiveError();
-      if (!user.emailVerifiedAt) throw new InviteEmailNotVerifiedError();
+      const authContext = role === Role.RESPONSAVEL ? 'PORTAL' : 'COLLABORATOR';
+      const contextCredential = await tx.authCredential.findUnique({
+        where: { uq_auth_credential_context_user: { context: authContext, userId: user.id } },
+        select: { emailVerifiedAt: true },
+      });
+      if (!contextCredential?.emailVerifiedAt) throw new InviteEmailNotVerifiedError();
 
       const existingMembership = await tx.usuarioConta.findUnique({
         where: { usuarioId_contaId: { usuarioId: user.id, contaId } },
@@ -395,7 +401,13 @@ export async function acceptInvite(
         if (!guardian) throw new InvalidInviteTargetError();
         const students = await tx.aluno.findMany({ where: { contaId, id: { in: studentIds } }, select: { id: true } });
         if (students.length !== studentIds.length) throw new InvalidGuardianStudentsError();
-        if (guardian.usuarioId && guardian.usuarioId !== user.id) throw new GuardianProfileConflictError();
+        if (guardian.usuarioId && guardian.usuarioId !== user.id) {
+          const previousIdentityMembership = await tx.usuarioConta.findUnique({
+            where: { usuarioId_contaId: { usuarioId: guardian.usuarioId, contaId } },
+            select: { id: true },
+          });
+          if (previousIdentityMembership) throw new GuardianProfileConflictError();
+        }
         const linkedRows = await tx.alunoResponsavel.findMany({
           where: { contaId, responsavelId: guardian.id },
           select: { alunoId: true, aluno: { select: { contaId: true } } },
@@ -452,7 +464,7 @@ export async function acceptInvite(
     if (error instanceof Prisma.PrismaClientKnownRequestError && (error.code === 'P2002' || error.code === 'P2034')) {
       const invite = await prisma.invite.findUnique({
         where: { token },
-        select: { id: true, contaId: true, email: true, status: true, acceptedByUserId: true },
+        select: { id: true, contaId: true, email: true, status: true, acceptedByUserId: true, role: true },
       });
       if (
         invite?.status === 'ACCEPTED' &&
@@ -464,14 +476,15 @@ export async function acceptInvite(
             id: authenticatedUserId,
             email: { equals: finalEmail ?? '', mode: 'insensitive' },
             status: 'ATIVO',
-            emailVerifiedAt: { not: null },
           },
         });
         const completedMembership = await prisma.usuarioConta.findUnique({
           where: { usuarioId_contaId: { usuarioId: authenticatedUserId, contaId: invite.contaId } },
         });
+        const contextCredential = completedUser ? await prisma.authCredential.findUnique({ where: { uq_auth_credential_context_user: { context: invite.role === Role.RESPONSAVEL ? 'PORTAL' : 'COLLABORATOR', userId: completedUser.id } }, select: { emailVerifiedAt: true } }) : null;
         if (
           !completedUser ||
+          !contextCredential?.emailVerifiedAt ||
           completedMembership?.status !== 'ATIVO' ||
           completedMembership.inviteId !== invite.id
         ) {

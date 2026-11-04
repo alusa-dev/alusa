@@ -27,11 +27,14 @@ import { useLogin } from '@/features/auth/hooks/use-login';
 import { loginSchema, type LoginFormValues } from '@/features/auth/schemas/login-schema';
 
 type LoginStep = 'welcome' | 'email' | 'password';
+type LoginAccount = { id: string; name: string };
 
 export default function LoginScreen() {
   const [step, setStep] = useState<LoginStep>('welcome');
   const [transitionDirection, setTransitionDirection] = useState<'forward' | 'back'>('forward');
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const [authContext, setAuthContext] = useState<'OWNER' | 'COLLABORATOR' | 'PORTAL'>('COLLABORATOR');
+  const [accounts, setAccounts] = useState<LoginAccount[]>([]);
   const login = useLogin();
   const {
     control,
@@ -67,8 +70,19 @@ export default function LoginScreen() {
     }
 
     Keyboard.dismiss();
-    await login.mutateAsync(parsed.data).catch(() => undefined);
+    await login.mutateAsync({ ...parsed.data, authContext }).then(() => setAccounts([])).catch((error: unknown) => {
+      if (isApiError(error) && error.code === 'CONFLICT' && error.details && typeof error.details === 'object') {
+        const candidate = (error.details as { accounts?: unknown }).accounts;
+        if (Array.isArray(candidate)) setAccounts(candidate.filter((item): item is LoginAccount => Boolean(item && typeof item === 'object' && typeof (item as LoginAccount).id === 'string' && typeof (item as LoginAccount).name === 'string')));
+      }
+    });
   });
+
+  async function enterAccount(account: LoginAccount) {
+    const parsed = loginSchema.safeParse({ email, password: watch('password'), authContext });
+    if (!parsed.success) return;
+    await login.mutateAsync({ ...parsed.data, contaId: account.id }).then(() => setAccounts([])).catch(() => undefined);
+  }
 
   const errorMessage = login.error
     ? isApiError(login.error)
@@ -116,6 +130,17 @@ export default function LoginScreen() {
         <View style={styles.formContent}>
           {step === 'email' ? (
           <>
+            <View style={styles.contextTabs}>
+              {([
+                ['OWNER', 'Minha conta'],
+                ['COLLABORATOR', 'Equipe escolar'],
+                ['PORTAL', 'Portal'],
+              ] as const).map(([context, title]) => (
+                <Pressable key={context} onPress={() => { setAuthContext(context); setAccounts([]); }} style={[styles.contextTab, authContext === context ? styles.contextTabSelected : null]}>
+                  <AppText variant="body" weight="medium" tone={authContext === context ? 'primary' : 'muted'}>{title}</AppText>
+                </Pressable>
+              ))}
+            </View>
             <AppText variant="heading" weight="medium" style={styles.formTitle}>
               Boas-vindas à Alusa! Qual é o seu e-mail?
             </AppText>
@@ -194,11 +219,21 @@ export default function LoginScreen() {
             <AppText variant="body" weight="medium" style={styles.passwordHint}>
               Essa é a senha que você cadastrou quando criou sua conta.
             </AppText>
-            <Pressable accessibilityRole="button" onPress={() => router.push('/forgot-password')} style={styles.forgotLink}>
+            <Pressable accessibilityRole="button" onPress={() => router.push(`/forgot-password?authContext=${authContext}`)} style={styles.forgotLink}>
               <AppText variant="body" weight="medium" tone="primary" style={styles.forgotLinkText}>
                 Esqueci a senha →
               </AppText>
             </Pressable>
+            {accounts.length > 1 ? (
+              <View style={styles.accountChoices}>
+                <AppText variant="body" weight="medium">Escolha a escola</AppText>
+                {accounts.map((account) => (
+                  <Pressable key={account.id} accessibilityRole="button" onPress={() => { void enterAccount(account); }} style={styles.accountChoice}>
+                    <AppText variant="body" weight="medium" tone="primary">{account.name}</AppText>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
             <CircleAction
               accessibilityLabel="Entrar na Alusa"
               disabled={login.isPending}
@@ -314,6 +349,11 @@ const styles = StyleSheet.create({
   },
   backButton: { alignSelf: 'flex-start', width: 42, height: 42, justifyContent: 'center' },
   formContent: { flex: 1, paddingTop: spacing['3xl'], gap: spacing.xl },
+  contextTabs: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  contextTab: { borderWidth: 1, borderColor: colors.border, borderRadius: radius.pill, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  contextTabSelected: { backgroundColor: colors.surface, borderColor: colors.brand },
+  accountChoices: { gap: spacing.sm, marginTop: spacing.sm },
+  accountChoice: { minHeight: 48, justifyContent: 'center', borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: spacing.md },
   formTitle: { fontSize: 30, lineHeight: 36, maxWidth: 360 },
   formSubtitle: { fontSize: 18, lineHeight: 26, maxWidth: 340 },
   underlinedInput: {
