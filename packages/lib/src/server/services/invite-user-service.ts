@@ -47,8 +47,8 @@ export class StudentAlreadyLinkedError extends Error {
 export class GuardianProfileConflictError extends Error {
   constructor() { super('Os dados informados já pertencem a outro cadastro de responsável nesta escola.'); }
 }
-export class MissingGuardianDataError extends Error {
-  constructor() { super('Informe CPF e telefone para concluir o cadastro de responsável.'); }
+export class InviteEmailNotVerifiedError extends Error {
+  constructor() { super('Confirme o e-mail antes de aceitar este convite.'); }
 }
 
 function normalizeEmail(email: string | undefined | null) {
@@ -258,128 +258,130 @@ export async function createInvite(
   }
 }
 
+async function loadAcceptableInvite(tx: Prisma.TransactionClient, token: string, now: Date) {
+  const invite = await tx.invite.findUnique({ where: { token } });
+  if (!invite || invite.status !== 'PENDING') throw new InvalidInviteError();
+  if (invite.expiresAt <= now) throw new ExpiredInviteError();
+  const contaId = invite.contaId;
+  if (!contaId || invite.role === Role.ADMIN) throw new InvalidInviteError();
+  const conta = await tx.conta.findFirst({ where: { id: contaId, status: 'ATIVO', deletedAt: null }, select: { id: true } });
+  if (!conta) throw new InvalidInviteError();
+  const inviterMembership = await tx.usuarioConta.findFirst({
+    where: { usuarioId: invite.invitedById, contaId, status: 'ATIVO', usuario: { status: 'ATIVO' } },
+    select: { id: true },
+  });
+  if (!inviterMembership) throw new InvalidInviteError();
+  return invite;
+}
+
+/**
+ * Creates only the global identity needed to receive email verification.
+ * This deliberately does not create tenant access or link operational records.
+ */
+export async function prepareInviteIdentity(token: string, nome: string, senhaHash: string, email: string) {
+  const acceptedEmail = normalizeEmail(email);
+  if (!acceptedEmail) throw new MissingInviteEmailError();
+  const now = new Date();
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`invite-identity:${acceptedEmail}`}, 0))`;
+    const invite = await loadAcceptableInvite(tx, token, now);
+    const invitedEmail = normalizeEmail(invite.email);
+    if (invitedEmail && invitedEmail !== acceptedEmail) throw new InvalidInviteError();
+    const existing = await tx.usuario.findFirst({
+      where: { email: { equals: acceptedEmail, mode: 'insensitive' } },
+      select: { id: true, email: true, nome: true, role: true, contaId: true, status: true, emailVerifiedAt: true },
+    });
+    if (existing) return existing;
+    try {
+      return await tx.usuario.create({
+        data: { contaId: null, nome: nome.trim(), email: acceptedEmail, senhaHash, role: invite.role, status: 'ATIVO' },
+        select: { id: true, email: true, nome: true, role: true, contaId: true, status: true, emailVerifiedAt: true },
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ExistingAccountAuthenticationRequiredError();
+      }
+      throw error;
+    }
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
 export async function acceptInvite(
   token: string,
-  nome: string,
-  senhaHash: string,
-  email?: string | null,
-  authenticatedUserId?: string,
-  guardianProfile?: { cpf: string; telefone: string } | null,
+  email: string,
+  authenticatedUserId: string,
 ) {
   const finalEmail = normalizeEmail(email);
   const now = new Date();
 
   try {
     return await prisma.$transaction(async (tx) => {
-      const invite = await tx.invite.findUnique({ where: { token } });
-      if (!invite || invite.status !== 'PENDING') throw new InvalidInviteError();
-      if (invite.expiresAt <= now) throw new ExpiredInviteError();
-
+      const completedInvite = await tx.invite.findUnique({ where: { token } });
+      if (completedInvite?.status === 'ACCEPTED') {
+        if (completedInvite.acceptedByUserId !== authenticatedUserId || !completedInvite.contaId) throw new InvalidInviteError();
+        const completedUser = await tx.usuario.findFirst({
+          where: { id: authenticatedUserId, email: { equals: finalEmail ?? '', mode: 'insensitive' }, status: 'ATIVO', emailVerifiedAt: { not: null } },
+        });
+        const completedMembership = await tx.usuarioConta.findUnique({
+          where: { usuarioId_contaId: { usuarioId: authenticatedUserId, contaId: completedInvite.contaId } },
+        });
+        if (!completedUser || completedMembership?.status !== 'ATIVO' || completedMembership.inviteId !== completedInvite.id) throw new InvalidInviteError();
+        return { ...completedUser, contaId: completedInvite.contaId, role: completedMembership.role };
+      }
+      const invite = await loadAcceptableInvite(tx, token, now);
+      if (!invite.contaId) throw new InvalidInviteError();
       const contaId = invite.contaId;
-      if (!contaId) throw new InvalidInviteError();
-      const conta = await tx.conta.findFirst({
-        where: { id: contaId, status: 'ATIVO', deletedAt: null },
-        select: { id: true },
-      });
-      if (!conta) throw new InvalidInviteError();
-      const inviterMembership = await tx.usuarioConta.findFirst({
-        where: {
-          usuarioId: invite.invitedById,
-          contaId,
-          status: 'ATIVO',
-          usuario: { status: 'ATIVO' },
-        },
-        select: { id: true },
-      });
-      if (!inviterMembership) throw new InvalidInviteError();
       const invitedEmail = normalizeEmail(invite.email);
       if (invitedEmail && finalEmail !== invitedEmail) throw new InvalidInviteError();
       const acceptedEmail = invitedEmail ?? finalEmail;
       if (!acceptedEmail) throw new MissingInviteEmailError();
-      if (invite.role === Role.ADMIN) throw new InvalidInviteError();
       const role = invite.role;
-
-      let user = authenticatedUserId
-        ? await tx.usuario.findFirst({ where: { id: authenticatedUserId, email: { equals: acceptedEmail, mode: 'insensitive' } } })
-        : await tx.usuario.findFirst({ where: { email: { equals: acceptedEmail, mode: 'insensitive' } } });
-      if (authenticatedUserId && !user) throw new InvalidInviteError();
+      const user = await tx.usuario.findFirst({
+        where: { id: authenticatedUserId, email: { equals: acceptedEmail, mode: 'insensitive' } },
+      });
+      if (!user) throw new InvalidInviteError();
       if (user && String(user.status).toUpperCase() !== 'ATIVO') throw new UserInactiveError();
-      if (user && !authenticatedUserId) throw new ExistingAccountAuthenticationRequiredError();
-      if (!user) {
-        user = await tx.usuario.create({
-          data: {
-            contaId,
-            nome,
-            email: acceptedEmail,
-            senhaHash,
-            role,
-            ...(guardianProfile?.telefone ? { telefone: guardianProfile.telefone } : {}),
-          },
-        });
-      }
+      if (!user.emailVerifiedAt) throw new InviteEmailNotVerifiedError();
 
       const existingMembership = await tx.usuarioConta.findUnique({
         where: { usuarioId_contaId: { usuarioId: user.id, contaId } },
       });
       if (existingMembership?.status === 'ATIVO') throw new UserAlreadyLinkedError();
+      let collaboratorIdToLink: string | null = null;
+      let guardianIdToLink: string | null = null;
 
       if (role === Role.RESPONSAVEL) {
-        if (!guardianProfile?.cpf || !guardianProfile.telefone) throw new MissingGuardianDataError();
         const studentIds = normalizeAlunoIds(invite.metadata);
         if (!studentIds.length) throw new InvalidInviteError();
+        const target = readExistingRecordTarget(invite.metadata as Prisma.JsonValue | undefined);
+        if (target?.recordType !== 'RESPONSAVEL') throw new InvalidInviteTargetError();
+        const guardian = await tx.responsavel.findFirst({
+          where: { id: target.recordId, contaId },
+          select: { id: true, usuarioId: true },
+        });
+        if (!guardian) throw new InvalidInviteTargetError();
         const students = await tx.aluno.findMany({ where: { contaId, id: { in: studentIds } }, select: { id: true } });
         if (students.length !== studentIds.length) throw new InvalidGuardianStudentsError();
-        const matchingGuardians = await tx.responsavel.findMany({
-          where: {
-            contaId,
-            OR: [
-              { cpf: guardianProfile.cpf },
-              { usuarioId: user.id },
-              { email: { equals: acceptedEmail, mode: 'insensitive' } },
-            ],
-          },
-          select: { id: true, usuarioId: true, cpf: true, email: true },
+        if (guardian.usuarioId && guardian.usuarioId !== user.id) throw new GuardianProfileConflictError();
+        const linkedRows = await tx.alunoResponsavel.findMany({
+          where: { contaId, responsavelId: guardian.id },
+          select: { alunoId: true, aluno: { select: { contaId: true } } },
         });
-        const matchingGuardianIds = new Set(matchingGuardians.map(({ id }) => id));
-        if (
-          matchingGuardianIds.size > 1 ||
-          matchingGuardians.some(({ usuarioId, cpf, email: guardianEmail }) =>
-            (usuarioId && usuarioId !== user.id) ||
-            (cpf !== guardianProfile.cpf && (usuarioId === user.id || guardianEmail.toLowerCase() === acceptedEmail)),
-          )
-        ) {
-          throw new GuardianProfileConflictError();
-        }
-        const guardian = matchingGuardians[0] ?? null;
-        if (!guardian) {
-          await tx.responsavel.create({
-            data: {
-              contaId,
-              nome: nome.trim(),
-              cpf: guardianProfile.cpf,
-              email: acceptedEmail,
-              telefone: guardianProfile.telefone,
-              usuarioId: user.id,
-            },
+        const scopedLinkedStudents = [...new Set(linkedRows.filter((link) => link.aluno.contaId === contaId).map((link) => link.alunoId))].sort();
+        if (JSON.stringify(scopedLinkedStudents) !== JSON.stringify(studentIds)) throw new InvalidGuardianStudentsError();
+        guardianIdToLink = guardian.id;
+      } else {
+        const target = readExistingRecordTarget(invite.metadata as Prisma.JsonValue | undefined);
+        if (target && target.recordType !== 'COLABORADOR') throw new InvalidInviteTargetError();
+        if (target) {
+          const collaborator = await tx.colaborador.findFirst({
+            where: { id: target.recordId, contaId },
+            select: { usuarioId: true, email: true, status: true },
           });
-        } else {
-          await tx.responsavel.update({ where: { id: guardian.id }, data: { usuarioId: user.id } });
-        }
-        const guardianId = guardian?.id ?? (await tx.responsavel.findFirstOrThrow({
-          where: { contaId, cpf: guardianProfile.cpf }, select: { id: true },
-        })).id;
-        const existingLinks = await tx.alunoResponsavel.findMany({
-          where: { contaId, alunoId: { in: studentIds }, responsavelId: { not: guardianId } },
-          select: { alunoId: true },
-          distinct: ['alunoId'],
-        });
-        if (existingLinks.length > 0) throw new StudentAlreadyLinkedError();
-        for (const alunoId of studentIds) {
-          await tx.alunoResponsavel.upsert({
-            where: { uq_aluno_responsavel_conta_aluno_responsavel: { contaId, alunoId, responsavelId: guardianId } },
-            create: { contaId, alunoId, responsavelId: guardianId, tipoVinculo: 'RESPONSAVEL' },
-            update: {},
-          });
+          if (!collaborator || !collaborator.email || normalizeEmail(collaborator.email) !== acceptedEmail) throw new InvalidInviteTargetError();
+          if (collaborator.usuarioId && collaborator.usuarioId !== user.id) throw new InvalidInviteTargetError();
+          if (collaborator.status !== 'ATIVO') throw new InvalidInviteTargetError();
+          collaboratorIdToLink = target.recordId;
         }
       }
 
@@ -392,6 +394,14 @@ export async function acceptInvite(
         await tx.usuarioConta.create({
           data: { usuarioId: user.id, contaId, role, status: 'ATIVO', invitedById: invite.invitedById, inviteId: invite.id, lastAccessedAt: now },
         });
+      }
+
+      // Membership must exist first because Colaborador uses a composite FK to it.
+      if (collaboratorIdToLink) {
+        await tx.colaborador.update({ where: { id: collaboratorIdToLink }, data: { usuarioId: user.id, temAcesso: true } });
+      }
+      if (guardianIdToLink) {
+        await tx.responsavel.update({ where: { id: guardianIdToLink }, data: { usuarioId: user.id } });
       }
 
       const claimed = await tx.invite.updateMany({
@@ -409,12 +419,6 @@ export async function acceptInvite(
     if (error instanceof Prisma.PrismaClientKnownRequestError && (error.code === 'P2002' || error.code === 'P2034')) {
       const invite = await prisma.invite.findUnique({ where: { token }, select: { id: true, contaId: true, email: true, status: true } });
       if (invite?.status !== 'PENDING') throw new InvalidInviteError();
-      const existingUser = await prisma.usuario.findFirst({ where: { email: { equals: finalEmail ?? invite.email ?? '', mode: 'insensitive' } }, select: { id: true } });
-      if (existingUser && invite.contaId) {
-        const membership = await prisma.usuarioConta.findUnique({ where: { usuarioId_contaId: { usuarioId: existingUser.id, contaId: invite.contaId } }, select: { status: true } });
-        if (membership) throw new UserAlreadyLinkedError();
-        throw new ExistingAccountAuthenticationRequiredError();
-      }
       if (error.code === 'P2034') throw new InviteStateConflictError();
       throw new DuplicateInviteError();
     }

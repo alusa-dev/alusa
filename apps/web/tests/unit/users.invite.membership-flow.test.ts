@@ -22,8 +22,9 @@ vi.mock('@/lib/auth-email-flow', async (importOriginal) => {
 import { getServerSession } from 'next-auth';
 import prisma from '@/lib/prisma';
 import { hashPassword } from '@/lib/auth-password';
+import { sendEmailVerificationForUser } from '@/lib/auth-email-flow';
 import { createInvite, deleteInviteById } from '@alusa/lib/server/services/invite-user-service';
-import { acceptInvite } from '@alusa/lib/server/services/invite-user-service';
+import { acceptInvite, ExpiredInviteError, InviteEmailNotVerifiedError, InvalidInviteError, InvalidInviteTargetError } from '@alusa/lib/server/services/invite-user-service';
 import { GET as inviteGet, POST as invitePost } from '@/app/api/users/invite/route';
 import { POST as acceptPost } from '@/app/api/users/accept/route';
 
@@ -54,6 +55,8 @@ describe('convite multi-tenant por identidade global', () => {
     'invite-flow-list-admin@example.com',
     'invite-flow-inactive-target@example.com', 'invite-flow-inactive-admin@example.com',
     'invite-flow-responsible-admin@example.com',
+    'guardian.identity@example.com',
+    'guardian.foreign@example.com',
   ];
   const fixtureColaboradorIds = ['invite-flow-existing-record-collaborator', 'invite-flow-active-collaborator', 'invite-flow-foreign-collaborator', 'invite-flow-inactive-collaborator'];
   const fixtureResponsavelIds = ['invite-flow-responsavel-record', 'invite-flow-responsavel-foreign-record'];
@@ -178,7 +181,7 @@ describe('convite multi-tenant por identidade global', () => {
     })).resolves.toMatchObject({ role: Role.FINANCEIRO, status: 'ATIVO' });
   });
 
-  it('cria a conta e o vínculo da escola ao aceitar um convite novo sem sessão', async () => {
+  it('mantém identidade e convite sem acesso até confirmar o e-mail e repetir a senha', async () => {
     const contaId = 'invite-flow-accept';
     const adminEmail = 'invite-flow-admin-accept@example.com';
     const inviteEmail = 'invite-flow-new-colleague@example.com';
@@ -211,6 +214,7 @@ describe('convite multi-tenant por identidade global', () => {
     const token = inviteTokenFromUrl(inviteJson.invite.inviteUrl);
 
     vi.mocked(getServerSession).mockResolvedValue(null as never);
+    vi.mocked(sendEmailVerificationForUser).mockRejectedValueOnce(new Error('verification email failed'));
     const acceptResponse = await acceptPost(new Request('http://x/api/users/accept', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -223,11 +227,38 @@ describe('convite multi-tenant por identidade global', () => {
     }));
     const acceptJson = await acceptResponse.json();
 
-    expect(acceptResponse.status, JSON.stringify(acceptJson)).toBe(200);
-    expect(acceptJson.user).toMatchObject({ email: inviteEmail, role: 'RECEPCAO', contaId });
+    expect(acceptResponse.status, JSON.stringify(acceptJson)).toBe(202);
+    expect(acceptJson).toMatchObject({ verificationRequired: true, user: { email: inviteEmail, role: 'RECEPCAO', contaId: null, emailVerified: false } });
+    const pendingUser = await prisma.usuario.findUniqueOrThrow({ where: { email: inviteEmail } });
+    expect(acceptJson.verificationEmailSent).toBe(false);
+    expect(pendingUser.contaId).toBeNull();
+    expect(pendingUser.emailVerifiedAt).toBeNull();
     await expect(prisma.usuarioConta.findFirst({
       where: { contaId, usuario: { email: inviteEmail } },
       select: { role: true, status: true },
+    })).resolves.toBeNull();
+    await expect(prisma.invite.findUnique({ where: { token }, select: { status: true } }))
+      .resolves.toMatchObject({ status: 'PENDING' });
+
+    const retryResponse = await acceptPost(new Request('http://x/api/users/accept', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, name: 'Bia Alencar', email: inviteEmail, password: 'Aa!23456' }),
+    }));
+    const retryJson = await retryResponse.json();
+    expect(retryResponse.status, JSON.stringify(retryJson)).toBe(202);
+    expect(retryJson.verificationEmailSent).toBe(true);
+    await expect(prisma.usuario.count({ where: { email: inviteEmail } })).resolves.toBe(1);
+
+    await prisma.usuario.update({ where: { id: pendingUser.id }, data: { emailVerifiedAt: new Date() } });
+    const completedResponse = await acceptPost(new Request('http://x/api/users/accept', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, email: inviteEmail, password: 'Aa!23456' }),
+    }));
+    const completedJson = await completedResponse.json();
+    expect(completedResponse.status, JSON.stringify(completedJson)).toBe(200);
+    expect(completedJson.user).toMatchObject({ email: inviteEmail, role: 'RECEPCAO', contaId, emailVerified: true });
+    await expect(prisma.usuarioConta.findFirst({
+      where: { contaId, usuario: { email: inviteEmail } }, select: { role: true, status: true },
     })).resolves.toMatchObject({ role: Role.RECEPCAO, status: 'ATIVO' });
     await expect(prisma.invite.findUnique({ where: { token }, select: { status: true } }))
       .resolves.toMatchObject({ status: 'ACCEPTED' });
@@ -288,7 +319,7 @@ describe('convite multi-tenant por identidade global', () => {
       data: { contaId: contaA, nome: 'Admin A', email: 'invite-flow-reactivate-admin@example.com', senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' },
     });
     const target = await prisma.usuario.create({
-      data: { contaId: contaA, nome: 'Usuário', email: 'invite-flow-reactivate-user@example.com', senhaHash: 'test', role: Role.PROFESSOR, status: 'ATIVO' },
+      data: { contaId: contaA, nome: 'Usuário', email: 'invite-flow-reactivate-user@example.com', senhaHash: 'test', role: Role.PROFESSOR, status: 'ATIVO', emailVerifiedAt: new Date() },
     });
     await prisma.usuarioConta.createMany({ data: [
       { usuarioId: admin.id, contaId: contaA, role: Role.ADMIN, status: 'ATIVO' },
@@ -304,7 +335,7 @@ describe('convite multi-tenant por identidade global', () => {
     });
 
     const invite = await createInvite('invite-flow-reactivate-user@example.com', Role.RECEPCAO, admin.id, contaA);
-    await acceptInvite(invite.token, 'Usuário reativado', 'test', invite.email, target.id);
+    await acceptInvite(invite.token, invite.email!, target.id);
 
     await expect(prisma.usuarioConta.findUnique({
       where: { usuarioId_contaId: { usuarioId: target.id, contaId: contaA } },
@@ -336,6 +367,188 @@ describe('convite multi-tenant por identidade global', () => {
     expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
     expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
     await expect(prisma.invite.count({ where: { contaId, email: { equals: 'invite-flow-race-target@example.com', mode: 'insensitive' }, status: 'PENDING' } })).resolves.toBe(1);
+  });
+
+  it('aceita concorrência como uma única concessão e torna o retry do mesmo user idempotente', async () => {
+    const contaId = 'invite-flow-race';
+    await ensureConta(contaId, contaId);
+    const admin = await prisma.usuario.create({
+      data: { contaId, nome: 'Admin Race', email: 'invite-flow-race-admin@example.com', senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' },
+    });
+    const target = await prisma.usuario.create({
+      data: { contaId: null, nome: 'Target', email: 'invite-flow-race-target@example.com', senhaHash: 'test', role: Role.RESPONSAVEL, status: 'ATIVO', emailVerifiedAt: new Date() },
+    });
+    await prisma.usuarioConta.create({ data: { usuarioId: admin.id, contaId, role: Role.ADMIN, status: 'ATIVO' } });
+    const invite = await createInvite(target.email, Role.FINANCEIRO, admin.id, contaId);
+
+    const results = await Promise.allSettled([
+      acceptInvite(invite.token, target.email, target.id),
+      acceptInvite(invite.token, target.email, target.id),
+    ]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    await expect(acceptInvite(invite.token, target.email, target.id)).resolves.toMatchObject({ id: target.id, contaId, role: Role.FINANCEIRO });
+    await expect(prisma.usuarioConta.count({ where: { usuarioId: target.id, contaId } })).resolves.toBe(1);
+    await expect(prisma.invite.findUnique({ where: { id: invite.id }, select: { status: true, acceptedByUserId: true } }))
+      .resolves.toEqual({ status: 'ACCEPTED', acceptedByUserId: target.id });
+  });
+
+  it('rejeita aceite se a membership do convidador foi suspensa, sem conceder ou linkar acesso', async () => {
+    const contaId = 'invite-flow-accept';
+    const targetEmail = 'invite-flow-new-colleague@example.com';
+    await ensureConta(contaId, 'Conta de aceite');
+    const admin = await prisma.usuario.create({
+      data: { contaId, nome: 'Admin', email: 'invite-flow-admin-accept@example.com', senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' },
+    });
+    const identity = await prisma.usuario.create({
+      data: { contaId: null, nome: 'Colaborador', email: targetEmail, senhaHash: 'test', role: Role.RECEPCAO, status: 'ATIVO', emailVerifiedAt: new Date() },
+    });
+    await prisma.usuarioConta.create({ data: { usuarioId: admin.id, contaId, role: Role.ADMIN, status: 'ATIVO' } });
+    await prisma.colaborador.create({
+      data: { id: fixtureColaboradorIds[0], contaId, nome: 'Colaborador', email: targetEmail, cargo: 'RECEPCAO', status: 'ATIVO' },
+    });
+    const invite = await createInvite(targetEmail, Role.RECEPCAO, admin.id, contaId, {
+      target: { kind: 'EXISTING_RECORD', recordType: 'COLABORADOR', recordId: fixtureColaboradorIds[0] },
+    });
+    await prisma.usuarioConta.update({ where: { usuarioId_contaId: { usuarioId: admin.id, contaId } }, data: { status: 'INATIVO' } });
+
+    vi.mocked(getServerSession).mockResolvedValue(null as never);
+    const response = await acceptPost(new Request('http://x/api/users/accept', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: invite.token, email: targetEmail, password: 'Aa!23456' }),
+    }));
+    expect(response.status).toBe(404);
+    await expect(acceptInvite(invite.token, targetEmail, identity.id)).rejects.toBeInstanceOf(InvalidInviteError);
+    await expect(prisma.usuarioConta.count({ where: { usuarioId: identity.id, contaId } })).resolves.toBe(0);
+    await expect(prisma.colaborador.findUnique({ where: { id: fixtureColaboradorIds[0] }, select: { usuarioId: true, temAcesso: true } }))
+      .resolves.toEqual({ usuarioId: null, temAcesso: false });
+    await expect(prisma.invite.findUnique({ where: { id: invite.id }, select: { status: true } })).resolves.toEqual({ status: 'PENDING' });
+  });
+
+  it('rejeita aceite se Usuario do convidador está INATIVO mesmo com membership ATIVO', async () => {
+    const contaId = 'invite-flow-accept';
+    const targetEmail = 'invite-flow-new-colleague@example.com';
+    await ensureConta(contaId, 'Conta de aceite');
+    const admin = await prisma.usuario.create({
+      data: { contaId, nome: 'Admin', email: 'invite-flow-admin-accept@example.com', senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' },
+    });
+    const identity = await prisma.usuario.create({
+      data: { contaId: null, nome: 'Colaborador', email: targetEmail, senhaHash: 'test', role: Role.RECEPCAO, status: 'ATIVO', emailVerifiedAt: new Date() },
+    });
+    await prisma.usuarioConta.create({ data: { usuarioId: admin.id, contaId, role: Role.ADMIN, status: 'ATIVO' } });
+    await prisma.colaborador.create({
+      data: { id: fixtureColaboradorIds[0], contaId, nome: 'Colaborador', email: targetEmail, cargo: 'RECEPCAO', status: 'ATIVO' },
+    });
+    const invite = await createInvite(targetEmail, Role.RECEPCAO, admin.id, contaId, {
+      target: { kind: 'EXISTING_RECORD', recordType: 'COLABORADOR', recordId: fixtureColaboradorIds[0] },
+    });
+    await prisma.usuario.update({ where: { id: admin.id }, data: { status: 'INATIVO' } });
+
+    vi.mocked(getServerSession).mockResolvedValue(null as never);
+    const response = await acceptPost(new Request('http://x/api/users/accept', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: invite.token, email: targetEmail, password: 'Aa!23456' }),
+    }));
+    expect(response.status).toBe(404);
+    await expect(prisma.usuarioConta.findUnique({
+      where: { usuarioId_contaId: { usuarioId: admin.id, contaId } }, select: { status: true },
+    })).resolves.toEqual({ status: 'ATIVO' });
+    await expect(acceptInvite(invite.token, targetEmail, identity.id)).rejects.toBeInstanceOf(InvalidInviteError);
+    await expect(prisma.usuarioConta.count({ where: { usuarioId: identity.id, contaId } })).resolves.toBe(0);
+    await expect(prisma.colaborador.findUnique({ where: { id: fixtureColaboradorIds[0] }, select: { usuarioId: true, temAcesso: true } }))
+      .resolves.toEqual({ usuarioId: null, temAcesso: false });
+    await expect(prisma.invite.findUnique({ where: { id: invite.id }, select: { status: true } })).resolves.toEqual({ status: 'PENDING' });
+  });
+
+  it('rejeita aceite se a Conta foi desativada, sem conceder nem linkar acesso', async () => {
+    const contaId = 'invite-flow-accept';
+    const targetEmail = 'invite-flow-new-colleague@example.com';
+    await ensureConta(contaId, 'Conta de aceite');
+    const admin = await prisma.usuario.create({
+      data: { contaId, nome: 'Admin', email: 'invite-flow-admin-accept@example.com', senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' },
+    });
+    const identity = await prisma.usuario.create({
+      data: { contaId: null, nome: 'Colaborador', email: targetEmail, senhaHash: 'test', role: Role.RECEPCAO, status: 'ATIVO', emailVerifiedAt: new Date() },
+    });
+    await prisma.usuarioConta.create({ data: { usuarioId: admin.id, contaId, role: Role.ADMIN, status: 'ATIVO' } });
+    await prisma.colaborador.create({
+      data: { id: fixtureColaboradorIds[0], contaId, nome: 'Colaborador', email: targetEmail, cargo: 'RECEPCAO', status: 'ATIVO' },
+    });
+    const invite = await createInvite(targetEmail, Role.RECEPCAO, admin.id, contaId, {
+      target: { kind: 'EXISTING_RECORD', recordType: 'COLABORADOR', recordId: fixtureColaboradorIds[0] },
+    });
+    await prisma.conta.update({ where: { id: contaId }, data: { status: 'INATIVO' } });
+
+    vi.mocked(getServerSession).mockResolvedValue(null as never);
+    const response = await acceptPost(new Request('http://x/api/users/accept', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: invite.token, email: targetEmail, password: 'Aa!23456' }),
+    }));
+    expect(response.status).toBe(404);
+    await expect(acceptInvite(invite.token, targetEmail, identity.id)).rejects.toBeInstanceOf(InvalidInviteError);
+    await expect(prisma.usuarioConta.count({ where: { usuarioId: identity.id, contaId } })).resolves.toBe(0);
+    await expect(prisma.colaborador.findUnique({ where: { id: fixtureColaboradorIds[0] }, select: { usuarioId: true, temAcesso: true } }))
+      .resolves.toEqual({ usuarioId: null, temAcesso: false });
+    await expect(prisma.invite.findUnique({ where: { id: invite.id }, select: { status: true } })).resolves.toEqual({ status: 'PENDING' });
+  });
+
+  it('expira token vencido sem membership e rejeita token revogado sem outras mutações', async () => {
+    const contaId = 'invite-flow-accept';
+    const targetEmail = 'invite-flow-new-colleague@example.com';
+    await ensureConta(contaId, 'Conta de aceite');
+    const admin = await prisma.usuario.create({
+      data: { contaId, nome: 'Admin', email: 'invite-flow-admin-accept@example.com', senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' },
+    });
+    const identity = await prisma.usuario.create({
+      data: { contaId: null, nome: 'Colaborador', email: targetEmail, senhaHash: 'test', role: Role.RECEPCAO, status: 'ATIVO', emailVerifiedAt: new Date() },
+    });
+    await prisma.usuarioConta.create({ data: { usuarioId: admin.id, contaId, role: Role.ADMIN, status: 'ATIVO' } });
+    await prisma.colaborador.create({
+      data: { id: fixtureColaboradorIds[0], contaId, nome: 'Colaborador', email: targetEmail, cargo: 'RECEPCAO', status: 'ATIVO' },
+    });
+    const expired = await createInvite(targetEmail, Role.RECEPCAO, admin.id, contaId, {
+      target: { kind: 'EXISTING_RECORD', recordType: 'COLABORADOR', recordId: fixtureColaboradorIds[0] },
+    });
+    await prisma.invite.update({ where: { id: expired.id }, data: { expiresAt: new Date(Date.now() - 1_000) } });
+    vi.mocked(getServerSession).mockResolvedValue(null as never);
+    const expiredResponse = await acceptPost(new Request('http://x/api/users/accept', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: expired.token, email: targetEmail, password: 'Aa!23456' }),
+    }));
+    expect(expiredResponse.status).toBe(410);
+    await expect(prisma.usuarioConta.count({ where: { usuarioId: identity.id, contaId } })).resolves.toBe(0);
+    await expect(prisma.colaborador.findUnique({ where: { id: fixtureColaboradorIds[0] }, select: { usuarioId: true, temAcesso: true } }))
+      .resolves.toEqual({ usuarioId: null, temAcesso: false });
+    await expect(prisma.invite.findUnique({ where: { id: expired.id }, select: { status: true, acceptedByUserId: true } }))
+      .resolves.toEqual({ status: 'EXPIRED', acceptedByUserId: null });
+
+    const serviceExpiredEmail = 'invite-flow-collaborator@example.com';
+    await prisma.colaborador.create({
+      data: { id: fixtureColaboradorIds[1], contaId, nome: 'Outro colaborador', email: serviceExpiredEmail, cargo: 'RECEPCAO', status: 'ATIVO' },
+    });
+    const serviceExpired = await createInvite(serviceExpiredEmail, Role.RECEPCAO, admin.id, contaId, {
+      target: { kind: 'EXISTING_RECORD', recordType: 'COLABORADOR', recordId: fixtureColaboradorIds[1] },
+    });
+    await prisma.invite.update({ where: { id: serviceExpired.id }, data: { expiresAt: new Date(Date.now() - 1_000) } });
+    await expect(acceptInvite(serviceExpired.token, serviceExpiredEmail, identity.id)).rejects.toBeInstanceOf(ExpiredInviteError);
+    await expect(prisma.usuarioConta.count({ where: { usuarioId: identity.id, contaId } })).resolves.toBe(0);
+    await expect(prisma.colaborador.findUnique({ where: { id: fixtureColaboradorIds[1] }, select: { usuarioId: true, temAcesso: true } }))
+      .resolves.toEqual({ usuarioId: null, temAcesso: false });
+    await expect(prisma.invite.findUnique({ where: { id: serviceExpired.id }, select: { status: true, acceptedByUserId: true } }))
+      .resolves.toEqual({ status: 'EXPIRED', acceptedByUserId: null });
+
+    await prisma.invite.update({ where: { id: expired.id }, data: { status: 'REVOKED', expiresAt: new Date(Date.now() + 60_000) } });
+    await expect(acceptInvite(expired.token, targetEmail, identity.id)).rejects.toBeInstanceOf(InvalidInviteError);
+    const revokedResponse = await acceptPost(new Request('http://x/api/users/accept', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: expired.token, email: targetEmail, password: 'Aa!23456' }),
+    }));
+    expect(revokedResponse.status).toBe(404);
+    await expect(prisma.usuarioConta.count({ where: { usuarioId: identity.id, contaId } })).resolves.toBe(0);
+    await expect(prisma.colaborador.findUnique({ where: { id: fixtureColaboradorIds[0] }, select: { usuarioId: true, temAcesso: true } }))
+      .resolves.toEqual({ usuarioId: null, temAcesso: false });
+    await expect(prisma.invite.findUnique({ where: { id: expired.id }, select: { status: true, acceptedByUserId: true } }))
+      .resolves.toEqual({ status: 'REVOKED', acceptedByUserId: null });
   });
 
   it('mapeia convite pendente duplicado para 409 mesmo com capitalização diferente', async () => {
@@ -498,6 +711,76 @@ describe('convite multi-tenant por identidade global', () => {
       target: { kind: 'EXISTING_RECORD', recordType: 'RESPONSAVEL', recordId: fixtureResponsavelIds[0] },
       alunosIds: [student.id],
     });
+
+    vi.mocked(getServerSession).mockResolvedValue(null as never);
+    const firstAcceptance = await acceptPost(new Request('http://x/api/users/accept', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, email: 'guardian.identity@example.com', name: 'Responsável', password: 'Aa!23456' }),
+    }));
+    const firstJson = await firstAcceptance.json();
+    expect(firstAcceptance.status, JSON.stringify(firstJson)).toBe(202);
+    const identity = await prisma.usuario.findUniqueOrThrow({ where: { email: 'guardian.identity@example.com' } });
+    expect(identity.contaId).toBeNull();
+    expect(identity.emailVerifiedAt).toBeNull();
+    await expect(prisma.usuarioConta.count({ where: { usuarioId: identity.id } })).resolves.toBe(0);
+    await expect(prisma.responsavel.findUnique({ where: { id: fixtureResponsavelIds[0] }, select: { usuarioId: true } })).resolves.toEqual({ usuarioId: null });
+    await expect(prisma.alunoResponsavel.count({ where: { contaId, alunoId: student.id, responsavelId: fixtureResponsavelIds[0] } })).resolves.toBe(1);
+    await expect(prisma.invite.findUnique({ where: { token: token! }, select: { status: true } })).resolves.toEqual({ status: 'PENDING' });
+    await expect(acceptInvite(token!, 'guardian.identity@example.com', identity.id)).rejects.toBeInstanceOf(InviteEmailNotVerifiedError);
+    await expect(prisma.usuarioConta.count({ where: { usuarioId: identity.id } })).resolves.toBe(0);
+
+    await prisma.usuario.update({ where: { id: identity.id }, data: { emailVerifiedAt: new Date() } });
+    const completed = await acceptPost(new Request('http://x/api/users/accept', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, email: 'guardian.identity@example.com', password: 'Aa!23456' }),
+    }));
+    expect(completed.status).toBe(200);
+    await expect(prisma.usuarioConta.findUnique({ where: { usuarioId_contaId: { usuarioId: identity.id, contaId } }, select: { role: true, status: true } }))
+      .resolves.toEqual({ role: Role.RESPONSAVEL, status: 'ATIVO' });
+    await expect(prisma.responsavel.findUnique({ where: { id: fixtureResponsavelIds[0] }, select: { usuarioId: true } })).resolves.toEqual({ usuarioId: identity.id });
+    await expect(prisma.alunoResponsavel.count({ where: { contaId, alunoId: student.id, responsavelId: fixtureResponsavelIds[0] } })).resolves.toBe(1);
+    await expect(prisma.invite.findUnique({ where: { token: token! }, select: { status: true } })).resolves.toEqual({ status: 'ACCEPTED' });
+    const replay = await acceptPost(new Request('http://x/api/users/accept', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, email: 'guardian.identity@example.com', password: 'Aa!23456' }),
+    }));
+    expect(replay.status).toBe(200);
+    await expect(prisma.usuarioConta.count({ where: { usuarioId: identity.id, contaId } })).resolves.toBe(1);
+    await expect(prisma.alunoResponsavel.count({ where: { contaId, alunoId: student.id, responsavelId: fixtureResponsavelIds[0] } })).resolves.toBe(1);
+  });
+
+  it('nega aceite quando metadata do convite A aponta para responsável e aluno de B', async () => {
+    const contaA = 'invite-flow-responsible-target';
+    const contaB = 'invite-flow-responsible-foreign';
+    await Promise.all([ensureConta(contaA, 'Conta A'), ensureConta(contaB, 'Conta B')]);
+    const admin = await prisma.usuario.create({
+      data: { contaId: contaA, nome: 'Admin A', email: 'invite-flow-responsible-admin@example.com', senhaHash: 'test', role: Role.ADMIN, status: 'ATIVO' },
+    });
+    await prisma.usuarioConta.create({ data: { usuarioId: admin.id, contaId: contaA, role: Role.ADMIN, status: 'ATIVO' } });
+    const identity = await prisma.usuario.create({
+      data: { contaId: null, nome: 'Responsável', email: 'guardian.foreign@example.com', senhaHash: 'test', role: Role.RESPONSAVEL, status: 'ATIVO', emailVerifiedAt: new Date() },
+    });
+    const student = await prisma.aluno.create({
+      data: { id: fixtureStudentIds[1], contaId: contaB, nome: 'Aluno B', dataNasc: new Date('2015-01-01T00:00:00.000Z') },
+    });
+    await prisma.responsavel.create({
+      data: { id: fixtureResponsavelIds[1], contaId: contaB, nome: 'Responsável B', cpf: '11144477735', email: 'responsavel-b@example.com', telefone: '11999999998' },
+    });
+    await prisma.alunoResponsavel.create({
+      data: { contaId: contaB, alunoId: student.id, responsavelId: fixtureResponsavelIds[1], tipoVinculo: 'RESPONSAVEL' },
+    });
+    const invite = await prisma.invite.create({
+      data: {
+        contaId: contaA, role: Role.RESPONSAVEL, email: null, token: randomUUID(), invitedById: admin.id,
+        status: 'PENDING', expiresAt: new Date(Date.now() + 60_000),
+        metadata: { target: { kind: 'EXISTING_RECORD', recordType: 'RESPONSAVEL', recordId: fixtureResponsavelIds[1] }, alunosIds: [student.id] },
+      },
+    });
+
+    await expect(acceptInvite(invite.token, identity.email, identity.id)).rejects.toBeInstanceOf(InvalidInviteTargetError);
+    await expect(prisma.usuarioConta.count({ where: { usuarioId: identity.id } })).resolves.toBe(0);
+    await expect(prisma.responsavel.findUnique({ where: { id: fixtureResponsavelIds[1] }, select: { usuarioId: true } })).resolves.toEqual({ usuarioId: null });
+    await expect(prisma.invite.findUnique({ where: { id: invite.id }, select: { status: true } })).resolves.toEqual({ status: 'PENDING' });
   });
 
   it('responde 404 sem mutações para seleção legada com alunos de outra escola, isolados ou mistos', async () => {

@@ -13,6 +13,10 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
 			? `/auth/register?token=${encodeURIComponent(params.token)}`
 			: '/dashboard';
 	if (session?.user?.id) redirect(callbackUrl);
+	// Invite identities do not receive a tenant session until acceptance. After
+	// email verification, send them back to the token-bound form to prove the
+	// verified identity with its password and complete the transactional accept.
+	if (callbackUrl.startsWith('/auth/register?token=')) redirect(callbackUrl);
 	return (
 		<AuthPageContainer>
 			<LoginClient />

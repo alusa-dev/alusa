@@ -63,7 +63,7 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
             <div data-testid="invite-acceptance-card" className="w-full max-w-lg rounded-2xl border p-6 text-center">
               <h1 className="text-xl font-semibold">Aceitar convite da escola</h1>
               <p className="mt-2 text-sm text-muted-foreground">Você está autenticado como {session.user.email}. Confirme para adicionar o acesso sem criar outra conta ou alterar sua senha.</p>
-              <AcceptInviteButton token={token} requireGuardianData={invite.role === 'RESPONSAVEL'} />
+              <AcceptInviteButton token={token} />
             </div>
           </main>
         </AuthPageContainer>
@@ -72,10 +72,10 @@ export default async function RegisterPage({ searchParams }: RegisterPageProps) 
 
     if (invite.email) {
       const existingUser = await prisma.usuario.findFirst({
-        where: { email: { equals: invite.email, mode: 'insensitive' } },
-        select: { id: true, status: true },
+        where: { email: { equals: invite.email, mode: 'insensitive' }, status: 'ATIVO' },
+        select: { id: true, acessosConta: { where: { status: 'ATIVO', conta: { status: 'ATIVO', deletedAt: null } }, select: { id: true }, take: 1 } },
       });
-      if (existingUser && String(existingUser.status).toUpperCase() === 'ATIVO') {
+      if (existingUser?.acessosConta.length) {
         redirect(`/auth/login?callbackUrl=${encodeURIComponent(`/auth/register?token=${token}`)}`);
       }
     }

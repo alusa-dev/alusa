@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { isValidCpfDigits, normalizeCpfCnpjDigits } from '@alusa/shared/validators/cpf-cnpj';
 
 const dateLikeDTOSchema = z.union([z.string(), z.date()]);
 
@@ -73,27 +72,17 @@ export type ValidateInviteQueryDTO = z.infer<typeof validateInviteQueryDTOSchema
 export const validateInviteResultDTOSchema = z.object({ email: z.string().email().nullable().optional(), role: z.string() });
 export type ValidateInviteResultDTO = z.infer<typeof validateInviteResultDTOSchema>;
 
-const optionalGuardianCpfSchema = z.preprocess(
-  (value) => typeof value === 'string' && value.trim() ? normalizeCpfCnpjDigits(value) : undefined,
-  z.string().refine(isValidCpfDigits, 'CPF inválido').optional(),
-);
-const optionalGuardianPhoneSchema = z.preprocess(
-  (value) => typeof value === 'string' ? value.replace(/\D/g, '') || undefined : value,
-  z.string().regex(/^\d{10,11}$/, 'Informe um telefone com DDD').optional(),
-);
-
 export const acceptInviteInputDTOSchema = z.object({
   token: z.string().min(1, 'Token é obrigatório'),
-  password: z.string().regex(new RegExp(`^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[!@#$%^&*]).{${String(Number(process.env.PASSWORD_MIN_LENGTH || 8))},}$`), 'Senha deve ter no mínimo 8 caracteres, incluindo maiúscula, minúscula, número e caractere especial.').optional(),
+  password: z.string().min(1).max(256).optional(),
   name: z.string().min(2, 'Nome deve ter no mínimo 2 caracteres').optional(), email: z.string().email('E-mail inválido').optional(),
-  cpf: optionalGuardianCpfSchema, telefone: optionalGuardianPhoneSchema,
   senha: z.string().optional(), nome: z.string().optional(),
 }).strict();
 export type AcceptInviteInputDTO = z.input<typeof acceptInviteInputDTOSchema>;
 
 export const acceptInviteResultDTOSchema = z.object({
-  message: z.string(), verificationEmailSent: z.boolean().optional(),
-  user: z.object({ id: z.string(), email: z.string().email(), role: z.string(), contaId: z.string().optional(), emailVerified: z.boolean().optional() }),
+  message: z.string(), verificationEmailSent: z.boolean().optional(), verificationRequired: z.boolean().optional(),
+  user: z.object({ id: z.string(), email: z.string().email(), role: z.string(), contaId: z.string().nullable().optional(), emailVerified: z.boolean().optional() }),
 });
 export type AcceptInviteResultDTO = z.infer<typeof acceptInviteResultDTOSchema>;
 

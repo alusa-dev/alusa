@@ -105,6 +105,11 @@ describe('RegisterForm', () => {
   });
 
   it('envia a aceitação do convite com o e-mail vinculado ao token', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 202,
+      json: async () => ({ verificationRequired: true, verificationEmailSent: true, user: { email: 'colaboradora@example.com', contaId: null, emailVerified: false } }),
+    });
     const { default: RegisterForm } = await import('@/app/(auth)/register/RegisterForm');
 
     render(
@@ -137,6 +142,10 @@ describe('RegisterForm', () => {
       password: 'StrongPass123!',
       name: 'Bia Alencar',
     });
+    expect(payload).not.toHaveProperty('cpf');
+    expect(payload).not.toHaveProperty('telefone');
+    expect(signInMock).not.toHaveBeenCalled();
+    expect(await screen.findByTestId('invite-verification-notice')).toHaveTextContent('Confirme o endereço');
   });
 
   it('mostra como toast, sem erro inline, quando o e-mail já está vinculado à escola', async () => {
@@ -157,8 +166,6 @@ describe('RegisterForm', () => {
     fireEvent.change(screen.getByTestId('register-nome-first'), { target: { value: 'Bryan' } });
     fireEvent.change(screen.getByTestId('register-nome-last'), { target: { value: 'Alencar' } });
     fireEvent.change(screen.getByTestId('register-email'), { target: { value: 'bryan@example.com' } });
-    fireEvent.change(screen.getByTestId('register-guardian-cpf'), { target: { value: '529.982.247-25' } });
-    fireEvent.change(screen.getByTestId('register-guardian-phone'), { target: { value: '(11) 99999-9999' } });
     fireEvent.change(screen.getByTestId('register-senha'), { target: { value: 'StrongPass123!' } });
     fireEvent.change(screen.getByTestId('register-senha-confirmar'), { target: { value: 'StrongPass123!' } });
     fireEvent.click(screen.getByTestId('register-termos-checkbox'));

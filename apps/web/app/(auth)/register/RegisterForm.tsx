@@ -22,7 +22,6 @@ import { LegalAcceptanceModal } from '@/components/legal/LegalAcceptanceModal';
 import PasswordStrengthIndicator from '@/components/auth/PasswordStrengthIndicator';
 import { requiredRegisterLegalDocuments } from '@/lib/privacy/legal-versions';
 import { passwordPolicyRegex } from '@/lib/password-policy';
-import { isValidCpfDigits, normalizeCpfCnpjDigits } from '@alusa/shared/validators/cpf-cnpj';
 
 export const REQUIRES_SCHOOL_DATA = false;
 
@@ -40,24 +39,12 @@ const baseSchema = z.object({
   senha: z.string().regex(passwordPolicyRegex, 'Senha fraca'),
   confirmarSenha: z.string(),
   termos: z.boolean().refine((val) => val === true, { message: 'Você deve aceitar os termos' }),
-  cpf: z.string().optional(),
-  telefone: z.string().optional(),
 });
 
-function schemaFor(isGuardianInvite: boolean) {
-  return baseSchema
-    .refine((data) => data.senha === data.confirmarSenha, {
-      path: ['confirmarSenha'],
-      message: 'Senhas não coincidem',
-    })
-    .refine((data) => !isGuardianInvite || (Boolean(data.cpf) && isValidCpfDigits(normalizeCpfCnpjDigits(data.cpf))), {
-      path: ['cpf'],
-      message: 'Informe um CPF válido',
-    })
-    .refine((data) => !isGuardianInvite || /^\d{10,11}$/.test((data.telefone ?? '').replace(/\D/g, '')) , {
-      path: ['telefone'],
-      message: 'Informe um telefone com DDD',
-    });
+function schemaFor() {
+  return baseSchema.refine((data) => data.senha === data.confirmarSenha, {
+    path: ['confirmarSenha'], message: 'Senhas não coincidem',
+  });
 }
 
 const INVITE_ROLE_LABELS: Record<string, string> = {
@@ -76,8 +63,6 @@ type FormValues = {
   senha: string;
   confirmarSenha: string;
   termos: boolean;
-  cpf?: string;
-  telefone?: string;
 };
 
 interface InviteData {
@@ -103,13 +88,13 @@ interface RegisterFormProps {
 export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding = false, onboardingStudentCount }: RegisterFormProps) {
   const mode: RegisterMode = inviteData ? 'invite' : 'first';
   const [globalError, setGlobalError] = useState<string | null>(null);
+  const [verificationNotice, setVerificationNotice] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [passwordValue, setPasswordValue] = useState('');
   const passwordInputRef = useRef<HTMLInputElement | null>(null);
   const [legalModalOpen, setLegalModalOpen] = useState(false);
-  const isGuardianInvite = mode === 'invite' && inviteData?.role.toUpperCase() === 'RESPONSAVEL';
-  const schema = useMemo(() => schemaFor(isGuardianInvite), [isGuardianInvite]);
+  const schema = useMemo(() => schemaFor(), []);
   const { register, handleSubmit, control, formState: { errors, isSubmitting }, setValue, watch } = useForm<FormValues>({
     resolver: zodResolver(schema),
     mode: 'onSubmit',
@@ -189,7 +174,6 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
           name: `${data.firstName} ${data.lastName}`.trim(),
           email: inviteData.email ?? data.email,
           password: data.senha,
-          ...(isGuardianInvite ? { cpf: data.cpf, telefone: data.telefone } : {}),
         };
       }
 
@@ -201,7 +185,9 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
       const responsePayload = (await res.json().catch(() => ({}))) as Partial<{
         error: string;
         code: string;
-        user: { email?: string; contaId?: string; emailVerified?: boolean };
+        verificationRequired?: boolean;
+        verificationEmailSent?: boolean;
+        user: { email?: string; contaId?: string | null; emailVerified?: boolean };
       }>;
 
       if (!res.ok) {
@@ -252,6 +238,13 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
             onClose={() => { toast.dismiss(t); }}
           />
         ));
+        return;
+      }
+
+      if (mode === 'invite' && responsePayload.verificationRequired) {
+        setVerificationNotice(responsePayload.verificationEmailSent
+          ? `Enviamos uma confirmação para ${responsePayload.user?.email ?? data.email}. Confirme o endereço e volte por este convite para concluir o acesso.`
+          : 'Não foi possível enviar a confirmação. Envie novamente este formulário para tentar outra vez. Nenhum acesso foi concedido.');
         return;
       }
 
@@ -361,9 +354,19 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
               </strong>.
             </p>
           ) : null}
+          {mode === 'invite' ? (
+            <p className="text-left text-xs leading-relaxed text-muted-foreground lg:text-center">
+              Se já tem uma conta com este e-mail, informe a senha que já usa. Para uma conta nova, escolha uma senha; o acesso só é liberado depois da confirmação do e-mail.
+            </p>
+          ) : null}
           {globalError && (
             <p data-testid="register-error" className="text-left text-sm text-red-600 lg:text-[12px]" role="alert">
               {globalError}
+            </p>
+          )}
+          {verificationNotice && (
+            <p data-testid="invite-verification-notice" className="text-left text-sm text-brand-muted" role="status">
+              {verificationNotice}
             </p>
           )}
         </header>
@@ -418,38 +421,6 @@ export default function RegisterForm({ inviteData, enableExternalAsaasOnboarding
               </span>
             </div>
           </div>
-          {isGuardianInvite ? (
-            <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  maxLength={14}
-                  placeholder="CPF"
-                  aria-label="CPF do responsável"
-                  data-testid="register-guardian-cpf"
-                  className="h-12 w-full rounded-[12px] border border-gray-300 bg-white px-4 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0"
-                  {...register('cpf')}
-                />
-                {errors.cpf ? <p role="alert" className="mt-1 text-xs text-red-600">{errors.cpf.message}</p> : null}
-              </div>
-              <div>
-                <input
-                  type="tel"
-                  inputMode="tel"
-                  autoComplete="tel"
-                  maxLength={20}
-                  placeholder="Telefone com DDD"
-                  aria-label="Telefone do responsável"
-                  data-testid="register-guardian-phone"
-                  className="h-12 w-full rounded-[12px] border border-gray-300 bg-white px-4 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-gray-300 focus:ring-0"
-                  {...register('telefone')}
-                />
-                {errors.telefone ? <p role="alert" className="mt-1 text-xs text-red-600">{errors.telefone.message}</p> : null}
-              </div>
-            </div>
-          ) : null}
           {mode === 'first' && enableExternalAsaasOnboarding && SHOW_FINANCE_INTEGRATION_MODE_SELECTOR ? (
             <div className="w-full">
               <Controller

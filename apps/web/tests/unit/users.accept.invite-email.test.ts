@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { getServerSession } from 'next-auth';
 
-const { acceptInviteMock, sendEmailVerificationForUserMock, hashPasswordMock, serviceErrors } = vi.hoisted(() => ({
+const { acceptInviteMock, prepareInviteIdentityMock, sendEmailVerificationForUserMock, hashPasswordMock, comparePasswordMock, serviceErrors } = vi.hoisted(() => ({
   acceptInviteMock: vi.fn(),
+  prepareInviteIdentityMock: vi.fn(),
   sendEmailVerificationForUserMock: vi.fn(),
   hashPasswordMock: vi.fn(),
+  comparePasswordMock: vi.fn(),
   serviceErrors: {
     ExpiredInviteError: class extends Error {},
     InvalidInviteError: class extends Error {},
@@ -17,6 +20,7 @@ const { acceptInviteMock, sendEmailVerificationForUserMock, hashPasswordMock, se
     StudentAlreadyLinkedError: class extends Error {},
     GuardianProfileConflictError: class extends Error {},
     MissingGuardianDataError: class extends Error {},
+    InviteEmailNotVerifiedError: class extends Error {},
     UserInactiveError: class extends Error {},
   },
 }));
@@ -38,6 +42,7 @@ const { prismaMock } = vi.hoisted(() => ({
 
 vi.mock('@alusa/lib/server/services/invite-user-service', () => ({
   acceptInvite: acceptInviteMock,
+  prepareInviteIdentity: prepareInviteIdentityMock,
   expirePendingInvite: vi.fn(),
   ...serviceErrors,
 }));
@@ -51,6 +56,7 @@ vi.mock('@/lib/rate-limit', () => ({
 
 vi.mock('@/lib/auth-password', () => ({
   hashPassword: hashPasswordMock,
+  comparePassword: comparePasswordMock,
   passwordPolicyMessage: 'Senha inválida',
 }));
 
@@ -68,7 +74,9 @@ import { POST } from '@/app/api/users/accept/route';
 describe('/api/users/accept', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getServerSession).mockResolvedValue(null as never);
     hashPasswordMock.mockResolvedValue('hashed-password');
+    comparePasswordMock.mockResolvedValue(true);
     prismaMock.invite.findUnique.mockResolvedValue({
       email: null,
       role: 'RESPONSAVEL',
@@ -85,10 +93,12 @@ describe('/api/users/accept', () => {
       email: 'responsavel@example.com',
       role: 'RESPONSAVEL',
       contaId: 'conta-1',
+      emailVerifiedAt: new Date(),
     });
+    prepareInviteIdentityMock.mockResolvedValue({ id: 'user-1', email: 'responsavel@example.com', role: 'RESPONSAVEL', contaId: null, emailVerifiedAt: null });
   });
 
-  it('encaminha o email digitado para convites sem email fixo', async () => {
+  it('cria apenas identidade global não verificada para RESPONSAVEL e preserva token no callback', async () => {
     const response = await POST(
       new Request('http://x/api/users/accept', {
         method: 'POST',
@@ -98,60 +108,86 @@ describe('/api/users/accept', () => {
           name: 'Responsável Teste',
           password: 'Abcdef1!',
           email: 'responsavel@example.com',
-          cpf: '529.982.247-25',
-          telefone: '(11) 99999-9999',
+        }),
+      }),
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(202);
+    expect(prepareInviteIdentityMock).toHaveBeenCalledWith(
+      'invite-token',
+      'Responsável Teste',
+      'hashed-password',
+      'responsavel@example.com',
+    );
+    expect(acceptInviteMock).not.toHaveBeenCalled();
+    expect(json).toMatchObject({ verificationRequired: true, verificationEmailSent: true, user: { email: 'responsavel@example.com', contaId: null, emailVerified: false } });
+    expect(sendEmailVerificationForUserMock).toHaveBeenCalledWith(
+      'user-1',
+      expect.any(Object),
+      { callbackUrl: '/auth/login?callbackUrl=%2Fauth%2Fregister%3Ftoken%3Dinvite-token' },
+    );
+  });
+
+  it('exige senha e e-mail verificado antes de concluir; reusa identidade confirmada', async () => {
+    prismaMock.usuario.findFirst.mockResolvedValue({
+      id: 'user-1',
+      email: 'responsavel@example.com',
+      status: 'ATIVO',
+      emailVerifiedAt: new Date(),
+      senhaHash: 'password-hash',
+    });
+
+    const response = await POST(
+      new Request('http://x/api/users/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: 'invite-token',
+          name: 'Responsável Teste',
+          password: 'Abcdef1!',
+          email: 'responsavel@example.com',
         }),
       }),
     );
     const json = await response.json();
 
     expect(response.status).toBe(200);
-    expect(acceptInviteMock).toHaveBeenCalledWith(
-      'invite-token',
-      'Responsável Teste',
-      'hashed-password',
-      'responsavel@example.com',
-      undefined,
-      { cpf: '52998224725', telefone: '11999999999' },
-    );
+    expect(comparePasswordMock).toHaveBeenCalledWith('Abcdef1!', 'password-hash');
+    expect(acceptInviteMock).toHaveBeenCalledWith('invite-token', 'responsavel@example.com', 'user-1');
     expect(json.user.email).toBe('responsavel@example.com');
-    expect(sendEmailVerificationForUserMock).toHaveBeenCalledWith(
-      'user-1',
-      expect.any(Object),
-      expect.any(Object),
-    );
   });
 
-  it('informa que a conta já está vinculada à escola sem pedir login novamente', async () => {
+  it('rejeita troca de sessão ou e-mail contra convite vinculado antes de criar identidade', async () => {
+    prismaMock.invite.findUnique.mockResolvedValue({
+      email: 'target@example.com', role: 'RECEPCAO', status: 'PENDING', expiresAt: new Date(Date.now() + 60_000), contaId: 'conta-1', invitedById: 'admin-1',
+    });
+    vi.mocked(getServerSession).mockResolvedValue({ user: { id: 'foreign-user', email: 'foreign@example.com' } } as never);
+
+    const response = await POST(new Request('http://x/api/users/accept', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: 'invite-token', email: 'target@example.com', password: 'Aa!23456', name: 'Pessoa' }),
+    }));
+
+    expect(response.status).toBe(403);
+    expect(prepareInviteIdentityMock).not.toHaveBeenCalled();
+    expect(acceptInviteMock).not.toHaveBeenCalled();
+  });
+
+  it('não aceita identidade verificada com senha incorreta', async () => {
     prismaMock.usuario.findFirst.mockResolvedValue({
-      id: 'user-1',
-      status: 'ATIVO',
-      contaId: 'outra-conta',
+      id: 'user-1', email: 'responsavel@example.com', status: 'ATIVO', emailVerifiedAt: new Date(), senhaHash: 'password-hash',
     });
-    prismaMock.usuarioConta.findUnique.mockResolvedValue({ status: 'ATIVO' });
+    comparePasswordMock.mockResolvedValue(false);
 
-    const response = await POST(
-      new Request('http://x/api/users/accept', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token: 'invite-token',
-          name: 'Responsável Teste',
-          password: 'Abcdef1!',
-          email: 'responsavel@example.com',
-          cpf: '529.982.247-25',
-          telefone: '(11) 99999-9999',
-        }),
-      }),
-    );
-    const json = await response.json();
+    const response = await POST(new Request('http://x/api/users/accept', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: 'invite-token', email: 'responsavel@example.com', password: 'Wrong123!' }),
+    }));
+    const body = await response.json();
 
-    expect(response.status).toBe(409);
-    expect(json).toEqual({
-      error: 'Esta conta já está vinculada a esta escola. Fale com o administrador.',
-      code: 'USER_ALREADY_LINKED',
-    });
-    expect(hashPasswordMock).not.toHaveBeenCalled();
+    expect(response.status).toBe(401);
+    expect(body.code).toBe('INVALID_CREDENTIALS');
     expect(acceptInviteMock).not.toHaveBeenCalled();
   });
 });

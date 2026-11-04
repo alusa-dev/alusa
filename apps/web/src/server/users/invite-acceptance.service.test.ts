@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import prisma from '@/lib/prisma';
-import { findExistingUserForInvite, findUserMembershipForInvite } from './invite-acceptance.service';
+import { findExistingUserForInvite, findInviteForAcceptance, findUserMembershipForInvite } from './invite-acceptance.service';
 
 describe('invite acceptance lookups', () => {
   afterEach(() => {
@@ -16,7 +16,16 @@ describe('invite acceptance lookups', () => {
 
     expect(findFirst).toHaveBeenCalledWith({
       where: { email: { equals: 'person@example.com', mode: 'insensitive' } },
-      select: { id: true, status: true, contaId: true },
+      select: { id: true, email: true, status: true, emailVerifiedAt: true, senhaHash: true },
+    });
+  });
+
+  it('loads acceptance state without treating token as tenant authority', async () => {
+    const findUnique = vi.spyOn(prisma.invite, 'findUnique').mockResolvedValue({ id: 'invite-1' } as never);
+    await findInviteForAcceptance('secret-token');
+    expect(findUnique).toHaveBeenCalledWith({
+      where: { token: 'secret-token' },
+      select: { id: true, email: true, role: true, status: true, expiresAt: true, contaId: true, invitedById: true, acceptedByUserId: true },
     });
   });
 

@@ -28,10 +28,17 @@ export async function findPendingInviteForAcceptance(
   return inviterMembership ? invite : null;
 }
 
+export async function findInviteForAcceptance(token: string) {
+  return prisma.invite.findUnique({
+    where: { token },
+    select: { id: true, email: true, role: true, status: true, expiresAt: true, contaId: true, invitedById: true, acceptedByUserId: true },
+  });
+}
+
 export async function findExistingUserForInvite(email: string) {
   return prisma.usuario.findFirst({
     where: { email: { equals: email, mode: 'insensitive' } },
-    select: { id: true, status: true },
+    select: { id: true, email: true, status: true, emailVerifiedAt: true, senhaHash: true },
   });
 }
 
