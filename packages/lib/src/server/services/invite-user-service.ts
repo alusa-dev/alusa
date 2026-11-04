@@ -300,28 +300,43 @@ export async function prepareInviteIdentity(token: string, nome: string, senhaHa
   const acceptedEmail = normalizeEmail(email);
   if (!acceptedEmail) throw new MissingInviteEmailError();
   const now = new Date();
-  return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`invite-identity:${acceptedEmail}`}, 0))`;
-    const invite = await loadAcceptableInvite(tx, token, now);
-    const invitedEmail = normalizeEmail(invite.email);
-    if (invitedEmail && invitedEmail !== acceptedEmail) throw new InvalidInviteError();
-    const existing = await tx.usuario.findFirst({
-      where: { email: { equals: acceptedEmail, mode: 'insensitive' } },
-      select: { id: true, email: true, nome: true, role: true, contaId: true, status: true, emailVerifiedAt: true },
-    });
-    if (existing) return existing;
-    try {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`invite-identity:${acceptedEmail}`}, 0))`;
+      const invite = await loadAcceptableInvite(tx, token, now);
+      const invitedEmail = normalizeEmail(invite.email);
+      if (invitedEmail && invitedEmail !== acceptedEmail) throw new InvalidInviteError();
+      const existing = await tx.usuario.findFirst({
+        where: { email: { equals: acceptedEmail, mode: 'insensitive' } },
+        select: { id: true, email: true, nome: true, role: true, contaId: true, status: true, emailVerifiedAt: true },
+      });
+      if (existing) return existing;
       return await tx.usuario.create({
         data: { contaId: null, nome: nome.trim(), email: acceptedEmail, senhaHash, role: invite.role, status: 'ATIVO' },
         select: { id: true, email: true, nome: true, role: true, contaId: true, status: true, emailVerifiedAt: true },
       });
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ExistingAccountAuthenticationRequiredError();
-      }
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (error) {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || !['P2002', 'P2034'].includes(error.code)) {
       throw error;
     }
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
+    // Two first submissions can take their serializable snapshots before the
+    // advisory-lock winner commits. Recover only the same verified target
+    // identity; never overwrite its name, password, status, or tenant links.
+    const existing = await prisma.$transaction(async (tx) => {
+      const invite = await loadAcceptableInvite(tx, token, new Date());
+      const invitedEmail = normalizeEmail(invite.email);
+      if (invitedEmail && invitedEmail !== acceptedEmail) throw new InvalidInviteError();
+      return tx.usuario.findFirst({
+        where: { email: { equals: acceptedEmail, mode: 'insensitive' } },
+        select: { id: true, email: true, nome: true, role: true, contaId: true, status: true, emailVerifiedAt: true },
+      });
+    });
+    if (existing) return existing;
+    if (error.code === 'P2002') throw new ExistingAccountAuthenticationRequiredError();
+    throw new InviteStateConflictError();
+  }
 }
 
 export async function acceptInvite(
@@ -435,7 +450,35 @@ export async function acceptInvite(
       throw error;
     }
     if (error instanceof Prisma.PrismaClientKnownRequestError && (error.code === 'P2002' || error.code === 'P2034')) {
-      const invite = await prisma.invite.findUnique({ where: { token }, select: { id: true, contaId: true, email: true, status: true } });
+      const invite = await prisma.invite.findUnique({
+        where: { token },
+        select: { id: true, contaId: true, email: true, status: true, acceptedByUserId: true },
+      });
+      if (
+        invite?.status === 'ACCEPTED' &&
+        invite.acceptedByUserId === authenticatedUserId &&
+        invite.contaId
+      ) {
+        const completedUser = await prisma.usuario.findFirst({
+          where: {
+            id: authenticatedUserId,
+            email: { equals: finalEmail ?? '', mode: 'insensitive' },
+            status: 'ATIVO',
+            emailVerifiedAt: { not: null },
+          },
+        });
+        const completedMembership = await prisma.usuarioConta.findUnique({
+          where: { usuarioId_contaId: { usuarioId: authenticatedUserId, contaId: invite.contaId } },
+        });
+        if (
+          !completedUser ||
+          completedMembership?.status !== 'ATIVO' ||
+          completedMembership.inviteId !== invite.id
+        ) {
+          throw new InvalidInviteError();
+        }
+        return { ...completedUser, contaId: invite.contaId, role: completedMembership.role };
+      }
       if (invite?.status !== 'PENDING') throw new InvalidInviteError();
       if (error.code === 'P2034') throw new InviteStateConflictError();
       throw new DuplicateInviteError();

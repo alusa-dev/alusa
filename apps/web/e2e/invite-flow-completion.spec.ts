@@ -70,7 +70,11 @@ async function postJson(page: Page, path: string, body: unknown) {
 function inviteFrom(body: Record<string, unknown>) {
   const invite = body.invite;
   if (!invite || typeof invite !== 'object') throw new Error('Resposta não contém invite');
-  return invite as { id: string; token: string; email?: string; inviteUrl?: string };
+  const record = invite as { id: string; email?: string; inviteUrl?: string };
+  if (!record.inviteUrl) throw new Error('Resposta não contém link do convite');
+  const token = new URL(record.inviteUrl).searchParams.get('token');
+  if (!token) throw new Error('Link do convite não contém token');
+  return { ...record, token };
 }
 
 test.describe('convites — validação ponta a ponta complementar', () => {
@@ -97,7 +101,7 @@ test.describe('convites — validação ponta a ponta complementar', () => {
     expect(forbidden.body.error).toBeTruthy();
   });
 
-  test('convite com e-mail fixo rejeita outra sessão e valida campos obrigatórios, CPF e telefone', async ({ page, browser }) => {
+  test('convite com e-mail fixo rejeita outra identidade e preserva convite pendente', async ({ page, browser }) => {
     const school = await seedAdminAndAuthenticate(page, { email: `admin-${randomUUID()}@e2e.test` });
     const inviteEmail = `colaborador-${randomUUID()}@e2e.test`;
     const created = await postJson(page, '/api/users/invite', { email: inviteEmail, role: 'RECEPCAO' });
@@ -122,24 +126,6 @@ test.describe('convites — validação ponta a ponta complementar', () => {
     });
     expect(wrongEmail.response.status()).toBe(403);
     expect(await prisma.invite.findUniqueOrThrow({ where: { token } })).toMatchObject({ status: 'PENDING', contaId: school.contaId });
-
-    const student = await createStudent(school.contaId, 'Aluno CPF inválido');
-    const responsible = await postJson(page, '/api/users/invite', { role: 'RESPONSAVEL', alunosIds: [student.id] });
-    expect(responsible.response.status()).toBe(201);
-    const guardianToken = inviteFrom(responsible.body).token;
-    const invalidCpf = await postJson(guestPage, '/api/users/accept', {
-      token: guardianToken, email: `guardian-${randomUUID()}@e2e.test`, name: 'Responsável Inválido',
-      password: 'Aa!23456', cpf: '111.111.111-11', telefone: '(11) 99999-9999',
-    });
-    expect(invalidCpf.response.status()).toBe(400);
-
-    const invalidPhone = await postJson(guestPage, '/api/users/accept', {
-      token: guardianToken, email: `guardian-${randomUUID()}@e2e.test`, name: 'Responsável Inválido',
-      password: 'Aa!23456', cpf: '529.982.247-25', telefone: '123',
-    });
-    expect(invalidPhone.response.status()).toBe(400);
-    expect(await prisma.usuario.count()).toBe(1);
-    expect(await prisma.invite.findUniqueOrThrow({ where: { token: guardianToken } })).toMatchObject({ status: 'PENDING' });
     await guestContext.close();
   });
 
@@ -153,6 +139,14 @@ test.describe('convites — validação ponta a ponta complementar', () => {
     const expiredInvite = inviteFrom(expired.body);
     const revokedInvite = inviteFrom(revoked.body);
     const acceptedInvite = inviteFrom(accepted.body) as { id: string; token: string; email: string };
+    const bcrypt = (await import('bcryptjs')).default;
+    await prisma.usuario.create({
+      data: {
+        nome: 'Identidade confirmada', email: acceptedInvite.email,
+        senhaHash: await bcrypt.hash('Aa!23456', 10), role: Role.RECEPCAO,
+        status: 'ATIVO', emailVerifiedAt: new Date(),
+      },
+    });
     const guestContext = await browser.newContext();
     const guestPage = await guestContext.newPage();
     await guestPage.goto('/');
@@ -173,7 +167,7 @@ test.describe('convites — validação ponta a ponta complementar', () => {
     const replay = await postJson(guestPage, '/api/users/accept', {
       token: acceptedInvite.token, name: 'Colaborador Aceito', email: acceptedInvite.email, password: 'Aa!23456',
     });
-    expect(replay.response.status()).toBe(404);
+    expect(replay.response.status()).toBe(200);
     await guestPage.goto(`/auth/register?token=${encodeURIComponent(acceptedInvite.token)}`);
     await expect(guestPage).toHaveURL(/\/auth\/login\?error=invalid_token/);
     expect(await prisma.usuario.count({ where: { email: acceptedInvite.email } })).toBe(1);
@@ -184,22 +178,47 @@ test.describe('convites — validação ponta a ponta complementar', () => {
   test('duas aceitações concorrentes do mesmo convite criam apenas uma identidade e um vínculo', async ({ page, browser }) => {
     const school = await seedAdminAndAuthenticate(page, { email: `admin-${randomUUID()}@e2e.test` });
     const student = await createStudent(school.contaId, 'Aluno concorrência');
-    const created = await postJson(page, '/api/users/invite', { role: 'RESPONSAVEL', alunosIds: [student.id] });
+    const guardian = await prisma.responsavel.create({
+      data: { contaId: school.contaId, nome: 'Responsável concorrente', cpf: '52998224725', email: ' ', telefone: '11999999999' },
+      select: { id: true },
+    });
+    await prisma.alunoResponsavel.create({ data: { contaId: school.contaId, alunoId: student.id, responsavelId: guardian.id, tipoVinculo: 'RESPONSAVEL' } });
+    const created = await postJson(page, '/api/users/invite', {
+      target: { kind: 'EXISTING_RECORD', recordType: 'RESPONSAVEL', recordId: guardian.id, role: 'RESPONSAVEL' },
+    });
     expect(created.response.status()).toBe(201);
     const token = inviteFrom(created.body).token;
     const email = `guardian-race-${randomUUID()}@e2e.test`;
     const payload = {
       token, name: 'Responsável Concorrente', email, password: 'Aa!23456',
-      cpf: '529.982.247-25', telefone: '11999999999',
     };
     const context = await browser.newContext();
     const guest = await context.newPage();
     await guest.goto('/');
-    const [first, second] = await Promise.all([
+    const [identityPreparationOne, identityPreparationTwo] = await Promise.all([
       postJson(guest, '/api/users/accept', payload),
       postJson(guest, '/api/users/accept', payload),
     ]);
-    expect([first.response.status(), second.response.status()].sort(), JSON.stringify([first.body, second.body])).toEqual([200, 404].sort());
+    expect([identityPreparationOne.response.status(), identityPreparationTwo.response.status()], JSON.stringify([identityPreparationOne.body, identityPreparationTwo.body])).toEqual([202, 202]);
+    const user = await prisma.usuario.findUniqueOrThrow({ where: { email } });
+    expect(user.emailVerifiedAt).toBeNull();
+    expect(await prisma.usuarioConta.count({ where: { usuarioId: user.id } })).toBe(0);
+    const verification = await sendEmailVerificationForUser(user.id, { ip: '127.0.0.1', userAgent: 'playwright' }, {
+      callbackUrl: `/auth/login?callbackUrl=${encodeURIComponent(`/auth/register?token=${encodeURIComponent(token)}`)}`,
+    });
+    const verificationToken = new URL(verification.actionUrl).searchParams.get('token');
+    expect(verificationToken).toBeTruthy();
+    await guest.goto(`/auth/verify-email?token=${encodeURIComponent(verificationToken!)}`);
+    await expect(guest.getByRole('heading', { name: 'E-mail confirmado' })).toBeVisible({ timeout: 10_000 });
+    const [acceptOne, acceptTwo] = await Promise.all([
+      postJson(guest, '/api/users/accept', payload),
+      postJson(guest, '/api/users/accept', payload),
+    ]);
+    const acceptStatuses = [acceptOne.response.status(), acceptTwo.response.status()];
+    expect(acceptStatuses.filter((status) => status === 200).length).toBeGreaterThanOrEqual(1);
+    expect(acceptStatuses.every((status) => [200, 409].includes(status)), JSON.stringify({ acceptStatuses, bodies: [acceptOne.body, acceptTwo.body] })).toBe(true);
+    const completedReplay = await postJson(guest, '/api/users/accept', payload);
+    expect(completedReplay.response.status(), JSON.stringify(completedReplay.body)).toBe(200);
     expect(await prisma.usuario.count({ where: { email } })).toBe(1);
     expect(await prisma.usuarioConta.count({ where: { contaId: school.contaId, role: Role.RESPONSAVEL } })).toBe(1);
     expect(await prisma.alunoResponsavel.count({ where: { contaId: school.contaId, alunoId: student.id } })).toBe(1);
@@ -254,7 +273,7 @@ test.describe('convites — validação ponta a ponta complementar', () => {
       const removalResponse = await page.request.delete(new URL(`/api/users/${createdUser.id}`, page.url()).toString(), { data: { reason: 'Teste de isolamento E2E' } });
       expect(removalResponse.status(), await removalResponse.text()).toBe(200);
       expect(await prisma.usuario.findUnique({ where: { id: createdUser.id } })).not.toBeNull();
-      expect(await prisma.usuarioConta.findUnique({ where: { usuarioId_contaId: { usuarioId: createdUser.id, contaId: schoolA.contaId } } })).toBeNull();
+      expect(await prisma.usuarioConta.findUnique({ where: { usuarioId_contaId: { usuarioId: createdUser.id, contaId: schoolA.contaId } } })).toMatchObject({ status: 'INATIVO' });
       expect(await prisma.usuarioConta.findUnique({ where: { usuarioId_contaId: { usuarioId: createdUser.id, contaId: schoolB.contaId } } })).toMatchObject({ status: 'ATIVO', role: Role.ADMIN });
 
       await installSession(schoolBPage, { ...createdUser, role: Role.RECEPCAO, contaId: schoolA.contaId }, true, false);
@@ -316,19 +335,30 @@ test.describe('convites — validação ponta a ponta complementar', () => {
     expect(await prisma.invite.count({ where: { contaId: school.contaId, email, status: 'PENDING' } })).toBe(1);
   });
 
-  test('avisa por toast quando a conta já está vinculada à escola', async ({ page }) => {
+  test('não oferece novo convite para responsável com acesso ativo', async ({ page }) => {
     const school = await seedAdminAndAuthenticate(page, { email: `admin-${randomUUID()}@e2e.test` });
     const student = await createStudent(school.contaId, 'Aluno conta já vinculada');
-    const created = await postJson(page, '/api/users/invite', { role: 'RESPONSAVEL', alunosIds: [student.id] });
-    expect(created.response.status()).toBe(201);
-    const token = inviteFrom(created.body).token;
-    await page.goto(`/auth/register?token=${encodeURIComponent(token)}`);
-    await page.getByTestId('invite-guardian-cpf').fill('529.982.247-25');
-    await page.getByTestId('invite-guardian-phone').fill('(11) 99999-9999');
-    await page.getByRole('button', { name: 'Aceitar convite' }).click();
-    await expect(page.getByText('Conta já vinculada')).toBeVisible();
-    await expect(page.getByText('Esta conta já está vinculada a esta escola. Fale com o administrador.')).toBeVisible();
-    await expect(page.getByTestId('invite-acceptance-card')).toBeVisible();
-    expect(await prisma.invite.findUniqueOrThrow({ where: { token } })).toMatchObject({ status: 'PENDING' });
+    const guardian = await prisma.responsavel.create({
+      data: { contaId: school.contaId, nome: 'Responsável já vinculado', cpf: '52998224725', email: ' ', telefone: '11999999999' },
+      select: { id: true },
+    });
+    await prisma.alunoResponsavel.create({ data: { contaId: school.contaId, alunoId: student.id, responsavelId: guardian.id, tipoVinculo: 'RESPONSAVEL' } });
+    const existingEmail = `guardian-linked-${randomUUID()}@e2e.test`;
+    const bcrypt = (await import('bcryptjs')).default;
+    const existingUser = await prisma.usuario.create({
+      data: { nome: 'Responsável já vinculado', email: existingEmail, senhaHash: await bcrypt.hash('Aa!23456', 10), role: Role.RESPONSAVEL, status: 'ATIVO', emailVerifiedAt: new Date() },
+      select: { id: true },
+    });
+    await prisma.usuarioConta.create({ data: { usuarioId: existingUser.id, contaId: school.contaId, role: Role.RESPONSAVEL, status: 'ATIVO' } });
+    await prisma.responsavel.update({ where: { id: guardian.id }, data: { usuarioId: existingUser.id } });
+    const candidatesResponse = await page.request.get(new URL('/api/users/invite/candidates?recordType=RESPONSAVEL', page.url()).toString());
+    expect(candidatesResponse.status()).toBe(200);
+    const candidates = await candidatesResponse.json() as { items: Array<{ recordId: string; accessStatus: string; canInvite: boolean }> };
+    expect(candidates.items.find((item) => item.recordId === guardian.id)).toMatchObject({ accessStatus: 'ACTIVE', canInvite: false });
+    const created = await postJson(page, '/api/users/invite', {
+      target: { kind: 'EXISTING_RECORD', recordType: 'RESPONSAVEL', recordId: guardian.id, role: 'RESPONSAVEL' },
+    });
+    expect(created.response.status()).toBe(409);
+    expect(await prisma.invite.count({ where: { contaId: school.contaId, metadata: { path: ['target', 'recordId'], equals: guardian.id } } })).toBe(0);
   });
 });
