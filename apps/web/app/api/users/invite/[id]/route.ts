@@ -1,13 +1,12 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import * as InviteUserService from '@alusa/lib/server/services/invite-user-service';
-import { deleteInviteResultDTOSchema } from '@/features/users/dtos';
+import { deleteInviteResultDTOSchema, resendInviteResultDTOSchema } from '@/features/users/dtos';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { ipFromRequest, rateLimitAsync } from '@/lib/rate-limit';
 import { getInviteBaseUrl } from '@/lib/app-url';
 import { sendInviteEmail } from '@/lib/auth-email-flow';
-import { resendInviteResultDTOSchema } from '@/features/users/dtos';
 
 const ParamsSchema = z.object({ id: z.string().min(1) });
 type RouteContext = { params: Promise<{ id: string }> };

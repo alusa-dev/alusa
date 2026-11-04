@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
 import { revokeUserSessions } from '@/lib/auth-service';
 import { removeManagedUserAccess } from '@/features/users/managed-user-access';
 import {
   deleteManagedUserInputDTOSchema,
+  deleteManagedUserResultDTOSchema,
   updateManagedUserInputDTOSchema,
+  updateManagedUserResultDTOSchema,
 } from '@/features/users/dtos';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import {
@@ -14,11 +15,6 @@ import {
   updateManagedUser,
 } from '@/src/server/users/user-management.service';
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
-
-const updateManagedUserResultSchema = z.object({
-  user: z.object({ id: z.string(), name: z.string(), email: z.string().email(), role: z.string(), status: z.string() }),
-});
-const deleteManagedUserResultSchema = z.object({ ok: z.literal(true), id: z.string(), hard: z.boolean() });
 
 function jsonError(error: string, status: number) {
   return NextResponse.json({ error }, { status });
@@ -77,7 +73,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       previousStatus: exists.status,
       nextStatus: current.status,
     });
-    return NextResponse.json(updateManagedUserResultSchema.parse({ user: mapManagedUser(current) }));
+    return NextResponse.json(updateManagedUserResultDTOSchema.parse({ user: mapManagedUser(current) }));
   } catch (error) {
     logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/[id]', method: 'PATCH', requestId: getRequestId(req), error });
     return jsonError('Internal server error', 500);
@@ -105,7 +101,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       reason: parsed.data.reason,
     });
     if (!removal) return jsonError('Usuário não encontrado', 404);
-    return NextResponse.json(deleteManagedUserResultSchema.parse({ ok: true, id: removal.id, hard: removal.hard }));
+    return NextResponse.json(deleteManagedUserResultDTOSchema.parse({ ok: true, id: removal.id, hard: removal.hard }));
   } catch (error) {
     logApiOperationalEvent({ severity: 'error', eventName: 'api.users.request.failed', route: '/api/users/[id]', method: 'DELETE', requestId: getRequestId(req), error });
     return jsonError('Internal server error', 500);
