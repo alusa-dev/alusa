@@ -87,13 +87,12 @@ export function InviteLinkModal({
                   Convite criado
                 </DialogTitle>
                 <DialogDescription className="text-sm text-muted-foreground">
-                  Envie o link abaixo para{" "}
                   {email ? (
-                    <strong className="font-semibold text-foreground">{email}</strong>
+                    <>Envie o link abaixo para <strong className="font-semibold text-foreground">{email}</strong>.</>
                   ) : (
-                    "o convidado"
-                  )}
-                  . Este convite expira em {expiresInHours} horas.
+                    "Compartilhe o link com a pessoa responsável, que informará e confirmará o próprio e-mail durante o acesso."
+                  )}{" "}
+                  Este convite expira em {expiresInHours} horas.
                 </DialogDescription>
               </DialogHeader>
 

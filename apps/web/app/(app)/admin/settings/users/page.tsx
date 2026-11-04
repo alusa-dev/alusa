@@ -1,7 +1,6 @@
 'use client';
-import React, { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useSession } from 'next-auth/react';
-import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -18,6 +17,8 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import ActionConfirmationDialog from '@/components/dialogs/ActionConfirmationDialog';
 import UserEditDialog from '@/features/users/components/UserEditDialog';
 import InviteLinkModal from '@/features/users/components/invite/InviteLinkModal';
+import InviteTargetPicker from '@/features/users/components/invite/InviteTargetPicker';
+import type { InviteCandidateDTO, InviteTargetDTO } from '@/features/users/dtos';
 
 type Role = 'PROFESSOR' | 'RECEPCAO' | 'FINANCEIRO' | 'RESPONSAVEL' | 'ADMIN';
 type UserStatus = 'ATIVO' | 'INATIVO';
@@ -50,20 +51,15 @@ export default function ConfigUsuariosPage() {
   } | null>(null);
 
   // Form
-  const [email, setEmail] = useState('');
   const [role, setRole] = useState<Role>('RECEPCAO');
+  const [inviteTarget, setInviteTarget] = useState<InviteTargetDTO | null>(null);
+  const [targetEmail, setTargetEmail] = useState<string | undefined>();
+  const [pickerResetKey, setPickerResetKey] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [lastInviteEmail, setLastInviteEmail] = useState<string | undefined>(undefined);
   
-  // Alunos (para RESPONSAVEL)
-  const [selectedAlunos, setSelectedAlunos] = useState<string[]>([]);
-  const [alunosList, setAlunosList] = useState<{id: string; nome: string; email: string | null; idade: number | null}[]>([]);
-  const [loadingAlunos, setLoadingAlunos] = useState(false);
-  const [searchAlunoTerm, setSearchAlunoTerm] = useState('');
-  const [showAlunoDropdown, setShowAlunoDropdown] = useState(false);
-
   // Tabs & busca
   const [tab, setTab] = useState<'USERS' | 'PENDING'>('USERS');
   const [search, setSearch] = useState('');
@@ -152,95 +148,25 @@ export default function ConfigUsuariosPage() {
     }
   }, [isReceptionist]);
   
-  // Carregar alunos quando selecionar RESPONSAVEL
-  useEffect(() => {
-    async function loadAlunos() {
-      if (role !== 'RESPONSAVEL') {
-        setAlunosList([]);
-        setSelectedAlunos([]);
-        setSearchAlunoTerm('');
-        return;
-      }
-      
-      setLoadingAlunos(true);
-      try {
-        const res = await fetch('/api/alunos/list-for-responsavel');
-        if (res.ok) {
-          const data = await res.json();
-          setAlunosList(data.alunos || []);
-        }
-      } catch (error) {
-        logClientOperationalEvent('admin.users.students.load_failed', error);
-        setAlunosList([]);
-      } finally {
-        setLoadingAlunos(false);
-      }
-    }
-    
-    loadAlunos();
-  }, [role]);
-
-  // Filtrar alunos baseado na busca
-  const filteredAlunos = React.useMemo(() => {
-    const term = searchAlunoTerm.toLowerCase().trim();
-    if (!term) return [];
-    
-    return alunosList.filter((aluno) => {
-      const nome = aluno.nome.toLowerCase();
-      const email = (aluno.email || '').toLowerCase();
-      return nome.includes(term) || email.includes(term);
-    });
-  }, [searchAlunoTerm, alunosList]);
-
-  // Fechar dropdown ao clicar fora
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      const target = event.target as HTMLElement;
-      if (!target.closest('#search-alunos') && !target.closest('.aluno-dropdown')) {
-        setShowAlunoDropdown(false);
-      }
-    }
-    
-    if (showAlunoDropdown) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-    }
-  }, [showAlunoDropdown]);
+  const handleInviteTargetChange = useCallback((target: InviteTargetDTO | null, candidate?: InviteCandidateDTO) => {
+    setInviteTarget(target);
+    setTargetEmail(target?.kind === 'EMAIL' ? target.email : candidate?.recordType === 'COLABORADOR' ? candidate.email ?? undefined : undefined);
+  }, []);
 
   // Actions
   async function onGenerateInvite() {
-    // Validar se selecionou alunos quando for RESPONSAVEL
-    if (role === 'RESPONSAVEL') {
-      if (selectedAlunos.length === 0) {
-        setToast({
-          title: 'Selecione ao menos um aluno',
-          description: 'É necessário vincular ao menos um aluno ao responsável.',
-          variant: 'warning',
-        });
-        setTimeout(() => setToast(null), 3000);
-        return;
-      }
-    } else {
-      // Para outras roles, email é obrigatório
-      if (!email) return;
-    }
+    if (!inviteTarget || inviteTarget.role !== role) return;
     
     setSubmitting(true);
     try {
       setInviteUrl(null);
-      setLastInviteEmail(role === 'RESPONSAVEL' ? undefined : email || undefined);
+      setLastInviteEmail(targetEmail);
       setInviteOpen(true);
-      
-      // Enviar payload apropriado
-      const payload =
-        role === 'RESPONSAVEL'
-          ? { role, alunosIds: selectedAlunos }
-          : { role, email };
       
       const res = await fetch('/api/users/invite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ target: inviteTarget }),
       });
       if (!res.ok) {
         const errorData = await res.json();
@@ -266,9 +192,9 @@ export default function ConfigUsuariosPage() {
       } else {
         setToast({ title: 'Convite criado', description: link, variant: 'success' });
       }
-      setEmail('');
-      setSelectedAlunos([]); // Limpar seleção
-      setSearchAlunoTerm(''); // Limpar busca
+      setInviteTarget(null);
+      setTargetEmail(undefined);
+      setPickerResetKey((key) => key + 1);
       await loadInvites();
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Tente novamente';
@@ -613,125 +539,21 @@ export default function ConfigUsuariosPage() {
       {/* Card: Enviar convite */}
       <section className="mt-4 rounded-md border border-gray-200 p-4 alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-card)]" aria-label="Enviar convite">
         <div className="grid grid-cols-12 gap-3 items-end">
-          {/* Campo adaptável: Email ou Autocomplete de Alunos */}
+          {/* Busca de cadastro existente ou fallback explícito por e-mail */}
           <div className="col-span-12 md:col-span-5">
-            <label htmlFor="invite-email" className="block text-sm font-medium text-gray-700 alusa-dark:text-[color:var(--color-text-secondary)]">
-              {role === 'RESPONSAVEL' ? 'Pesquise e selecione os alunos *' : 'E-mail'}
-            </label>
-            
-            {role === 'RESPONSAVEL' ? (
-              // Input com tags inline para RESPONSAVEL
-              <div className="relative mt-1">
-                <div className="flex flex-wrap items-center gap-1.5 min-h-[40px] w-full rounded-md border border-gray-300 px-2 py-1.5 focus-within:border-gray-300 focus-within:ring-0 alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:focus-within:border-[color:var(--color-input-border)]">
-                  {/* Tags dos alunos selecionados */}
-                  {selectedAlunos.map((alunoId) => {
-                    const aluno = alunosList.find(a => a.id === alunoId);
-                    if (!aluno) return null;
-                    return (
-                      <span
-                        key={alunoId}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 bg-violet-100 text-violet-700 rounded text-xs font-medium alusa-dark:bg-[color:rgba(169,77,255,0.18)] alusa-dark:text-[color:var(--color-text-brand)]"
-                      >
-                        {aluno.nome}
-                        <button
-                          type="button"
-                          onClick={() => setSelectedAlunos(selectedAlunos.filter(id => id !== alunoId))}
-                          className="hover:bg-violet-200 rounded-full p-0.5 transition-colors alusa-dark:hover:bg-[color:rgba(169,77,255,0.24)]"
-                          aria-label={`Remover ${aluno.nome}`}
-                        >
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                      </span>
-                    );
-                  })}
-                  
-                  {/* Input de busca */}
-                  <input
-                    id="search-alunos"
-                    type="text"
-                    placeholder={loadingAlunos ? "Carregando..." : selectedAlunos.length === 0 ? "Pesquise o aluno..." : "Adicionar mais..."}
-                    disabled={loadingAlunos}
-                    className="flex-1 min-w-[120px] outline-none text-sm py-1 disabled:bg-gray-50 disabled:cursor-not-allowed alusa-dark:bg-transparent alusa-dark:text-[color:var(--color-input-text)] alusa-dark:placeholder:text-[color:var(--color-input-placeholder)] alusa-dark:disabled:bg-transparent"
-                    value={searchAlunoTerm}
-                    onChange={(e) => setSearchAlunoTerm(e.target.value)}
-                    onFocus={() => setShowAlunoDropdown(true)}
-                  />
-                </div>
-                
-                {/* Dropdown de sugestões */}
-                {showAlunoDropdown && searchAlunoTerm.trim().length > 0 && (
-                  <div className="aluno-dropdown absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto alusa-dark:border-[color:var(--color-border-default)] alusa-dark:bg-[color:var(--color-bg-popover)]">
-                    {filteredAlunos.length === 0 ? (
-                      <div className="px-4 py-3 text-sm text-gray-500 text-center alusa-dark:text-[color:var(--color-text-muted)]">
-                        Nenhum aluno encontrado
-                      </div>
-                    ) : (
-                      filteredAlunos.map((aluno) => {
-                        const isSelected = selectedAlunos.includes(aluno.id);
-                        return (
-                          <button
-                            key={aluno.id}
-                            type="button"
-                            onClick={() => {
-                              if (!isSelected) {
-                                setSelectedAlunos([...selectedAlunos, aluno.id]);
-                              }
-                              setSearchAlunoTerm('');
-                            }}
-                            disabled={isSelected}
-                            className={`w-full px-4 py-3 text-left hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed alusa-dark:hover:bg-[color:rgba(255,255,255,0.05)] ${
-                              isSelected ? 'bg-gray-50 alusa-dark:bg-[color:var(--color-bg-card-soft)]' : ''
-                            }`}
-                          >
-                            <div className="flex items-center justify-between">
-                              <div className="flex-1">
-                                <p className="text-sm font-medium text-gray-900 alusa-dark:text-[color:var(--color-text-primary)]">{aluno.nome}</p>
-                                {aluno.email && (
-                                  <p className="text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">{aluno.email}</p>
-                                )}
-                                {aluno.idade && (
-                                  <p className="text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-muted)]">{aluno.idade} anos</p>
-                                )}
-                              </div>
-                              {isSelected && (
-                                <span className="text-xs text-violet-600 font-medium">✓</span>
-                              )}
-                            </div>
-                          </button>
-                        );
-                      })
-                    )}
-                  </div>
-                )}
-                
-                {/* Helper text */}
-                {!loadingAlunos && alunosList.length === 0 && (
-                  <p className="text-xs text-gray-500 mt-1 alusa-dark:text-[color:var(--color-text-muted)]">
-                    Nenhum aluno disponível. Cadastre alunos primeiro.
-                  </p>
-                )}
-              </div>
-            ) : (
-              // Input de email normal
-              <input
-                id="invite-email"
-                aria-label="E-mail do convidado"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="email@exemplo.com"
-                className="mt-1 w-full rounded-md border border-gray-300 px-3 h-10 text-sm outline-none focus:border-violet-400 alusa-dark:border-[color:var(--color-input-border)] alusa-dark:bg-[color:var(--color-input-bg)] alusa-dark:text-[color:var(--color-input-text)] alusa-dark:placeholder:text-[color:var(--color-input-placeholder)]"
-              />
-            )}
+            <InviteTargetPicker key={`${role}-${pickerResetKey}`} role={role as Exclude<Role, 'ADMIN'>} onTargetChange={handleInviteTargetChange} />
           </div>
           
           <div className="col-span-12 md:col-span-3">
             <label htmlFor="invite-role" className="block text-sm font-medium text-gray-700 alusa-dark:text-[color:var(--color-text-secondary)]">
               Função
             </label>
-            <Select value={role} onValueChange={(v: Role) => setRole(v)}>
+            <Select value={role} onValueChange={(v: Role) => {
+              setRole(v);
+              setInviteTarget(null);
+              setTargetEmail(undefined);
+              setPickerResetKey((key) => key + 1);
+            }}>
               <SelectTrigger
                 aria-label="Função do convidado"
                 id="invite-role"
@@ -756,7 +578,7 @@ export default function ConfigUsuariosPage() {
           <div className="col-span-12 md:col-span-4">
             <Button
               onClick={onGenerateInvite}
-              disabled={submitting || (role !== 'RESPONSAVEL' && !email) || (role === 'RESPONSAVEL' && selectedAlunos.length === 0)}
+              disabled={submitting || !inviteTarget || inviteTarget.role !== role}
               className="mt-6 md:mt-0 w-full h-10 rounded-md bg-violet-600 hover:bg-violet-700 text-white"
               aria-label="Gerar convite"
             >
