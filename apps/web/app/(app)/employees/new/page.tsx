@@ -55,6 +55,7 @@ export default function NovoColaboradorPage() {
   });
   const cargo = form.watch('cargo');
   const status = form.watch('status');
+  const temAcesso = form.watch('temAcesso');
   const { data: session } = useSession();
   const effectiveContaId =
     (session?.user as { contaId?: string } | undefined)?.contaId || 'conta-default';
@@ -66,11 +67,16 @@ export default function NovoColaboradorPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(values),
     });
+    const result = await res.json().catch(() => ({}));
     if (res.ok) {
+      if (result?.accessInvite?.status === 'failed') {
+        alert(result.accessInvite.message || 'Colaborador salvo, mas o convite falhou. Você pode tentar novamente pela edição.');
+      } else if (result?.accessInvite?.status === 'pending' && result.accessInvite.inviteUrl) {
+        alert(`${result.accessInvite.message}\n\nLink do convite: ${result.accessInvite.inviteUrl}`);
+      }
       window.location.href = '/employees';
     } else {
-      const data = await res.json().catch(() => ({}));
-      alert(data?.error || 'Falha ao salvar');
+      alert(result?.error?.message || result?.error || 'Falha ao salvar');
     }
   });
 
@@ -331,10 +337,34 @@ export default function NovoColaboradorPage() {
           {step === 5 && (
             <section className="space-y-3">
               <label className="inline-flex items-center gap-2 text-sm">
-                <input type="checkbox" {...form.register('temAcesso')} />
-                Conceder acesso ao sistema
+                <input
+                  type="checkbox"
+                  {...form.register('temAcesso', {
+                    onChange: (event) => {
+                      if (!event.target.checked) form.setValue('roleUsuario', undefined, { shouldValidate: true });
+                    },
+                  })}
+                />
+                Enviar convite de acesso ao sistema
               </label>
               <p className="text-xs text-gray-500">Se marcado, o e-mail se torna obrigatório.</p>
+              {temAcesso && (
+                <div className="max-w-sm space-y-1">
+                  <label htmlFor="colaborador-role" className="block text-sm font-medium">Perfil de acesso</label>
+                  <Select
+                    value={form.watch('roleUsuario') ?? undefined}
+                    onValueChange={(value) => form.setValue('roleUsuario', value as ColaboradorInput['roleUsuario'], { shouldValidate: true })}
+                  >
+                    <SelectTrigger id="colaborador-role"><SelectValue placeholder="Selecione o perfil" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="FINANCEIRO">Financeiro</SelectItem>
+                      <SelectItem value="RECEPCAO">Recepção</SelectItem>
+                      <SelectItem value="PROFESSOR">Professor</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {form.formState.errors.roleUsuario && <p className="text-sm text-red-600">{form.formState.errors.roleUsuario.message}</p>}
+                </div>
+              )}
             </section>
           )}
 

@@ -5,7 +5,7 @@ import { FieldError, FieldLabel } from "../ui";
 import type { ColaboradorInput } from "@alusa/lib/schemas/colaborador";
 
 export default function AccessFields() {
-  const { control, watch } = useFormContext<ColaboradorInput>();
+  const { control, watch, setValue } = useFormContext<ColaboradorInput>();
   const temAcesso = watch("temAcesso");
   const baseInputClasses = "h-10 px-3 bg-white border border-gray-300 placeholder:text-gray-400 text-gray-900 shadow-none";
   return (
@@ -20,9 +20,12 @@ export default function AccessFields() {
                 type="checkbox"
                 className="h-4 w-4 rounded border-slate-300 text-violet-600 focus:ring-violet-500"
                 checked={!!field.value}
-                onChange={(e: React.ChangeEvent<HTMLInputElement>) => field.onChange(e.target.checked)}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                  field.onChange(e.target.checked);
+                  if (!e.target.checked) setValue("roleUsuario", undefined, { shouldValidate: true });
+                }}
               />
-              Conceder acesso ao sistema
+              Enviar convite de acesso ao sistema
             </label>
           )}
         />
@@ -37,7 +40,6 @@ export default function AccessFields() {
             <Select value={field.value ?? undefined} onValueChange={field.onChange} disabled={!temAcesso}>
               <SelectTrigger id="colab-role" className={baseInputClasses}><SelectValue placeholder="Selecione" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="ADMIN">Admin</SelectItem>
                 <SelectItem value="FINANCEIRO">Financeiro</SelectItem>
                 <SelectItem value="RECEPCAO">Recepção</SelectItem>
                 <SelectItem value="PROFESSOR">Professor</SelectItem>

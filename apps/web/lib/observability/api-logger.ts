@@ -122,6 +122,7 @@ export type ApiOperationalEventName =
   | 'api.employees.request.failed'
   | 'api.employees.photo_upload.failed'
   | 'api.employees.photo_cleanup.failed'
+  | 'api.employees.access_invite.failed'
   | 'api.whatsapp_test.send.failed'
   | 'api.whatsapp_contract.send.failed'
   | 'api.whatsapp_ticket.send.failed'

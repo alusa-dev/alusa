@@ -216,6 +216,13 @@ export const colaboradorSchema = z
         message: 'E-mail é obrigatório para acesso ao sistema',
       });
     }
+    if (val.temAcesso && !val.roleUsuario) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['roleUsuario'],
+        message: 'Selecione o perfil de acesso para gerar o convite',
+      });
+    }
   });
 
 export type ColaboradorInput = z.infer<typeof colaboradorSchema>;

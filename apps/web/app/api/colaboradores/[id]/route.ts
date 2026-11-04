@@ -8,7 +8,10 @@ import {
 import {
   update as updateColab,
   remove as removeColab,
+  MissingProfessorDataError,
+  ProfessorIdentityConflictError,
 } from '../../../../../../packages/lib/src/server/services/colaborador-service';
+import { inviteEmployeeAccess } from '@/src/server/employees/employee-access-invite.service';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 import { getColaborador } from '@/src/server/employees/employee-read.service';
 import { readBoundedJson } from '@/lib/upload-request';
@@ -94,7 +97,12 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
         temAcesso: z.boolean().optional(),
         roleUsuario: z.enum(['ADMIN', 'FINANCEIRO', 'RECEPCAO', 'PROFESSOR']).optional().nullable(),
       })
-      .strict();
+      .strict()
+      .superRefine((value, ctx) => {
+        if (value.temAcesso && !value.roleUsuario) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['roleUsuario'], message: 'Selecione o perfil de acesso para gerar o convite.' });
+        }
+      });
     const parsed = updateSchema.safeParse(json);
     if (!parsed.success)
       return jsonError(422, 'ERRO_VALIDACAO', 'Falha de validação', parsed.error.flatten());
@@ -107,11 +115,33 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
         ? await normalizeAvatarUpload({ entity: 'colaborador', entityId: ctxParams.id, contaId, foto: parsed.data.foto, previousFoto: typeof current.foto === 'string' ? current.foto : null })
         : parsed.data.foto;
       const updated = await updateColab(ctxParams.id, contaId, { ...parsed.data, foto: foto as string | null | undefined } as any);
-      return NextResponse.json({ data: updated });
+      const accessInvite = parsed.data.temAcesso && parsed.data.roleUsuario
+        ? user.role === 'ADMIN'
+          ? await inviteEmployeeAccess({
+            contaId,
+            invitedById: user.id,
+            invitedByName: undefined,
+            recordId: ctxParams.id,
+            email: typeof updated?.email === 'string' ? updated.email : '',
+            role: parsed.data.roleUsuario,
+            request: req,
+          })
+          : {
+              status: 'failed' as const,
+              message: 'Colaborador salvo. Somente um administrador ativo desta escola pode enviar convites de acesso.',
+            }
+        : undefined;
+      return NextResponse.json({ data: updated, ...(accessInvite ? { accessInvite } : {}) });
     } catch (e: unknown) {
       const msg = (e as Error)?.message || 'Falha ao atualizar colaborador';
       if (msg.includes('não encontrado')) {
         return jsonError(404, 'NAO_ENCONTRADO', 'Colaborador não encontrado');
+      }
+      if (e instanceof MissingProfessorDataError) {
+        return jsonError(422, 'PROFESSOR_DADOS_INCOMPLETOS', msg);
+      }
+      if (e instanceof ProfessorIdentityConflictError) {
+        return jsonError(409, 'PROFESSOR_IDENTIDADE_CONFLITANTE', msg);
       }
       return jsonError(400, 'ATUALIZACAO_FALHOU', msg);
     }

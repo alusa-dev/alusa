@@ -12,6 +12,154 @@ const digits = (v?: string | null) =>
   typeof v === 'string' ? v.replace(/\D/g, '') : (v ?? undefined);
 const nullify = (v?: string | null) => (v && v.trim().length > 0 ? v : null);
 
+export class MissingProfessorDataError extends Error {
+  constructor() {
+    super('Para cadastrar este colaborador como professor, informe CPF, nascimento, e-mail e telefone.');
+    this.name = 'MissingProfessorDataError';
+  }
+}
+
+export class ProfessorIdentityConflictError extends Error {
+  constructor() {
+    super('CPF e e-mail correspondem a cadastros diferentes de professor nesta escola. Revise os dados antes de salvar.');
+    this.name = 'ProfessorIdentityConflictError';
+  }
+}
+
+export class ColaboradorIdentityConflictError extends Error {
+  constructor() {
+    super('Os identificadores informados correspondem a um cadastro diferente ou ambíguo nesta escola. Revise CPF e e-mail antes de tentar novamente.');
+    this.name = 'ColaboradorIdentityConflictError';
+  }
+}
+
+function normalizeColaboradorCreateData(input: ColaboradorInput & { contaId: string }) {
+  return {
+    contaId: input.contaId.trim(),
+    nome: input.nome.trim(),
+    nomeSocial: nullify(input.nomeSocial) || undefined,
+    foto: nullify(input.foto),
+    dataNasc: input.dataNasc || undefined,
+    genero: input.genero || undefined,
+    cpf: digits(input.cpf) || undefined,
+    rg: nullify(input.rg) || undefined,
+    orgaoEmissor: nullify(input.orgaoEmissor) || undefined,
+    dataEmissao: input.dataEmissao || undefined,
+    email: input.email?.trim().toLowerCase() || undefined,
+    telefone1: digits(input.telefone1) || undefined,
+    contatoEmergenciaTelefone: digits(input.contatoEmergenciaTelefone) || null,
+    enderecoCep: digits(input.enderecoCep) || undefined,
+    enderecoLogradouro: nullify(input.enderecoLogradouro) || undefined,
+    enderecoNumero: nullify(input.enderecoNumero) || undefined,
+    enderecoComplemento: nullify(input.enderecoComplemento) || undefined,
+    enderecoBairro: nullify(input.enderecoBairro) || undefined,
+    enderecoCidade: nullify(input.enderecoCidade) || undefined,
+    enderecoUf: input.enderecoUf || undefined,
+    cargo: input.cargo,
+    especialidade: nullify(input.especialidade) || undefined,
+    status: input.status || 'ATIVO',
+    dataAdmissao: input.dataAdmissao || undefined,
+    dataDesligamento: input.dataDesligamento || undefined,
+    observacoes: nullify(input.observacoes) || undefined,
+    salario: typeof input.salario === 'number'
+      ? Number(input.salario).toFixed(2)
+      : undefined,
+    temAcesso: input.temAcesso ?? false,
+  } as const;
+}
+
+/** Recovers only a fully matching request after a create uniqueness conflict. */
+export async function findExactColaboradorCreateRetry(input: ColaboradorInput & { contaId: string }) {
+  const cpf = digits(input.cpf);
+  const email = input.email?.trim().toLowerCase() || undefined;
+  const identityFilters = [
+    ...(cpf ? [{ cpf }] : []),
+    ...(email ? [{ email: { equals: email, mode: 'insensitive' as const } }] : []),
+  ];
+  if (!identityFilters.length) return null;
+
+  const matches = await prisma.colaborador.findMany({
+    where: { contaId: input.contaId, OR: identityFilters },
+  });
+  const uniqueMatches = [...new Map(matches.map((match) => [match.id, match])).values()];
+  if (uniqueMatches.length > 1) throw new ColaboradorIdentityConflictError();
+  const existing = uniqueMatches[0];
+  if (!existing) return null;
+
+  const identityMatches = (!cpf || digits(existing.cpf) === cpf) &&
+    (!email || existing.email?.trim().toLowerCase() === email);
+  const expected = normalizeColaboradorCreateData(input);
+  const equivalent = (actual: unknown, wanted: unknown): boolean => {
+    if (actual == null || wanted == null) return actual == null && wanted == null;
+    if (actual instanceof Date && wanted instanceof Date) return actual.getTime() === wanted.getTime();
+    if (typeof actual === 'object' && actual && 'toFixed' in actual && typeof wanted === 'string') {
+      return (actual as { toFixed: (_digits: number) => string }).toFixed(2) === wanted;
+    }
+    return actual === wanted;
+  };
+  const persistedFields = Object.keys(expected) as Array<keyof typeof expected>;
+  const requestMatches = persistedFields.every((field) => equivalent(existing[field], expected[field])) && existing.usuarioId == null;
+  if (!identityMatches || !requestMatches) throw new ColaboradorIdentityConflictError();
+  return existing;
+}
+
+async function ensureProfessorForColaborador(tx: any, contaId: string, employee: Record<string, any>) {
+  if (employee.cargo !== 'PROFESSOR') return;
+
+  const cpf = digits(employee.cpf);
+  const email = typeof employee.email === 'string' ? employee.email.trim().toLowerCase() : '';
+  const nome = typeof employee.nome === 'string' ? employee.nome.trim() : '';
+  const telefoneCel = digits(employee.telefone1);
+  const dataNasc = employee.dataNasc;
+  if (!nome || !cpf || !email || !telefoneCel || !(dataNasc instanceof Date) || Number.isNaN(dataNasc.getTime())) {
+    throw new MissingProfessorDataError();
+  }
+
+  const matches = await tx.professor.findMany({
+    where: {
+      contaId,
+      OR: [
+        { cpf },
+        { email: { equals: email, mode: 'insensitive' } },
+      ],
+    },
+    select: { id: true },
+  });
+  const matchIds = new Set(matches.map((match: { id: string }) => match.id));
+  const professorStatus = employee.status === 'INATIVO' ? 'INATIVO' : 'ATIVO';
+  if (matchIds.size > 1) throw new ProfessorIdentityConflictError();
+  if (matchIds.size === 1) {
+    const professorId = [...matchIds][0];
+    await tx.professor.updateMany({ where: { id: professorId, contaId }, data: { status: professorStatus } });
+    return professorId;
+  }
+
+  try {
+    const professor = await tx.professor.create({
+      data: {
+        contaId,
+        nome,
+        cpf,
+        dataNasc,
+        email,
+        telefoneCel,
+        ...(employee.especialidade ? { especialidades: [employee.especialidade] } : {}),
+        ...(employee.foto ? { foto: employee.foto } : {}),
+        status: professorStatus,
+      },
+      select: { id: true },
+    });
+    return professor.id as string;
+  } catch (error) {
+    // Uma concorrente pode criar a mesma identidade depois da busca inicial.
+    // Não converta outros erros de persistência em sucesso silencioso.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw new ProfessorIdentityConflictError();
+    }
+    throw error;
+  }
+}
+
 export async function list(contaId: string) {
   const db = prisma as unknown as { colaborador: any };
   return db.colaborador.findMany({ where: { contaId }, orderBy: { createdAt: 'desc' } });
@@ -56,45 +204,11 @@ export async function create(input: ColaboradorInput & { contaId: string }) {
   }
   const contaId = contaIdRaw;
 
-  // normalizações simples
-  const data = {
-    contaId,
-    nome: input.nome.trim(),
-    nomeSocial: nullify(input.nomeSocial) || undefined,
-    foto: nullify(input.foto),
-    dataNasc: input.dataNasc || undefined,
-    genero: input.genero || undefined,
-    cpf: digits(input.cpf) || undefined,
-    rg: nullify(input.rg) || undefined,
-    orgaoEmissor: nullify(input.orgaoEmissor) || undefined,
-    dataEmissao: input.dataEmissao || undefined,
-    email: input.email?.trim().toLowerCase() || undefined,
-    telefone1: digits(input.telefone1) || undefined,
-    contatoEmergenciaTelefone: digits(input.contatoEmergenciaTelefone) || null,
-    enderecoCep: digits(input.enderecoCep) || undefined,
-    enderecoLogradouro: nullify(input.enderecoLogradouro) || undefined,
-    enderecoNumero: nullify(input.enderecoNumero) || undefined,
-    enderecoComplemento: nullify(input.enderecoComplemento) || undefined,
-    enderecoBairro: nullify(input.enderecoBairro) || undefined,
-    enderecoCidade: nullify(input.enderecoCidade) || undefined,
-    enderecoUf: input.enderecoUf || undefined,
-    cargo: input.cargo,
-    especialidade: nullify(input.especialidade) || undefined,
-    status: input.status || 'ATIVO',
-    dataAdmissao: input.dataAdmissao || undefined,
-    dataDesligamento: input.dataDesligamento || undefined,
-    observacoes: nullify(input.observacoes) || undefined,
-    // Persistência coerente com Prisma Decimal: enviaremos string com 2 casas
-    salario:
-      typeof (input as any).salario === 'number'
-        ? (Number((input as any).salario).toFixed(2) as unknown as any)
-        : undefined,
-    temAcesso: input.temAcesso ?? false,
-  } as const;
+  const data = normalizeColaboradorCreateData({ ...input, contaId });
 
   // Regras básicas
   return prisma.$transaction(async (tx0) => {
-    const tx = tx0 as unknown as { colaborador: any; conta: any };
+    const tx = tx0 as unknown as { colaborador: any; conta: any; professor: any };
     const conta = await tx.conta.findUnique({ where: { id: contaId } });
     if (!conta) {
       throw new Error(`Conta com ID ${contaId} não encontrada`);
@@ -115,48 +229,7 @@ export async function create(input: ColaboradorInput & { contaId: string }) {
     try {
       const created = await tx.colaborador.create({ data });
 
-      // Criação automática de Professor quando cargo=PROFESSOR
-      // Regras:
-      //  - Evita duplicar se já existir professor com mesmo CPF ou email na conta
-      //  - Requer campos mínimos obrigatórios do modelo Professor; se ausentes, ignora silenciosamente
-      if (data.cargo === 'PROFESSOR') {
-        try {
-          const profTx = tx as unknown as { professor: any };
-          const existing = await profTx.professor.findFirst({
-            where: {
-              contaId,
-              OR: [
-                data.cpf ? { cpf: data.cpf } : undefined,
-                data.email ? { email: data.email } : undefined,
-              ].filter(Boolean),
-            },
-          });
-          const hasMinFields = !!(
-            data.nome &&
-            data.cpf &&
-            data.dataNasc &&
-            data.email &&
-            data.telefone1
-          );
-          if (!existing && hasMinFields) {
-            await profTx.professor.create({
-              data: {
-                contaId,
-                nome: data.nome,
-                cpf: data.cpf,
-                dataNasc: data.dataNasc,
-                email: data.email,
-                telefoneCel: data.telefone1,
-                status: 'ATIVO',
-              },
-            });
-          }
-        } catch {
-          // Falhas na criação do Professor não devem abortar criação do Colaborador.
-          // (Ex.: duplicidade de email já existente em Professor). Log silencioso opcional.
-          // console.warn('Falha ao criar professor automático:', e);
-        }
-      }
+      await ensureProfessorForColaborador(tx, contaId, data as unknown as Record<string, any>);
       return created;
     } catch (err) {
       // Trata duplicidade de forma robusta (concorrência)
@@ -227,7 +300,9 @@ export async function update(id: string, contaId: string, input: Partial<Colabor
 
   // unicidade de email quando alterado
   return prisma.$transaction(async (tx0) => {
-    const tx = tx0 as unknown as { colaborador: any };
+    const tx = tx0 as unknown as { colaborador: any; professor: any };
+    const current = await tx.colaborador.findFirst({ where: { id, contaId } });
+    if (!current) throw new Error('Colaborador não encontrado');
     if (data.email) {
       const exists = await tx.colaborador.findFirst({ where: { contaId, email: data.email } });
       if (exists && exists.id !== id)
@@ -239,6 +314,9 @@ export async function update(id: string, contaId: string, input: Partial<Colabor
       throw new Error('Colaborador não encontrado');
     }
     // Retornar registro atualizado
-    return tx.colaborador.findFirst({ where: { id, contaId } });
+    const updated = await tx.colaborador.findFirst({ where: { id, contaId } });
+    if (!updated) throw new Error('Colaborador não encontrado');
+    await ensureProfessorForColaborador(tx, contaId, updated as Record<string, any>);
+    return updated;
   });
 }

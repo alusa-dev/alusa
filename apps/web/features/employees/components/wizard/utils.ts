@@ -49,6 +49,8 @@ export function buildStepFieldMap() {
       "salario",
       "status",
       "observacoes",
+      "temAcesso",
+      "roleUsuario",
     ],
   foto: [],
     confirmar: [],

@@ -25,4 +25,9 @@ describe('colaboradorSchema', () => {
     const r = colaboradorSchema.safeParse({ ...base, temAcesso: true, email: undefined });
     expect(r.success).toBe(false);
   });
+  it('exige perfil de acesso quando convite é solicitado', () => {
+    const r = colaboradorSchema.safeParse({ ...base, temAcesso: true, roleUsuario: undefined });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues.some((issue) => issue.path.includes('roleUsuario'))).toBe(true);
+  });
 });

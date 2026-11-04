@@ -4,6 +4,7 @@ import { Select, SelectContent, SelectItem, SelectValue } from "@/components/ui/
 import { FieldError, FieldLabel, DateMaskControlled, MoneyMaskControlled, WizardInput, WizardSelectTrigger, useWizardFieldClass } from "../ui";
 import { Calendar } from "@/components/icons/icons";
 import type { ColaboradorInput } from "@alusa/lib/schemas/colaborador";
+import AccessFields from "./AccessFields";
 
 export default function EmploymentFields() {
   const { control, register, clearErrors } = useFormContext<ColaboradorInput>();
@@ -84,6 +85,9 @@ export default function EmploymentFields() {
           placeholder="Notas gerais sobre o colaborador (opcional)"
         />
         <FieldError name="observacoes" />
+      </div>
+      <div className="col-span-full">
+        <AccessFields />
       </div>
     </div>
   );

@@ -10,7 +10,15 @@ import {
   statusColabEnum,
   cargoEnum,
 } from '../../../../../packages/lib/src/schemas/colaborador';
-import { create as createColab, update as updateColab } from '../../../../../packages/lib/src/server/services/colaborador-service';
+import {
+  create as createColab,
+  update as updateColab,
+  findExactColaboradorCreateRetry,
+  ColaboradorIdentityConflictError,
+  MissingProfessorDataError,
+  ProfessorIdentityConflictError,
+} from '../../../../../packages/lib/src/server/services/colaborador-service';
+import { inviteEmployeeAccess } from '@/src/server/employees/employee-access-invite.service';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 import { listColaboradores } from '@/src/server/employees/employee-read.service';
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
@@ -72,10 +80,21 @@ export async function POST(req: NextRequest) {
 
     const data = colaboradorSchema.parse(norm) as ColaboradorInput;
     const hasDataUrlPhoto = typeof data.foto === 'string' && data.foto.startsWith('data:image/');
-    const created = await createColab({ ...data, ...(hasDataUrlPhoto ? { foto: undefined } : {}), contaId });
+    let created: Awaited<ReturnType<typeof createColab>>;
+    let replayed = false;
+    try {
+      created = await createColab({ ...data, ...(hasDataUrlPhoto ? { foto: undefined } : {}), contaId });
+    } catch (error) {
+      const identityConflict = error instanceof Error && /(?:CPF|e-mail) já cadastrado|colaborador cadastrado com este (?:CPF|e-mail)/i.test(error.message);
+      if (!identityConflict) throw error;
+      const existing = await findExactColaboradorCreateRetry({ ...data, contaId });
+      if (!existing) throw error;
+      created = existing;
+      replayed = true;
+    }
     let saved = created;
     let photoUploadWarning = false;
-    if (hasDataUrlPhoto) {
+    if (hasDataUrlPhoto && !replayed) {
       let foto: string | null | undefined;
       try {
         foto = await normalizeAvatarUpload({ entity: 'colaborador', entityId: created.id, contaId, foto: data.foto, previousFoto: null });
@@ -102,10 +121,27 @@ export async function POST(req: NextRequest) {
         });
       }
     }
+    const accessInvite = data.temAcesso && data.roleUsuario
+      ? auth.role === 'ADMIN'
+        ? await inviteEmployeeAccess({
+          contaId,
+          invitedById: auth.userId,
+          invitedByName: auth.name,
+          recordId: created.id,
+          email: data.email ?? '',
+          role: data.roleUsuario,
+          request: req,
+        })
+        : {
+            status: 'failed' as const,
+            message: 'Colaborador salvo. Somente um administrador ativo desta escola pode enviar convites de acesso.',
+          }
+      : undefined;
     return NextResponse.json({
       data: saved,
+      ...(accessInvite ? { accessInvite } : {}),
       ...(photoUploadWarning ? { photoUploadWarning: 'Colaborador criado, mas não foi possível salvar a foto. Você pode adicioná-la pela edição do cadastro.' } : {}),
-    }, { status: 201 });
+    }, { status: replayed ? 200 : 201 });
   } catch (e) {
     logApiOperationalEvent({ severity: 'error', eventName: 'api.employees.request.failed', route: '/api/colaboradores', method: 'POST', requestId: getRequestId(req), error: e });
 
@@ -125,6 +161,15 @@ export async function POST(req: NextRequest) {
 
     // Erros de unicidade do Prisma tratados no service já trazem mensagens amigáveis
     const msg = e instanceof Error ? e.message : 'Erro ao criar colaborador';
+    if (e instanceof MissingProfessorDataError) {
+      return NextResponse.json({ error: { code: 'PROFESSOR_DADOS_INCOMPLETOS', message: msg } }, { status: 422 });
+    }
+    if (e instanceof ProfessorIdentityConflictError) {
+      return NextResponse.json({ error: { code: 'PROFESSOR_IDENTIDADE_CONFLITANTE', message: msg } }, { status: 409 });
+    }
+    if (e instanceof ColaboradorIdentityConflictError) {
+      return NextResponse.json({ error: { code: 'COLABORADOR_IDENTIDADE_CONFLITANTE', message: msg } }, { status: 409 });
+    }
     // Sinalizar especificamente duplicidade de CPF
     if (/colaborador cadastrado com este CPF/i.test(msg)) {
       return NextResponse.json(

@@ -17,6 +17,7 @@ import { toast } from '@/components/ui/toast';
 import { useSession } from 'next-auth/react';
 import { ImageCropDialog } from '@/components/image/ImageCropDialog';
 import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
+import { InviteLinkModal } from '@/features/users/components/invite/InviteLinkModal';
 
 export type Status = 'ATIVO' | 'INATIVO';
 export type Cargo = 'PROFESSOR' | 'RECEPCAO' | 'FINANCEIRO' | 'ADMINISTRATIVO' | 'OUTRO';
@@ -176,6 +177,9 @@ export default function EmployeeEditDialog({
 
   const [loadingDetails, setLoadingDetails] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
+  const [inviteLink, setInviteLink] = React.useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = React.useState<string | undefined>(undefined);
+  const [inviteModalOpen, setInviteModalOpen] = React.useState(false);
 
   const avatarFallback = React.useMemo(() => {
     const base = (nome || nomeSocial || '').trim();
@@ -532,7 +536,24 @@ export default function EmployeeEditDialog({
         return;
       }
 
-      toast.success(mode === 'create' ? 'Colaborador criado!' : 'Colaborador atualizado!');
+      const savedMessage = mode === 'create' ? 'Colaborador criado!' : 'Colaborador atualizado!';
+      const accessInvite = json?.accessInvite as
+        | { status?: string; message?: string; inviteUrl?: string }
+        | undefined;
+      if (accessInvite) {
+        const message = accessInvite.message || savedMessage;
+        if (accessInvite.status === 'failed') toast.error(message);
+        else if (accessInvite.status === 'pending') toast.info(message);
+        else if (accessInvite.status === 'already_active') toast.info(message);
+        else toast.success(message);
+        if (accessInvite.inviteUrl) {
+          setInviteLink(accessInvite.inviteUrl);
+          setInviteEmail(email.trim().toLowerCase() || undefined);
+          setInviteModalOpen(true);
+        }
+      } else {
+        toast.success(savedMessage);
+      }
       try {
         window.dispatchEvent(new CustomEvent('colaboradores:changed'));
       } catch {
@@ -549,6 +570,7 @@ export default function EmployeeEditDialog({
   }
 
   return (
+    <>
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent
         fullScreenMobile
@@ -943,7 +965,6 @@ export default function EmployeeEditDialog({
                             <SelectValue placeholder="Selecione o perfil" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="ADMIN">Admin</SelectItem>
                             <SelectItem value="FINANCEIRO">Financeiro</SelectItem>
                             <SelectItem value="RECEPCAO">Recepção</SelectItem>
                             <SelectItem value="PROFESSOR">Professor</SelectItem>
@@ -1000,5 +1021,12 @@ export default function EmployeeEditDialog({
         />
       </DialogContent>
     </Dialog>
+    <InviteLinkModal
+      open={inviteModalOpen}
+      onOpenChange={setInviteModalOpen}
+      inviteUrl={inviteLink}
+      email={inviteEmail}
+    />
+    </>
   );
 }
