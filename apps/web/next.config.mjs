@@ -20,6 +20,7 @@ const scriptSrc = [
   ...(process.env.NODE_ENV === 'production' ? [] : ["'unsafe-eval'"]),
   'https://va.vercel-scripts.com',
   'https://vercel.live',
+  'https://connect.facebook.net',
 ].join(' ');
 
 const securityHeaders = [
