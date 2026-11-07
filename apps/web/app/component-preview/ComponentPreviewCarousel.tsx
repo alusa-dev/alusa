@@ -5,9 +5,11 @@ import { useState } from 'react';
 import { ChevronLeft, ChevronRight } from '@/components/icons/icons';
 import { LoadingDots } from '@/components/ui/LoadingDots';
 import { CheckoutResumePopup } from '@/features/platform-billing/components/CheckoutResumePopup';
+import { PublicMapLoading } from '@/features/events/map/public/PublicMapLoading';
 
 const previews = [
   { id: 'loading-dots', label: 'Loading dots' },
+  { id: 'public-map-loading', label: 'Loading do mapa público' },
   { id: 'checkout-resume', label: 'Popup de retomada da contratação' },
   { id: 'monthly-close-notice', label: 'Aviso de fechamento mensal' },
 ] as const;
@@ -48,7 +50,11 @@ export function ComponentPreviewCarousel() {
           </p>
         </div>
 
-        <div className="relative flex min-h-72 items-center justify-center overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 shadow-sm sm:min-h-96">
+        <div
+          className={`relative flex items-center justify-center overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm ${
+            activePreview.id === 'public-map-loading' ? 'h-72 p-0 sm:h-96' : 'min-h-72 p-6 sm:min-h-96'
+          }`}
+        >
           {activePreview.id === 'loading-dots' ? (
             <div className="grid w-full grid-cols-1 gap-5 sm:grid-cols-2">
               <div className="flex h-48 items-center justify-center rounded-2xl border border-gray-200 bg-white">
@@ -57,6 +63,10 @@ export function ComponentPreviewCarousel() {
               <div className="flex h-48 items-center justify-center rounded-2xl bg-black">
                 <LoadingDots label="Carregando pré-visualização em fundo preto" />
               </div>
+            </div>
+          ) : activePreview.id === 'public-map-loading' ? (
+            <div className="h-72 w-full overflow-hidden rounded-xl sm:h-96">
+              <PublicMapLoading variant="preview" className="rounded-xl" />
             </div>
           ) : activePreview.id === 'checkout-resume' ? (
             <CheckoutResumePopup

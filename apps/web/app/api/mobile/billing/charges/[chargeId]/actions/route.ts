@@ -61,18 +61,30 @@ export async function POST(request: Request, context: { params: Promise<{ charge
 
   const parsed = bodySchema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) return responseError('INVALID_INPUT', 'Ação de cobrança inválida.', 422);
+  const idempotencyKey = request.headers.get('idempotency-key')?.trim();
+  const refundGatewayEnabled = process.env.ASAAS_REFUND_GATEWAY_ENABLED === 'true';
+  if (parsed.data.action === 'REFUND' && ((idempotencyKey && !/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) || (refundGatewayEnabled && !idempotencyKey))) {
+    return responseError('IDEMPOTENCY_KEY_INVALID', 'Chave Idempotency-Key obrigatória ou inválida para estorno.', 400);
+  }
 
   try {
     const result = await executeMobileBillingAction({
       actor: { userId: actor.userId, contaId: actor.contaId },
       chargeId,
       action: parsed.data.action,
+      ...(parsed.data.action === 'REFUND' ? { correlationId: idempotencyKey } : {}),
       changes: parsed.data.changes as MobileBillingChargeChanges | undefined,
     });
 
     if (!result.success) return responseError(result.code, result.error, statusForActionError(result.code));
     return NextResponse.json(
-      { success: true, message: result.message },
+      {
+        success: true,
+        message: result.message,
+        ...('pending' in result && result.pending ? { pending: true } : {}),
+        ...('correlationId' in result && result.correlationId ? { correlationId: result.correlationId } : {}),
+        ...('commandStatus' in result && result.commandStatus ? { commandStatus: result.commandStatus } : {}),
+      },
       { status: 202, headers: { 'Cache-Control': 'no-store' } },
     );
   } catch (error) {

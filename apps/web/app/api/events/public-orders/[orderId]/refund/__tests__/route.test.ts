@@ -46,6 +46,7 @@ describe('POST /api/events/public-orders/[orderId]/refund', () => {
       userId: 'user-a',
       role: 'ADMIN',
       id: 'event-map-order:order-a',
+      correlationId: 'event-order-refund:order-a',
       body: { description: 'Solicitação do organizador' },
     });
   });

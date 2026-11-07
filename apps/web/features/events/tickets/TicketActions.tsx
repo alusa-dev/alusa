@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { MoreVertical } from '@/components/icons/icons';
 
@@ -28,6 +28,7 @@ import {
   type TicketSaleDTO,
 } from '../events-service';
 import { eventQueryKeys } from '../shared/event-query-keys';
+import { RefundAttemptKeys } from '../refund-attempt-keys';
 import { EditSaleFormDialog } from './EditSaleFormDialog';
 
 export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: TicketSaleDTO; eventId: string; lots: TicketLotDTO[]; scopedResources?: EventScopedResources }) {
@@ -35,6 +36,10 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [refundOpen, setRefundOpen] = useState(false);
+  const refundAttemptKeys = useRef(new RefundAttemptKeys());
+  const refundOperationId = sale.eventMapOrderId
+    ? `event-map-order:${sale.eventMapOrderId}`
+    : `event-ticket-sale:${sale.id}`;
 
   const invalidate = async () => {
     await Promise.all([
@@ -45,20 +50,20 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
   };
 
   const refundAsaas = useMutation({
-    mutationFn: () => refundEventCharge(
-      sale.eventMapOrderId
-        ? `event-map-order:${sale.eventMapOrderId}`
-        : `event-ticket-sale:${sale.id}`,
-    ),
+    mutationFn: () => refundEventCharge(refundOperationId, undefined, refundAttemptKeys.current.get(refundOperationId)),
     onSuccess: async () => {
       await invalidate();
       toast.success({ title: 'Estorno solicitado', description: 'O status será atualizado assim que a solicitação for confirmada.' });
+      refundAttemptKeys.current.complete(refundOperationId);
       setRefundOpen(false);
     },
-    onError: () => toast.error({
-      title: 'Não foi possível solicitar o estorno',
-      description: 'Tente novamente. Se o problema continuar, entre em contato com o suporte.',
-    }),
+    onError: (error) => {
+      refundAttemptKeys.current.fail(refundOperationId, error);
+      toast.error({
+        title: 'Não foi possível solicitar o estorno',
+        description: 'Tente novamente. Se o problema continuar, entre em contato com o suporte.',
+      });
+    },
   });
 
   const paid = useMutation({ mutationFn: () => markTicketSalePaid(sale.id), onSuccess: invalidate, onError: (err) => toast.error({ title: 'Erro ao marcar como pago', description: err.message }) });

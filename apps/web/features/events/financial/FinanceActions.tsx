@@ -29,7 +29,7 @@ import { EventMutationOverlay } from '@/features/events/components/EventMutation
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 
-import { deleteEventCost, formatCurrency, registerCostumeAssignmentPayment, registerEventCostPayment, refundCostumeAssignmentPayment, updateFinancialEntry, type FinancialEntryDTO } from '../events-service';
+import { deleteEventCost, EventApiError, formatCurrency, registerCostumeAssignmentPayment, registerEventCostPayment, refundCostumeAssignmentPayment, updateFinancialEntry, type FinancialEntryDTO } from '../events-service';
 import { EventField as Field } from '../shared/EventField';
 import { eventQueryKeys } from '../shared/event-query-keys';
 import { FILTER_INPUT_CLASS, formatDateInputValue, handleFormDataSubmit, nullableString } from '../shared/event-form-utils';
@@ -109,7 +109,12 @@ export function FinanceActions({ entry, eventId }: { entry: FinancialEntryDTO; e
       refundIdempotencyKey.current = null;
       toast.success({ title: 'Estorno registrado', description: 'O estorno foi registrado e o saldo da cobrança foi atualizado.' });
     },
-    onError: (error) => toast.error({ title: 'Erro no estorno', description: (error as Error).message }),
+    onError: (error) => {
+      if (error instanceof EventApiError && error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 408) {
+        refundIdempotencyKey.current = null;
+      }
+      toast.error({ title: 'Erro no estorno', description: (error as Error).message });
+    },
   });
   const deleteMutation = useMutation({
     mutationFn: () => deleteEventCost(entry.id),

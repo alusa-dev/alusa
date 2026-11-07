@@ -253,6 +253,10 @@ function getApiErrorMessage(payload: unknown, fallback: string): string {
   return fallback;
 }
 
+function createRefundIdempotencyKey() {
+  return globalThis.crypto?.randomUUID?.() ?? `web-refund-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 export function CobrancaDetalhesClient({ id }: { id: string }) {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -267,6 +271,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
   const [isResendingAsaas, setIsResendingAsaas] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
   const [isRefunding, setIsRefunding] = useState(false);
+  const refundIdempotencyKeyRef = useRef<string | null>(null);
   const [showRemoveDialog, setShowRemoveDialog] = useState(false);
   const [showRefundDialog, setShowRefundDialog] = useState(false);
   const [awaitingWebhook, setAwaitingWebhook] = useState(false);
@@ -916,15 +921,19 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
     setIsRefunding(true);
 
     try {
+      refundIdempotencyKeyRef.current ??= createRefundIdempotencyKey();
       const res = await fetch(`/api/cobrancas/${cobranca.id}/refund`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': refundIdempotencyKeyRef.current },
         body: JSON.stringify({}),
       });
 
       const result = await res.json().catch(() => ({}));
 
       if (!res.ok || !result.success) {
+        if (res.status >= 400 && res.status < 500 && res.status !== 408) {
+          refundIdempotencyKeyRef.current = null;
+        }
         throw new Error(getApiErrorMessage(result, 'Erro ao solicitar estorno'));
       }
 
@@ -938,6 +947,7 @@ export function CobrancaDetalhesClient({ id }: { id: string }) {
 
       markAwaitingWebhook();
       await loadCobranca();
+      refundIdempotencyKeyRef.current = null;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Erro desconhecido';
       pushToast({

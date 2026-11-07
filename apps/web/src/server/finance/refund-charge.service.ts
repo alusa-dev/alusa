@@ -3,9 +3,10 @@ import {
   AsaasHttpError,
   KycNotApprovedError,
   auditLogService,
-  claimPaymentCommandForDispatch,
+  claimPaymentRefundCommandForDispatch,
   evaluatePaymentActionPolicy,
   expectedEventsForPaymentCommand,
+  findActivePaymentRefundCommand,
   failPaymentCommand,
   isAsaasEnabled,
   markPaymentCommandSent,
@@ -98,6 +99,13 @@ function validateRefundValue(params: {
   return null;
 }
 
+function buildRefundRequestFingerprint(value: number, splitRefunds: CobrancaRefundInputDTO['splitRefunds']) {
+  const canonicalSplits = (splitRefunds ?? [])
+    .map((split) => [split.id, split.value] as const)
+    .sort(([leftId, leftValue], [rightId, rightValue]) => leftId.localeCompare(rightId) || leftValue - rightValue);
+  return JSON.stringify({ value, splitRefunds: canonicalSplits });
+}
+
 async function executeRefundCommand(params: {
   contaId: string;
   userId: string;
@@ -119,29 +127,42 @@ async function executeRefundCommand(params: {
   storeSaleRefundAttemptId?: string;
 }): Promise<RefundCommandResult> {
   const refundValue = params.body.value;
-  const command = await registerPaymentCommand({
-    contaId: params.contaId,
-    type: 'PAYMENT_REFUND_COMMAND',
-    entityType: params.entityType,
-    entityId: params.entityId,
-    asaasPaymentId: params.asaasPayment.id,
-    expectedEvents: expectedEventsForPaymentCommand('PAYMENT_REFUND_COMMAND'),
-    correlationId: params.correlationId,
-    actorId: params.userId,
-    ...(params.chargeId !== undefined ? { chargeId: params.chargeId } : {}),
-    ...(params.cobrancaId !== undefined ? { cobrancaId: params.cobrancaId } : {}),
-    metadata: {
-      source: 'POST /api/cobrancas/[id]/refund',
-      ...(params.origin ? { origin: params.origin } : {}),
-      previousAsaasStatus: params.asaasPayment.status,
-      previousEffectiveAsaasStatus: params.effectiveAsaasStatus,
-      refundValue: refundValue ?? params.paymentValue,
-      isPartialRefund: refundValue !== undefined && refundValue < params.paymentValue,
-      splitRefunds: params.body.splitRefunds ?? null,
-      ...(params.storeSaleReturnId ? { storeSaleReturnId: params.storeSaleReturnId } : {}),
-      ...(params.storeSaleRefundAttemptId ? { storeSaleRefundAttemptId: params.storeSaleRefundAttemptId } : {}),
-    },
-  });
+  let command: Awaited<ReturnType<typeof registerPaymentCommand>>;
+  try {
+    command = await registerPaymentCommand({
+      contaId: params.contaId,
+      type: 'PAYMENT_REFUND_COMMAND',
+      entityType: params.entityType,
+      entityId: params.entityId,
+      asaasPaymentId: params.asaasPayment.id,
+      expectedEvents: expectedEventsForPaymentCommand('PAYMENT_REFUND_COMMAND'),
+      correlationId: params.correlationId,
+      requestFingerprint: buildRefundRequestFingerprint(refundValue ?? params.paymentValue, params.body.splitRefunds),
+      actorId: params.userId,
+      ...(params.chargeId !== undefined ? { chargeId: params.chargeId } : {}),
+      ...(params.cobrancaId !== undefined ? { cobrancaId: params.cobrancaId } : {}),
+      metadata: {
+        source: 'POST /api/cobrancas/[id]/refund',
+        ...(params.origin ? { origin: params.origin } : {}),
+        previousAsaasStatus: params.asaasPayment.status,
+        previousEffectiveAsaasStatus: params.effectiveAsaasStatus,
+        refundValue: refundValue ?? params.paymentValue,
+        isPartialRefund: refundValue !== undefined && refundValue < params.paymentValue,
+        splitRefunds: params.body.splitRefunds ?? null,
+        ...(params.storeSaleReturnId ? { storeSaleReturnId: params.storeSaleReturnId } : {}),
+        ...(params.storeSaleRefundAttemptId ? { storeSaleRefundAttemptId: params.storeSaleRefundAttemptId } : {}),
+      },
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'PAYMENT_COMMAND_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD') {
+      return result(409, {
+        error: 'A chave de idempotência já foi usada com outros dados de estorno.',
+        code: 'IDEMPOTENCY_KEY_REUSED',
+        correlationId: params.correlationId,
+      });
+    }
+    throw error;
+  }
 
   const commandPayload = command.payload && typeof command.payload === 'object' && !Array.isArray(command.payload)
     ? command.payload as { commandStatus?: string }
@@ -155,27 +176,43 @@ async function executeRefundCommand(params: {
       refundValue: refundValue ?? params.paymentValue,
     })));
   }
+  if (commandPayload?.commandStatus === 'FAILED') {
+    return result(409, {
+      error: 'A tentativa anterior de estorno foi recusada. Verifique o estado da cobrança e solicite uma nova operação.',
+      code: 'REFUND_COMMAND_FAILED',
+      correlationId: params.correlationId,
+    });
+  }
 
   try {
     // Claim the outbound boundary atomically: exactly one concurrent caller
     // may send this non-idempotent provider mutation.
-    const dispatchClaim = await claimPaymentCommandForDispatch({
+    const dispatchClaim = await claimPaymentRefundCommandForDispatch({
       contaId: params.contaId,
       jobId: command.id,
+      asaasPaymentId: params.asaasPayment.id,
       providerStatus: params.effectiveAsaasStatus,
     });
     if (!dispatchClaim.claimed) {
+      if (!dispatchClaim.activeCommand) {
+        return result(409, {
+          error: 'Não foi possível iniciar uma nova solicitação de estorno.',
+          code: 'REFUND_COMMAND_NOT_DISPATCHED',
+          correlationId: params.correlationId,
+        });
+      }
       return result(202, cobrancaActionResultDTOSchema.parse(mapCobrancaActionResultToDTO({
         success: true,
         message: 'Estorno em processamento ou aguardando reconciliação.',
         pending: true,
-        correlationId: params.correlationId,
+        correlationId: dispatchClaim.activeCommand.correlationId,
         refundValue: refundValue ?? params.paymentValue,
       })));
     }
     await refundCobranca({
       paymentId: params.asaasPayment.id,
       contaId: params.contaId,
+      idempotencyKey: command.id,
       value: refundValue,
       description: params.body.description || `Estorno solicitado via Alusa - ${params.correlationId}`,
       splitRefunds: params.body.splitRefunds,
@@ -354,17 +391,53 @@ async function executeEventRefund(params: {
   };
 
   if (claimedEventOrder && (asaasPayment.billingType ?? paymentLookup.billingType)?.toUpperCase() === 'BOLETO') {
-    const command = await registerPaymentCommand({
+    let command: Awaited<ReturnType<typeof registerPaymentCommand>>;
+    try {
+      command = await registerPaymentCommand({
+        contaId: params.contaId,
+        type: 'PAYMENT_REFUND_COMMAND',
+        entityType: 'CHARGE',
+        entityId: params.id,
+        asaasPaymentId: asaasPayment.id,
+        expectedEvents: expectedEventsForPaymentCommand('PAYMENT_REFUND_COMMAND'),
+        correlationId: params.correlationId,
+        actorId: params.userId,
+        requestFingerprint: buildRefundRequestFingerprint(paymentValue, params.body.splitRefunds),
+        metadata: {
+          source: 'POST /api/cobrancas/[id]/refund',
+          origin: 'EVENT_MAP_ORDER',
+          billingType: 'BOLETO',
+          refundValue: paymentValue,
+          splitRefunds: params.body.splitRefunds ?? null,
+        },
+      });
+    } catch (error) {
+      await restoreEventOrderClaim();
+      throw error;
+    }
+    const existingStatus = command.payload && typeof command.payload === 'object' && !Array.isArray(command.payload)
+      ? (command.payload as { commandStatus?: string }).commandStatus
+      : null;
+    if (['SENT_TO_ASAAS', 'CONFIRMED_BY_WEBHOOK', 'NEEDS_RECONCILIATION'].includes(existingStatus ?? '')) {
+      return result(202, { success: true, pending: true, correlationId: params.correlationId, message: 'Solicitação já enviada ao pagador.' });
+    }
+    if (existingStatus === 'FAILED') {
+      await restoreEventOrderClaim();
+      return result(409, { error: 'A tentativa anterior de estorno foi recusada. Solicite uma nova operação com outra chave de idempotência.', code: 'REFUND_COMMAND_FAILED', correlationId: params.correlationId });
+    }
+    const dispatchClaim = await claimPaymentRefundCommandForDispatch({
       contaId: params.contaId,
-      type: 'PAYMENT_REFUND_COMMAND',
-      entityType: 'CHARGE',
-      entityId: params.id,
+      jobId: command.id,
       asaasPaymentId: asaasPayment.id,
-      expectedEvents: expectedEventsForPaymentCommand('PAYMENT_REFUND_COMMAND'),
-      correlationId: params.correlationId,
-      actorId: params.userId,
-      metadata: { source: 'POST /api/cobrancas/[id]/refund', origin: 'EVENT_MAP_ORDER', billingType: 'BOLETO' },
+      providerStatus: 'REFUND_REQUEST_SUBMITTING',
     });
+    if (!dispatchClaim.claimed) {
+      if (dispatchClaim.activeCommand) {
+        return result(202, { success: true, pending: true, correlationId: dispatchClaim.activeCommand.correlationId, message: 'Solicitação em processamento ou aguardando confirmação.' });
+      }
+      await restoreEventOrderClaim();
+      return result(409, { error: 'Não foi possível iniciar uma nova solicitação de estorno.', code: 'REFUND_COMMAND_NOT_DISPATCHED', correlationId: params.correlationId });
+    }
     try {
       const request = await requestBankSlipRefund({ paymentId: asaasPayment.id, contaId: params.contaId });
       const requestUrl = new URL(request.requestUrl);
@@ -414,7 +487,7 @@ async function executeEventRefund(params: {
         correlationId: params.correlationId,
       });
     } catch (error) {
-      if (error instanceof AsaasHttpError && error.status >= 400 && error.status < 500) {
+      if (error instanceof AsaasHttpError && error.status >= 400 && error.status < 500 && error.status !== 408) {
         await failPaymentCommand({ jobId: command.id, error });
         await restoreEventOrderClaim();
       } else {
@@ -427,7 +500,7 @@ async function executeEventRefund(params: {
   }
 
   try {
-    return await executeRefundCommand({
+    const refundResult = await executeRefundCommand({
       ...params,
       asaasPayment,
       effectiveAsaasStatus: effectiveStatus,
@@ -436,8 +509,15 @@ async function executeEventRefund(params: {
       entityId: params.id,
       origin: 'EVENT',
     });
+    if (refundResult.status === 409 && (refundResult.body as { code?: string })?.code === 'IDEMPOTENCY_KEY_REUSED') {
+      await restoreEventOrderClaim();
+    }
+    return refundResult;
   } catch (error) {
-    if (error instanceof AsaasHttpError && error.status >= 400 && error.status < 500) {
+    if (
+      (error instanceof AsaasHttpError && error.status >= 400 && error.status < 500 && error.status !== 408) ||
+      (error instanceof Error && error.message === 'PAYMENT_COMMAND_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD')
+    ) {
       await restoreEventOrderClaim();
     }
     throw error;
@@ -458,7 +538,7 @@ export async function executeCobrancaRefund(params: {
   const startedAt = Date.now();
   try {
     const records = await loadCobrancaActionRecords(params.contaId, params.id);
-    if (!records.cobranca && !records.charge) return executeEventRefund({ ...params, correlationId, startedAt });
+    if (!records.cobranca && !records.charge) return await executeEventRefund({ ...params, correlationId, startedAt });
 
     const asaasPaymentId = records.cobranca?.asaasPaymentId ?? records.charge?.asaasPaymentId ?? null;
     if (!asaasPaymentId) return result(400, { error: 'Cobrança sem integração com a plataforma financeira', correlationId });
@@ -490,6 +570,17 @@ export async function executeCobrancaRefund(params: {
     });
     if (!policy.canRefund) return policyFailure(policy, effectiveStatus, correlationId, false);
     if (params.body.value !== undefined && !policy.canPartialRefund) return policyFailure(policy, effectiveStatus, correlationId, true);
+    const paymentValue = asaasPayment.value ?? Number(records.cobranca?.valor ?? records.charge?.value ?? 0);
+
+    const activeRefundCommand = await findActivePaymentRefundCommand({ contaId: params.contaId, asaasPaymentId });
+    if (activeRefundCommand && activeRefundCommand.correlationId !== correlationId) {
+      return result(202, {
+        success: true,
+        pending: true,
+        correlationId: activeRefundCommand.correlationId,
+        message: 'Já existe uma solicitação de estorno aguardando confirmação ou reconciliação.',
+      });
+    }
 
     if ((asaasPayment.billingType ?? records.charge?.billingType)?.toUpperCase() === 'BOLETO') {
       if (params.body.value !== undefined) {
@@ -507,6 +598,7 @@ export async function executeCobrancaRefund(params: {
         asaasPaymentId,
         expectedEvents: expectedEventsForPaymentCommand('PAYMENT_REFUND_COMMAND'),
         correlationId,
+        requestFingerprint: buildRefundRequestFingerprint(paymentValue, params.body.splitRefunds),
         actorId: params.userId,
         chargeId: records.charge?.id ?? null,
         cobrancaId: records.cobranca?.id ?? null,
@@ -516,6 +608,8 @@ export async function executeCobrancaRefund(params: {
           storeSaleReturnId: params.storeSaleReturnId ?? null,
           storeSaleRefundAttemptId: params.storeSaleRefundAttemptId ?? null,
           billingType: 'BOLETO',
+          refundValue: paymentValue,
+          splitRefunds: params.body.splitRefunds ?? null,
         },
       });
       const payload = command.payload && typeof command.payload === 'object' && !Array.isArray(command.payload)
@@ -524,9 +618,25 @@ export async function executeCobrancaRefund(params: {
       if (['SENT_TO_ASAAS', 'CONFIRMED_BY_WEBHOOK', 'NEEDS_RECONCILIATION'].includes(payload?.commandStatus ?? '')) {
         return result(202, { success: true, pending: true, correlationId, message: 'Solicitação já enviada ao pagador.', });
       }
-      const dispatchClaim = await claimPaymentCommandForDispatch({ contaId: params.contaId, jobId: command.id, providerStatus: 'REFUND_REQUEST_SUBMITTING' });
+      if (payload?.commandStatus === 'FAILED') {
+        return result(409, { error: 'A tentativa anterior de estorno foi recusada. Solicite uma nova operação com outra chave de idempotência.', code: 'REFUND_COMMAND_FAILED', correlationId });
+      }
+      const dispatchClaim = await claimPaymentRefundCommandForDispatch({
+        contaId: params.contaId,
+        jobId: command.id,
+        asaasPaymentId,
+        providerStatus: 'REFUND_REQUEST_SUBMITTING',
+      });
       if (!dispatchClaim.claimed) {
-        return result(202, { success: true, pending: true, correlationId, message: 'Solicitação em processamento ou aguardando reconciliação.' });
+        if (dispatchClaim.activeCommand) {
+          return result(202, {
+            success: true,
+            pending: true,
+            correlationId: dispatchClaim.activeCommand.correlationId,
+            message: 'Solicitação em processamento ou aguardando reconciliação.',
+          });
+        }
+        return result(409, { error: 'Não foi possível iniciar uma nova solicitação de estorno.', code: 'REFUND_COMMAND_NOT_DISPATCHED', correlationId });
       }
       let bankSlipRequest;
       try {
@@ -552,7 +662,6 @@ export async function executeCobrancaRefund(params: {
       return result(202, { success: true, pending: true, correlationId, requestUrl: requestUrl.toString(), message: 'Solicitação enviada; o pagador precisa informar os dados bancários.' });
     }
 
-    const paymentValue = asaasPayment.value ?? Number(records.cobranca?.valor ?? records.charge?.value ?? 0);
     const invalidValue = validateRefundValue({ value: params.body.value, paymentValue, correlationId, event: false });
     if (invalidValue) return invalidValue;
 
@@ -572,6 +681,13 @@ export async function executeCobrancaRefund(params: {
       storeSaleRefundAttemptId: params.storeSaleRefundAttemptId,
     });
   } catch (error) {
+    if (error instanceof Error && error.message === 'PAYMENT_COMMAND_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD') {
+      return result(409, {
+        error: 'A chave de idempotência já foi usada com outros dados de estorno.',
+        code: 'IDEMPOTENCY_KEY_REUSED',
+        correlationId,
+      });
+    }
     logFinanceOperationalEvent({ severity: 'error', eventName: 'finance.services.refund_charge.failed', error });
     if (error instanceof KycNotApprovedError) {
       return result(409, { error: 'KYC_NAO_APROVADO', message: 'Conta não aprovada para operações financeiras', correlationId });

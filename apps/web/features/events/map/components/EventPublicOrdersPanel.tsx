@@ -40,6 +40,7 @@ import { EventWhatsAppStatusIndicator } from '../../shared/EventWhatsAppStatusIn
 import { EventTablePanel } from '../../shared/EventTablePanel';
 import { EventTicketScannerAccesses } from './EventTicketScannerAccesses';
 import { canRequestEventRefund } from '../../shared/event-refund-permission';
+import { RefundAttemptKeys } from '../../refund-attempt-keys';
 import { isSafePaymentUrl, publicOrderAdminActions, publicOrderAdminStatusDescription, publicOrderAdminStatusLabel, publicOrderAdminStatusVariant } from './public-order-admin-utils';
 
 type PublicOrderListItem = {
@@ -189,6 +190,7 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
   const [refundTarget, setRefundTarget] = useState<PublicOrderListItem | null>(null);
+  const refundAttemptKeys = useRef(new RefundAttemptKeys());
   const [cancelTarget, setCancelTarget] = useState<PublicOrderListItem | null>(null);
   const [orderDetailsTarget, setOrderDetailsTarget] = useState<PublicOrderListItem | null>(null);
   const orderDetailsScrollRef = useRef<HTMLDivElement>(null);
@@ -367,22 +369,34 @@ export function EventPublicOrdersPanel({ event }: { event: SchoolEventDTO }) {
     mutationFn: async (order: PublicOrderListItem) => {
       const response = await fetch(`/api/events/public-orders/${order.id}/refund`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': refundAttemptKeys.current.get(`event-map-order:${order.id}`),
+        },
         body: JSON.stringify({}),
       });
       const json = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(json?.error?.message ?? json?.message ?? 'Não foi possível solicitar o estorno.');
+      if (!response.ok) {
+        const error = new Error(typeof json?.error === 'string' ? json.error : json?.error?.message ?? json?.message ?? 'Não foi possível solicitar o estorno.') as Error & { status: number; code?: string };
+        error.status = response.status;
+        error.code = json?.code ?? json?.error?.code;
+        throw error;
+      }
       return json;
     },
-    onSuccess: async () => {
+    onSuccess: async (_data, order) => {
       await queryClient.invalidateQueries({ queryKey: ['events', event.id, 'public-orders'] });
       toast.success({ title: 'Estorno solicitado', description: 'O status será atualizado assim que a solicitação for confirmada.' });
+      refundAttemptKeys.current.complete(`event-map-order:${order.id}`);
       setRefundTarget(null);
     },
-    onError: () => toast.error({
-      title: 'Não foi possível solicitar o estorno',
-      description: 'Tente novamente. Se o problema continuar, entre em contato com o suporte.',
-    }),
+    onError: (error, order) => {
+      refundAttemptKeys.current.fail(`event-map-order:${order.id}`, error);
+      toast.error({
+        title: 'Não foi possível solicitar o estorno',
+        description: 'Tente novamente. Se o problema continuar, entre em contato com o suporte.',
+      });
+    },
   });
 
   const cancelMutation = useMutation({

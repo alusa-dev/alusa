@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import {
@@ -299,6 +299,7 @@ export function ChargeActionsMenu({
   const router = useRouter();
   const [loadingAction, setLoadingAction] = useState<ChargeMenuAction | null>(null);
   const [confirmAction, setConfirmAction] = useState<ChargeMenuAction | null>(null);
+  const refundIdempotencyKeyRef = useRef<string | null>(null);
 
   const recommendedActions = useMemo(() => getRecommendedActions(cobranca), [cobranca]);
   const navigationActions = useMemo(
@@ -381,9 +382,10 @@ export function ChargeActionsMenu({
           });
           break;
         case 'REFUND':
+          refundIdempotencyKeyRef.current ??= createRefundIdempotencyKey();
           response = await fetch(`/api/cobrancas/${cobranca.id}/refund`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'Idempotency-Key': refundIdempotencyKeyRef.current },
             body: JSON.stringify({}),
           });
           break;
@@ -403,6 +405,9 @@ export function ChargeActionsMenu({
 
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
+        if (action === 'REFUND' && response.status >= 400 && response.status < 500 && response.status !== 408) {
+          refundIdempotencyKeyRef.current = null;
+        }
         const message = payload?.message || payload?.error?.message || payload?.error || 'Falha ao executar ação';
         throw new Error(message);
       }
@@ -430,6 +435,7 @@ export function ChargeActionsMenu({
 
       await onActionComplete?.();
       router.refresh();
+      if (action === 'REFUND') refundIdempotencyKeyRef.current = null;
     } catch (error) {
       pushToast({
         title: 'Erro',
@@ -534,4 +540,8 @@ export function ChargeActionsMenu({
       )}
     </>
   );
+}
+
+function createRefundIdempotencyKey() {
+  return globalThis.crypto?.randomUUID?.() ?? `web-refund-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }

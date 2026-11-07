@@ -52,6 +52,7 @@ export default async function PublicEventMapPage({ params, searchParams }: PageP
         bankSlipBarcode: paymentInstruments?.bankSlipInfo?.barCode ?? null,
         status: initialOrder.status,
         paymentStatus: initialOrder.paymentStatus,
+        totalAmount: initialOrder.totalAmount,
         refundRequestUrl: initialOrder.refundRequestUrl,
         ticketFulfillmentLastError: initialOrder.ticketFulfillmentLastError,
         ticketFulfillmentStatus: initialOrder.ticketFulfillmentStatus,

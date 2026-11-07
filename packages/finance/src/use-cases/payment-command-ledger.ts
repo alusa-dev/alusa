@@ -3,6 +3,7 @@ import type { AsaasIntegrationJobType, Prisma } from '@prisma/client';
 
 import { publishFinanceEvent } from '../realtime/finance-realtime-publisher';
 import { upsertFinanceReconciliationIssue } from '../reconciliation/finance-reconciliation-issue.service';
+import { withIdempotencyGuard } from '../core/idempotency.service';
 
 export type PaymentCommandJobType =
   | 'PAYMENT_UPDATE_COMMAND'
@@ -37,6 +38,7 @@ type PaymentCommandPayload = {
   lastObservedEvent?: string | null;
   providerStatus?: string | null;
   metadata?: Record<string, unknown>;
+  requestFingerprint?: string;
 };
 
 export type RegisterPaymentCommandInput = {
@@ -51,6 +53,7 @@ export type RegisterPaymentCommandInput = {
   chargeId?: string | null;
   cobrancaId?: string | null;
   metadata?: Record<string, unknown>;
+  requestFingerprint?: string;
 };
 
 export function expectedEventsForPaymentCommand(type: PaymentCommandJobType): string[] {
@@ -87,6 +90,31 @@ function parsePayload(payload: Prisma.JsonValue): PaymentCommandPayload | null {
   return record as PaymentCommandPayload;
 }
 
+function legacyRefundFingerprint(payload: PaymentCommandPayload): string | null {
+  const metadata = payload.metadata;
+  if (!metadata || typeof metadata.refundValue !== 'number') return null;
+  const rawSplits = metadata.splitRefunds;
+  const splits = rawSplits == null ? [] : Array.isArray(rawSplits) ? rawSplits : null;
+  if (!splits) return null;
+  const canonicalSplits: Array<[string, number]> = [];
+  for (const entry of splits) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+    const split = entry as Record<string, unknown>;
+    if (typeof split.id !== 'string' || typeof split.value !== 'number') return null;
+    canonicalSplits.push([split.id, split.value]);
+  }
+  canonicalSplits.sort(([leftId, leftValue], [rightId, rightValue]) => leftId.localeCompare(rightId) || leftValue - rightValue);
+  return JSON.stringify({ value: metadata.refundValue, splitRefunds: canonicalSplits });
+}
+
+function matchesRequestFingerprint(payload: PaymentCommandPayload, fingerprint: string | undefined): boolean {
+  if (fingerprint === undefined) return true;
+  if (typeof payload.requestFingerprint === 'string') return payload.requestFingerprint === fingerprint;
+  // Legacy refund jobs recorded the canonical ingredients in metadata. If a
+  // legacy row lacks enough data, fail closed instead of replaying an unknown payload.
+  return legacyRefundFingerprint(payload) === fingerprint;
+}
+
 export async function registerPaymentCommand(input: RegisterPaymentCommandInput) {
   const nowIso = new Date().toISOString();
   const payload: PaymentCommandPayload = {
@@ -100,6 +128,7 @@ export async function registerPaymentCommand(input: RegisterPaymentCommandInput)
     actorId: input.actorId ?? null,
     requestedAt: nowIso,
     metadata: input.metadata,
+    requestFingerprint: input.requestFingerprint,
   };
 
   const key = {
@@ -119,7 +148,8 @@ export async function registerPaymentCommand(input: RegisterPaymentCommandInput)
       existingPayload.entityType !== input.entityType ||
       existingPayload.entityId !== input.entityId ||
       existingPayload.asaasPaymentId !== input.asaasPaymentId ||
-      JSON.stringify(existingPayload.expectedEvents) !== JSON.stringify(input.expectedEvents)
+      JSON.stringify(existingPayload.expectedEvents) !== JSON.stringify(input.expectedEvents) ||
+      !matchesRequestFingerprint(existingPayload, input.requestFingerprint)
     ) {
       throw new Error('PAYMENT_COMMAND_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
     }
@@ -149,12 +179,152 @@ export async function registerPaymentCommand(input: RegisterPaymentCommandInput)
     persistedPayload.entityType !== input.entityType ||
     persistedPayload.entityId !== input.entityId ||
     persistedPayload.asaasPaymentId !== input.asaasPaymentId ||
-    JSON.stringify(persistedPayload.expectedEvents) !== JSON.stringify(input.expectedEvents)
+    JSON.stringify(persistedPayload.expectedEvents) !== JSON.stringify(input.expectedEvents) ||
+    !matchesRequestFingerprint(persistedPayload, input.requestFingerprint)
   ) {
     throw new Error('PAYMENT_COMMAND_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
   }
 
   return persisted;
+}
+
+/** Finds the newest refund command that is still outstanding for this payment
+ * within the tenant. A webhook-confirmed or terminally failed command is not active. */
+export async function findActivePaymentRefundCommand(input: { contaId: string; asaasPaymentId: string }) {
+  const job = await prisma.asaasIntegrationJob.findFirst({
+    where: {
+      contaId: input.contaId,
+      type: 'PAYMENT_REFUND_COMMAND',
+      AND: [
+        { payload: { path: ['asaasPaymentId'], equals: input.asaasPaymentId } },
+        {
+          OR: ['REQUESTED', 'SENT_TO_ASAAS', 'NEEDS_RECONCILIATION'].map((commandStatus) => ({
+            payload: { path: ['commandStatus'], equals: commandStatus },
+          })),
+        },
+      ],
+    },
+    orderBy: { createdAt: 'asc' },
+    select: { id: true, payload: true },
+  });
+  const payload = job ? parsePayload(job.payload) : null;
+  if (!job || !payload || payload.commandType !== 'PAYMENT_REFUND_COMMAND' || payload.asaasPaymentId !== input.asaasPaymentId) {
+    return null;
+  }
+  if (!['REQUESTED', 'SENT_TO_ASAAS', 'NEEDS_RECONCILIATION'].includes(payload.commandStatus)) return null;
+  return { id: job.id, correlationId: payload.correlationId, commandStatus: payload.commandStatus };
+}
+
+/** Atomically claims one refund command per tenant/payment, even when callers
+ * use different idempotency keys concurrently. A losing request is made
+ * terminal without dispatch and receives the winning command identity. */
+export async function claimPaymentRefundCommandForDispatch(input: {
+  contaId: string;
+  jobId: string;
+  asaasPaymentId: string;
+  providerStatus?: string | null;
+}) {
+  return withIdempotencyGuard({
+    contaId: input.contaId,
+    scope: 'event-payment-refund',
+    key: input.asaasPaymentId,
+    fn: async (tx) => {
+      const jobs = await tx.asaasIntegrationJob.findMany({
+        where: {
+          contaId: input.contaId,
+          type: 'PAYMENT_REFUND_COMMAND',
+          AND: [
+            { payload: { path: ['asaasPaymentId'], equals: input.asaasPaymentId } },
+            {
+              OR: ['REQUESTED', 'SENT_TO_ASAAS', 'NEEDS_RECONCILIATION'].map((commandStatus) => ({
+                payload: { path: ['commandStatus'], equals: commandStatus },
+              })),
+            },
+          ],
+        },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, payload: true },
+      });
+      const active = jobs.flatMap((candidate) => {
+        const payload = parsePayload(candidate.payload);
+        if (
+          !payload ||
+          payload.commandType !== 'PAYMENT_REFUND_COMMAND' ||
+          payload.asaasPaymentId !== input.asaasPaymentId ||
+          !['REQUESTED', 'SENT_TO_ASAAS', 'NEEDS_RECONCILIATION'].includes(payload.commandStatus)
+        ) return [];
+        return [{ id: candidate.id, payload }];
+      });
+      const current = active.find((candidate) => candidate.id === input.jobId);
+      const winner = active[0];
+      if (!current || !winner) {
+        return { claimed: false as const, activeCommand: winner ? {
+          id: winner.id, correlationId: winner.payload.correlationId, commandStatus: winner.payload.commandStatus,
+        } : null };
+      }
+
+      if (winner.id !== input.jobId) {
+        const now = new Date();
+        await tx.asaasIntegrationJob.updateMany({
+          where: {
+            id: input.jobId,
+            contaId: input.contaId,
+            status: { in: ['PENDING', 'PROCESSING'] },
+            payload: { path: ['commandStatus'], equals: 'REQUESTED' },
+          },
+          data: {
+            status: 'FAILED',
+            lastError: 'Another refund command for this payment is already active.',
+            lastErrorAt: now,
+            payload: toJsonPayload({
+              ...current.payload,
+              commandStatus: 'FAILED',
+              failedAt: now.toISOString(),
+              metadata: {
+                ...(current.payload.metadata ?? {}),
+                failureMessage: 'Another refund command for this payment is already active.',
+              },
+            }),
+          },
+        });
+        return {
+          claimed: false as const,
+          activeCommand: { id: winner.id, correlationId: winner.payload.correlationId, commandStatus: winner.payload.commandStatus },
+        };
+      }
+
+      if (current.payload.commandStatus !== 'REQUESTED') {
+        return {
+          claimed: false as const,
+          activeCommand: { id: current.id, correlationId: current.payload.correlationId, commandStatus: current.payload.commandStatus },
+        };
+      }
+
+      const now = new Date();
+      const claimed = await tx.asaasIntegrationJob.updateMany({
+        where: {
+          id: input.jobId,
+          contaId: input.contaId,
+          status: { in: ['PENDING', 'PROCESSING'] },
+          payload: { path: ['commandStatus'], equals: 'REQUESTED' },
+        },
+        data: {
+          status: 'PROCESSING',
+          processingAt: now,
+          payload: toJsonPayload({
+            ...current.payload,
+            commandStatus: 'SENT_TO_ASAAS',
+            sentAt: now.toISOString(),
+            providerStatus: input.providerStatus ?? current.payload.providerStatus ?? null,
+          }),
+        },
+      });
+      return {
+        claimed: claimed.count === 1,
+        activeCommand: { id: current.id, correlationId: current.payload.correlationId, commandStatus: 'SENT_TO_ASAAS' as const },
+      };
+    },
+  });
 }
 
 export async function markPaymentCommandSent(input: {
@@ -277,9 +447,16 @@ export async function markPaymentCommandNeedsReconciliation(input: {
   });
   const payload = job ? parsePayload(job.payload) : null;
   if (!job || !payload) return null;
+  if (payload.commandStatus === 'CONFIRMED_BY_WEBHOOK') {
+    return { id: job.id, status: 'CONFIRMED_BY_WEBHOOK' as const };
+  }
   const now = new Date();
-  await prisma.asaasIntegrationJob.update({
-    where: { id: input.jobId },
+  const updated = await prisma.asaasIntegrationJob.updateMany({
+    where: {
+      id: input.jobId,
+      contaId: job.contaId,
+      payload: { path: ['commandStatus'], equals: payload.commandStatus },
+    },
     data: {
       status: 'FAILED',
       lastError: message,
@@ -292,6 +469,17 @@ export async function markPaymentCommandNeedsReconciliation(input: {
       }),
     },
   });
+  if (updated.count !== 1) {
+    const latest = await prisma.asaasIntegrationJob.findUnique({
+      where: { id: input.jobId },
+      select: { payload: true },
+    });
+    const latestPayload = latest ? parsePayload(latest.payload) : null;
+    if (latestPayload?.commandStatus === 'CONFIRMED_BY_WEBHOOK') {
+      return { id: job.id, status: 'CONFIRMED_BY_WEBHOOK' as const };
+    }
+    return null;
+  }
   await upsertFinanceReconciliationIssue({
     contaId: job.contaId,
     entityType: payload.entityType === 'COBRANCA' ? 'PAYMENT' : 'CHARGE',
@@ -324,7 +512,15 @@ export async function confirmPaymentCommandsByProviderEvent(input: {
   const candidates = await prisma.asaasIntegrationJob.findMany({
     where: {
       contaId: input.contaId,
-      status: { in: ['PENDING', 'PROCESSING'] },
+      status: { in: ['PENDING', 'PROCESSING', 'FAILED'] },
+      OR: [
+        { status: { in: ['PENDING', 'PROCESSING'] } },
+        {
+          status: 'FAILED',
+          type: 'PAYMENT_REFUND_COMMAND',
+          payload: { path: ['commandStatus'], equals: 'NEEDS_RECONCILIATION' },
+        },
+      ],
       type: {
         in: [
           'PAYMENT_UPDATE_COMMAND',
@@ -346,24 +542,49 @@ export async function confirmPaymentCommandsByProviderEvent(input: {
     if (!payload || payload.asaasPaymentId !== input.asaasPaymentId) continue;
     if (!payload.expectedEvents.includes(input.eventName)) continue;
 
-    const nextPayload: PaymentCommandPayload = {
-      ...payload,
-      commandStatus: 'CONFIRMED_BY_WEBHOOK',
-      confirmedAt: now.toISOString(),
-      lastObservedEvent: input.eventName,
-      providerStatus: input.providerStatus ?? null,
-    };
-
-    confirmed.push(
-      await prisma.asaasIntegrationJob.update({
-        where: { id: job.id },
+    let confirmPayload = payload;
+    let transitioned = false;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const nextPayload: PaymentCommandPayload = {
+        ...confirmPayload,
+        commandStatus: 'CONFIRMED_BY_WEBHOOK',
+        confirmedAt: now.toISOString(),
+        lastObservedEvent: input.eventName,
+        providerStatus: input.providerStatus ?? null,
+      };
+      const updated = await prisma.asaasIntegrationJob.updateMany({
+        where: {
+          id: job.id,
+          contaId: input.contaId,
+          payload: { path: ['commandStatus'], equals: confirmPayload.commandStatus },
+        },
         data: {
           status: 'DONE',
           doneAt: now,
           payload: toJsonPayload(nextPayload),
         },
-      }),
-    );
+      });
+      if (updated.count === 1) {
+        transitioned = true;
+        break;
+      }
+      const latest = await prisma.asaasIntegrationJob.findUnique({
+        where: { id: job.id },
+        select: { payload: true },
+      });
+      const latestPayload = latest ? parsePayload(latest.payload) : null;
+      if (!latestPayload || latestPayload.commandStatus === 'CONFIRMED_BY_WEBHOOK') break;
+      if (attempt === 0 && latestPayload.commandStatus === 'NEEDS_RECONCILIATION' && latestPayload.expectedEvents.includes(input.eventName)) {
+        confirmPayload = latestPayload;
+        continue;
+      }
+      break;
+    }
+    if (!transitioned) continue;
+
+    const confirmedJob = await prisma.asaasIntegrationJob.findUnique({ where: { id: job.id } });
+    if (!confirmedJob) continue;
+    confirmed.push(confirmedJob);
 
     await publishFinanceEvent({
       contaId: input.contaId,

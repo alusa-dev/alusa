@@ -53,10 +53,15 @@ import ActionConfirmationDialog from '@/components/dialogs/ActionConfirmationDia
 import { DangerActionDialog } from '@/features/renewals/components/DangerActionDialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+
+function createRefundIdempotencyKey() {
+  return globalThis.crypto?.randomUUID?.() ?? `web-refund-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { refundEventCharge } from '@/features/events/events-service';
+import { RefundAttemptKeys } from '@/features/events/refund-attempt-keys';
 import { Receipt, RotateCcw, Trash } from '@/components/icons/icons';
 import { exportPaidReceiptsPdf } from '@/features/finance/operations/payments/paid-receipts-pdf';
 import { loadPaidReceiptSchoolProfile } from '@/features/finance/operations/payments/receipt-school-profile';
@@ -276,6 +281,7 @@ export function ParticipantDetailsFeature({
   const [manualPaymentActionTarget, setManualPaymentActionTarget] = useState<{ action: 'refund' | 'delete'; paymentId: string } | null>(null);
   const quitarIdempotencyKey = useRef<string | null>(null);
   const manualPaymentIdempotencyKey = useRef<string | null>(null);
+  const refundChargeIdempotencyKeys = useRef(new Map<string, string>());
 
   // Form states
   const [generalForm, setGeneralForm] = useState({
@@ -455,18 +461,25 @@ export function ParticipantDetailsFeature({
     },
   });
 
+  const refundPublicOrderAttemptKeys = useRef(new RefundAttemptKeys());
   const refundPublicOrderMutation = useMutation({
-    mutationFn: async (orderId: string) => refundEventCharge(`event-map-order:${orderId}`),
-    onSuccess: async () => {
+    mutationFn: async (orderId: string) => refundEventCharge(
+      `event-map-order:${orderId}`,
+      undefined,
+      refundPublicOrderAttemptKeys.current.get(`event-map-order:${orderId}`),
+    ),
+    onSuccess: async (_data, orderId) => {
       await Promise.all([
         refetch(),
         queryClient.invalidateQueries({ queryKey: ['events', 'sales', eventId] }),
         queryClient.invalidateQueries({ queryKey: ['events', 'detail', eventId] }),
       ]);
       toast.success({ title: 'Estorno solicitado', description: 'O status será atualizado assim que a solicitação for confirmada.' });
+      refundPublicOrderAttemptKeys.current.complete(`event-map-order:${orderId}`);
       setRefundOrderTarget(null);
     },
-    onError: () => {
+    onError: (error, orderId) => {
+      refundPublicOrderAttemptKeys.current.fail(`event-map-order:${orderId}`, error);
       toast.error({
         title: 'Não foi possível solicitar o estorno',
         description: 'Tente novamente. Se o problema continuar, entre em contato com o suporte.',
@@ -732,21 +745,28 @@ export function ParticipantDetailsFeature({
 
   const refundChargeMutation = useMutation({
     mutationFn: async (chargeId: string) => {
+      const idempotencyKey = refundChargeIdempotencyKeys.current.get(chargeId)
+        ?? createRefundIdempotencyKey();
+      refundChargeIdempotencyKeys.current.set(chargeId, idempotencyKey);
       const res = await fetch(`/api/cobrancas/${chargeId}/refund`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
         body: JSON.stringify({
           description: 'Estorno solicitado via painel do evento',
         }),
       });
       if (!res.ok) {
+        if (res.status >= 400 && res.status < 500 && res.status !== 408) {
+          refundChargeIdempotencyKeys.current.delete(chargeId);
+        }
         const err = await res.json().catch(() => null);
         throw new Error(err?.error?.message ?? err?.message ?? 'Erro ao realizar estorno.');
       }
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId, participantId] });
+    onSuccess: async (_, chargeId) => {
+      await queryClient.invalidateQueries({ queryKey: ['events', 'participants', eventId, participantId] });
+      refundChargeIdempotencyKeys.current.delete(chargeId);
       toast.success({ title: 'Estorno solicitado', description: 'O estorno da cobrança foi solicitado com sucesso.' });
     },
     onError: (err) => {

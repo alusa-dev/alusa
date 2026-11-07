@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Linking, Pressable, Share, StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ArrowLeftIcon, ArrowUturnLeftIcon, BanknotesIcon, DocumentTextIcon, EllipsisVerticalIcon, PencilSquareIcon, ReceiptRefundIcon, ShareIcon, XCircleIcon } from 'react-native-heroicons/outline';
@@ -14,6 +14,7 @@ import { formatCurrency, formatDate } from '@/features/billing/utils/formatters'
 import { formatPaymentDate } from '@alusa/shared';
 import { colors, radius, spacing } from '@/theme/tokens';
 import { useAppRefresh } from '@/hooks/use-app-refresh';
+import { ApiError } from '@/lib/api/errors';
 
 export default function BillingChargeScreen() {
   const { chargeId } = useLocalSearchParams<{ chargeId?: string }>();
@@ -22,6 +23,7 @@ export default function BillingChargeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [actionsVisible, setActionsVisible] = useState(false);
   const [actionLoading, setActionLoading] = useState<BillingChargeAction | null>(null);
+  const refundIdempotencyKeyRef = useRef<string | null>(null);
 
   const loadCharge = useCallback(async (options: { silent?: boolean } = {}) => {
     if (!chargeId) {
@@ -70,11 +72,25 @@ export default function BillingChargeScreen() {
         onAction={async (action) => {
           setActionLoading(action);
           try {
-            const result = await billingService.executeAction(chargeId ?? '', action);
+            const refundKey = action === 'REFUND'
+              ? (refundIdempotencyKeyRef.current ??= createRefundIdempotencyKey())
+              : undefined;
+            const result = await billingService.executeAction(chargeId ?? '', action, undefined, refundKey);
             setActionsVisible(false);
             await refresh();
+            if (action === 'REFUND') refundIdempotencyKeyRef.current = null;
             Alert.alert('Ação enviada', result.message);
           } catch (actionError) {
+            if (
+              action === 'REFUND' &&
+              actionError instanceof ApiError &&
+              actionError.status !== undefined &&
+              actionError.status >= 400 &&
+              actionError.status < 500 &&
+              actionError.status !== 408
+            ) {
+              refundIdempotencyKeyRef.current = null;
+            }
             Alert.alert('Não foi possível concluir', actionError instanceof Error ? actionError.message : 'Tente novamente.');
           } finally {
             setActionLoading(null);
@@ -83,6 +99,10 @@ export default function BillingChargeScreen() {
       />
     </Screen>
   );
+}
+
+function createRefundIdempotencyKey() {
+  return globalThis.crypto?.randomUUID?.() ?? `mobile-refund-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
 function ChargeDetails({ charge, onEdit, onEditRules }: { charge: BillingCharge; onEdit: () => void; onEditRules: () => void }) {

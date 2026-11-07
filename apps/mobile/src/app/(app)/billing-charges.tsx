@@ -158,7 +158,7 @@ export default function BillingChargesScreen({ origin }: { origin?: BillingOrigi
         renderItem={({ item }) => <ChargeCard charge={item} onPress={() => router.push({ pathname: '/(app)/billing/[chargeId]', params: { chargeId: item.id } })} />}
         ListHeaderComponent={listHeader}
         ListEmptyComponent={loading ? <BillingChargesSkeleton /> : error ? <ErrorState title="Não foi possível carregar" message={error} actionLabel="Tentar novamente" onAction={() => void loadCharges()} /> : <EmptyState title="Nenhuma cobrança encontrada" message="As cobranças da conta aparecerão aqui quando forem geradas." />}
-        ListFooterComponent={!loading && charges.length > 0 ? <BillingListFooter hasMore={hasMore} loading={loadingMore} error={loadMoreError} onRetry={() => void loadMoreCharges()} /> : null}
+        ListFooterComponent={!loading && charges.length > 0 ? <BillingListFooter hasMore={hasMore} loading={loadingMore} error={loadMoreError} onRetry={() => void loadMoreCharges()} /> : undefined}
         contentContainerStyle={styles.listContent}
         onEndReached={() => void loadMoreCharges()}
         onEndReachedThreshold={0.45}

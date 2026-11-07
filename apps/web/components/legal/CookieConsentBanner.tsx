@@ -34,6 +34,7 @@ const publicPrefixes = [
   '/dpa',
   '/direitos-lgpd',
   '/preferencias-de-cookies',
+  '/m',
 ];
 
 const authenticatedPrefixes = [

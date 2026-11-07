@@ -58,6 +58,7 @@ import type { EventMapObjectDTO } from '../api/event-map-service';
 import type { EventMapDocument } from '@alusa/domain';
 
 import { formatCpfCnpjBR, formatPhoneBR, isValidCpfCnpjBR, isValidPhoneBR, onlyDigits } from '@/lib/formatters';
+import { MetaPixelTracker } from './MetaPixelTracker';
 
 type PublicSeat = PublicMapViewModel['seats'][number];
 export function reconcilePublicMapSeatSelection<T extends { id: string; status: string }>(
@@ -75,6 +76,7 @@ type PublicMapOrderState = {
   invoiceUrl: string | null;
   status: string;
   paymentStatus?: string | null;
+  totalAmount?: number;
   refundRequestUrl?: string | null;
   ticketFulfillmentLastError?: string | null;
   ticketFulfillmentStatus: 'PENDING' | 'ISSUED' | 'FAILED' | 'REQUIRES_RECONCILIATION';
@@ -142,7 +144,7 @@ export function PublicMapExperience({
   const [step, setStep] = useState<'SELECTION' | 'IDENTIFICATION' | 'PAYMENT_METHOD' | 'CONFIRMATION'>(
     initialOrder ? 'CONFIRMATION' : 'SELECTION',
   );
-  
+
   // Form states
   const [buyerName, setBuyerName] = useState('');
   const [buyerEmail, setBuyerEmail] = useState('');
@@ -154,7 +156,6 @@ export function PublicMapExperience({
     initialOrder?.paymentMethod ?? 'PIX',
   );
   const [checkoutKey, setCheckoutKey] = useState(createCheckoutKey);
-  
   // Component UX states
   const [copied, setCopied] = useState(false);
   const [pollTimedOut, setPollTimedOut] = useState(false);
@@ -164,6 +165,7 @@ export function PublicMapExperience({
   const expirationSyncAttempted = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [order, setOrder] = useState<PublicMapOrderState | null>(initialOrder);
+
   const currentOrderIdRef = useRef(order?.orderId ?? null);
   currentOrderIdRef.current = order?.orderId ?? null;
   const bankSlipBarcodeSvg = useMemo(() => {
@@ -404,6 +406,7 @@ export function PublicMapExperience({
         invoiceUrl: string | null;
         status: string;
         paymentStatus?: string | null;
+        totalAmount: number;
         ticketFulfillmentStatus: 'PENDING' | 'ISSUED' | 'FAILED' | 'REQUIRES_RECONCILIATION';
         expiresAt: string;
         statusUrl?: string | null;
@@ -525,6 +528,7 @@ export function PublicMapExperience({
           invoiceUrl: string | null;
           status: string;
           paymentStatus: string | null;
+          totalAmount: number;
           refundRequestUrl: string | null;
           ticketFulfillmentLastError: string | null;
           ticketFulfillmentStatus: 'PENDING' | 'ISSUED' | 'FAILED' | 'REQUIRES_RECONCILIATION';
@@ -544,6 +548,7 @@ export function PublicMapExperience({
                 ...current,
                 status: status.status,
                 paymentStatus: status.paymentStatus,
+                totalAmount: status.totalAmount,
                 refundRequestUrl: status.refundRequestUrl,
                 ticketFulfillmentLastError: status.ticketFulfillmentLastError,
                 ticketFulfillmentStatus: status.ticketFulfillmentStatus,
@@ -646,6 +651,7 @@ export function PublicMapExperience({
 
   return (
     <div data-public-ticket-checkout={isPublicFlow ? '' : undefined} className={isPublicFlow ? 'flex h-dvh flex-col overflow-hidden lg:bg-slate-100' : undefined}>
+    <MetaPixelTracker publicSlug={map.publicSlug} mode={mode} order={order} />
     <main className={`relative ${isPublicFlow ? 'bg-white lg:!bg-slate-100' : 'bg-slate-100'} text-slate-950 ${
       isPublicFlow
         ? 'flex min-h-0 flex-1 flex-col overflow-hidden lg:min-h-0 lg:flex-1'

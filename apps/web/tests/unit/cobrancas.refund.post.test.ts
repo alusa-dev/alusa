@@ -13,6 +13,10 @@ vi.mock('@/lib/auth-options', () => ({
   authOptions: {},
 }));
 
+vi.mock('@/src/server/platform-billing/capacity', () => ({
+  platformBillingAccessResponseForConta: vi.fn(async () => null),
+}));
+
 vi.mock('@/src/prisma', () => ({
   prisma: {
     $transaction: vi.fn(async (callback: (_tx: unknown) => Promise<unknown>) => callback((await import('@/src/prisma')).prisma)),
@@ -53,7 +57,7 @@ vi.mock('@/src/server/finance/resolve-charge-payment-lookup', () => ({
 vi.mock('@alusa/finance', () => ({
   KycNotApprovedError: class KycNotApprovedError extends Error {},
   AsaasHttpError: class AsaasHttpError extends Error {
-    status = 400;
+    constructor(message: string, public status = 400) { super(message); }
   },
   evaluatePaymentActionPolicy: vi.fn((input: { asaasStatus?: string | null }) => {
     const status = String(input.asaasStatus ?? '').toUpperCase();
@@ -89,9 +93,13 @@ vi.mock('@alusa/finance', () => ({
     return input.status ?? null;
   }),
   expectedEventsForPaymentCommand: vi.fn(() => ['PAYMENT_REFUNDED']),
+  findActivePaymentRefundCommand: vi.fn(async () => null),
   registerPaymentCommand: vi.fn(async () => ({ id: 'job-1' })),
+  requestBankSlipRefund: vi.fn(async () => ({ requestUrl: 'https://asaas.com/refund/request-1' })),
   claimPaymentCommandForDispatch: vi.fn(async () => ({ claimed: true })),
+  claimPaymentRefundCommandForDispatch: vi.fn(async () => ({ claimed: true, activeCommand: null })),
   markPaymentCommandSent: vi.fn(async () => undefined),
+  markPaymentCommandNeedsReconciliation: vi.fn(async () => undefined),
   failPaymentCommand: vi.fn(async () => undefined),
   refundCobranca: vi.fn(async () => undefined),
   syncPaymentStateFromAsaas: vi.fn(async () => undefined),
@@ -100,13 +108,14 @@ vi.mock('@alusa/finance', () => ({
 
 import { getServerSession } from 'next-auth';
 import { prisma } from '@/src/prisma';
-import { readPaymentFullPreflight, refundCobranca, syncPaymentStateFromAsaas } from '@alusa/finance';
+import { AsaasHttpError, markPaymentCommandNeedsReconciliation, markPaymentCommandSent, readPaymentFullPreflight, refundCobranca, registerPaymentCommand, requestBankSlipRefund, syncPaymentStateFromAsaas } from '@alusa/finance';
+import { resolveCobrancaPaymentLookupForTenant } from '@/src/server/finance/resolve-charge-payment-lookup';
 import { POST } from '@/app/api/cobrancas/[id]/refund/route';
 
-const buildPostRequest = (url: string, body: unknown): NextRequest =>
+const buildPostRequest = (url: string, body: unknown, extraHeaders: Record<string, string> = {}): NextRequest =>
   new Request(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...extraHeaders },
     body: JSON.stringify(body),
   }) as unknown as NextRequest;
 
@@ -142,6 +151,164 @@ describe('POST /api/cobrancas/[id]/refund', () => {
     expect(syncPaymentStateFromAsaas).toHaveBeenCalledTimes(1);
     expect(prisma.eventMapOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ id: 'order-1', contaId: 'conta-1' }),
+      data: { paymentStatus: 'REFUND_REQUESTED', refundRequestUrl: null },
+    }));
+  });
+
+  it('restaura pedido de boleto quando a mesma chave do tenant conflita com outro pedido', async () => {
+    (getServerSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      user: { id: 'u1', role: 'FINANCEIRO', contaId: 'conta-1' },
+    });
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(resolveCobrancaPaymentLookupForTenant).mockResolvedValueOnce({
+      entityType: 'EVENT', origin: 'EVENT', asaasPaymentId: 'pay_event_2', localStatus: 'PAGO',
+      billingType: 'BOLETO', value: 120,
+      operational: { kind: 'event-map-order', entityId: 'order-2', refundedAmount: 0 },
+    } as never);
+    vi.mocked(readPaymentFullPreflight).mockResolvedValueOnce({
+      id: 'pay_event_2', status: 'RECEIVED', billingType: 'BOLETO', value: 120,
+    } as never);
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
+      id: 'order-2', status: 'CONFIRMED', paymentStatus: 'RECEIVED',
+      ticketFulfillmentStatus: 'ISSUED', _count: { items: 1 },
+    } as never);
+    vi.mocked(prisma.eventTicket.count)
+      .mockResolvedValueOnce(1 as never)
+      .mockResolvedValueOnce(0 as never);
+    vi.mocked(registerPaymentCommand).mockRejectedValueOnce(
+      new Error('PAYMENT_COMMAND_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD'),
+    );
+
+    const response = await POST(buildPostRequest(
+      'http://localhost/api/cobrancas/event-charge-2/refund',
+      {},
+      { 'Idempotency-Key': 'shared-refund-key-1' },
+    ), { params: Promise.resolve({ id: 'event-charge-2' }) });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED' });
+    expect(prisma.eventMapOrder.updateMany).toHaveBeenNthCalledWith(2, {
+      where: { id: 'order-2', contaId: 'conta-1', paymentStatus: 'REFUND_REQUESTED' },
+      data: { paymentStatus: 'RECEIVED' },
+    });
+    expect(registerPaymentCommand).toHaveBeenCalledTimes(1);
+    expect(refundCobranca).not.toHaveBeenCalled();
+  });
+
+  it('restaura pedido de evento não boleto quando a chave do tenant pertence a outro pedido', async () => {
+    (getServerSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      user: { id: 'u1', role: 'FINANCEIRO', contaId: 'conta-1' },
+    });
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(prisma.charge.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(resolveCobrancaPaymentLookupForTenant).mockResolvedValueOnce({
+      entityType: 'EVENT', origin: 'EVENT', asaasPaymentId: 'pay_event_3', localStatus: 'PAGO',
+      billingType: 'PIX', value: 120,
+      operational: { kind: 'event-map-order', entityId: 'order-3', refundedAmount: 0 },
+    } as never);
+    vi.mocked(readPaymentFullPreflight).mockResolvedValueOnce({
+      id: 'pay_event_3', status: 'RECEIVED', billingType: 'PIX', value: 120,
+    } as never);
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValueOnce({
+      id: 'order-3', status: 'CONFIRMED', paymentStatus: 'RECEIVED',
+      ticketFulfillmentStatus: 'ISSUED', _count: { items: 1 },
+    } as never);
+    vi.mocked(prisma.eventTicket.count)
+      .mockResolvedValueOnce(1 as never)
+      .mockResolvedValueOnce(0 as never);
+    vi.mocked(registerPaymentCommand).mockRejectedValueOnce(
+      new Error('PAYMENT_COMMAND_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD'),
+    );
+
+    const response = await POST(buildPostRequest(
+      'http://localhost/api/cobrancas/event-charge-3/refund',
+      {},
+      { 'Idempotency-Key': 'shared-refund-key-2' },
+    ), { params: Promise.resolve({ id: 'event-charge-3' }) });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED' });
+    expect(prisma.eventMapOrder.updateMany).toHaveBeenNthCalledWith(2, {
+      where: { id: 'order-3', contaId: 'conta-1', paymentStatus: 'REFUND_REQUESTED' },
+      data: { paymentStatus: 'RECEIVED' },
+    });
+    expect(registerPaymentCommand).toHaveBeenCalledTimes(1);
+    expect(refundCobranca).not.toHaveBeenCalled();
+  });
+
+  it('preserva o claim do pedido de boleto após HTTP 408 e não redispatcha o mesmo retry', async () => {
+    (getServerSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      user: { id: 'u1', role: 'FINANCEIRO', contaId: 'conta-1' },
+    });
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.charge.findFirst).mockResolvedValue(null as never);
+    vi.mocked(resolveCobrancaPaymentLookupForTenant).mockResolvedValue({
+      entityType: 'EVENT', origin: 'EVENT', asaasPaymentId: 'pay_event_408_boleto', localStatus: 'PAGO',
+      billingType: 'BOLETO', value: 120,
+      operational: { kind: 'event-map-order', entityId: 'order-408-boleto', refundedAmount: 0 },
+    } as never);
+    vi.mocked(readPaymentFullPreflight).mockResolvedValue({
+      id: 'pay_event_408_boleto', status: 'RECEIVED', billingType: 'BOLETO', value: 120,
+    } as never);
+    vi.mocked(prisma.eventMapOrder.findFirst)
+      .mockResolvedValueOnce({ id: 'order-408-boleto', status: 'CONFIRMED', paymentStatus: 'RECEIVED', ticketFulfillmentStatus: 'ISSUED', _count: { items: 1 } } as never)
+      .mockResolvedValueOnce({ id: 'order-408-boleto', status: 'CONFIRMED', paymentStatus: 'REFUND_REQUESTED', ticketFulfillmentStatus: 'ISSUED', _count: { items: 1 } } as never);
+    vi.mocked(prisma.eventTicket.count).mockResolvedValueOnce(1 as never).mockResolvedValueOnce(0 as never);
+    vi.mocked(registerPaymentCommand).mockResolvedValueOnce({ id: 'job-408-boleto', payload: { commandStatus: 'REQUESTED' } } as never);
+    vi.mocked(requestBankSlipRefund).mockRejectedValueOnce(new AsaasHttpError('provider timeout', 408));
+
+    const makeRequest = () => buildPostRequest('http://localhost/api/cobrancas/event-charge-408-boleto/refund', {}, {
+      'Idempotency-Key': 'event-408-boleto-key',
+    });
+    const first = await POST(makeRequest(), { params: Promise.resolve({ id: 'event-charge-408-boleto' }) });
+    const retry = await POST(makeRequest(), { params: Promise.resolve({ id: 'event-charge-408-boleto' }) });
+
+    expect(first.status).toBe(408);
+    expect(retry.status).toBe(409);
+    expect(requestBankSlipRefund).toHaveBeenCalledTimes(1);
+    expect(registerPaymentCommand).toHaveBeenCalledTimes(1);
+    expect(markPaymentCommandSent).toHaveBeenCalledWith({ jobId: 'job-408-boleto', providerStatus: 'UNKNOWN' });
+    expect(prisma.eventMapOrder.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.eventMapOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: { paymentStatus: 'REFUND_REQUESTED', refundRequestUrl: null },
+    }));
+  });
+
+  it('preserva o claim do pedido não boleto após HTTP 408 e não redispatcha o mesmo retry', async () => {
+    (getServerSession as ReturnType<typeof vi.fn>).mockResolvedValue({
+      user: { id: 'u1', role: 'FINANCEIRO', contaId: 'conta-1' },
+    });
+    vi.mocked(prisma.cobranca.findFirst).mockResolvedValue(null as never);
+    vi.mocked(prisma.charge.findFirst).mockResolvedValue(null as never);
+    vi.mocked(resolveCobrancaPaymentLookupForTenant).mockResolvedValue({
+      entityType: 'EVENT', origin: 'EVENT', asaasPaymentId: 'pay_event_408_pix', localStatus: 'PAGO',
+      billingType: 'PIX', value: 120,
+      operational: { kind: 'event-map-order', entityId: 'order-408-pix', refundedAmount: 0 },
+    } as never);
+    vi.mocked(readPaymentFullPreflight).mockResolvedValue({
+      id: 'pay_event_408_pix', status: 'RECEIVED', billingType: 'PIX', value: 120,
+    } as never);
+    vi.mocked(prisma.eventMapOrder.findFirst)
+      .mockResolvedValueOnce({ id: 'order-408-pix', status: 'CONFIRMED', paymentStatus: 'RECEIVED', ticketFulfillmentStatus: 'ISSUED', _count: { items: 1 } } as never)
+      .mockResolvedValueOnce({ id: 'order-408-pix', status: 'CONFIRMED', paymentStatus: 'REFUND_REQUESTED', ticketFulfillmentStatus: 'ISSUED', _count: { items: 1 } } as never);
+    vi.mocked(prisma.eventTicket.count).mockResolvedValueOnce(1 as never).mockResolvedValueOnce(0 as never);
+    vi.mocked(registerPaymentCommand).mockResolvedValueOnce({ id: 'job-408-pix', payload: { commandStatus: 'REQUESTED' } } as never);
+    vi.mocked(refundCobranca).mockRejectedValueOnce(new AsaasHttpError('provider timeout', 408));
+
+    const makeRequest = () => buildPostRequest('http://localhost/api/cobrancas/event-charge-408-pix/refund', {}, {
+      'Idempotency-Key': 'event-408-pix-key',
+    });
+    const first = await POST(makeRequest(), { params: Promise.resolve({ id: 'event-charge-408-pix' }) });
+    const retry = await POST(makeRequest(), { params: Promise.resolve({ id: 'event-charge-408-pix' }) });
+
+    expect(first.status).toBe(408);
+    expect(retry.status).toBe(409);
+    expect(refundCobranca).toHaveBeenCalledTimes(1);
+    expect(registerPaymentCommand).toHaveBeenCalledTimes(1);
+    expect(markPaymentCommandNeedsReconciliation).toHaveBeenCalledWith({ jobId: 'job-408-pix', error: expect.any(AsaasHttpError) });
+    expect(prisma.eventMapOrder.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.eventMapOrder.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       data: { paymentStatus: 'REFUND_REQUESTED', refundRequestUrl: null },
     }));
   });

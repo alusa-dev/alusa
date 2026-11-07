@@ -219,7 +219,9 @@ export type EventReportsDTO = {
 type JsonEnvelope<T> = { data: T };
 
 type ApiErrorEnvelope = {
-  error?: {
+  code?: string;
+  message?: string;
+  error?: string | {
     code?: string;
     message?: string;
     details?: unknown;
@@ -245,12 +247,14 @@ async function parseResponse<T>(response: Response): Promise<T> {
 
   if (!response.ok) {
     const errorPayload = json as ApiErrorEnvelope | null;
+    const nestedError = errorPayload?.error;
     const message =
-      errorPayload?.error?.message ??
+      (typeof nestedError === 'string' ? nestedError : nestedError?.message) ??
+      errorPayload?.message ??
       'Não foi possível concluir a ação de Eventos.';
     throw new EventApiError(message, {
-      code: errorPayload?.error?.code,
-      details: errorPayload?.error?.details,
+      code: (typeof nestedError === 'string' ? undefined : nestedError?.code) ?? errorPayload?.code,
+      details: typeof nestedError === 'string' ? undefined : nestedError?.details,
       status: response.status,
     });
   }
@@ -426,18 +430,18 @@ export async function refundTicketSale(id: string, reason?: string) {
   }))).data;
 }
 
-export async function refundEventCharge(chargeId: string, reason?: string) {
+export async function refundEventCharge(chargeId: string, reason?: string, idempotencyKey = `event-charge-refund:${chargeId}`) {
   return (await parseResponse<JsonEnvelope<{ success: boolean; pending?: boolean; correlationId?: string; message?: string }>>(await fetch(`/api/cobrancas/${encodeURIComponent(chargeId)}/refund`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify({ description: reason }),
   }))).data;
 }
 
-export async function refundPublicEventMapOrder(orderId: string, reason?: string) {
+export async function refundPublicEventMapOrder(orderId: string, reason?: string, idempotencyKey = `event-order-refund:${orderId}`) {
   return (await parseResponse<JsonEnvelope<{ success: boolean; pending?: boolean; correlationId?: string }>>(await fetch(`/api/events/public-orders/${orderId}/refund`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
     body: JSON.stringify({ reason }),
   }))).data;
 }

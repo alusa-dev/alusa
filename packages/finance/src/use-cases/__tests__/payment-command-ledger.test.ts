@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@alusa/database', () => ({
-  prisma: {
+const mocks = vi.hoisted(() => {
+  const db = {
     asaasIntegrationJob: {
       upsert: vi.fn(),
       findUnique: vi.fn(),
@@ -10,8 +10,15 @@ vi.mock('@alusa/database', () => ({
       updateMany: vi.fn(),
       findMany: vi.fn(),
     },
-  },
-}));
+  };
+  return {
+    db,
+    withIdempotencyGuard: vi.fn(async ({ fn }: { fn: (tx: typeof db) => Promise<unknown> }) => fn(db)),
+  };
+});
+
+vi.mock('@alusa/database', () => ({ prisma: mocks.db }));
+vi.mock('../../core/idempotency.service', () => ({ withIdempotencyGuard: mocks.withIdempotencyGuard }));
 
 vi.mock('../../realtime/finance-realtime-publisher', () => ({
   publishFinanceEvent: vi.fn(async () => undefined),
@@ -28,9 +35,11 @@ import {
   confirmPaymentCommandsByProviderEvent,
   expectedEventsForPaymentCommand,
   claimPaymentCommandForDispatch,
+  claimPaymentRefundCommandForDispatch,
   markPaymentCommandSent,
   markPaymentCommandNeedsReconciliation,
   markStalePaymentCommandsForReconciliation,
+  findActivePaymentRefundCommand,
   registerPaymentCommand,
 } from '../payment-command-ledger';
 
@@ -145,12 +154,12 @@ describe('payment-command-ledger', () => {
         entityId: 'chg-1', asaasPaymentId: 'pay-1', expectedEvents: ['PAYMENT_REFUNDED'], correlationId: 'corr-1',
       },
     } as never);
-    vi.mocked(prisma.asaasIntegrationJob.update).mockResolvedValueOnce({ id: 'job-1' } as never);
+    vi.mocked(prisma.asaasIntegrationJob.updateMany).mockResolvedValueOnce({ count: 1 } as never);
 
     await markPaymentCommandNeedsReconciliation({ jobId: 'job-1', error: new Error('request timeout') });
 
-    expect(prisma.asaasIntegrationJob.update).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'job-1' },
+    expect(prisma.asaasIntegrationJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'job-1', contaId: 'conta-1', payload: { path: ['commandStatus'], equals: 'SENT_TO_ASAAS' } }),
       data: expect.objectContaining({
         status: 'FAILED',
         payload: expect.objectContaining({
@@ -161,6 +170,106 @@ describe('payment-command-ledger', () => {
     }));
     expect(upsertFinanceReconciliationIssue).toHaveBeenCalledWith(expect.objectContaining({
       contaId: 'conta-1', entityType: 'CHARGE', entityId: 'chg-1', asaasId: 'pay-1',
+    }));
+  });
+
+  it('does not downgrade a webhook confirmation when reconciliation marking loses the race', async () => {
+    vi.mocked(prisma.asaasIntegrationJob.findUnique)
+      .mockResolvedValueOnce({
+        id: 'job-1', contaId: 'conta-1', payload: {
+          commandStatus: 'SENT_TO_ASAAS', commandType: 'PAYMENT_REFUND_COMMAND', entityType: 'CHARGE',
+          entityId: 'chg-1', asaasPaymentId: 'pay-1', expectedEvents: ['PAYMENT_REFUNDED'], correlationId: 'corr-1',
+        },
+      } as never)
+      .mockResolvedValueOnce({ payload: {
+        commandStatus: 'CONFIRMED_BY_WEBHOOK', commandType: 'PAYMENT_REFUND_COMMAND', entityType: 'CHARGE',
+        entityId: 'chg-1', asaasPaymentId: 'pay-1', expectedEvents: ['PAYMENT_REFUNDED'], correlationId: 'corr-1',
+      } } as never);
+    vi.mocked(prisma.asaasIntegrationJob.updateMany).mockResolvedValueOnce({ count: 0 } as never);
+
+    const result = await markPaymentCommandNeedsReconciliation({ jobId: 'job-1', error: new Error('timeout') });
+
+    expect(result).toEqual({ id: 'job-1', status: 'CONFIRMED_BY_WEBHOOK' });
+    expect(prisma.asaasIntegrationJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ payload: { path: ['commandStatus'], equals: 'SENT_TO_ASAAS' } }),
+    }));
+    expect(upsertFinanceReconciliationIssue).not.toHaveBeenCalled();
+    expect(publishFinanceEvent).not.toHaveBeenCalled();
+  });
+
+  it('finds only active refund commands within the requested tenant and payment', async () => {
+    vi.mocked(prisma.asaasIntegrationJob.findFirst).mockResolvedValueOnce({
+      id: 'job-active', payload: {
+        commandStatus: 'NEEDS_RECONCILIATION', commandType: 'PAYMENT_REFUND_COMMAND', entityType: 'CHARGE',
+        entityId: 'chg-1', asaasPaymentId: 'pay-1', expectedEvents: ['PAYMENT_REFUNDED'], correlationId: 'corr-active',
+      },
+    } as never);
+
+    const active = await findActivePaymentRefundCommand({ contaId: 'tenant-a', asaasPaymentId: 'pay-1' });
+
+    expect(active).toEqual({ id: 'job-active', correlationId: 'corr-active', commandStatus: 'NEEDS_RECONCILIATION' });
+    expect(prisma.asaasIntegrationJob.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        contaId: 'tenant-a',
+        type: 'PAYMENT_REFUND_COMMAND',
+        AND: expect.arrayContaining([
+          { payload: { path: ['asaasPaymentId'], equals: 'pay-1' } },
+          { OR: [
+            { payload: { path: ['commandStatus'], equals: 'REQUESTED' } },
+            { payload: { path: ['commandStatus'], equals: 'SENT_TO_ASAAS' } },
+            { payload: { path: ['commandStatus'], equals: 'NEEDS_RECONCILIATION' } },
+          ] },
+        ]),
+      }),
+    }));
+  });
+
+  it('claims only one command when the same payment has concurrent requests with different keys', async () => {
+    const requestCommand = (id: string, correlationId: string, commandStatus: string) => ({
+      id,
+      payload: {
+        commandStatus,
+        commandType: 'PAYMENT_REFUND_COMMAND',
+        entityType: 'CHARGE',
+        entityId: 'chg-1',
+        asaasPaymentId: 'pay-1',
+        expectedEvents: ['PAYMENT_REFUNDED'],
+        correlationId,
+      },
+    });
+    vi.mocked(prisma.asaasIntegrationJob.findMany)
+      .mockResolvedValueOnce([requestCommand('job-a', 'key-a', 'REQUESTED'), requestCommand('job-b', 'key-b', 'REQUESTED')] as never)
+      .mockResolvedValueOnce([requestCommand('job-a', 'key-a', 'SENT_TO_ASAAS'), requestCommand('job-b', 'key-b', 'REQUESTED')] as never);
+    vi.mocked(prisma.asaasIntegrationJob.updateMany)
+      .mockResolvedValueOnce({ count: 1 } as never)
+      .mockResolvedValueOnce({ count: 1 } as never);
+
+    const winner = await claimPaymentRefundCommandForDispatch({ contaId: 'tenant-a', jobId: 'job-a', asaasPaymentId: 'pay-1' });
+    const loser = await claimPaymentRefundCommandForDispatch({ contaId: 'tenant-a', jobId: 'job-b', asaasPaymentId: 'pay-1' });
+
+    expect(winner.claimed).toBe(true);
+    expect(loser).toMatchObject({ claimed: false, activeCommand: { id: 'job-a', correlationId: 'key-a' } });
+    expect(prisma.asaasIntegrationJob.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: expect.objectContaining({ id: 'job-b', payload: { path: ['commandStatus'], equals: 'REQUESTED' } }),
+      data: expect.objectContaining({ status: 'FAILED' }),
+    }));
+  });
+
+  it('does not consider confirmed or terminally failed refunds active', async () => {
+    vi.mocked(prisma.asaasIntegrationJob.findFirst).mockResolvedValueOnce(null);
+
+    await expect(findActivePaymentRefundCommand({ contaId: 'tenant-a', asaasPaymentId: 'pay-1' })).resolves.toBeNull();
+    expect(prisma.asaasIntegrationJob.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        AND: [
+          { payload: { path: ['asaasPaymentId'], equals: 'pay-1' } },
+          { OR: [
+            { payload: { path: ['commandStatus'], equals: 'REQUESTED' } },
+            { payload: { path: ['commandStatus'], equals: 'SENT_TO_ASAAS' } },
+            { payload: { path: ['commandStatus'], equals: 'NEEDS_RECONCILIATION' } },
+          ] },
+        ],
+      }),
     }));
   });
 
@@ -175,6 +284,7 @@ describe('payment-command-ledger', () => {
         entityId: 'chg-1',
         asaasPaymentId: 'pay-1',
         expectedEvents: ['PAYMENT_REFUNDED'],
+        requestFingerprint: '{"value":10,"splitRefunds":[]}',
       },
     } as never);
 
@@ -186,6 +296,7 @@ describe('payment-command-ledger', () => {
       asaasPaymentId: 'pay-1',
       expectedEvents: ['PAYMENT_REFUNDED'],
       correlationId: 'corr-1',
+      requestFingerprint: '{"value":10,"splitRefunds":[]}',
     });
 
     expect(result).toMatchObject({ id: 'job-1', status: 'PROCESSING' });
@@ -216,11 +327,95 @@ describe('payment-command-ledger', () => {
     })).rejects.toThrow('PAYMENT_COMMAND_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
   });
 
+  it('rejeita a mesma chave de estorno quando valor ou splits mudam no fingerprint', async () => {
+    vi.mocked(prisma.asaasIntegrationJob.findUnique).mockResolvedValueOnce({
+      id: 'job-1',
+      payload: {
+        commandStatus: 'REQUESTED',
+        commandType: 'PAYMENT_REFUND_COMMAND',
+        entityType: 'CHARGE',
+        entityId: 'chg-1',
+        asaasPaymentId: 'pay-1',
+        expectedEvents: ['PAYMENT_REFUNDED'],
+        requestFingerprint: JSON.stringify({ value: 25, splitRefunds: [['wallet-a', 25]] }),
+      },
+    } as never);
+
+    await expect(registerPaymentCommand({
+      contaId: 'conta-1',
+      type: 'PAYMENT_REFUND_COMMAND',
+      entityType: 'CHARGE',
+      entityId: 'chg-1',
+      asaasPaymentId: 'pay-1',
+      expectedEvents: ['PAYMENT_REFUNDED'],
+      correlationId: 'corr-1',
+      requestFingerprint: JSON.stringify({ value: 30, splitRefunds: [['wallet-a', 30]] }),
+    })).rejects.toThrow('PAYMENT_COMMAND_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
+  });
+
+  it('reproduz com segurança um comando legado pelo fingerprint derivado dos metadados existentes', async () => {
+    vi.mocked(prisma.asaasIntegrationJob.findUnique).mockResolvedValueOnce({
+      id: 'legacy-job',
+      status: 'PROCESSING',
+      payload: {
+        commandStatus: 'SENT_TO_ASAAS',
+        commandType: 'PAYMENT_REFUND_COMMAND',
+        entityType: 'CHARGE',
+        entityId: 'chg-1',
+        asaasPaymentId: 'pay-1',
+        expectedEvents: ['PAYMENT_REFUNDED'],
+        metadata: {
+          refundValue: 25,
+          splitRefunds: [{ id: 'wallet-b', value: 5 }, { id: 'wallet-a', value: 20 }],
+        },
+      },
+    } as never);
+
+    await expect(registerPaymentCommand({
+      contaId: 'conta-1',
+      type: 'PAYMENT_REFUND_COMMAND',
+      entityType: 'CHARGE',
+      entityId: 'chg-1',
+      asaasPaymentId: 'pay-1',
+      expectedEvents: ['PAYMENT_REFUNDED'],
+      correlationId: 'legacy-key',
+      requestFingerprint: JSON.stringify({ value: 25, splitRefunds: [['wallet-a', 20], ['wallet-b', 5]] }),
+    })).resolves.toMatchObject({ id: 'legacy-job', status: 'PROCESSING' });
+
+    expect(prisma.asaasIntegrationJob.upsert).not.toHaveBeenCalled();
+  });
+
+  it('falha fechado para comando legado sem metadados suficientes para comparar o payload', async () => {
+    vi.mocked(prisma.asaasIntegrationJob.findUnique).mockResolvedValueOnce({
+      id: 'legacy-job',
+      payload: {
+        commandStatus: 'FAILED',
+        commandType: 'PAYMENT_REFUND_COMMAND',
+        entityType: 'CHARGE',
+        entityId: 'chg-1',
+        asaasPaymentId: 'pay-1',
+        expectedEvents: ['PAYMENT_REFUNDED'],
+      },
+    } as never);
+
+    await expect(registerPaymentCommand({
+      contaId: 'conta-1',
+      type: 'PAYMENT_REFUND_COMMAND',
+      entityType: 'CHARGE',
+      entityId: 'chg-1',
+      asaasPaymentId: 'pay-1',
+      expectedEvents: ['PAYMENT_REFUNDED'],
+      correlationId: 'legacy-key',
+      requestFingerprint: JSON.stringify({ value: 25, splitRefunds: [] }),
+    })).rejects.toThrow('PAYMENT_COMMAND_IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD');
+  });
+
   it('confirma comandos pendentes quando webhook/sync traz evento esperado', async () => {
     vi.mocked(prisma.asaasIntegrationJob.findMany).mockResolvedValueOnce([
       {
         id: 'job-1',
         contaId: 'conta-1',
+        status: 'PROCESSING',
         payload: {
           commandStatus: 'SENT_TO_ASAAS',
           commandType: 'PAYMENT_CANCEL_COMMAND',
@@ -233,7 +428,8 @@ describe('payment-command-ledger', () => {
         },
       },
     ] as never);
-    vi.mocked(prisma.asaasIntegrationJob.update).mockResolvedValueOnce({ id: 'job-1' } as never);
+    vi.mocked(prisma.asaasIntegrationJob.updateMany).mockResolvedValueOnce({ count: 1 } as never);
+    vi.mocked(prisma.asaasIntegrationJob.findUnique).mockResolvedValueOnce({ id: 'job-1' } as never);
 
     const result = await confirmPaymentCommandsByProviderEvent({
       contaId: 'conta-1',
@@ -243,8 +439,8 @@ describe('payment-command-ledger', () => {
     });
 
     expect(result).toHaveLength(1);
-    expect(prisma.asaasIntegrationJob.update).toHaveBeenCalledWith(expect.objectContaining({
-      where: { id: 'job-1' },
+    expect(prisma.asaasIntegrationJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: 'job-1', contaId: 'conta-1', payload: { path: ['commandStatus'], equals: 'SENT_TO_ASAAS' } }),
       data: expect.objectContaining({
         status: 'DONE',
         payload: expect.objectContaining({
@@ -260,6 +456,43 @@ describe('payment-command-ledger', () => {
       entityId: 'chg-1',
       commandType: 'PAYMENT_CANCEL_COMMAND',
       commandStatus: 'CONFIRMED_BY_WEBHOOK',
+    }));
+  });
+
+  it('confirma um webhook tardio para refund que já estava em reconciliação', async () => {
+    vi.mocked(prisma.asaasIntegrationJob.findMany).mockResolvedValueOnce([{
+      id: 'job-refund-reconciliation',
+      contaId: 'conta-1',
+      status: 'FAILED',
+      payload: {
+        commandStatus: 'NEEDS_RECONCILIATION',
+        commandType: 'PAYMENT_REFUND_COMMAND',
+        entityType: 'CHARGE',
+        entityId: 'chg-1',
+        asaasPaymentId: 'pay-1',
+        expectedEvents: ['PAYMENT_REFUNDED'],
+        correlationId: 'corr-1',
+      },
+    }] as never);
+    vi.mocked(prisma.asaasIntegrationJob.updateMany).mockResolvedValueOnce({ count: 1 } as never);
+    vi.mocked(prisma.asaasIntegrationJob.findUnique).mockResolvedValueOnce({ id: 'job-refund-reconciliation' } as never);
+
+    const result = await confirmPaymentCommandsByProviderEvent({
+      contaId: 'conta-1', asaasPaymentId: 'pay-1', eventName: 'PAYMENT_REFUNDED', providerStatus: 'REFUNDED',
+    });
+
+    expect(result).toHaveLength(1);
+    expect(prisma.asaasIntegrationJob.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        OR: expect.arrayContaining([expect.objectContaining({
+          status: 'FAILED', type: 'PAYMENT_REFUND_COMMAND',
+          payload: { path: ['commandStatus'], equals: 'NEEDS_RECONCILIATION' },
+        })]),
+      }),
+    }));
+    expect(prisma.asaasIntegrationJob.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ payload: { path: ['commandStatus'], equals: 'NEEDS_RECONCILIATION' } }),
+      data: expect.objectContaining({ status: 'DONE', payload: expect.objectContaining({ commandStatus: 'CONFIRMED_BY_WEBHOOK' }) }),
     }));
   });
 

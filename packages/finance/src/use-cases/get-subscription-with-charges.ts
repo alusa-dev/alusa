@@ -377,6 +377,13 @@ export async function getSubscriptionWithCharges(
               },
               select: {
                 items: {
+                  where: {
+                    matricula: {
+                      status: {
+                        in: ['PENDENTE_TAXA', 'AGUARDANDO_CONFIRMACAO', 'ATIVA', 'PAUSADA'],
+                      },
+                    },
+                  },
                   orderBy: { orderIndex: 'asc' },
                   select: {
                     matriculaId: true,
@@ -440,7 +447,9 @@ export async function getSubscriptionWithCharges(
         cycle: standaloneSub.cycle,
         cycleLabel,
         billingType: standaloneSub.billingType,
-        description: standaloneSub.description,
+        // A descrição gravada no Asaas é um snapshot da criação. Para grupos
+        // familiares, a tela deve refletir somente as matrículas vigentes.
+        description: family ? 'Plano familiar' : standaloneSub.description,
         nextDueDate: standaloneSub.nextDueDate?.toISOString().split('T')[0] ?? null,
         matriculaId: '',
         contratoId: '',

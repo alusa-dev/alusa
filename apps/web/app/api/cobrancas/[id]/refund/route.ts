@@ -19,12 +19,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (billingBlocked) return NextResponse.json(billingBlocked.body, { status: billingBlocked.status });
 
     const { id } = cobrancaRouteParamsDTOSchema.parse(await params);
+    const idempotencyKey = req.headers.get('idempotency-key')?.trim();
+    const refundGatewayEnabled = process.env.ASAAS_REFUND_GATEWAY_ENABLED === 'true';
+    if ((idempotencyKey && !/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) || (refundGatewayEnabled && !idempotencyKey)) {
+      return NextResponse.json({ error: 'Cabeçalho Idempotency-Key obrigatório ou inválido.' }, { status: 400 });
+    }
     const body = cobrancaRefundInputDTOSchema.parse(await req.json().catch(() => ({})));
     const response = await executeCobrancaRefund({
       contaId: auth.contaId,
       userId: auth.userId,
       role: auth.role,
       id,
+      correlationId: idempotencyKey,
       body,
     });
     return NextResponse.json(response.body, { status: response.status });

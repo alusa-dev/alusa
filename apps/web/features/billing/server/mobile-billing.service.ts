@@ -17,6 +17,7 @@ import {
   updatePayment,
   undoCashPayment,
   evaluatePaymentActionPolicy,
+  findActivePaymentRefundCommand,
   type MobileBillingCategory,
   type MobileBillingPeriod,
   type AsaasBillingType,
@@ -181,6 +182,7 @@ export async function executeMobileBillingAction(input: {
   chargeId: string;
   action: MobileBillingAction;
   changes?: MobileBillingChargeChanges;
+  correlationId?: string;
 }) {
   const target = await withAuthorizedTenant(input.actor, async (tx) => {
     const academic = await tx.cobranca.findFirst({
@@ -279,6 +281,66 @@ export async function executeMobileBillingAction(input: {
     return { success: false as const, code: 'NO_PROVIDER_PAYMENT', error: 'Esta cobrança não possui pagamento integrado ao Asaas.' };
   }
 
+  if (input.action === 'REFUND' && input.correlationId) {
+    const priorCommand = await withAuthorizedTenant(input.actor, (tx) => tx.asaasIntegrationJob.findUnique({
+      where: {
+        uq_asaas_integration_job: {
+          contaId: input.actor.contaId,
+          type: 'PAYMENT_REFUND_COMMAND',
+          idempotencyKey: input.correlationId!,
+        },
+      },
+      select: { payload: true },
+    }));
+    const priorPayload = priorCommand?.payload && typeof priorCommand.payload === 'object' && !Array.isArray(priorCommand.payload)
+      ? priorCommand.payload as Record<string, unknown>
+      : null;
+    const priorStatus = typeof priorPayload?.commandStatus === 'string' ? priorPayload.commandStatus : null;
+    if (priorPayload && (
+      priorPayload.entityId !== target.id ||
+      priorPayload.asaasPaymentId !== target.asaasPaymentId ||
+      priorPayload.commandType !== 'PAYMENT_REFUND_COMMAND'
+    )) {
+      return { success: false as const, code: 'ACTION_NOT_ALLOWED', error: 'A chave de estorno já está vinculada a outra operação.' };
+    }
+    if (priorStatus === 'FAILED') {
+      return { success: false as const, code: 'ACTION_NOT_ALLOWED', error: 'A tentativa anterior de estorno foi recusada. Verifique a cobrança antes de tentar novamente.' };
+    }
+    if (['SENT_TO_ASAAS', 'NEEDS_RECONCILIATION'].includes(priorStatus ?? '')) {
+      return {
+        success: true as const,
+        pending: true as const,
+        correlationId: input.correlationId,
+        commandStatus: priorStatus,
+        message: 'Estorno já solicitado. O status será atualizado via webhook ou reconciliação.',
+      };
+    }
+    if (priorStatus === 'CONFIRMED_BY_WEBHOOK') {
+      return {
+        success: true as const,
+        correlationId: input.correlationId,
+        commandStatus: priorStatus,
+        message: 'Estorno já confirmado.',
+      };
+    }
+  }
+
+  if (input.action === 'REFUND') {
+    const activeCommand = await findActivePaymentRefundCommand({
+      contaId: input.actor.contaId,
+      asaasPaymentId: target.asaasPaymentId,
+    });
+    if (activeCommand) {
+      return {
+        success: true as const,
+        pending: true as const,
+        correlationId: activeCommand.correlationId,
+        commandStatus: activeCommand.commandStatus,
+        message: 'Já existe uma solicitação de estorno aguardando confirmação ou reconciliação.',
+      };
+    }
+  }
+
   const payment = await readPaymentFullPreflight(target.asaasPaymentId, { contaId: input.actor.contaId });
   const providerStatus = String(payment.status ?? '').toUpperCase();
 
@@ -317,9 +379,25 @@ export async function executeMobileBillingAction(input: {
     chargeId: target.origin === 'STANDALONE' ? target.id : null,
     cobrancaId: target.origin === 'ACADEMIC' ? target.id : null,
     providerStatus,
+    correlationId: input.correlationId,
     metadata: { source: 'mobile-billing', action: input.action, previousProviderStatus: providerStatus, amount: target.amount },
-    run: () => refundCobranca({ paymentId: target.asaasPaymentId!, contaId: input.actor.contaId, description: `Estorno solicitado via Alusa` }),
+    reconcileAmbiguousFailure: true,
+    run: ({ commandJobId }) => refundCobranca({ paymentId: target.asaasPaymentId!, contaId: input.actor.contaId, idempotencyKey: commandJobId, description: `Estorno solicitado via Alusa` }),
   });
+  if (command.alreadyDispatched) {
+    if (command.commandStatus === 'FAILED') {
+      return { success: false as const, code: 'ACTION_NOT_ALLOWED', error: 'A tentativa anterior de estorno foi recusada. Verifique a cobrança antes de tentar novamente.' };
+    }
+    return {
+      success: true as const,
+      pending: true as const,
+      correlationId: command.correlationId,
+      commandStatus: command.commandStatus,
+      message: command.commandStatus === 'CONFIRMED_BY_WEBHOOK'
+        ? 'Estorno já confirmado.'
+        : 'Estorno já solicitado. O status será atualizado via webhook ou reconciliação.',
+    };
+  }
   await syncPaymentStateFromAsaas({ contaId: input.actor.contaId, asaasPaymentId: target.asaasPaymentId, eventName: 'PAYMENT_REFUNDED' });
   await auditLogService.record({ contaId: input.actor.contaId, action: 'finance.charge.refund_requested', entity: { type: target.origin === 'ACADEMIC' ? 'Cobranca' : 'Charge', id: target.id }, actor: { type: 'USER', id: input.actor.userId }, metadata: { source: 'mobile-billing', commandJobId: command.commandJobId, correlationId: command.correlationId, asaasPaymentId: target.asaasPaymentId } });
   return { success: true as const, message: 'Estorno solicitado. O status será atualizado via webhook.' };

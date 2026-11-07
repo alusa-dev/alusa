@@ -892,6 +892,8 @@ export {
   registerPaymentCommand,
   markPaymentCommandSent,
   claimPaymentCommandForDispatch,
+  claimPaymentRefundCommandForDispatch,
+  findActivePaymentRefundCommand,
   failPaymentCommand,
   markPaymentCommandNeedsReconciliation,
   confirmPaymentCommandsByProviderEvent,

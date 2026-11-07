@@ -8,7 +8,6 @@ import {
   notifyPayment as asaasNotifyPayment,
   receiveInCash as asaasReceiveInCash,
   undoReceivedInCash as asaasUndoReceivedInCash,
-  refundPayment as asaasRefundPayment,
   refundBankSlip as asaasRefundBankSlip,
   listPaymentRefunds as asaasListPaymentRefunds,
   getBillingInfo as asaasGetBillingInfo,
@@ -42,6 +41,7 @@ import { loadAsaasCredentials } from '@alusa/database';
 import { requireKycApproved } from '../foundation/kyc-guard';
 import { buildOutboundOperationKey } from '../core';
 import { ensureWebhookConfigOperational } from '../webhooks/ensure-webhook-config-operational';
+import { refundPaymentWithGateway } from './refund-payment-adapter';
 
 export class AsaasEnvError extends Error {
   constructor(message: string) {
@@ -314,6 +314,7 @@ export async function reenviarCobranca(input: {
 export async function refundCobranca(input: {
   paymentId: string;
   contaId: string;
+  idempotencyKey?: string;
   value?: number;
   description?: string;
   splitRefunds?: Array<{ id: string; value: number }>;
@@ -321,9 +322,10 @@ export async function refundCobranca(input: {
   await assertKycApprovedOrThrow(input.contaId);
   await ensureWebhookConfigOperational(input.contaId);
   const { apiKey } = await getCredentialsOrThrow(input.contaId);
-  await asaasRefundPayment({
+  await refundPaymentWithGateway({
     apiKey,
     paymentId: input.paymentId,
+    idempotencyKey: input.idempotencyKey,
     value: input.value,
     description: input.description,
     splitRefunds: input.splitRefunds,

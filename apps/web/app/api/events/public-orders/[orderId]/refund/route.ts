@@ -17,6 +17,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const { orderId } = eventPublicOrderRouteParamsDTOSchema.parse(await params);
     const ctx = await getEventsContext('eventTickets.refund');
     const body = ticketSaleActionSchema.parse(await request.json().catch(() => ({})));
+    const requestKey = request.headers.get('idempotency-key')?.trim();
+    if (requestKey && !/^[A-Za-z0-9._:-]{8,128}$/.test(requestKey)) {
+      return NextResponse.json({ error: { code: 'INVALID_IDEMPOTENCY_KEY', message: 'Cabeçalho Idempotency-Key inválido.' } }, { status: 400 });
+    }
 
     const order = await getEventOrderRefundContext({ orderId, contaId: ctx.contaId });
 
@@ -29,6 +33,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       userId: ctx.userId,
       role: ctx.role,
       id: `event-map-order:${order.id}`,
+      correlationId: requestKey ?? `event-order-refund:${order.id}`,
       body: {
         description: body.reason || `Estorno solicitado via Alusa - pedido público ${order.id}`,
       },
