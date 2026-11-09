@@ -10,8 +10,9 @@
     <meta property="og:image" content="/amagiadouniverso/assets/background-v2.webp" />
     <title>A Magia do Universo — Ballet Elaine Costa</title>
     <link rel="icon" type="image/webp" href="/amagiadouniverso/assets/fcf86.webp" />
+    <link rel="preload" href="/amagiadouniverso/assets/geist-latin.woff2" as="font" type="font/woff2" crossorigin fetchpriority="high" />
     <link rel="stylesheet" href="/amagiadouniverso/styles.css" />
-    <script src="/amagiadouniverso/event-content.js"></script>
+    <script src="/amagiadouniverso/event-content.js" defer fetchpriority="high"></script>
     <script>
       (() => {
         const fit = () => {
@@ -31,7 +32,7 @@
     <main class="viewport" aria-label="A Magia do Universo, Ballet Elaine Costa">
       <picture class="scene-background" aria-hidden="true">
         <source media="(min-width: 768px)" srcset="/amagiadouniverso/assets/background-desktop-v2.webp" />
-        <img class="scene__background" src="/amagiadouniverso/assets/background-v2.webp" alt="" />
+        <img class="scene__background" src="/amagiadouniverso/assets/background-v2.webp" fetchpriority="low" alt="" />
       </picture>
       <div class="scene-frame">
         <div class="scene">
@@ -40,16 +41,19 @@
           <img
             class="scene__planet scene__planet--top-left"
             src="/amagiadouniverso/assets/2692b-v2.webp"
+            fetchpriority="low"
             alt=""
           />
           <img
             class="scene__planet scene__planet--top-right"
             src="/amagiadouniverso/assets/3ad81-v2.webp"
+            fetchpriority="low"
             alt=""
           />
           <img
             class="scene__planet scene__planet--bottom-left"
             src="/amagiadouniverso/assets/2692b-v2.webp"
+            fetchpriority="low"
             alt=""
           />
 
@@ -57,6 +61,7 @@
           <img
             class="scene__title-art"
             src="/amagiadouniverso/assets/28b91-v2.webp"
+            fetchpriority="high"
             alt="A Magia do Universo"
           />
 
@@ -70,13 +75,13 @@
             <a class="session-card" href="https://alusa.app/m/map_58c37147e01c496f92bc6f5f" data-session="first">
               <span class="session-card__label">Comprar ingressos<br />18h00</span>
               <span class="session-card__ticket-position" aria-hidden="true">
-                <img class="session-card__tickets" src="/amagiadouniverso/assets/686cb-v2.webp" alt="" />
+                <img class="session-card__tickets" src="/amagiadouniverso/assets/686cb-v2.webp" fetchpriority="low" alt="" />
               </span>
             </a>
             <a class="session-card" href="https://alusa.app/m/map_dc0c9a1a841941138d558b3d" data-session="second">
               <span class="session-card__label">Comprar ingressos<br />20h00</span>
               <span class="session-card__ticket-position" aria-hidden="true">
-                <img class="session-card__tickets" src="/amagiadouniverso/assets/686cb-v2.webp" alt="" />
+                <img class="session-card__tickets" src="/amagiadouniverso/assets/686cb-v2.webp" fetchpriority="low" alt="" />
               </span>
             </a>
           </section>
@@ -99,6 +104,6 @@
       </div>
     </section>
     <a data-cookie-manage href="/preferencias-de-cookies" aria-label="Gerenciar preferências de cookies" style="position:fixed;right:1rem;bottom:1rem;z-index:21;padding:.55rem .8rem;border-radius:.7rem;background:#fff;color:#251c87;font:700 13px/1.4 Geist,sans-serif;box-shadow:0 4px 16px rgba(10,7,55,.22)">Gerenciar cookies</a>
-    <script src="/amagiadouniverso/landing.js" defer></script>
+    <script src="/amagiadouniverso/landing.js" defer fetchpriority="high"></script>
   </body>
 </html>

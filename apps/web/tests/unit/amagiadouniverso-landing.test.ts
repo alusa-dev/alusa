@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const landingScript = readFileSync(resolve(process.cwd(), 'public/amagiadouniverso/landing.js'), 'utf8');
 const landingHtml = readFileSync(resolve(process.cwd(), 'public/amagiadouniverso/index.html'), 'utf8');
+const landingCss = readFileSync(resolve(process.cwd(), 'public/amagiadouniverso/styles.css'), 'utf8');
 const consentKey = 'alusa.cookie-consent.v1';
 
 describe('A Magia do Universo landing', () => {
@@ -35,6 +36,14 @@ describe('A Magia do Universo landing', () => {
     expect(page.querySelector('.page-loader')).toBeNull();
     expect(page.querySelector('.scene__background')?.getAttribute('src')).toContain('background-v2.webp');
     expect(landingHtml).toContain('Compre seu ingresso: escolha a sessão e selecione seus lugares.');
+    expect([...page.querySelectorAll('script[src]')].every((script) => script.hasAttribute('defer'))).toBe(true);
+    expect(page.querySelector('link[rel="preload"][as="font"][href$="geist-latin.woff2"]')).not.toBeNull();
+    expect(page.querySelector('.scene__title-art')?.getAttribute('fetchpriority')).toBe('high');
+    expect(page.querySelector('.scene__planet')?.getAttribute('fetchpriority')).toBe('low');
+    const invitationStyle = landingCss.match(/\.scene__invitation\s*\{([^}]+)\}/)?.[1] ?? '';
+    const secretaryStyle = landingCss.match(/\.scene__secretariat\s*\{([^}]+)\}/)?.[1] ?? '';
+    expect(invitationStyle).not.toMatch(/animation\s*:/);
+    expect(secretaryStyle).not.toMatch(/animation\s*:/);
   });
 
   afterEach(() => {
