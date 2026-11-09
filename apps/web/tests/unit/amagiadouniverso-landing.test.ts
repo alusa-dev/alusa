@@ -32,6 +32,10 @@ describe('A Magia do Universo landing', () => {
     expect(links).toHaveLength(2);
     expect(links[0].href).toBe('https://alusa.app/m/map_58c37147e01c496f92bc6f5f');
     expect(links[1].href).toBe('https://alusa.app/m/map_dc0c9a1a841941138d558b3d');
+    expect(links.map((link) => link.querySelector('.session-card__label')?.textContent?.replace(/\s+/g, ' ').trim())).toEqual([
+      '1ª Sessão: 18h00',
+      '2ª Sessão: 20h00',
+    ]);
     expect(links.every((link) => !link.hasAttribute('disabled') && !link.hasAttribute('target'))).toBe(true);
     expect(page.querySelector('.page-loader')).toBeNull();
     expect(page.querySelector('.scene__background')?.getAttribute('src')).toContain('background-v2.webp');
