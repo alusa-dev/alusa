@@ -24,3 +24,7 @@ export function shouldSendMetaPixelPurchase(input: {
 export function metaPixelPurchaseDedupeKey(orderId: string) {
   return `alusa.meta-pixel.purchase.${orderId}`;
 }
+
+export function metaPixelPurchaseEventId(orderId: string) {
+  return `alusa_purchase_${orderId}`;
+}

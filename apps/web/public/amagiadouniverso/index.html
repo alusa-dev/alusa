@@ -7,14 +7,13 @@
     <meta name="description" content="Escolha sua sessão do espetáculo A Magia do Universo, do Ballet Elaine Costa." />
     <meta property="og:title" content="A Magia do Universo — Ballet Elaine Costa" />
     <meta property="og:description" content="Escolha sua sessão e garanta seu ingresso." />
-    <meta property="og:image" content="/amagiadouniverso/assets/background.webp" />
+    <meta property="og:image" content="/amagiadouniverso/assets/background-v2.webp" />
     <title>A Magia do Universo — Ballet Elaine Costa</title>
     <link rel="icon" type="image/webp" href="/amagiadouniverso/assets/fcf86.webp" />
     <link rel="stylesheet" href="/amagiadouniverso/styles.css" />
     <script src="/amagiadouniverso/event-content.js"></script>
     <script>
       (() => {
-        document.documentElement.classList.add('is-loading');
         const fit = () => {
           const styles = getComputedStyle(document.documentElement);
           const safe = (side) => parseFloat(styles.getPropertyValue(`--safe-${side}`)) || 0;
@@ -29,14 +28,10 @@
     </script>
   </head>
   <body>
-    <div class="page-loader" role="status" aria-live="polite">
-      <span class="page-loader__spinner" aria-hidden="true"></span>
-      <span>Preparando a magia...</span>
-    </div>
     <main class="viewport" aria-label="A Magia do Universo, Ballet Elaine Costa">
       <picture class="scene-background" aria-hidden="true">
-        <source media="(min-width: 768px)" srcset="/amagiadouniverso/assets/background-desktop.webp" />
-        <img class="scene__background" src="/amagiadouniverso/assets/background.webp" alt="" />
+        <source media="(min-width: 768px)" srcset="/amagiadouniverso/assets/background-desktop-v2.webp" />
+        <img class="scene__background" src="/amagiadouniverso/assets/background-v2.webp" alt="" />
       </picture>
       <div class="scene-frame">
         <div class="scene">
@@ -44,56 +39,52 @@
 
           <img
             class="scene__planet scene__planet--top-left"
-            src="/amagiadouniverso/assets/2692b.webp"
+            src="/amagiadouniverso/assets/2692b-v2.webp"
             alt=""
           />
           <img
             class="scene__planet scene__planet--top-right"
-            src="/amagiadouniverso/assets/3ad81.webp"
+            src="/amagiadouniverso/assets/3ad81-v2.webp"
             alt=""
           />
           <img
             class="scene__planet scene__planet--bottom-left"
-            src="/amagiadouniverso/assets/2692b.webp"
+            src="/amagiadouniverso/assets/2692b-v2.webp"
             alt=""
           />
 
           <h1 class="visually-hidden">A Magia do Universo</h1>
           <img
             class="scene__title-art"
-            src="/amagiadouniverso/assets/28b91.webp"
+            src="/amagiadouniverso/assets/28b91-v2.webp"
             alt="A Magia do Universo"
           />
 
           <p
             class="scene__invitation"
           >
-            Escolha sua<br />
-            sessão abaixo e<br />
-            garanta seu ingresso!
+            Compre seu ingresso: escolha a sessão e selecione seus lugares.
           </p>
 
           <section class="sessions" aria-label="Sessões do espetáculo">
-            <button class="session-card" type="button" data-session="first" disabled>
-              <span class="session-card__label">1º Sessão: 18h00</span>
+            <a class="session-card" href="https://alusa.app/m/map_58c37147e01c496f92bc6f5f" data-session="first">
+              <span class="session-card__label">Comprar ingressos<br />18h00</span>
               <span class="session-card__ticket-position" aria-hidden="true">
-                <img class="session-card__tickets" src="/amagiadouniverso/assets/686cb.webp" alt="" />
+                <img class="session-card__tickets" src="/amagiadouniverso/assets/686cb-v2.webp" alt="" />
               </span>
-            </button>
-            <button class="session-card" type="button" data-session="second" disabled>
-              <span class="session-card__label">2º Sessão: 20h00</span>
+            </a>
+            <a class="session-card" href="https://alusa.app/m/map_dc0c9a1a841941138d558b3d" data-session="second">
+              <span class="session-card__label">Comprar ingressos<br />20h00</span>
               <span class="session-card__ticket-position" aria-hidden="true">
-                <img class="session-card__tickets" src="/amagiadouniverso/assets/686cb.webp" alt="" />
+                <img class="session-card__tickets" src="/amagiadouniverso/assets/686cb-v2.webp" alt="" />
               </span>
-            </button>
+            </a>
           </section>
 
           <p
             class="scene__secretariat"
           >
-            Entre em contato com a secretaria<br />
-            para saber em qual sessão sua<br />
-            bailarina irá se apresentar!
+            Não sabe qual sessão assistir? Consulte a secretaria para confirmar o horário da apresentação da bailarina.
           </p>
 
           <img class="scene__school-logo" src="/amagiadouniverso/assets/fcf86.webp" alt="Ballet Elaine Costa" />
@@ -107,7 +98,7 @@
         <button type="button" data-cookie-reject>Rejeitar todos</button>
       </div>
     </section>
-    <a href="/preferencias-de-cookies" aria-label="Gerenciar preferências de cookies" style="position:fixed;right:1rem;bottom:1rem;z-index:21;padding:.55rem .8rem;border-radius:.7rem;background:#fff;color:#251c87;font:700 13px/1.4 Geist,sans-serif;box-shadow:0 4px 16px rgba(10,7,55,.22)">Gerenciar cookies</a>
+    <a data-cookie-manage href="/preferencias-de-cookies" aria-label="Gerenciar preferências de cookies" style="position:fixed;right:1rem;bottom:1rem;z-index:21;padding:.55rem .8rem;border-radius:.7rem;background:#fff;color:#251c87;font:700 13px/1.4 Geist,sans-serif;box-shadow:0 4px 16px rgba(10,7,55,.22)">Gerenciar cookies</a>
     <script src="/amagiadouniverso/landing.js" defer></script>
   </body>
 </html>

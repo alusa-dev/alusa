@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasCurrentMarketingConsent, metaPixelPurchaseDedupeKey, META_PIXEL_MAP_SLUGS, shouldSendMetaPixelPurchase } from '../meta-pixel';
+import { hasCurrentMarketingConsent, metaPixelPurchaseDedupeKey, metaPixelPurchaseEventId, META_PIXEL_MAP_SLUGS, shouldSendMetaPixelPurchase } from '../meta-pixel';
 
 describe('public event map Meta Pixel', () => {
   it('allows only the two configured maps', () => {
@@ -17,6 +17,7 @@ describe('public event map Meta Pixel', () => {
 
   it('uses an order-scoped persistent dedupe key', () => {
     expect(metaPixelPurchaseDedupeKey('order-1')).toBe('alusa.meta-pixel.purchase.order-1');
+    expect(metaPixelPurchaseEventId('order-1')).toBe('alusa_purchase_order-1');
   });
 
   it('accepts marketing only for the current consent policy', () => {

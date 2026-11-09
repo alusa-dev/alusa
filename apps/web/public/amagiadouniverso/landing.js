@@ -5,6 +5,7 @@
   const policyVersion = '2026-05-27';
   const pixelId = '1081285171574725';
   const consentBanner = document.querySelector('[data-cookie-consent]');
+  const manageCookiesLink = document.querySelector('[data-cookie-manage]');
 
   const readConsent = () => {
     try {
@@ -14,9 +15,20 @@
   };
 
   const loadPixel = () => {
-    if (readConsent()?.categories?.marketing !== true || window.fbq) return;
+    if (readConsent()?.categories?.marketing !== true) {
+      if (window.fbq) window.fbq('consent', 'revoke');
+      return;
+    }
+    if (window.fbq) {
+      window.fbq('consent', 'grant');
+      return;
+    }
     const queue = [];
-    const fbq = (...args) => queue.push(args);
+    const fbq = (...args) => {
+      if (fbq.callMethod) fbq.callMethod.apply(fbq, args);
+      else queue.push(args);
+    };
+    fbq.push = fbq;
     fbq.queue = queue;
     fbq.loaded = true;
     fbq.version = '2.0';
@@ -31,8 +43,13 @@
   };
 
   const storedConsent = readConsent();
-  if (!storedConsent) consentBanner?.removeAttribute('hidden');
-  else loadPixel();
+  if (!storedConsent) {
+    consentBanner?.removeAttribute('hidden');
+    manageCookiesLink?.setAttribute('hidden', '');
+  } else {
+    manageCookiesLink?.removeAttribute('hidden');
+    loadPixel();
+  }
 
   const persistConsent = async (marketing, decision) => {
     const acceptedAll = decision === 'ACCEPT_ALL';
@@ -46,6 +63,7 @@
     try { window.localStorage.setItem(consentKey, JSON.stringify(stored)); } catch {}
     window.dispatchEvent(new CustomEvent(consentEvent, { detail: stored }));
     consentBanner?.setAttribute('hidden', '');
+    manageCookiesLink?.removeAttribute('hidden');
     let anonymousId;
     try {
       anonymousId = window.localStorage.getItem(anonymousKey);
@@ -86,41 +104,23 @@
 
     if (!['https:', 'http:'].includes(parsedUrl.protocol)) return;
 
-    const link = document.createElement('a');
-    link.className = button.className;
-    link.href = parsedUrl.href;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    link.setAttribute('aria-label', `${button.textContent.trim()} — comprar ingresso`);
-    link.innerHTML = button.innerHTML;
-    button.replaceWith(link);
-  });
-
-  const viewport = document.querySelector('.viewport');
-  viewport?.setAttribute('aria-busy', 'true');
-
-  const waitForImage = async (image) => {
-    if (!image.complete) {
-      await new Promise((resolve) => {
-        const settle = () => {
-          image.removeEventListener('load', settle);
-          image.removeEventListener('error', settle);
-          resolve();
-        };
-        image.addEventListener('load', settle, { once: true });
-        image.addEventListener('error', settle, { once: true });
-        if (image.complete) settle();
-      });
+    const allowedParams = new URLSearchParams();
+    let count = 0;
+    for (const [key, value] of new URLSearchParams(window.location.search)) {
+      if (count >= 7 || value.length > 1024) continue;
+      const isUtm = /^utm_[a-z0-9_]{1,32}$/.test(key) && value.length <= 200 && /^[\p{L}\p{N} ._~:/+-]{1,200}$/u.test(value);
+      const isFbclid = key === 'fbclid' && /^[A-Za-z0-9_-]{1,1024}$/.test(value);
+      if (!isUtm && !isFbclid) continue;
+      allowedParams.append(key, value);
+      count += 1;
     }
-
-    if (image.naturalWidth > 0 && typeof image.decode === 'function') {
-      await image.decode().catch(() => {});
-    }
-  };
-
-  Promise.all(Array.from(document.images, waitForImage)).finally(() => {
-    document.documentElement.classList.remove('is-loading');
-    viewport?.setAttribute('aria-busy', 'false');
-    document.querySelector('.page-loader')?.setAttribute('hidden', '');
+    for (const [key, value] of allowedParams) parsedUrl.searchParams.set(key, value);
+    button.href = parsedUrl.href;
+    button.setAttribute('aria-label', `${button.textContent.trim()} — comprar ingresso`);
+    button.addEventListener('click', () => {
+      if (readConsent()?.categories?.marketing === true && typeof window.fbq === 'function') {
+        window.fbq('trackCustom', 'SelectSession', { session: button.dataset.session });
+      }
+    });
   });
 })();

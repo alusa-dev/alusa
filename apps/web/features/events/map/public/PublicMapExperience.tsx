@@ -651,7 +651,7 @@ export function PublicMapExperience({
 
   return (
     <div data-public-ticket-checkout={isPublicFlow ? '' : undefined} className={isPublicFlow ? 'flex h-dvh flex-col overflow-hidden lg:bg-slate-100' : undefined}>
-    <MetaPixelTracker publicSlug={map.publicSlug} mode={mode} order={order} />
+    <MetaPixelTracker publicSlug={map.publicSlug} mode={mode} order={order} step={step} />
     <main className={`relative ${isPublicFlow ? 'bg-white lg:!bg-slate-100' : 'bg-slate-100'} text-slate-950 ${
       isPublicFlow
         ? 'flex min-h-0 flex-1 flex-col overflow-hidden lg:min-h-0 lg:flex-1'
