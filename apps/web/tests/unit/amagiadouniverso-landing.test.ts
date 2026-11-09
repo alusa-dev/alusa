@@ -35,7 +35,9 @@ describe('A Magia do Universo landing', () => {
     expect(links.every((link) => !link.hasAttribute('disabled') && !link.hasAttribute('target'))).toBe(true);
     expect(page.querySelector('.page-loader')).toBeNull();
     expect(page.querySelector('.scene__background')?.getAttribute('src')).toContain('background-v2.webp');
-    expect(landingHtml).toContain('Compre seu ingresso: escolha a sessão e selecione seus lugares.');
+    const invitation = page.querySelector('.scene__invitation');
+    expect(invitation?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Compre seu ingresso: escolha a sessão e selecione seus lugares.');
+    expect(invitation?.querySelectorAll('br')).toHaveLength(2);
     expect([...page.querySelectorAll('script[src]')].every((script) => script.hasAttribute('defer'))).toBe(true);
     expect(page.querySelector('link[rel="preload"][as="font"][href$="geist-latin.woff2"]')).not.toBeNull();
     expect(page.querySelector('.scene__title-art')?.getAttribute('fetchpriority')).toBe('high');
