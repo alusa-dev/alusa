@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { publicOrderStatusPath, publicOrderTicketsPath } from '@alusa/lib/events/map/public-order-links';
 import { toMoney } from '@alusa/lib/events/map/event-map-order-operations';
+import { META_MARKETING_CONSENT_POLICY_VERSION } from '@alusa/lib/events/map/meta-marketing-consent';
 
 type PublicCheckoutOrderRecord = Prisma.EventMapOrderGetPayload<{
   include: { items: { include: { ticket: true } } };
@@ -26,6 +27,9 @@ export function buildPublicEventMapCheckoutResponse(
     buyerName: order.buyerName,
     buyerEmail: order.buyerEmail,
     totalAmount: toMoney(order.totalAmount),
+    metaMarketingConsentGranted: Boolean(order.metaMarketingConsentAt)
+      && !order.metaMarketingConsentRevokedAt
+      && order.metaMarketingConsentPolicyVersion === META_MARKETING_CONSENT_POLICY_VERSION,
     status: order.status,
     expiresAt: order.expiresAt?.toISOString() ?? order.createdAt.toISOString(),
     asaasPaymentId: order.asaasPaymentId,

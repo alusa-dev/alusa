@@ -1,4 +1,9 @@
 // Regras de matrícula
+export { classifyEnrollment } from './rules/enrollment-classification.js';
+export { validateEnrollmentTransfer } from './rules/enrollment-transfer.js';
+export type { EnrollmentTransferValidationInput, EnrollmentTransferValidationError } from './rules/enrollment-transfer.js';
+export type { EnrollmentClassification, EnrollmentClassificationInput, EnrollmentClassificationDecision, EnrollmentClassificationReason } from './rules/enrollment-classification.js';
+export * from './rules/academic-period.js';
 export {
   calcularIdadeMinima,
   calcularIdadeMaxima,

@@ -149,6 +149,7 @@ export async function processPendingBillingAdjustments(input?: {
           await refundCobranca({
             contaId: adjustment.contaId,
             paymentId: charge.asaasPaymentId,
+            idempotencyKey: adjustment.id,
             value: amount,
             description: `Ajuste do acordo ${agreement.externalReference}`,
           });

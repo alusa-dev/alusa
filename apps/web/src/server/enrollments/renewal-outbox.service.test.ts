@@ -462,4 +462,36 @@ describe('renewal outbox leases', () => {
     expect(prisma.rematriculaOutbox.updateMany.mock.calls.every(([args]) => args.where.contaId === 'conta-a'))
       .toBe(true);
   });
+
+  it('preserva a uiRequestId da taxa em retry após falha transitória', async () => {
+    const initialNow = new Date('2026-08-13T10:00:00.000Z');
+    const retryAt = new Date('2026-08-13T10:05:00.000Z');
+    const rows: StatefulOutboxRow[] = [{
+      ...buildEvent(),
+      eventType: 'CREATE_RENEWAL_FEE_CHARGE',
+      status: 'PENDING',
+      attempts: 0,
+      availableAt: initialNow,
+      payload: { acordoFinanceiroFuturoId: 'agreement-a', amount: 80 },
+    }];
+    const agreement = {
+      ...buildFinanceAgreement(new Date('2026-08-12T00:00:00.000Z')),
+      enrollmentFeeTotal: { toString: () => '80.00' },
+      asaasPaymentId: null,
+    };
+    const prisma = createStatefulPrisma(rows, agreement as never);
+    createStandaloneChargeMock.mockResolvedValue({ success: false, error: 'ASAAS_TEMPORARY_FAILURE' });
+
+    const firstAttempt = await processRenewalOutbox({ contaId: 'conta-a', now: initialNow }, { prisma } as never);
+    expect(firstAttempt).toEqual([expect.objectContaining({ status: 'FAILED' })]);
+    expect(rows[0]).toMatchObject({ status: 'FAILED', attempts: 1, availableAt: retryAt });
+
+    const retryAttempt = await processRenewalOutbox({ contaId: 'conta-a', now: retryAt }, { prisma } as never);
+    expect(retryAttempt).toEqual([expect.objectContaining({ status: 'FAILED' })]);
+    expect(createStandaloneChargeMock).toHaveBeenCalledTimes(2);
+    expect(createStandaloneChargeMock.mock.calls.map(([call]) => call.uiRequestId)).toEqual([
+      'renewal-fee:agreement-a',
+      'renewal-fee:agreement-a',
+    ]);
+  });
 });

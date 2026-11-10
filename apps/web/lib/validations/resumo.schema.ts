@@ -22,6 +22,8 @@ export const resumoMatriculaSchema = z
     modoTurmas: z.enum(['COMBO', 'TURMAS']),
     turmaIds: z.array(z.string()).optional(),
     comboId: z.string().optional(),
+    transferenciaOrigemVinculoId: z.string().optional(),
+    transferenciaMotivo: z.string().optional(),
     comboValor: z.number().optional(), // valor do combo (R$)
     comboPeriodicidade: z.string().optional(), // periodicidade do combo
 
@@ -383,6 +385,8 @@ export function prepararPayloadMatricula(state: Record<string, unknown>): {
     // Turma ou Combo
     turmaId: state.modoTurmas === 'TURMAS' ? (state.turmaIds as string[])[0] : undefined,
     comboId: state.modoTurmas === 'COMBO' ? state.comboId : undefined,
+    transferenciaOrigemVinculoId: state.transferenciaOrigemVinculoId,
+    transferenciaMotivo: state.transferenciaOrigemVinculoId ? state.transferenciaMotivo : undefined,
 
     // Plano - só inclui se NÃO for combo (combo define valor/periodicidade)
     planoId: state.modoTurmas === 'COMBO' ? undefined : state.planoId,

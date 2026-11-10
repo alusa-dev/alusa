@@ -19,6 +19,11 @@ import { enqueueEnrollmentFinancialCommand, type EnrollmentFinancialCommand } fr
 import { runWithTenant } from '@/lib/prisma-tenant';
 import {
   resolvePayer,
+  classifyEnrollment,
+  areAcademicPeriodsImmediatelyAdjacent,
+  inferAcademicPeriodFromDateRange,
+  normalizeAcademicPeriodLabel,
+  validateEnrollmentTransfer,
   validarCapacidade,
   validarConflitosHorario,
   validarDatasContrato,
@@ -59,6 +64,8 @@ import {
   type CanonicalEnrollmentBillingStrategy,
 } from './initial-enrollment-billing-preview.service';
 import { createPendingEnrollmentContract } from '@/src/server/contracts/create-pending-enrollment-contract.service';
+import { buildUnmappedPriorEnrollmentInCourseWhere, wasCancelledBeforeEffectiveStart } from './academic-history-query';
+import { isTransferOriginUniqueConflict } from './transfer-conflicts';
 
 export { calcularPrecoMatricula };
 export type { CalcularPrecoInput, CalcularPrecoOutput, DescontoInput };
@@ -69,7 +76,10 @@ export class MatriculaConflictError extends Error {
     | 'MATRICULA_DUPLICADA_COMBO'
     | 'TURMA_SEM_VAGAS'
     | 'COMBO_SEM_VAGAS'
-    | 'CONFLITO_HORARIO';
+    | 'CONFLITO_HORARIO'
+    | 'TRANSFERENCIA_INCOMPLETA'
+    | 'TRANSFERENCIA_ORIGEM_INVALIDA'
+    | 'COMBO_CICLO_ACADEMICO_CONFLITANTE';
 
   constructor(
     code:
@@ -77,7 +87,10 @@ export class MatriculaConflictError extends Error {
       | 'MATRICULA_DUPLICADA_COMBO'
       | 'TURMA_SEM_VAGAS'
       | 'COMBO_SEM_VAGAS'
-      | 'CONFLITO_HORARIO',
+      | 'CONFLITO_HORARIO'
+      | 'TRANSFERENCIA_INCOMPLETA'
+      | 'TRANSFERENCIA_ORIGEM_INVALIDA'
+      | 'COMBO_CICLO_ACADEMICO_CONFLITANTE',
     message: string,
   ) {
     super(message);
@@ -257,6 +270,8 @@ async function assertNoDuplicateEnrollment(
 
 type EnrollmentTargetTurma = {
   id: string;
+  modalidadeId?: string;
+  cicloAcademicoId?: string | null;
   nome: string;
   capacidade: number;
   diasSemana: string[];
@@ -481,8 +496,54 @@ export async function listarMatriculas(input: ListarMatriculasInput) {
         limit: cobrancaIds.length,
       })
     : null;
+  const matriculaIds = dataRaw.map((matricula) => matricula.id);
+  const matriculaStartById = new Map(dataRaw.map((matricula) => [matricula.id, matricula.dataInicio]));
+  const now = new Date();
+  const sharedFeeAllocations = matriculaIds.length
+    ? await prisma.familyFinancialAllocation.findMany({
+        where: {
+          contaId: input.contaId,
+          matriculaId: { in: matriculaIds },
+          chargeKind: 'TAXA_MATRICULA',
+          sourceChargeId: { not: null },
+        },
+        select: {
+          matriculaId: true,
+          competenceStart: true,
+          competenceEnd: true,
+          createdAt: true,
+          sourceCharge: { select: { status: true, dueDate: true } },
+        },
+        orderBy: [{ competenceStart: 'desc' }, { createdAt: 'desc' }],
+      })
+    : [];
+  const sharedFeeAllocationByMatricula = new Map<string, (typeof sharedFeeAllocations)[number]>();
+  for (const allocation of sharedFeeAllocations) {
+    if (!allocation.matriculaId || !allocation.sourceCharge || sharedFeeAllocationByMatricula.has(allocation.matriculaId)) continue;
+    const enrollmentStart = matriculaStartById.get(allocation.matriculaId);
+    if (!enrollmentStart || allocation.competenceStart > enrollmentStart || (allocation.competenceEnd && allocation.competenceEnd < enrollmentStart)) continue;
+    sharedFeeAllocationByMatricula.set(allocation.matriculaId, allocation);
+  }
+  const sharedFeeStatusByMatricula = new Map<string, StatusCobranca>();
+  for (const [matriculaId, allocation] of sharedFeeAllocationByMatricula) {
+    const charge = allocation.sourceCharge;
+    if (!charge) continue;
+    const status = charge.status === ChargeStatus.PAID
+      ? StatusCobranca.PAGO
+      : charge.status === ChargeStatus.OVERDUE
+        ? StatusCobranca.ATRASADO
+        : charge.status === ChargeStatus.CANCELED
+          ? StatusCobranca.CANCELADO
+          : charge.status === ChargeStatus.REFUNDED
+            ? StatusCobranca.ESTORNADO
+            : charge.dueDate && charge.dueDate > now
+              ? StatusCobranca.A_VENCER
+              : StatusCobranca.PENDENTE;
+    sharedFeeStatusByMatricula.set(matriculaId, status);
+  }
   const data = dataRaw.map((matricula) => ({
     ...matricula,
+    taxaCompartilhadaStatus: sharedFeeStatusByMatricula.get(matricula.id) ?? null,
     taxaStatus:
       matricula.taxaStatus === StatusTaxaMatricula.PAGO ||
       matricula.cobrancas.some((cobranca) => {
@@ -525,6 +586,8 @@ export type CriarMatriculaInput = {
   planoId?: string | null;
   turmaId?: string | null;
   comboId?: string | null;
+  transferenciaOrigemVinculoId?: string;
+  transferenciaMotivo?: string;
   responsavelFinanceiroId?: string | null;
   dataInicio: Date;
   dataFimContrato: Date;
@@ -613,6 +676,8 @@ async function loadMatriculaCreationReferences(
                   select: {
                     id: true,
                     nome: true,
+                    modalidadeId: true,
+                    cicloAcademicoId: true,
                     capacidade: true,
                     diasSemana: true,
                     horaInicio: true,
@@ -630,6 +695,8 @@ async function loadMatriculaCreationReferences(
           select: {
             id: true,
             nome: true,
+            modalidadeId: true,
+            cicloAcademicoId: true,
             capacidade: true,
             diasSemana: true,
             horaInicio: true,
@@ -685,17 +752,41 @@ export async function assertMatriculaCreationPreflight(
     );
   }
 
-  const requiresPayer = input.criarCobranca || input.gerarCobrancaTaxa || input.pagarTaxaAgora;
   const payerResult = resolvePayer({
     alunoId: aluno.id,
     alunoDataNasc: aluno.dataNasc,
     responsavelFinanceiroId: input.responsavelFinanceiroId,
   });
-  if (requiresPayer && !payerResult.success) {
+  if (!payerResult.success) {
     throw new Error('Responsável financeiro é obrigatório para alunos menores de 18 anos.');
   }
 
   const targetTurmas = turma ? [turma] : combo?.turmas.map((item) => item.turma) ?? [];
+  if (Boolean(input.transferenciaOrigemVinculoId) !== Boolean(input.transferenciaMotivo)) {
+    throw new MatriculaConflictError('TRANSFERENCIA_INCOMPLETA', 'Informe vínculo de origem e motivo para formalizar transferência.');
+  }
+  if (input.transferenciaOrigemVinculoId) {
+    const modalities = [...new Set(targetTurmas.map((item) => item.modalidadeId))];
+    const source = await db.matriculaVinculoAcademico.findFirst({
+      where: { id: input.transferenciaOrigemVinculoId, contaId: input.contaId },
+      select: { id: true, modalidadeId: true, vigenciaIniciadaEm: true, matricula: { select: { alunoId: true } } },
+    });
+    const alreadyTransferred = source ? await db.transferenciaAcademicaVinculo.findFirst({
+      where: { contaId: input.contaId, origemVinculoId: source.id }, select: { id: true },
+    }) : null;
+    const transferValidation = validateEnrollmentTransfer({
+      sourceFound: source != null,
+      sourceStudentId: source?.matricula.alunoId ?? null,
+      expectedStudentId: input.alunoId,
+      sourceCourseId: source?.modalidadeId ?? null,
+      destinationCourseIds: modalities,
+      sourceEffective: source?.vigenciaIniciadaEm != null,
+      alreadyTransferred: alreadyTransferred != null,
+    });
+    if (!transferValidation.valid) {
+      throw new MatriculaConflictError('TRANSFERENCIA_ORIGEM_INVALIDA', `Transferência inválida: ${transferValidation.error}.`);
+    }
+  }
   await assertTargetTurmasAvailable(db, {
     contaId: input.contaId,
     alunoId: input.alunoId,
@@ -1155,6 +1246,34 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       }
     }
 
+    let transferSource: { id: string; modalidadeId: string; vigenciaIniciadaEm: Date | null } | null = null;
+    if (Boolean(input.transferenciaOrigemVinculoId) !== Boolean(input.transferenciaMotivo)) {
+      throw new MatriculaConflictError('TRANSFERENCIA_INCOMPLETA', 'Informe vínculo de origem e motivo para formalizar transferência.');
+    }
+    if (input.transferenciaOrigemVinculoId) {
+      const targetModalities = [...new Set(targetTurmas.map((item) => item.modalidadeId).filter((value): value is string => Boolean(value)))];
+      const source = await tx.matriculaVinculoAcademico.findFirst({
+        where: { id: input.transferenciaOrigemVinculoId, contaId: input.contaId },
+        select: { id: true, modalidadeId: true, vigenciaIniciadaEm: true, matricula: { select: { alunoId: true } } },
+      });
+      if (!source) throw new MatriculaConflictError('TRANSFERENCIA_ORIGEM_INVALIDA', 'Vínculo de origem não encontrado.');
+      const existingTransfer = await tx.transferenciaAcademicaVinculo.findFirst({
+        where: { contaId: input.contaId, origemVinculoId: source.id },
+        select: { id: true },
+      });
+      const transferValidation = validateEnrollmentTransfer({
+        sourceFound: source != null,
+        sourceStudentId: source?.matricula.alunoId ?? null,
+        expectedStudentId: input.alunoId,
+        sourceCourseId: source?.modalidadeId ?? null,
+        destinationCourseIds: targetModalities,
+        sourceEffective: source?.vigenciaIniciadaEm != null,
+        alreadyTransferred: existingTransfer != null,
+      });
+      if (!transferValidation.valid) throw new MatriculaConflictError('TRANSFERENCIA_ORIGEM_INVALIDA', `Transferência inválida: ${transferValidation.error}.`);
+      transferSource = source;
+    }
+
     const matricula = await tx.matricula.create({
       data: {
         contaId: input.contaId,
@@ -1222,6 +1341,142 @@ export async function criarMatricula(input: CriarMatriculaInput) {
         })),
         skipDuplicates: true,
       });
+    }
+
+    const academicTurmas = await tx.matriculaTurma.findMany({
+      where: { contaId: input.contaId, matriculaId: matricula.id },
+      select: { turma: { select: { modalidadeId: true, cicloAcademicoId: true } } },
+    });
+    const cycleIdsByCourse = new Map<string, Set<string | null>>();
+    for (const { turma } of academicTurmas) {
+      const cycleIds = cycleIdsByCourse.get(turma.modalidadeId) ?? new Set<string | null>();
+      cycleIds.add(turma.cicloAcademicoId ?? null);
+      cycleIdsByCourse.set(turma.modalidadeId, cycleIds);
+    }
+    if (Array.from(cycleIdsByCourse.values()).some((cycleIds) => cycleIds.size > 1)) {
+      throw new MatriculaConflictError(
+        'COMBO_CICLO_ACADEMICO_CONFLITANTE',
+        'O combo contém turmas da mesma modalidade em ciclos acadêmicos conflitantes.',
+      );
+    }
+    const byCourse = new Map(academicTurmas.map(({ turma }) => [turma.modalidadeId, turma.cicloAcademicoId]));
+    for (const [modalidadeId, cicloAcademicoId] of byCourse) {
+      const currentCycle = cicloAcademicoId
+        ? await tx.cicloAcademico.findFirst({
+          where: { id: cicloAcademicoId, contaId: input.contaId, modalidadeId },
+          select: { sequencia: true, dataInicio: true, nome: true },
+        })
+        : null;
+      const coverage = await tx.historicoAcademicoCobertura.findFirst({
+        where: { contaId: input.contaId, modalidadeId },
+        select: { coberturaDesde: true },
+      });
+      const student = await tx.aluno.findFirst({ where: { id: input.alunoId, contaId: input.contaId }, select: { createdAt: true } });
+      const history = await tx.matriculaVinculoAcademico.findMany({
+        where: {
+          contaId: input.contaId,
+          modalidadeId,
+          matricula: {
+            contaId: input.contaId,
+            alunoId: input.alunoId,
+          },
+        },
+        select: {
+          vigenciaIniciadaEm: true,
+          cicloAcademico: { select: { sequencia: true, nome: true } },
+          transferenciaDestino: { select: { status: true } },
+          matricula: {
+            select: {
+              status: true,
+              cancelledAt: true,
+              dataInicio: true,
+              dataFimContrato: true,
+              rematriculaItensFuturos: { where: { contaId: input.contaId }, orderBy: { createdAt: 'desc' }, take: 1, select: { targetPeriodId: true } },
+              pausaAtiva: true,
+              dataRetornoPrevista: true,
+              operacoes: { where: { contaId: input.contaId, tipo: 'CANCELAMENTO', status: 'SINCRONIZADO' }, select: { observacao: true }, take: 1 },
+            },
+          },
+        },
+        orderBy: { vigenciaIniciadaEm: 'desc' },
+      });
+      const unmappedPriorEnrollments = await tx.matricula.findMany({
+        where: buildUnmappedPriorEnrollmentInCourseWhere({ contaId: input.contaId, alunoId: input.alunoId, currentMatriculaId: matricula.id, modalidadeId }),
+        select: { id: true, status: true, cancelledAt: true, dataInicio: true },
+      });
+      const relevantHistory = history.filter((item) => !wasCancelledBeforeEffectiveStart({
+        status: item.matricula.status,
+        cancelledAt: item.matricula.cancelledAt,
+        dataInicio: item.matricula.dataInicio,
+      }));
+      const effectiveHistory = relevantHistory.filter((item) => item.vigenciaIniciadaEm != null);
+      const unresolvedHistoricalLink = unmappedPriorEnrollments.some((item) => !wasCancelledBeforeEffectiveStart(item)) || relevantHistory.some((item) => item.vigenciaIniciadaEm == null);
+      const priorSequences = effectiveHistory.map((item) => item.cicloAcademico?.sequencia).filter((value): value is number => value != null);
+      const latestHistory = effectiveHistory[0] ?? null;
+      const priorSequence = latestHistory?.cicloAcademico?.sequencia ?? null;
+      const historyCovered = Boolean(coverage && student && coverage.coberturaDesde <= student.createdAt);
+      const priorHistoryUsable = effectiveHistory.length > 0 && priorSequences.length === effectiveHistory.length;
+      const firstCourseEnrollment = historyCovered && relevantHistory.length === 0 &&
+        unmappedPriorEnrollments.every((item) => wasCancelledBeforeEffectiveStart(item));
+      const targetPeriod = normalizeAcademicPeriodLabel(currentCycle?.nome) ??
+        inferAcademicPeriodFromDateRange(matricula.dataInicio, matricula.dataFimContrato);
+      const sourcePeriod = latestHistory
+        ? normalizeAcademicPeriodLabel(latestHistory.matricula.rematriculaItensFuturos[0]?.targetPeriodId) ??
+          normalizeAcademicPeriodLabel(latestHistory.cicloAcademico?.nome) ??
+          inferAcademicPeriodFromDateRange(latestHistory.matricula.dataInicio, latestHistory.matricula.dataFimContrato)
+        : null;
+      const periodContinuity = currentCycle && latestHistory && priorSequence != null
+        ? currentCycle.sequencia === priorSequence + 1
+        : areAcademicPeriodsImmediatelyAdjacent(sourcePeriod, targetPeriod);
+      const sourcePeriodCoverageComplete = !targetPeriod || effectiveHistory.every((item) =>
+        item.cicloAcademico?.sequencia != null ||
+        normalizeAcademicPeriodLabel(item.matricula.rematriculaItensFuturos[0]?.targetPeriodId) != null ||
+        normalizeAcademicPeriodLabel(item.cicloAcademico?.nome) != null ||
+        inferAcademicPeriodFromDateRange(item.matricula.dataInicio, item.matricula.dataFimContrato) != null,
+      );
+      const justifiedPause = Boolean(latestHistory?.matricula.status === StatusMatricula.PAUSADA && (latestHistory.matricula.pausaAtiva || (latestHistory.matricula.dataRetornoPrevista && latestHistory.matricula.dataRetornoPrevista >= matricula.dataInicio)));
+      const definitiveBreak = Boolean(latestHistory?.matricula.status === StatusMatricula.CANCELADA && latestHistory.matricula.cancelledAt != null && latestHistory.matricula.operacoes.some((operation) => Boolean(operation.observacao?.trim())));
+      const historyReliable = definitiveBreak || firstCourseEnrollment || (!unresolvedHistoricalLink && sourcePeriodCoverageComplete && (historyCovered || priorHistoryUsable || periodContinuity != null));
+      const intermediateCycles = historyCovered && currentCycle && priorSequence != null && currentCycle.sequencia > priorSequence + 1
+        ? await tx.cicloAcademico.findMany({
+          where: { contaId: input.contaId, modalidadeId, sequencia: { gt: priorSequence, lt: currentCycle.sequencia } },
+          select: { sequencia: true },
+        })
+        : [];
+      const sequenceComplete = currentCycle != null && priorSequence != null && intermediateCycles.length === currentCycle.sequencia - priorSequence - 1;
+      const provenUnjustifiedGap = Boolean(!justifiedPause && ((historyCovered && sequenceComplete && currentCycle && priorSequence != null && currentCycle.sequencia > priorSequence + 1) || periodContinuity === false));
+      const decision = classifyEnrollment({
+        formalTransfer: transferSource != null,
+        pendingTransferWithEvidence: relevantHistory.some((item) => item.transferenciaDestino?.status === 'PENDENTE'),
+        historyReliable,
+        hasEffectiveEnrollmentInCourse: effectiveHistory.length > 0,
+        definitiveBreak,
+        provenUnjustifiedGap,
+        immediatelyNextCycle: periodContinuity === true,
+      });
+      const academicLink = await tx.matriculaVinculoAcademico.create({
+        data: {
+          contaId: input.contaId,
+          matriculaId: matricula.id,
+          modalidadeId,
+          cicloAcademicoId,
+          classificacao: decision.classification,
+          classificacaoOrigem: transferSource ? 'TRANSFERENCIA_FORMAL' : 'AUTOMATICA',
+          classificacaoMotivo: decision.reasonCode,
+          vigenciaIniciadaEm: matricula.status === StatusMatricula.ATIVA && matricula.dataInicio <= new Date() ? new Date() : null,
+        },
+      });
+      if (transferSource) {
+        const formalizadaEm = new Date();
+        await tx.transferenciaAcademicaVinculo.create({ data: {
+          contaId: input.contaId,
+          origemVinculoId: transferSource.id,
+          destinoVinculoId: academicLink.id,
+          motivo: input.transferenciaMotivo!,
+          formalizadaEm,
+          formalizadaPor: input.createdById,
+        } });
+      }
     }
 
     await aplicarDescontosMatricula(tx, matricula.id, descontosAplicaveis, planoValor, preco);
@@ -1480,6 +1735,12 @@ export async function criarMatricula(input: CriarMatriculaInput) {
       if (existing) {
         return buildCriarMatriculaResultFromExisting(existing);
       }
+    }
+    if (input.transferenciaOrigemVinculoId && isTransferOriginUniqueConflict(error)) {
+      throw new MatriculaConflictError(
+        'TRANSFERENCIA_ORIGEM_INVALIDA',
+        'O vínculo de origem já foi usado em outra transferência. Atualize o histórico antes de tentar novamente.',
+      );
     }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       logEnrollmentOperationalEvent('api.enrollment.operation.unique_conflict', error);

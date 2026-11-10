@@ -4,6 +4,18 @@ export type ContaSummary = {
   role?: string | null;
 };
 
+export type AuthContext = 'OWNER' | 'COLLABORATOR' | 'PORTAL';
+
+/** Existing login screens start in the owner context; legacy saved accesses use this fallback. */
+export const DEFAULT_AUTH_CONTEXT: AuthContext = 'OWNER';
+
+export function resolveAuthContext(context: AuthContext | undefined, role?: string | null): AuthContext {
+  if (context) return context;
+  const normalizedRole = role?.trim().toUpperCase();
+  if (normalizedRole === 'RESPONSAVEL' || normalizedRole === 'ALUNO') return 'PORTAL';
+  return DEFAULT_AUTH_CONTEXT;
+}
+
 export type SessionUser = {
   id: string;
   email: string;
@@ -25,11 +37,13 @@ export type PersistedSession = {
   expiresAt?: string | null;
   user: SessionUser;
   activeContaId?: string | null;
+  authContext?: AuthContext;
 };
 
 export type SavedAccessProfile = {
   user: SessionUser;
   activeContaId?: string | null;
+  authContext: AuthContext;
   biometricEnabled: boolean;
   favorite?: boolean;
 };

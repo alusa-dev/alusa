@@ -1,6 +1,6 @@
 import { StatusContrato, StatusMatricula, type Prisma } from '@prisma/client';
 import { prisma } from '@/src/prisma';
-import { validarElegibilidadeRematricula } from '@alusa/domain';
+import { areAcademicPeriodsImmediatelyAdjacent, normalizeAcademicPeriodLabel, validarElegibilidadeRematricula } from '@alusa/domain';
 import {
   buildFinancialSnapshot,
   evaluateCanonicalRematriculaDecision,
@@ -114,7 +114,7 @@ export async function listarRematriculasElegiveis(input: {
     where: {
       contaId: input.contaId,
       aluno: { contaId: input.contaId },
-      status: { in: [StatusMatricula.ATIVA, StatusMatricula.PAUSADA, StatusMatricula.AGUARDANDO_CONFIRMACAO] },
+      status: { in: [StatusMatricula.ATIVA, StatusMatricula.PAUSADA, StatusMatricula.AGUARDANDO_CONFIRMACAO, StatusMatricula.ENCERRADA] },
       dataFimContrato: { lte: limite },
       ...(input.statusContrato ? { statusContrato: input.statusContrato } : {}),
       ...(input.search?.trim()
@@ -207,6 +207,32 @@ export async function listarRematriculasElegiveis(input: {
     : [];
 
   const chainById = new Map<string, EnrollmentChainRow>(chainRows.map((row) => [row.id, row]));
+  const closedContinuityIds = new Set<string>();
+  const naturallyClosedIds = matriculas.filter((matricula) => matricula.status === StatusMatricula.ENCERRADA).map((matricula) => matricula.id);
+  if (input.targetPeriodId && naturallyClosedIds.length) {
+    const [links, targetCycles] = await Promise.all([
+      prisma.matriculaVinculoAcademico.findMany({
+        where: { contaId: input.contaId, matriculaId: { in: naturallyClosedIds }, vigenciaIniciadaEm: { not: null } },
+        select: { matriculaId: true, classificacao: true, modalidadeId: true, cicloAcademico: { select: { sequencia: true, nome: true } } },
+      }),
+      prisma.cicloAcademico.findMany({
+        where: { contaId: input.contaId, nome: input.targetPeriodId },
+        select: { modalidadeId: true, sequencia: true, nome: true },
+      }),
+    ]);
+    const targetByCourse = new Map(targetCycles.map((cycle) => [cycle.modalidadeId, cycle]));
+    for (const link of links) {
+      if (link.classificacao === 'RETORNO') continue;
+      const target = targetByCourse.get(link.modalidadeId);
+      const continuous = target && link.cicloAcademico?.sequencia != null && target.sequencia != null
+        ? target.sequencia === link.cicloAcademico.sequencia + 1
+        : areAcademicPeriodsImmediatelyAdjacent(
+            normalizeAcademicPeriodLabel(link.cicloAcademico?.nome),
+            normalizeAcademicPeriodLabel(target?.nome ?? input.targetPeriodId),
+          ) === true;
+      if (continuous) closedContinuityIds.add(link.matriculaId);
+    }
+  }
   const activeRenewalItems =
     input.targetPeriodId && chainRows.length
       ? await prisma.rematriculaItem.findMany({
@@ -339,6 +365,7 @@ export async function listarRematriculasElegiveis(input: {
       status: m.status,
       contratoExpirado,
       diasContratoExpirado: contratoExpirado ? Math.abs(diasRestantes) : 0,
+      continuidadeImediataComprovada: closedContinuityIds.has(m.id),
     });
     const podeRenovar = elegibilidade.success;
     const payerKey = `${m.responsavelFinanceiroId ? 'RESPONSAVEL' : 'ALUNO'}:${m.responsavelFinanceiroId ?? m.aluno.id}`;

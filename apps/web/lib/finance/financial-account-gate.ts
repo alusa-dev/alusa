@@ -12,11 +12,14 @@ export type FinancialAccountStatus = 'PENDING_ACTIVATION' | 'UNAVAILABLE';
 export type FinancialAccountGateCode =
   | 'FINANCIAL_ACCOUNT_NOT_READY'
   | 'FINANCIAL_ACCOUNT_UNAVAILABLE'
+  | 'FINANCIAL_ACCOUNT_VERIFICATION_UNAVAILABLE'
+  | 'FINANCIAL_ACCOUNT_IP_NOT_ALLOWED'
   | 'KYC_REQUIRED'
   | 'COMMERCIAL_INFO_EXPIRED';
 
 export type FinancialAccountGatePayload = {
   code: FinancialAccountGateCode;
+  message?: string;
   financialAccount: { status: FinancialAccountStatus };
   reasons?: string[];
   redirectTo?: string;
@@ -31,6 +34,33 @@ const approvedGateCache = new Map<string, { expiresAt: number; summary: GetKycSu
 
 function json<T>(status: number, body: T) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
+}
+
+function isAsaasIpNotAllowed(error: unknown): boolean {
+  if (!(error instanceof Error) || error.name !== 'AsaasHttpError') return false;
+  const providerError = error as Error & { status?: unknown; response?: unknown };
+  if (providerError.status !== 403 || !providerError.response || typeof providerError.response !== 'object') return false;
+
+  const errors = (providerError.response as { errors?: unknown }).errors;
+  return Array.isArray(errors) && errors.some(
+    (item) => Boolean(item && typeof item === 'object' && 'code' in item && item.code === 'not_allowed_ip'),
+  );
+}
+
+function financialAccountVerificationFailure(error: unknown) {
+  const ipDenied = isAsaasIpNotAllowed(error);
+  return {
+    ok: false as const,
+    response: json<FinancialAccountGatePayload>(503, {
+      code: ipDenied
+        ? ('FINANCIAL_ACCOUNT_IP_NOT_ALLOWED' as const)
+        : ('FINANCIAL_ACCOUNT_VERIFICATION_UNAVAILABLE' as const),
+      message: ipDenied
+        ? 'O Asaas bloqueou a validação por IP. Revise a liberação de IP da credencial da subconta e tente novamente.'
+        : 'Não foi possível validar a conta financeira no Asaas. Tente novamente em instantes.',
+      financialAccount: { status: 'UNAVAILABLE' as const },
+    }),
+  };
 }
 
 function isLocalMockFinancialGateEnabled() {
@@ -126,7 +156,13 @@ export async function guardFinancialAccountOr412(
     }
   }
 
-  const summary = opts.bypassCache ? await getKycSummaryFresh(contaId) : await getKycSummary(contaId);
+  let summary: GetKycSummaryResult;
+  try {
+    summary = opts.bypassCache ? await getKycSummaryFresh(contaId) : await getKycSummary(contaId);
+  } catch (error) {
+    approvedGateCache.delete(contaId);
+    return financialAccountVerificationFailure(error);
+  }
 
   if (summary.asaasConnection.status === 'CONNECTED') {
     // Cobranças exigem a aprovação geral/documental, API key e webhook ativo.

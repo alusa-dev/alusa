@@ -167,11 +167,12 @@ export const billingService = {
     });
   },
 
-  executeAction(chargeId: string, action: BillingChargeAction, changes?: BillingChargeChanges) {
+  executeAction(chargeId: string, action: BillingChargeAction, changes?: BillingChargeChanges, idempotencyKey?: string) {
     return authenticatedApi.request<{ success: true; message: string }>({
       method: 'POST',
       path: `/api/mobile/billing/charges/${encodeURIComponent(chargeId)}/actions`,
       body: { action, ...(changes ? { changes } : {}) },
+      ...(action === 'REFUND' && idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : {}),
     });
   },
 

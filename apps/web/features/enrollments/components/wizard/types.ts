@@ -104,6 +104,8 @@ export interface WizardState {
   modoTurmas: 'COMBO' | 'TURMAS';
   comboId?: string;
   turmaIds: string[];
+  transferenciaOrigemVinculoId?: string;
+  transferenciaMotivo?: string;
   turmaLabel?: string; // label amigável da turma selecionada (MVP 1 turma)
   comboLabel?: string; // label amigável do combo selecionado
   comboValor?: number; // valor do combo (R$)

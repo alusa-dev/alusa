@@ -16,8 +16,8 @@ vi.mock('@/src/server/enrollments/enrollment-pause.service', async () => {
   };
 });
 
-function authenticatedSession() {
-  return { user: { id: 'user-1', contaId: 'conta-1', role: 'ADMIN' } };
+function authenticatedSession(role = 'ADMIN', authContext?: 'OWNER' | 'COLLABORATOR' | 'PORTAL') {
+  return { user: { id: 'user-1', contaId: 'conta-1', role, authContext } };
 }
 
 function buildRequest(id: string) {
@@ -37,6 +37,22 @@ describe('GET /api/matriculas/[id]/pausa-resumo', () => {
 
     const response = await GET(buildRequest('mat-1'), { params: Promise.resolve({ id: 'mat-1' }) });
     expect(response.status).toBe(401);
+  });
+
+  it.each([
+    ['portal mesmo com role ADMIN', 'ADMIN', 'PORTAL'],
+    ['usuário institucional sem role ADMIN', 'COLLABORATOR', 'COLLABORATOR'],
+  ] as const)('deve negar acesso a %s antes de consultar resumo', async (_label, role, authContext) => {
+    const { getServerSession } = await import('next-auth');
+    const { getPausaResumo } = await import('@/src/server/enrollments/enrollment-pause.service');
+    vi.mocked(getServerSession).mockResolvedValue(authenticatedSession(role, authContext) as never);
+
+    const response = await GET(buildRequest('mat-1'), { params: Promise.resolve({ id: 'mat-1' }) });
+    const data = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(data.error).toBe('SEM_PERMISSAO');
+    expect(getPausaResumo).not.toHaveBeenCalled();
   });
 
   it('deve retornar resumo completo de pausa', async () => {

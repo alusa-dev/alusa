@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Search as SearchIcon, Trash2, Users } from '@/components/icons/icons';
+import { InfoCircle, Search as SearchIcon, Trash2 } from '@/components/icons/icons';
 import { cn } from '@/lib/utils';
 import type { WizardAlunoFamiliar, WizardContextValue } from '../types';
 import { InfoCallout } from '@/components/ui/info-callout';
@@ -264,11 +264,14 @@ export function StepFamilyStudents({ ctx, contaId }: StepFamilyStudentsProps) {
             value={state.modoTurmas}
             onValueChange={(v) => setModoTurmas(v as 'TURMAS' | 'COMBO')}
           >
-            <TabsList className="h-8">
-              <TabsTrigger value="TURMAS" className="text-xs">
+            <TabsList
+              aria-label="Tipo de vínculo acadêmico"
+              className="grid h-9 w-fit min-w-64 grid-cols-2 rounded-xl bg-slate-100 p-1"
+            >
+              <TabsTrigger value="TURMAS" className="h-7 w-full rounded-lg px-2 text-xs shadow-none">
                 Turma individual
               </TabsTrigger>
-              <TabsTrigger value="COMBO" className="text-xs">
+              <TabsTrigger value="COMBO" className="h-7 w-full rounded-lg px-2 text-xs shadow-none">
                 Combo
               </TabsTrigger>
             </TabsList>
@@ -386,7 +389,7 @@ export function StepFamilyStudents({ ctx, contaId }: StepFamilyStudentsProps) {
             showIcon={false}
           >
             <span className="flex items-center gap-2">
-              <Users className="h-3.5 w-3.5 shrink-0 text-amber-700" />
+              <InfoCircle className="h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
               Adicione ao menos uma matrícula ao agrupamento financeiro.
             </span>
           </InfoCallout>
@@ -431,7 +434,6 @@ export function StepFamilyStudents({ ctx, contaId }: StepFamilyStudentsProps) {
                     )}
                   >
                     <p className="text-sm font-medium text-slate-800">{aluno.nome}</p>
-                    {aluno.cpf && <p className="text-xs text-slate-500">{aluno.cpf}</p>}
                     {aluno.ativo === false && (
                       <p className="text-[11px] text-red-500">Inativo</p>
                     )}

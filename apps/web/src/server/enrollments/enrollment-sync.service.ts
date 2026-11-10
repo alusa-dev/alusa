@@ -151,6 +151,29 @@ const ASAAS_PAID_PAYMENT_STATUSES = new Set([
   'RECEIVED_IN_CASH',
 ]);
 
+async function resolveFamilySubscriptionDescription(input: {
+  prisma: PrismaClient;
+  contaId: string;
+  familyId: string;
+  excludedMatriculaId: string;
+}): Promise<string> {
+  const family = await input.prisma.matriculaFamiliar.findFirst({
+    where: { id: input.familyId, contaId: input.contaId },
+    select: {
+      items: {
+        where: {
+          matriculaId: { not: input.excludedMatriculaId },
+          matricula: { status: { in: ['PENDENTE_TAXA', 'AGUARDANDO_CONFIRMACAO', 'ATIVA', 'PAUSADA'] } },
+        },
+        orderBy: { orderIndex: 'asc' },
+        select: { matricula: { select: { aluno: { select: { nome: true } } } } },
+      },
+    },
+  });
+  const names = family?.items.map((item) => item.matricula.aluno.nome).filter(Boolean) ?? [];
+  return (names.length > 0 ? `Plano familiar · ${names.join(', ')}` : 'Plano familiar').slice(0, 500);
+}
+
 export async function inspectEnrollmentPaidCharges(input: {
   prisma: PrismaClient;
   contaId: string;
@@ -1008,6 +1031,14 @@ export async function syncMatriculaStatus(input: SyncMatriculaStatusInput): Prom
           effectivePolicy: 'CURRENT_CYCLE_FULL' as const,
           effectiveDate,
           allocationIds,
+          ...(input.targetStatus === 'CANCELADA' && matricula.matriculaFamiliarId
+            ? { description: await resolveFamilySubscriptionDescription({
+                prisma: input.prisma,
+                contaId: input.contaId,
+                familyId: matricula.matriculaFamiliarId,
+                excludedMatriculaId: matricula.id,
+              }) }
+            : {}),
         };
     try {
       const preview = await previewBillingAgreementChange(change);

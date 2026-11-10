@@ -10,6 +10,7 @@ const {
   validarElegibilidadeRematriculaMock,
   previewRenewalProcessMock,
   confirmRenewalProcessMock,
+  findRenewalProcessReplayMock,
   guardFinancialAccountOr412Mock,
   buildFinancialSnapshotMock,
   evaluateCanonicalRematriculaDecisionMock,
@@ -20,6 +21,7 @@ const {
   validarElegibilidadeRematriculaMock: vi.fn(() => ({ success: true })),
   previewRenewalProcessMock: vi.fn(),
   confirmRenewalProcessMock: vi.fn(),
+  findRenewalProcessReplayMock: vi.fn(),
   guardFinancialAccountOr412Mock: vi.fn(),
   buildFinancialSnapshotMock: vi.fn(),
   evaluateCanonicalRematriculaDecisionMock: vi.fn(),
@@ -55,6 +57,9 @@ vi.mock('@/src/server/enrollments/renewal.service', () => ({
 vi.mock('@/src/server/enrollments/renewal-process.service', () => ({
   previewRenewalProcess: previewRenewalProcessMock,
   confirmRenewalProcess: confirmRenewalProcessMock,
+  findRenewalProcessReplay: findRenewalProcessReplayMock,
+  RENEWAL_IDEMPOTENCY_CONFLICT: 'IDEMPOTENCY_CONFLICT',
+  RENEWAL_IDEMPOTENCY_KEY_REQUIRES_NEW_INTENT: 'IDEMPOTENCY_KEY_REQUIRES_NEW_INTENT',
 }));
 
 vi.mock('@/lib/finance/financial-account-gate', () => ({
@@ -122,10 +127,13 @@ describe('POST /api/rematriculas', () => {
       processId: 'proc-1',
       status: 'CONFIRMED',
     });
+    findRenewalProcessReplayMock.mockResolvedValue(null);
   });
 
   it('bloqueia a rematrícula quando a decisão canônica indicar bloqueio e audita a tentativa', async () => {
-    prismaMock.matricula.findFirst.mockResolvedValueOnce(makeDecisionMatricula());
+    prismaMock.matricula.findFirst
+      .mockResolvedValueOnce({ id: 'mat-1', alunoId: 'aluno-1', turmaId: 'turma-1', planoId: 'plano-1', responsavelFinanceiroId: null })
+      .mockResolvedValueOnce(makeDecisionMatricula());
     evaluateCanonicalRematriculaDecisionMock.mockReturnValue({
       actionStatus: 'BLOQUEADA',
       blockReason: 'OUTRO',
@@ -138,6 +146,8 @@ describe('POST /api/rematriculas', () => {
       buildRequest({
         contaId: 'conta-1',
         matriculaId: 'mat-1',
+        planoId: 'plano-2',
+        turmaId: 'turma-2',
         dataFimContrato: '2025-12-31',
       }),
     );
@@ -165,7 +175,9 @@ describe('POST /api/rematriculas', () => {
   });
 
   it('exige motivo de autorização quando a decisão indicar conferência administrativa', async () => {
-    prismaMock.matricula.findFirst.mockResolvedValueOnce(makeDecisionMatricula());
+    prismaMock.matricula.findFirst
+      .mockResolvedValueOnce({ id: 'mat-1', alunoId: 'aluno-1', turmaId: 'turma-1', planoId: 'plano-1', responsavelFinanceiroId: null })
+      .mockResolvedValueOnce(makeDecisionMatricula());
     evaluateCanonicalRematriculaDecisionMock.mockReturnValue({
       actionStatus: 'REQUER_OVERRIDE',
       blockReason: 'NOVO_CICLO_BLOQUEADO',
@@ -179,6 +191,8 @@ describe('POST /api/rematriculas', () => {
       buildRequest({
         contaId: 'conta-1',
         matriculaId: 'mat-1',
+        planoId: 'plano-2',
+        turmaId: 'turma-2',
         dataFimContrato: '2025-12-31',
       }),
     );
@@ -198,14 +212,72 @@ describe('POST /api/rematriculas', () => {
     );
   });
 
+  it('revalida permissão de override antes de devolver um replay individual persistido', async () => {
+    findRenewalProcessReplayMock.mockResolvedValue({
+      processId: 'proc-persistido', status: 'EFFECTIVE', idempotent: true,
+      firstDueDate: new Date('2025-02-10T00:00:00.000Z'),
+    });
+    prismaMock.matricula.findFirst
+      .mockResolvedValueOnce({ id: 'mat-1', alunoId: 'aluno-1', turmaId: 'turma-1', planoId: 'plano-1', responsavelFinanceiroId: null })
+      .mockResolvedValueOnce(makeDecisionMatricula());
+    evaluateCanonicalRematriculaDecisionMock.mockReturnValue({
+      actionStatus: 'REQUER_OVERRIDE', blockReason: 'NOVO_CICLO_BLOQUEADO',
+      message: 'Necessita autorização.', canCurrentUserOverride: false, requiresOverrideReason: true,
+    });
+
+    const response = await POST(buildRequest({
+      contaId: 'conta-1', matriculaId: 'mat-1', planoId: 'plano-2', turmaId: 'turma-2',
+      dataInicio: '2025-02-01', dataFimContrato: '2025-12-31', uiRequestId: 'retry-key',
+    }));
+    const data = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(data.error.code).toBe('OVERRIDE_SEM_PERMISSAO');
+    expect(prismaMock.rematriculaItem.findFirst).not.toHaveBeenCalled();
+    expect(previewRenewalProcessMock).not.toHaveBeenCalled();
+    expect(confirmRenewalProcessMock).not.toHaveBeenCalled();
+  });
+
+  it('deriva o status do replay individual do processo e matrícula persistidos', async () => {
+    findRenewalProcessReplayMock.mockResolvedValue({
+      processId: 'proc-efetivo', status: 'EFFECTIVE', idempotent: true,
+      firstDueDate: new Date('2025-02-10T00:00:00.000Z'),
+    });
+    prismaMock.matricula.findFirst
+      .mockResolvedValueOnce({ id: 'mat-1', alunoId: 'aluno-1', turmaId: 'turma-1', planoId: 'plano-1', responsavelFinanceiroId: null })
+      .mockResolvedValueOnce(makeDecisionMatricula())
+      .mockResolvedValueOnce({
+        id: 'nova-efetiva', planoId: 'plano-2', turmaId: 'turma-2', status: 'ATIVA',
+        statusContrato: 'ATIVO', dataInicio: new Date('2025-02-01T00:00:00.000Z'),
+        dataFimContrato: new Date('2025-12-31T00:00:00.000Z'), asaasSubscriptionId: 'sub-1',
+        vencimentoDia: 10, responsavelFinanceiro: null,
+      })
+      .mockResolvedValueOnce({ dataInicio: new Date('2024-02-01T00:00:00.000Z'), dataFimContrato: new Date('2025-01-31T00:00:00.000Z'), turmaId: 'turma-1', planoId: 'plano-1' });
+    prismaMock.rematriculaItem.findFirst.mockResolvedValue({ matriculaFuturaId: 'nova-efetiva' });
+    evaluateCanonicalRematriculaDecisionMock.mockReturnValue({
+      actionStatus: 'PERMITIDA', blockReason: null, message: 'Permitida.',
+      canCurrentUserOverride: false, requiresOverrideReason: false,
+    });
+
+    const response = await POST(buildRequest({
+      contaId: 'conta-1', matriculaId: 'mat-1', planoId: 'plano-2', turmaId: 'turma-2',
+      dataInicio: '2025-02-01', dataFimContrato: '2025-12-31', uiRequestId: 'effective-retry',
+    }));
+    const data = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(data.status).toBe('COMMITTED');
+    expect(data.message).toContain('efetivada');
+    expect(data.novaMatricula.status).toBe('ATIVA');
+  });
+
   it('considera vigente no último dia quando o fim está armazenado ao meio-dia UTC', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-07T04:30:00.000Z'));
     try {
-      prismaMock.matricula.findFirst.mockResolvedValueOnce({
-        ...makeDecisionMatricula(),
-        dataFimContrato: new Date('2026-09-07T12:00:00.000Z'),
-      });
+      prismaMock.matricula.findFirst
+        .mockResolvedValueOnce({ id: 'mat-1', alunoId: 'aluno-1', turmaId: 'turma-1', planoId: 'plano-1', responsavelFinanceiroId: null })
+        .mockResolvedValueOnce({ ...makeDecisionMatricula(), dataFimContrato: new Date('2026-09-07T12:00:00.000Z') });
       evaluateCanonicalRematriculaDecisionMock.mockReturnValue({
         actionStatus: 'BLOQUEADA',
         blockReason: 'OUTRO',
@@ -218,6 +290,8 @@ describe('POST /api/rematriculas', () => {
         buildRequest({
           contaId: 'conta-1',
           matriculaId: 'mat-1',
+          planoId: 'plano-2',
+          turmaId: 'turma-2',
           dataFimContrato: '2026-12-31',
         }),
       );
@@ -274,7 +348,6 @@ describe('POST /api/rematriculas', () => {
 
   it('propaga contexto financeiro e autorização para o caso autorizado', async () => {
     prismaMock.matricula.findFirst
-      .mockResolvedValueOnce(makeDecisionMatricula())
       .mockResolvedValueOnce({
         id: 'mat-1',
         alunoId: 'aluno-1',
@@ -285,6 +358,7 @@ describe('POST /api/rematriculas', () => {
         dataInicio: new Date('2024-02-01T00:00:00.000Z'),
         dataFimContrato: new Date('2025-01-31T00:00:00.000Z'),
       })
+      .mockResolvedValueOnce(makeDecisionMatricula())
       .mockResolvedValueOnce({
         id: 'nova-1',
         planoId: 'plano-novo',

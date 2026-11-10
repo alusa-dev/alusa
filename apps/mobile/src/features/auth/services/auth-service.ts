@@ -72,12 +72,13 @@ export const authService: AuthService = {
       });
     }
 
-    return api.request<LoginResponse, LoginInput>({
+    const session = await api.request<LoginResponse, LoginInput>({
       method: 'POST',
       path: '/api/mobile/auth/login',
       body: input,
       accessToken: null,
     });
+    return { ...session, authContext: input.authContext };
   },
   async refresh(refreshToken, contaId) {
     if (!mobileEnv.mobileAuthEnabled) {

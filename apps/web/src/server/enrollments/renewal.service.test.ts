@@ -14,6 +14,8 @@ const { prismaMock } = vi.hoisted(() => ({
     charge: {
       findMany: vi.fn(),
     },
+    matriculaVinculoAcademico: { findMany: vi.fn() },
+    cicloAcademico: { findMany: vi.fn() },
   },
 }));
 
@@ -21,9 +23,15 @@ vi.mock('@/src/prisma', () => ({
   prisma: prismaMock,
 }));
 
-vi.mock('@alusa/domain', () => ({
-  validarElegibilidadeRematricula: vi.fn(() => ({ success: true })),
-}));
+vi.mock('@alusa/domain', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@alusa/domain')>();
+  return {
+    ...actual,
+    validarElegibilidadeRematricula: vi.fn((input: { status?: string; continuidadeImediataComprovada?: boolean }) => ({
+      success: input.status !== 'ENCERRADA' || input.continuidadeImediataComprovada === true,
+    })),
+  };
+});
 
 vi.mock('./renewal-financial-policy.service', () => ({
   buildFinancialSnapshot: vi.fn(() => ({
@@ -51,6 +59,8 @@ describe('listarRematriculasElegiveis', () => {
     prismaMock.matricula.findMany.mockResolvedValue([]);
     prismaMock.customer.findMany.mockResolvedValue([]);
     prismaMock.charge.findMany.mockResolvedValue([]);
+    prismaMock.matriculaVinculoAcademico.findMany.mockResolvedValue([]);
+    prismaMock.cicloAcademico.findMany.mockResolvedValue([]);
   });
 
   function matriculaFixture(overrides: Record<string, unknown> = {}) {
@@ -167,5 +177,47 @@ describe('listarRematriculasElegiveis', () => {
 
     expect(result.itens).toHaveLength(1);
     expect(result.itens[0]?.id).toBe('mat-2027');
+  });
+
+  it.each([
+    { source: '2026', target: '2027', sourceSequence: 2, targetSequence: 3, classification: 'REMATRICULA', expected: true },
+    { source: '2026', target: '2027', sourceSequence: 2, targetSequence: 3, classification: 'REMATRICULA', effective: false, expected: false },
+    { source: '2025', target: '2027', sourceSequence: 1, targetSequence: 3, classification: 'REMATRICULA', expected: false },
+    { source: '2026', target: '2027', sourceSequence: 2, targetSequence: 3, classification: 'RETORNO', expected: false },
+    { source: '2027.1', target: '2027.2', sourceSequence: null, targetSequence: null, classification: 'REMATRICULA', expected: true },
+    { source: '2027.1', target: '2028.1', sourceSequence: null, targetSequence: null, classification: 'REMATRICULA', expected: false },
+  ])('só inclui encerrada com vínculo efetivo no sucessor imediato: $source → $target', async (scenario) => {
+    const closed = matriculaFixture({ id: 'mat-closed', status: 'ENCERRADA' });
+    prismaMock.matricula.findMany
+      .mockResolvedValueOnce([closed])
+      .mockResolvedValueOnce([{
+        id: closed.id,
+        alunoId: 'aluno-1',
+        rematriculadaDeId: null,
+        status: 'ENCERRADA',
+        dataInicio: closed.dataInicio,
+        dataFimContrato: closed.dataFimContrato,
+        createdAt: closed.createdAt,
+      }]);
+    prismaMock.matriculaVinculoAcademico.findMany.mockResolvedValue(scenario.effective === false ? [] : [{
+      matriculaId: closed.id,
+      classificacao: scenario.classification,
+      modalidadeId: 'curso-1',
+      cicloAcademico: { sequencia: scenario.sourceSequence, nome: scenario.source },
+    }]);
+    prismaMock.cicloAcademico.findMany.mockResolvedValue([{
+      modalidadeId: 'curso-1', sequencia: scenario.targetSequence, nome: scenario.target,
+    }]);
+
+    const result = await listarRematriculasElegiveis({
+      contaId: 'conta-1',
+      targetPeriodId: scenario.target,
+      referencia: new Date('2026-07-01T00:00:00.000Z'),
+    });
+
+    expect(result.itens.find((item) => item.id === closed.id)?.podeRenovar ?? false).toBe(scenario.expected);
+    expect(prismaMock.matriculaVinculoAcademico.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ vigenciaIniciadaEm: { not: null } }),
+    }));
   });
 });

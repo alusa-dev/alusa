@@ -6,6 +6,7 @@ import {
   StyleSheet,
   View,
   useWindowDimensions,
+  type ScrollViewInstance,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
@@ -60,7 +61,7 @@ const quickActionCards = [
 export default function AppHomeScreen() {
   const { width } = useWindowDimensions();
   const { session } = useSession();
-  const moduleRail = useRef<ScrollView>(null);
+  const moduleRail = useRef<ScrollViewInstance>(null);
   const [moduleIndex, setModuleIndex] = useState(0);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const notifications = useMobileNotifications(notificationsOpen);

@@ -9,6 +9,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Input } from '@/components/ui/input';
+import { getEligibleTransferSources, type EffectiveSourceLink } from './transfer-source-options';
 
 interface Option {
   value: string;
@@ -23,8 +25,9 @@ interface Option {
   vagasOcupadas?: number;
   valor?: number; // valor do combo (R$)
   periodicidade?: string; // periodicidade do combo
+  modalidadeId?: string;
+  cicloAcademicoId?: string | null;
 }
-
 interface StepClassesAndBundleProps {
   ctx: WizardContextValue;
   contaId?: string;
@@ -36,6 +39,7 @@ export function StepClassesAndBundle({ ctx, contaId }: StepClassesAndBundleProps
   const [turmas, setTurmas] = useState<Option[]>([]);
   const [combos, setCombos] = useState<Option[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [sourceLinks, setSourceLinks] = useState<EffectiveSourceLink[]>([]);
 
   useEffect(() => {
     if (!contaId) return;
@@ -68,6 +72,8 @@ export function StepClassesAndBundle({ ctx, contaId }: StepClassesAndBundleProps
               horaInicio: typeof t.horaInicio === 'string' ? t.horaInicio : undefined,
               horaFim: typeof t.horaFim === 'string' ? t.horaFim : undefined,
               capacidade: typeof t.capacidade === 'number' ? t.capacidade : undefined,
+              modalidadeId: typeof t.modalidadeId === 'string' ? t.modalidadeId : undefined,
+              cicloAcademicoId: typeof t.cicloAcademicoId === 'string' ? t.cicloAcademicoId : null,
             } satisfies Option;
           }),
         );
@@ -94,6 +100,19 @@ export function StepClassesAndBundle({ ctx, contaId }: StepClassesAndBundleProps
 
     return () => controller.abort();
   }, [contaId]);
+
+  useEffect(() => {
+    setSourceLinks([]);
+    update({ transferenciaOrigemVinculoId: undefined, transferenciaMotivo: undefined });
+    const studentId = state.aluno?.id;
+    if (!studentId || !contaId) return;
+    const controller = new AbortController();
+    void fetch(`/api/alunos/${encodeURIComponent(studentId)}/vinculos-academicos?contaId=${encodeURIComponent(contaId)}`, { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error('Não foi possível consultar os vínculos anteriores.')))
+      .then((body: { data?: EffectiveSourceLink[] }) => setSourceLinks(Array.isArray(body.data) ? body.data : []))
+      .catch((cause: { name?: string }) => { if (cause.name !== 'AbortError') setSourceLinks([]); });
+    return () => controller.abort();
+  }, [state.aluno?.id, contaId]);
 
   const modo = state.modoTurmas;
 
@@ -222,6 +241,24 @@ export function StepClassesAndBundle({ ctx, contaId }: StepClassesAndBundleProps
             )}
           </div>
         )}
+
+        {modo === 'TURMAS' && state.turmaIds.length === 1 && (() => {
+          const selected = turmas.find((turma) => turma.value === state.turmaIds[0]);
+          const eligibleSources = getEligibleTransferSources(sourceLinks, selected?.modalidadeId);
+          return eligibleSources.length > 0 ? (
+            <div className="space-y-3 rounded-lg border p-4">
+              <p className="text-sm font-medium">Transferência de curso (opcional)</p>
+              <Select value={state.transferenciaOrigemVinculoId ?? 'none'} onValueChange={(value) => update({ transferenciaOrigemVinculoId: value === 'none' ? undefined : value, transferenciaMotivo: value === 'none' ? undefined : state.transferenciaMotivo })}>
+                <SelectTrigger><SelectValue placeholder="Nova matrícula" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Nova matrícula</SelectItem>
+                  {eligibleSources.map((link) => <SelectItem key={link.id} value={link.id}>{link.modalidade.nome}{link.cicloAcademico ? ` · ${link.cicloAcademico.nome}` : ''}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              {state.transferenciaOrigemVinculoId && <Input value={state.transferenciaMotivo ?? ''} onChange={(event) => update({ transferenciaMotivo: event.target.value })} placeholder="Motivo da transferência" maxLength={500} />}
+            </div>
+          ) : null;
+        })()}
 
         {error && <p className="text-sm text-red-600">{error}</p>}
 

@@ -158,6 +158,7 @@ export interface ValidarElegibilidadeInput {
   status: StatusMatricula;
   contratoExpirado: boolean;
   diasContratoExpirado?: number | null;
+  continuidadeImediataComprovada?: boolean;
 }
 
 export type ValidarElegibilidadeResult =
@@ -166,7 +167,8 @@ export type ValidarElegibilidadeResult =
   | { success: false; error: 'CONTRATO_EXPIRADO' };
 
 export function validarElegibilidadeRematricula(input: ValidarElegibilidadeInput): ValidarElegibilidadeResult {
-  if (!STATUSES_ELEGIVEL_REMATRICULA.includes(input.status)) {
+  const encerramentoNaturalContinuavel = input.status === 'ENCERRADA' && input.continuidadeImediataComprovada === true;
+  if (!STATUSES_ELEGIVEL_REMATRICULA.includes(input.status) && !encerramentoNaturalContinuavel) {
     return { success: false, error: 'STATUS_INVALIDO' };
   }
 

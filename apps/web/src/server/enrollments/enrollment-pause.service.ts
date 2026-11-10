@@ -1,5 +1,5 @@
 import { logEnrollmentOperationalEvent } from '@/lib/observability/api-logger';
-import type { PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import { StatusMatricula } from '@prisma/client';
 import { prisma as defaultPrisma } from '@/src/prisma';
 import {
@@ -27,6 +27,7 @@ import {
   syncFamilyLifecycleAggregate,
   type FamilyLifecycleImpact,
 } from './family-lifecycle.service';
+import { getAcademicDateKey, getCurrentAcademicDateKey } from '@alusa/shared/date-only';
 
 // ============================================================================
 // ERRORS
@@ -43,6 +44,161 @@ export class PausaBusinessError extends Error {
     this.code = code;
     this.statusCode = statusCode;
     this.details = details;
+  }
+}
+
+export type PausaRegularizacaoElegibilidadeCode =
+  | 'MATRICULA_NAO_PAUSADA'
+  | 'CONTRATO_ENCERRADO_REGULARIZACAO_NAO_APLICAVEL'
+  | 'PRAZO_RETORNO_NAO_VENCIDO'
+  | 'OPERACAO_PAUSA_NAO_ENCONTRADA'
+  | 'PAUSA_JA_REGULARIZADA';
+
+export type PausaRegularizacaoElegibilidade = {
+  elegivel: boolean;
+  exigeRegularizacao: boolean;
+  codigo: PausaRegularizacaoElegibilidadeCode | null;
+  mensagem: string | null;
+};
+
+export function avaliarElegibilidadeRegularizacaoPausa(input: {
+  status: string;
+  pausaAtiva: boolean;
+  dataRetornoPrevista: Date | null;
+  dataFimContrato: Date | null;
+  timeZone?: string | null;
+  now?: Date;
+  possuiOperacaoPausa: boolean;
+  possuiRegularizacao: boolean;
+}): PausaRegularizacaoElegibilidade {
+  if (input.status !== 'PAUSADA' || !input.pausaAtiva) {
+    return {
+      elegivel: false, exigeRegularizacao: false, codigo: 'MATRICULA_NAO_PAUSADA',
+      mensagem: 'A matrícula precisa estar pausada para regularizar o prazo.',
+    };
+  }
+
+  const today = getCurrentAcademicDateKey(input.now ?? new Date(), input.timeZone ?? undefined);
+  const contractEnd = input.dataFimContrato ? getAcademicDateKey(input.dataFimContrato) : null;
+  if (!contractEnd || contractEnd < today) {
+    return {
+      elegivel: false, exigeRegularizacao: false,
+      codigo: 'CONTRATO_ENCERRADO_REGULARIZACAO_NAO_APLICAVEL',
+      mensagem: 'O contrato não tem vigência confirmada ou já expirou. Esta regularização de pausa não se aplica; siga o fluxo de nova matrícula.',
+    };
+  }
+
+  const returnDate = input.dataRetornoPrevista ? getAcademicDateKey(input.dataRetornoPrevista) : null;
+  if (!returnDate || returnDate >= today) {
+    return {
+      elegivel: false, exigeRegularizacao: false, codigo: 'PRAZO_RETORNO_NAO_VENCIDO',
+      mensagem: 'A regularização só pode ser enviada depois que a data prevista de retorno vencer.',
+    };
+  }
+
+  if (input.possuiRegularizacao) {
+    return {
+      elegivel: false, exigeRegularizacao: false, codigo: 'PAUSA_JA_REGULARIZADA',
+      mensagem: 'O prazo desta pausa já foi regularizado. Não é necessário enviar outra regularização.',
+    };
+  }
+
+  if (!input.possuiOperacaoPausa) {
+    return {
+      elegivel: false, exigeRegularizacao: true, codigo: 'OPERACAO_PAUSA_NAO_ENCONTRADA',
+      mensagem: 'Não foi encontrada a operação original de pausa. Atualize o registro antes de regularizar.',
+    };
+  }
+
+  return { elegivel: true, exigeRegularizacao: true, codigo: null, mensagem: null };
+}
+
+async function carregarElegibilidadeRegularizacaoPausa(input: {
+  tx: PrismaClient | Prisma.TransactionClient;
+  contaId: string;
+  matriculaId: string;
+  status: string;
+  pausaAtiva: boolean;
+  dataRetornoPrevista: Date | null;
+  dataFimContrato: Date | null;
+  now?: Date;
+}) {
+  const [account, pauseOperation] = await Promise.all([
+    input.tx.conta.findFirst({ where: { id: input.contaId }, select: { timezone: true } }),
+    input.tx.matriculaOperacao.findFirst({
+      where: { contaId: input.contaId, matriculaId: input.matriculaId, tipo: 'PAUSA' },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    }),
+  ]);
+  const regularizations = pauseOperation ? await input.tx.matriculaOperacao.findMany({
+    where: { contaId: input.contaId, matriculaId: input.matriculaId, tipo: 'REGULARIZACAO_PAUSA', status: 'SINCRONIZADO' },
+    orderBy: { createdAt: 'desc' },
+    take: 20,
+    select: { id: true, correlationId: true, metadata: true, createdAt: true },
+  }) : [];
+  const existingRegularization = pauseOperation ? regularizations.find((operation) =>
+    typeof operation.metadata === 'object' && operation.metadata !== null &&
+    'pausaOperacaoId' in operation.metadata && operation.metadata.pausaOperacaoId === pauseOperation.id,
+  ) ?? null : null;
+  return {
+    ...avaliarElegibilidadeRegularizacaoPausa({
+      status: input.status,
+      pausaAtiva: input.pausaAtiva,
+      dataRetornoPrevista: input.dataRetornoPrevista,
+      dataFimContrato: input.dataFimContrato,
+      timeZone: account?.timezone,
+      now: input.now,
+      possuiOperacaoPausa: pauseOperation !== null,
+      possuiRegularizacao: existingRegularization !== null,
+    }),
+    pauseOperation,
+    existingRegularization,
+  };
+}
+
+async function assertEnrollmentTermAllowsReactivation(input: {
+  tx: PrismaClient | Prisma.TransactionClient;
+  contaId: string;
+  dataFimContrato: Date | null;
+}) {
+  const conta = await input.tx.conta.findFirst({ where: { id: input.contaId }, select: { timezone: true } });
+  const today = getCurrentAcademicDateKey(new Date(), conta?.timezone ?? undefined);
+  const contractEnd = input.dataFimContrato ? getAcademicDateKey(input.dataFimContrato) : null;
+  if (!contractEnd || contractEnd < today) {
+    throw new PausaBusinessError(
+      'VINCULO_ACADEMICO_ENCERRADO',
+      'Este vínculo acadêmico não possui vigência confirmada ou já foi encerrado. A reativação não é válida; faça uma nova matrícula para registrar o retorno.',
+      409,
+    );
+  }
+}
+
+async function assertPauseDeadlineRegularized(input: {
+  tx: PrismaClient | Prisma.TransactionClient;
+  contaId: string;
+  matriculaId: string;
+  status: string;
+  pausaAtiva: boolean;
+  dataRetornoPrevista: Date | null;
+  dataFimContrato: Date | null;
+}) {
+  if (input.status !== 'PAUSADA' || !input.pausaAtiva || !input.dataRetornoPrevista || !input.dataFimContrato) return;
+  const eligibility = await carregarElegibilidadeRegularizacaoPausa({
+    tx: input.tx,
+    contaId: input.contaId,
+    matriculaId: input.matriculaId,
+    status: input.status,
+    pausaAtiva: input.pausaAtiva,
+    dataRetornoPrevista: input.dataRetornoPrevista,
+    dataFimContrato: input.dataFimContrato,
+  });
+  if (eligibility.exigeRegularizacao) {
+    throw new PausaBusinessError(
+      'PAUSA_PRAZO_VENCIDO_REGULARIZACAO_OBRIGATORIA',
+      'O prazo previsto da pausa venceu. Regularize a pausa com justificativa antes de reativar a matrícula.',
+      409,
+    );
   }
 }
 
@@ -101,6 +257,68 @@ export type ReativarMatriculaResult = {
   warnings: string[];
   familyImpact?: FamilyLifecycleImpact | null;
 };
+
+export type RegularizarPausaInput = {
+  tx: Prisma.TransactionClient;
+  matriculaId: string;
+  contaId: string;
+  actorId: string;
+  motivo: string;
+};
+
+export async function regularizarPausaVencida(input: RegularizarPausaInput) {
+  const motivo = input.motivo.trim();
+  if (motivo.length < 8 || motivo.length > 1000) {
+    throw new PausaBusinessError('MOTIVO_REGULARIZACAO_INVALIDO', 'Informe uma justificativa entre 8 e 1000 caracteres.', 422);
+  }
+
+  await input.tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.contaId}), hashtext(${`pause-regularization:${input.matriculaId}`}))`;
+  const matricula = await input.tx.matricula.findFirst({
+    where: { id: input.matriculaId, contaId: input.contaId },
+    select: { id: true, status: true, pausaAtiva: true, dataRetornoPrevista: true, dataFimContrato: true },
+  });
+  if (!matricula) throw new PausaBusinessError('MATRICULA_NOT_FOUND', 'Matrícula não encontrada.', 404);
+  const eligibility = await carregarElegibilidadeRegularizacaoPausa({
+    tx: input.tx,
+    contaId: input.contaId,
+    matriculaId: input.matriculaId,
+    status: matricula.status,
+    pausaAtiva: matricula.pausaAtiva,
+    dataRetornoPrevista: matricula.dataRetornoPrevista,
+    dataFimContrato: matricula.dataFimContrato,
+  });
+  if (eligibility.existingRegularization) return { ...eligibility.existingRegularization, jaRegularizada: true };
+  if (!eligibility.elegivel) {
+    throw new PausaBusinessError(
+      eligibility.codigo ?? 'PRAZO_RETORNO_NAO_VENCIDO',
+      eligibility.mensagem ?? 'A regularização da pausa não está disponível.',
+      409,
+    );
+  }
+  const pausa = eligibility.pauseOperation;
+  if (!pausa) throw new PausaBusinessError('OPERACAO_PAUSA_NAO_ENCONTRADA', 'Não foi encontrada a operação de pausa para regularizar.', 409);
+
+  const now = new Date();
+  const operation = await input.tx.matriculaOperacao.create({
+    data: {
+      matriculaId: matricula.id,
+      contaId: input.contaId,
+      tipo: 'REGULARIZACAO_PAUSA',
+      origem: 'USER',
+      status: 'SINCRONIZADO',
+      actorId: input.actorId,
+      observacao: motivo,
+      payloadEnviado: { motivo },
+      payloadRecebido: { regularizadaEm: now.toISOString() },
+      metadata: {
+        pausaOperacaoId: pausa.id,
+        dataRetornoPrevista: matricula.dataRetornoPrevista ? getAcademicDateKey(matricula.dataRetornoPrevista) : null,
+      },
+      processedAt: now,
+    },
+  });
+  return { ...operation, jaRegularizada: false };
+}
 
 // ============================================================================
 // HELPER: Build financial error
@@ -811,6 +1029,30 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
     );
   }
 
+  const pauseDeadlineSnapshot = await input.prisma.matricula.findFirst({
+    where: { id: input.matriculaId, contaId: input.contaId },
+    select: { status: true, pausaAtiva: true, dataRetornoPrevista: true, dataFimContrato: true },
+  });
+  if (!pauseDeadlineSnapshot) {
+    throw new PausaBusinessError('MATRICULA_NOT_FOUND', 'Matrícula não encontrada.', 404);
+  }
+  if (pauseDeadlineSnapshot.status === 'PAUSADA') {
+    await assertEnrollmentTermAllowsReactivation({
+      tx: input.prisma,
+      contaId: input.contaId,
+      dataFimContrato: pauseDeadlineSnapshot.dataFimContrato,
+    });
+  }
+  await assertPauseDeadlineRegularized({
+    tx: input.prisma,
+    contaId: input.contaId,
+    matriculaId: input.matriculaId,
+    status: pauseDeadlineSnapshot?.status ?? '',
+    pausaAtiva: pauseDeadlineSnapshot?.pausaAtiva ?? false,
+    dataRetornoPrevista: pauseDeadlineSnapshot?.dataRetornoPrevista ?? null,
+    dataFimContrato: pauseDeadlineSnapshot?.dataFimContrato ?? null,
+  });
+
   await reconcileMatriculaPendingSynchronization({
     prisma: input.prisma,
     matriculaId: input.matriculaId,
@@ -846,6 +1088,7 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
       alunoId: true,
       status: true,
       pausaAtiva: true,
+      dataRetornoPrevista: true,
       manterVaga: true,
       cobrarDurantePausa: true,
       asaasSubscriptionId: true,
@@ -875,6 +1118,7 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
   // Reserve capacity before any Asaas side effect. The row remains paused while
   // reserved, and manterVaga=true makes that reservation visible to all
   // occupancy queries. Advisory locks match enrollment creation.
+  const effectiveStart = new Date(`${input.dataRetornoEfetiva}T12:00:00.000Z`);
   let reservedVersion = matricula.version;
   const operacao = await input.prisma.$transaction(async (tx) => {
     const classIds = Array.from(new Set([
@@ -893,7 +1137,7 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
 
     const current = await tx.matricula.findFirst({
       where: { id: matricula.id, aluno: { contaId: input.contaId } },
-      select: { id: true, status: true, version: true, manterVaga: true },
+      select: { id: true, status: true, version: true, manterVaga: true, pausaAtiva: true, dataRetornoPrevista: true, dataFimContrato: true },
     });
     if (!current || current.status !== 'PAUSADA' || current.version !== matricula.version) {
       throw new PausaBusinessError(
@@ -903,7 +1147,22 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
       );
     }
 
-    const effectiveStart = new Date(`${input.dataRetornoEfetiva}T12:00:00.000Z`);
+    await assertEnrollmentTermAllowsReactivation({
+      tx,
+      contaId: input.contaId,
+      dataFimContrato: current.dataFimContrato,
+    });
+
+    await assertPauseDeadlineRegularized({
+      tx,
+      contaId: input.contaId,
+      matriculaId: matricula.id,
+      status: current.status,
+      pausaAtiva: current.pausaAtiva,
+      dataRetornoPrevista: current.dataRetornoPrevista,
+      dataFimContrato: current.dataFimContrato,
+    });
+
     const occupancyPeriod = buildSeatOccupancyOverlapWhereClause(
       effectiveStart,
       matricula.dataFimContrato ?? effectiveStart,
@@ -1148,6 +1407,10 @@ export async function reativarMatricula(input: ReativarMatriculaInput): Promise<
         version: { increment: 1 },
       },
     });
+    await tx.matriculaVinculoAcademico.updateMany({
+      where: { contaId: input.contaId, matriculaId: matricula.id, vigenciaIniciadaEm: null },
+      data: { vigenciaIniciadaEm: effectiveStart },
+    });
 
     await tx.matriculaLog.create({
       data: {
@@ -1223,6 +1486,7 @@ export type PausaResumoResult = {
   integrationStatus: string;
   warningCode: string | null;
   asaasSubscriptionId: string | null;
+  regularizacaoPausa: PausaRegularizacaoElegibilidade;
   operacoes: Array<{
     id: string;
     tipo: string;
@@ -1248,6 +1512,7 @@ export async function getPausaResumo(
       pausaAtiva: true,
       dataInicioPausa: true,
       dataRetornoPrevista: true,
+      dataFimContrato: true,
       manterVaga: true,
       cobrarDurantePausa: true,
       motivoPausa: true,
@@ -1255,7 +1520,7 @@ export async function getPausaResumo(
       warningCode: true,
       asaasSubscriptionId: true,
       operacoes: {
-        where: { tipo: { in: ['PAUSA', 'REATIVACAO'] } },
+        where: { contaId, tipo: { in: ['PAUSA', 'REATIVACAO'] } },
         orderBy: { createdAt: 'desc' },
         take: 10,
         select: {
@@ -1275,6 +1540,16 @@ export async function getPausaResumo(
     throw new PausaBusinessError('MATRICULA_NOT_FOUND', 'Matrícula não encontrada.', 404);
   }
 
+  const regularizacaoPausa = await carregarElegibilidadeRegularizacaoPausa({
+    tx: prisma,
+    contaId,
+    matriculaId: matricula.id,
+    status: matricula.status,
+    pausaAtiva: matricula.pausaAtiva,
+    dataRetornoPrevista: matricula.dataRetornoPrevista,
+    dataFimContrato: matricula.dataFimContrato,
+  });
+
   return {
     matriculaId: matricula.id,
     status: matricula.status,
@@ -1287,6 +1562,12 @@ export async function getPausaResumo(
     integrationStatus: matricula.integrationStatus,
     warningCode: matricula.warningCode,
     asaasSubscriptionId: matricula.asaasSubscriptionId,
+    regularizacaoPausa: {
+      elegivel: regularizacaoPausa.elegivel,
+      exigeRegularizacao: regularizacaoPausa.exigeRegularizacao,
+      codigo: regularizacaoPausa.codigo,
+      mensagem: regularizacaoPausa.mensagem,
+    },
     operacoes: matricula.operacoes.map((op) => ({
       id: op.id,
       tipo: op.tipo,

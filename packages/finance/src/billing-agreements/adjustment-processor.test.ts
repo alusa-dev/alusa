@@ -2,21 +2,22 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   adjustmentFindMany: vi.fn(), adjustmentUpdateMany: vi.fn(), agreementFindFirst: vi.fn(),
-  createCharge: vi.fn(),
+  chargeFindFirst: vi.fn(), createCharge: vi.fn(), providerGetPayment: vi.fn(), refund: vi.fn(),
 }));
 
 vi.mock('@alusa/database', () => ({
   prisma: {
     billingAdjustment: { findMany: mocks.adjustmentFindMany, updateMany: mocks.adjustmentUpdateMany },
     billingAgreement: { findFirst: mocks.agreementFindFirst },
+    charge: { findFirst: mocks.chargeFindFirst },
     $transaction: vi.fn(async (work: (tx: unknown) => unknown) => work({
       billingAdjustment: { updateMany: mocks.adjustmentUpdateMany },
     })),
   },
 }));
 vi.mock('../use-cases/create-standalone-charge', () => ({ createStandaloneCharge: mocks.createCharge }));
-vi.mock('./asaas-subscription.adapter', () => ({ createAsaasBillingAgreementPort: () => ({}) }));
-vi.mock('../use-cases/asaas-ops', () => ({ refundCobranca: vi.fn(), requestBankSlipRefund: vi.fn() }));
+vi.mock('./asaas-subscription.adapter', () => ({ createAsaasBillingAgreementPort: () => ({ getPayment: mocks.providerGetPayment }) }));
+vi.mock('../use-cases/asaas-ops', () => ({ refundCobranca: mocks.refund, requestBankSlipRefund: vi.fn() }));
 vi.mock('../reconciliation/finance-reconciliation-issue.service', () => ({ upsertFinanceReconciliationIssue: vi.fn() }));
 
 import { decideBillingAdjustmentFailure, processPendingBillingAdjustments } from './adjustment-processor';
@@ -30,6 +31,9 @@ beforeEach(() => {
     type: 'COMPLEMENT', amount: 10, effectiveAt: NOW, attempts: 0, idempotencyKey: 'idem-1',
   }]);
   mocks.adjustmentUpdateMany.mockResolvedValue({ count: 1 });
+  mocks.refund.mockResolvedValue({ success: true, message: 'Reembolso solicitado' });
+  mocks.chargeFindFirst.mockResolvedValue({ asaasPaymentId: 'payment-1' });
+  mocks.providerGetPayment.mockResolvedValue({ billingType: 'PIX', valueCents: 1000 });
   mocks.agreementFindFirst.mockResolvedValue({
     customer: { id: 'customer-1' }, payerType: 'ALUNO', payerId: 'student-1', billingType: 'BOLETO',
     externalReference: 'agreement-1',
@@ -38,6 +42,23 @@ beforeEach(() => {
 });
 
 describe('decideBillingAdjustmentFailure', () => {
+  it('uses the persisted adjustment ID as stable refund command identity', async () => {
+    mocks.adjustmentFindMany.mockResolvedValue([{
+      id: 'adjustment-refund-1', contaId: 'conta-1', agreementId: 'agreement-1', operationId: 'operation-1',
+      type: 'REFUND', amount: 10, effectiveAt: NOW, attempts: 0, chargeId: 'charge-1',
+      externalReference: 'refund-ref-1',
+    }]);
+    mocks.agreementFindFirst.mockResolvedValue({
+      customer: { id: 'customer-1' }, externalReference: 'agreement-ref-1',
+    });
+
+    await processPendingBillingAdjustments({ contaId: 'conta-1', operationId: 'operation-1', now: NOW });
+
+    expect(mocks.refund).toHaveBeenCalledWith(expect.objectContaining({
+      paymentId: 'payment-1', contaId: 'conta-1', idempotencyKey: 'adjustment-refund-1',
+    }));
+  });
+
   it('não grava o estado do ajuste quando o guard do outbox falha após o efeito remoto', async () => {
     let transactionalChecks = 0;
     const ownershipGuard = async (tx?: unknown) => {

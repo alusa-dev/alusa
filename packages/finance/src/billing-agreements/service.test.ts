@@ -286,6 +286,47 @@ describe('BillingAgreementLifecycleService idempotency', () => {
     ]));
   });
 
+  it('preserva o término remoto ao pausar a assinatura no cancelamento com cobrança vencida', async () => {
+    const source = lifecycleContext({
+      allocations: [lifecycleContext().allocations[0]!],
+      charges: [{
+        id: 'charge-overdue', contaId: 'conta-1', agreementId: 'agreement-1', allocationId: null,
+        providerPaymentId: 'payment-overdue', status: 'OVERDUE', amountCents: 20_000, dueDate: '2026-06-10',
+      }],
+    });
+    source.agreement.desiredAmountCents = 20_000;
+    source.agreement.confirmedAmountCents = 20_000;
+    source.agreement.validUntil = '2027-01-01';
+    const change: BillingAgreementChangeInput = {
+      contaId: 'conta-1', agreementId: 'agreement-1', actorId: 'user-1', reason: 'Cancelamento',
+      kind: 'REMOVE_ALLOCATION', allocationIds: ['allocation-one'],
+      effectivePolicy: 'CURRENT_CYCLE_FULL', effectiveDate: '2026-07-21',
+    };
+    const preview = calculateBillingAgreementChangePreview({
+      change, sourceContext: source, now: new Date('2026-07-21T12:00:00.000Z'), previewTtlMs: 60_000,
+    });
+    expect(preview.plans[0]).toMatchObject({
+      remoteAction: 'PAUSE_SUBSCRIPTION',
+      agreementValidUntil: '2027-01-01',
+    });
+    const input: CommitBillingAgreementChangeInput = {
+      ...change, uiRequestId: 'request-overdue-pause-preserve-end-date', previewHash: preview.previewHash,
+      previewExpiresAt: preview.expiresAt, expectedAgreementVersion: 1,
+    };
+    const { service, asaas, payments, remoteSubscription } = buildCommitService(source, input);
+    remoteSubscription.endDate = '2026-12-31';
+
+    const result = await service.commit(input);
+
+    expect(result.status).toBe('COMPLETED');
+    expect(asaas.updateSubscription).toHaveBeenCalledWith(expect.objectContaining({
+      subscriptionId: 'sub-1', status: 'INACTIVE', endDate: '2026-12-31', updatePendingPayments: false,
+    }));
+    expect(asaas.deleteSubscription).not.toHaveBeenCalled();
+    expect(asaas.deletePayment).not.toHaveBeenCalled();
+    expect(payments.get('payment-overdue')).toMatchObject({ status: 'OVERDUE', deleted: false });
+  });
+
   it('inativa subscription antiga antes de substituir quando overdue só existe no Asaas', async () => {
     const source = lifecycleContext({ charges: [] });
     const change: BillingAgreementChangeInput = {

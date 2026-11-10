@@ -338,6 +338,8 @@ export const createMatriculaInputDTOSchema = z.object({
   planoId: z.string().trim().min(1).optional().nullable(),
   turmaId: z.string().trim().min(1).optional().nullable(),
   comboId: z.string().trim().min(1).optional().nullable(),
+  transferenciaOrigemVinculoId: z.string().trim().min(1).optional(),
+  transferenciaMotivo: z.string().trim().min(8).max(1000).optional(),
   responsavelFinanceiroId: z.string().trim().min(1).optional().nullable(),
   modeloId: z.string().trim().min(1, 'Modelo de contrato é obrigatório'),
   dataInicio: dateLikeDTOSchema.optional(),
@@ -370,6 +372,10 @@ export const createMatriculaInputDTOSchema = z.object({
   sourceVersion: z.string().trim().regex(/^[a-f0-9]{64}$/i, 'Versão do preview inválida.'),
   previewExpiresAt: dateLikeDTOSchema,
   billingStrategy: enrollmentBillingStrategyDTOSchema,
+}).superRefine((data, context) => {
+  if (Boolean(data.transferenciaOrigemVinculoId) !== Boolean(data.transferenciaMotivo)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['transferenciaMotivo'], message: 'Informe vínculo de origem e motivo para formalizar transferência.' });
+  }
 });
 export type CreateMatriculaInputDTO = z.input<typeof createMatriculaInputDTOSchema>;
 
@@ -426,6 +432,29 @@ export const reativarMatriculaInputDTOSchema = z.object({
   observacao: z.string().trim().optional(),
 });
 export type ReativarMatriculaInputDTO = z.infer<typeof reativarMatriculaInputDTOSchema>;
+
+export const regularizarPausaInputDTOSchema = z.object({
+  motivo: z.string().trim().min(8, 'Informe uma justificativa com pelo menos 8 caracteres.').max(1000),
+});
+export type RegularizarPausaInputDTO = z.infer<typeof regularizarPausaInputDTOSchema>;
+
+export const registrarTransferenciaPendenteInputDTOSchema = z.object({
+  origemVinculoId: z.string().trim().min(1),
+  motivo: z.string().trim().min(8, 'Informe o motivo da transferência com pelo menos 8 caracteres.').max(1000),
+});
+export type RegistrarTransferenciaPendenteInputDTO = z.infer<typeof registrarTransferenciaPendenteInputDTOSchema>;
+
+export const transferenciaAcademicaResultDTOSchema = z.object({
+  id: z.string(),
+  status: z.enum(['PENDENTE', 'FORMALIZADA']),
+  origemVinculoId: z.string(),
+  destinoVinculoId: z.string(),
+  motivo: z.string(),
+  solicitadaPor: nullableStringDTOSchema.optional(),
+  formalizadaEm: nullableDateStringDTOSchema.optional(),
+  formalizadaPor: nullableStringDTOSchema.optional(),
+});
+export type TransferenciaAcademicaResultDTO = z.infer<typeof transferenciaAcademicaResultDTOSchema>;
 
 export const updateMatriculaValueInputDTOSchema = z.object({
   contaId: z.string().trim().optional().nullable(),
@@ -616,6 +645,7 @@ export const matriculaResumoDTOSchema = z.object({
   turmas: z.array(matriculaTurmaResumoDTOSchema).default([]),
   combo: matriculaComboResumoDTOSchema.nullable().default(null),
   cobrancas: z.array(matriculaCobrancaDTOSchema).default([]),
+  taxaCompartilhadaStatus: z.enum(['A_VENCER', 'PENDENTE', 'PAGO', 'ATRASADO', 'CANCELADO', 'ESTORNADO']).nullable().default(null),
   contratos: z.array(matriculaContratoResumoDTOSchema).default([]),
   asaasSubscriptionId: nullableStringDTOSchema.default(null).optional(),
   pausaAtiva: z.boolean().default(false).optional(),
@@ -747,6 +777,18 @@ export const matriculaPausaResumoDTOSchema = z.object({
   integrationStatus: matriculaIntegrationStatusDTOSchema,
   warningCode: nullableStringDTOSchema.default(null),
   asaasSubscriptionId: nullableStringDTOSchema.default(null),
+  regularizacaoPausa: z.object({
+    elegivel: z.boolean(),
+    exigeRegularizacao: z.boolean(),
+    codigo: z.enum([
+      'MATRICULA_NAO_PAUSADA',
+      'CONTRATO_ENCERRADO_REGULARIZACAO_NAO_APLICAVEL',
+      'PRAZO_RETORNO_NAO_VENCIDO',
+      'OPERACAO_PAUSA_NAO_ENCONTRADA',
+      'PAUSA_JA_REGULARIZADA',
+    ]).nullable(),
+    mensagem: nullableStringDTOSchema,
+  }),
   operacoes: z.array(matriculaOperacaoPausaResumoDTOSchema).default([]),
 });
 export type MatriculaPausaResumoDTO = z.infer<typeof matriculaPausaResumoDTOSchema>;

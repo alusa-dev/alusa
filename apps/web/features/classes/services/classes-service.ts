@@ -17,6 +17,7 @@ export interface ClassListItem {
   horaFim: string;
   diasSemana: string[];
   modalidadeId: string;
+  cicloAcademicoId?: string | null;
   salaId: string;
   professores: ClassInstructorInfo[];
   professoresCount: number;
@@ -56,6 +57,7 @@ function normalizeClass(input: Partial<ClassListItem> & { id?: unknown }) {
     horaFim: String(input.horaFim ?? ''),
     diasSemana: diasSemana.map((dia) => String(dia)),
     modalidadeId: String(input.modalidadeId ?? ''),
+    cicloAcademicoId: input.cicloAcademicoId == null ? null : String(input.cicloAcademicoId),
     salaId: String(input.salaId ?? ''),
     professores,
     professoresCount,

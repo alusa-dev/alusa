@@ -12,6 +12,7 @@ import { resolveRenewalPending } from './renewal-governance.service';
 import {
   cancelRenewalProcess,
   confirmRenewalProcess,
+  findRenewalProcessReplay,
   editRenewalFutureLink,
   previewRenewalProcess,
 } from './renewal-process.service';
@@ -60,6 +61,10 @@ export function previewRenewalProcessFromHttp(input: WithoutDeps<typeof previewR
 
 export function confirmRenewalProcessFromHttp(input: WithoutDeps<typeof confirmRenewalProcess>) {
   return confirmRenewalProcess(input, { prisma });
+}
+
+export function findRenewalProcessReplayFromHttp(input: WithoutDeps<typeof findRenewalProcessReplay>) {
+  return findRenewalProcessReplay(input, { prisma });
 }
 
 export function cancelRenewalProcessFromHttp(input: WithoutDeps<typeof cancelRenewalProcess>) {
@@ -111,7 +116,20 @@ export function listConfirmedRenewalItems(input: { contaId: string; processId: s
     where: { contaId: input.contaId, processoId: input.processId },
     include: {
       matriculaOrigem: { select: { alunoId: true, aluno: { select: { nome: true } } } },
+      matriculaFutura: { select: { status: true } },
     },
     orderBy: { createdAt: 'asc' },
+  });
+}
+
+export function getRenewalProcessPersistedStates(input: { contaId: string; processId: string }) {
+  return prisma.rematriculaProcesso.findFirst({
+    where: { id: input.processId, contaId: input.contaId },
+    select: {
+      status: true,
+      itens: { where: { contaId: input.contaId }, select: { decision: true, matriculaFutura: { select: { status: true } } } },
+      contratos: { where: { contaId: input.contaId }, select: { status: true } },
+      financeiros: { where: { contaId: input.contaId }, select: { status: true } },
+    },
   });
 }

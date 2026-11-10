@@ -7,6 +7,7 @@ export const turmaSchema = z
   .object({
     nome: z.string().min(3),
     modalidadeId: z.string().cuid(),
+    cicloAcademicoId: z.string().cuid().nullish(),
     salaId: z.string().cuid(),
     diasSemana: z.array(diasEnum).min(1),
     horaInicio: z.string().regex(/^\d{2}:\d{2}$/),

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import type { MatriculaCreatedPayload } from '@/features/enrollments/services/enrollments-service';
+import type { FamilyEnrollmentOutcome } from './wizard/types';
 import { EnrollmentWizardFlow } from './EnrollmentWizardFlow';
 
 interface EnrollmentWizardDialogProps {
@@ -11,6 +12,7 @@ interface EnrollmentWizardDialogProps {
   contaId?: string;
   onOpenChange: (_open: boolean) => void;
   onCreated?: (_payload: MatriculaCreatedPayload) => void;
+  onFamilyCreated?: (_outcome: FamilyEnrollmentOutcome) => void;
 }
 
 export default function EnrollmentWizardDialog({
@@ -18,6 +20,7 @@ export default function EnrollmentWizardDialog({
   contaId,
   onOpenChange,
   onCreated,
+  onFamilyCreated,
 }: EnrollmentWizardDialogProps) {
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
 
@@ -65,6 +68,7 @@ export default function EnrollmentWizardDialog({
             variant="dialog"
             onClose={() => onOpenChange(false)}
             onCompleted={onCreated}
+            onFamilyCompleted={onFamilyCreated}
           />
         </DialogContent>
       </Dialog>

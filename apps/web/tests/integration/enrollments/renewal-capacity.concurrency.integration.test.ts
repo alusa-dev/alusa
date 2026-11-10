@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { resetDb } from '../../utils/reset-db';
 
@@ -15,6 +16,17 @@ import {
 
 const hasDb = !!process.env.DATABASE_URL && process.env.DATABASE_URL.startsWith('postgres');
 const describeIf = hasDb ? describe : describe.skip;
+
+function createReadBarrier(expectedReaders: number) {
+  let readers = 0;
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => { release = resolve; });
+  return async () => {
+    readers += 1;
+    if (readers === expectedReaders) release();
+    await barrier;
+  };
+}
 
 describeIf('renewal capacity concurrency', () => {
   const db = new PrismaClient();
@@ -185,5 +197,101 @@ describeIf('renewal capacity concurrency', () => {
         where: { contaId, targetClassId: turmaId, targetPeriodId: '2027', status: 'RESERVED' },
       }),
     ).resolves.toBe(1);
+  }, 30_000);
+
+  it('deduplica duas confirmações simultâneas da mesma intenção no banco', async () => {
+    const modalidade = await db.modalidade.create({ data: { contaId, nome: 'Modalidade Replay Concorrente' } });
+    const sala = await db.sala.create({ data: { contaId, nome: 'Sala Replay Concorrente', capacidade: 20 } });
+    const turma = await db.turma.create({
+      data: {
+        contaId, nome: 'Turma Replay Concorrente', modalidadeId: modalidade.id, salaId: sala.id,
+        diasSemana: ['QUARTA'], horaInicio: '18:00', horaFim: '19:00', capacidade: 20,
+      },
+    });
+    const student = await db.aluno.create({
+      data: { contaId, nome: 'Aluno Replay Concorrente', dataNasc: new Date('2012-01-01') },
+    });
+    const source = await db.matricula.create({
+      data: {
+        contaId, alunoId: student.id, responsavelFinanceiroId: responsavelId, planoId,
+        dataInicio: new Date('2026-02-01T00:00:00.000Z'), dataFimContrato: new Date('2027-01-31T00:00:00.000Z'),
+        status: 'ATIVA', statusFinanceiro: 'ADIMPLENTE', statusContrato: 'ATIVO',
+        taxaMatricula: new Prisma.Decimal(0), taxaIsenta: true, formaPagamento: 'PIX',
+        formaPagamentoTaxa: 'PIX', vencimentoDia: 10, uiRequestId: `replay-source-${randomUUID()}`,
+      },
+    });
+    const key = `same-intent-race-${randomUUID()}`;
+    const intent: RenewalProcessInput = {
+      contaId,
+      actorId: 'concurrent-same-intent-actor',
+      origin: 'STANDALONE',
+      targetPeriodId: '2027',
+      holderType: 'RESPONSIBLE',
+      holderId: responsavelId,
+      effectiveAt,
+      targetContractEndsAt: new Date('2028-01-31T00:00:00.000Z'),
+      items: [{
+        decision: 'RENEW', sourceEnrollmentId: source.id,
+        target: { type: 'CLASS', targetId: turma.id, planId: planoId },
+      }],
+      financialTerms: {
+        paymentMethod: 'PIX', enrollmentFeePaymentMethod: 'PIX', dueDay: 10,
+        enrollmentFeeAmount: 80, enrollmentFeeExempt: false,
+        feeChargeMoment: 'CHARGE_ON_CONFIRMATION', feeUnit: 'PER_STUDENT',
+        feePurpose: 'ADMINISTRATIVE_FEE',
+      },
+    };
+    const preview = await previewRenewalProcess(intent, { prisma: db });
+    expect(preview.blockers).toHaveLength(0);
+    const confirmation = {
+      ...intent,
+      previewHash: preview.previewHash,
+      sourceVersion: preview.sourceVersion,
+      idempotencyKey: key,
+    };
+    const releaseAfterBothAbsent = createReadBarrier(2);
+    let initialAbsentReads = 0;
+    const competingPrisma = new Proxy(db, {
+      get(target, property) {
+        if (property !== 'rematriculaProcesso') return Reflect.get(target, property, target);
+        const delegate = Reflect.get(target, property, target);
+        return new Proxy(delegate, {
+          get(model, method) {
+            const original = Reflect.get(model, method, model);
+            if (method !== 'findFirst') return original;
+            return async (args: { where?: { contaId?: string; idempotencyKey?: string } }) => {
+              if (
+                args.where?.contaId === contaId &&
+                args.where.idempotencyKey === key &&
+                initialAbsentReads < 2
+              ) {
+                const existing = await original.call(model, args);
+                expect(existing).toBeNull();
+                initialAbsentReads += 1;
+                await releaseAfterBothAbsent();
+                return existing;
+              }
+              return original.call(model, args);
+            };
+          },
+        });
+      },
+    }) as PrismaClient;
+
+    const results = await Promise.all([
+      confirmRenewalProcess(confirmation, { prisma: competingPrisma }),
+      confirmRenewalProcess(confirmation, { prisma: competingPrisma }),
+    ]);
+    expect(initialAbsentReads).toBe(2);
+    expect(results[0]?.processId).toBe(results[1]?.processId);
+    const processId = results[0]!.processId;
+
+    await expect(db.rematriculaProcesso.count({ where: { contaId, idempotencyKey: key } })).resolves.toBe(1);
+    await expect(db.rematriculaItem.count({ where: { contaId, processoId: processId } })).resolves.toBe(1);
+    await expect(db.matricula.count({ where: { contaId, rematriculadaDeId: source.id } })).resolves.toBe(1);
+    const future = await db.matricula.findFirstOrThrow({ where: { contaId, rematriculadaDeId: source.id }, select: { id: true } });
+    await expect(db.matriculaVinculoAcademico.count({ where: { contaId, matriculaId: future.id } })).resolves.toBe(1);
+    await expect(db.acordoFinanceiroFuturo.count({ where: { contaId, processoId: processId } })).resolves.toBe(1);
+    await expect(db.rematriculaOutbox.count({ where: { contaId, processoId: processId, eventType: 'CREATE_RENEWAL_FEE_CHARGE' } })).resolves.toBe(1);
   }, 30_000);
 });

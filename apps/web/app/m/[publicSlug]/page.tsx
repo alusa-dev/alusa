@@ -53,6 +53,7 @@ export default async function PublicEventMapPage({ params, searchParams }: PageP
         status: initialOrder.status,
         paymentStatus: initialOrder.paymentStatus,
         totalAmount: initialOrder.totalAmount,
+        metaMarketingConsentGranted: initialOrder.metaMarketingConsentGranted,
         refundRequestUrl: initialOrder.refundRequestUrl,
         ticketFulfillmentLastError: initialOrder.ticketFulfillmentLastError,
         ticketFulfillmentStatus: initialOrder.ticketFulfillmentStatus,

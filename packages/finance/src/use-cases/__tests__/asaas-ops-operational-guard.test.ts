@@ -7,6 +7,7 @@ const ensureWebhookConfigOperationalMock = vi.fn();
 const asaasNotifyPaymentMock = vi.fn();
 const asaasUndoReceivedInCashMock = vi.fn();
 const asaasCreateSubscriptionMock = vi.fn();
+const asaasRefundPaymentMock = vi.fn();
 
 vi.mock('@alusa/database', () => ({
   loadAsaasCredentials: loadAsaasCredentialsMock,
@@ -30,7 +31,7 @@ vi.mock('@alusa/asaas', () => ({
   notifyPayment: asaasNotifyPaymentMock,
   receiveInCash: vi.fn(),
   undoReceivedInCash: asaasUndoReceivedInCashMock,
-  refundPayment: vi.fn(),
+  refundPayment: asaasRefundPaymentMock,
   getBillingInfo: vi.fn(),
   updatePayment: vi.fn(),
   getSubscription: vi.fn(),
@@ -51,6 +52,7 @@ describe('asaas-ops operational guard', () => {
     asaasNotifyPaymentMock.mockResolvedValue({ success: true, message: 'ok' });
     asaasUndoReceivedInCashMock.mockResolvedValue({ id: 'pay_1' });
     asaasCreateSubscriptionMock.mockResolvedValue({ id: 'sub_1' });
+    asaasRefundPaymentMock.mockResolvedValue({ id: 'pay_1' });
   });
 
   it('bloqueia reenviarCobranca antes da mutação quando o tenant não está operacional', async () => {
@@ -77,6 +79,15 @@ describe('asaas-ops operational guard', () => {
 
     expect(asaasUndoReceivedInCashMock).not.toHaveBeenCalled();
     expect(loadAsaasCredentialsMock).not.toHaveBeenCalled();
+  });
+
+  it('propaga a identidade persistente do comando ao transporte do refund', async () => {
+    const { refundCobranca } = await import('../asaas-ops');
+    await refundCobranca({ paymentId: 'pay_1', contaId: 'conta_1', idempotencyKey: 'command-stable-1' });
+
+    expect(asaasRefundPaymentMock).toHaveBeenCalledWith(expect.objectContaining({
+      apiKey: 'asaas_key', paymentId: 'pay_1', idempotencyKey: 'command-stable-1',
+    }));
   });
 
   it('bloqueia reativarAssinatura antes da mutação quando o tenant não está operacional', async () => {

@@ -9,7 +9,7 @@ export function useAppRefresh(refreshTask: () => Promise<void>, options: UseAppR
   const intervalMs = options.intervalMs === undefined ? 15_000 : options.intervalMs;
   const taskRef = useRef(refreshTask);
   const runningRef = useRef(false);
-  const previousStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const previousStateRef = useRef<string | null | undefined>(AppState.currentState);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {

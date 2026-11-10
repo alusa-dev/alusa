@@ -6,6 +6,7 @@ import { isPublicOrderRefundActionPending } from './public-order-refund-action';
 import { publicOrderStatusPath, publicOrderTicketsPath } from './public-order-links';
 import { toMoney } from './event-map-order-operations';
 import { eventMapDateToLocalDateTime, eventMapLocalDateTimeToDate, eventMapSnapshotStartsAtToDate } from './event-map.schema';
+import { META_MARKETING_CONSENT_POLICY_VERSION } from './meta-marketing-consent';
 
 type EventTicketRecord = Prisma.EventTicketGetPayload<Prisma.EventTicketDefaultArgs>;
 function hasCompletePublicOrderTickets(order: { items: Array<{ ticket: EventTicketRecord | null }> }) {
@@ -109,6 +110,9 @@ export async function getPublicEventMapOrderStatus(orderId: string, accessToken:
     buyerName: order.buyerName,
     buyerEmail: order.buyerEmail,
     totalAmount: toMoney(order.totalAmount),
+    metaMarketingConsentGranted: Boolean(order.metaMarketingConsentAt)
+      && !order.metaMarketingConsentRevokedAt
+      && order.metaMarketingConsentPolicyVersion === META_MARKETING_CONSENT_POLICY_VERSION,
     status: order.status,
     ticketFulfillmentStatus: order.ticketFulfillmentStatus,
     paymentMethod: order.paymentMethod,

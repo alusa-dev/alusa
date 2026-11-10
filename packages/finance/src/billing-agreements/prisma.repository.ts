@@ -754,6 +754,47 @@ export function createPrismaBillingAgreementRepository(
           versions[agreementId] = updated.version;
           resultingAmountsCents[agreementId] = plan.resultingAmountCents;
         }
+        const descriptionConfirmedPlans = [...plans.entries()]
+          .filter(([, plan]) => !plan.remoteAction.startsWith('SCHEDULE_'))
+          .map(([agreementId, plan]) => ({ agreementId, plan }));
+        if (input.change.description !== undefined && descriptionConfirmedPlans.length > 0) {
+          await tx.standaloneSubscription.updateMany({
+            where: {
+              contaId: input.contaId,
+              billingAgreementId: { in: descriptionConfirmedPlans.map(({ agreementId }) => agreementId) },
+            },
+            data: { description: input.change.description },
+          });
+          const eligiblePendingChargeIds = [...new Set(
+            descriptionConfirmedPlans.flatMap(({ plan }) => plan.chargeImpacts
+              .filter((impact) => impact.status === 'PENDING' &&
+                Boolean(impact.providerPaymentId) &&
+                (impact.action === 'UPDATE_WITH_SUBSCRIPTION' || impact.action === 'UPDATE_PAYMENT'))
+              .map((impact) => impact.chargeId)),
+          )];
+          if (eligiblePendingChargeIds.length > 0) {
+            const charges = await tx.charge.findMany({
+              where: {
+                id: { in: eligiblePendingChargeIds },
+                contaId: input.contaId,
+                status: { in: ['CREATED', 'PENDING_SYNC', 'OPEN'] },
+                OR: [{ asaasStatus: 'PENDING' }, { asaasStatus: null }],
+              },
+              select: { id: true },
+            });
+            const chargeIds = charges.map((charge) => charge.id);
+            if (chargeIds.length > 0) {
+              await tx.charge.updateMany({
+                where: { id: { in: chargeIds }, contaId: input.contaId },
+                data: { description: input.change.description },
+              });
+              await tx.chargeReadModel.updateMany({
+                where: { contaId: input.contaId, sourceKind: 'CHARGE', sourceId: { in: chargeIds } },
+                data: { description: input.change.description },
+              });
+            }
+          }
+        }
         for (const [index, adjustment] of input.adjustments.entries()) {
           const charge = adjustment.chargeId
             ? await tx.charge.findFirst({ where: { id: adjustment.chargeId, contaId: input.contaId }, select: { id: true } })

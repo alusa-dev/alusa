@@ -20,7 +20,9 @@ vi.mock('@/src/server/enrollments/enrollment.service', () => ({
     }
   },
   MatriculaConflictError: class MatriculaConflictError extends Error {
-    code = 'MATRICULA_CONFLICT';
+    constructor(readonly code = 'MATRICULA_CONFLICT', message = 'Conflict') {
+      super(message);
+    }
   },
 }));
 
@@ -432,6 +434,32 @@ describe('POST /api/matriculas', () => {
         code: 'PREVIEW_DESATUALIZADO',
         message: 'O preview da matrícula mudou. Gere um novo preview antes de confirmar.',
       },
+    });
+  });
+
+  it('retorna conflito estável quando o vínculo de origem já foi usado', async () => {
+    const { getServerSession } = await import('next-auth');
+    const { createImmediateEnrollment } = await import('@/src/server/enrollments/create-immediate-enrollment.use-case');
+    const { MatriculaConflictError } = await import('@/src/server/enrollments/enrollment.service');
+
+    vi.mocked(getServerSession).mockResolvedValue({
+      user: { id: 'admin-a', contaId: 'tenant-a', role: 'ADMIN' },
+    } as never);
+    vi.mocked(createImmediateEnrollment).mockRejectedValueOnce(
+      new MatriculaConflictError('TRANSFERENCIA_ORIGEM_INVALIDA', 'Vínculo de origem já utilizado.') as never,
+    );
+
+    const response = await POST(buildRequest({
+      contaId: 'tenant-a', alunoId: 'student-a', responsavelFinanceiroId: 'responsible-a',
+      planoId: 'plan-a', modeloId: 'model-a', turmaId: 'class-a',
+      dataInicio: '2099-01-10', dataFimContrato: '2099-12-10', vencimentoDia: 10,
+      taxaMatricula: 0, taxaIsenta: true, criarCobranca: true, formaPagamento: 'PIX',
+      transferenciaOrigemVinculoId: 'source-link-a', transferenciaMotivo: 'Transferência formalizada',
+    }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'TRANSFERENCIA_ORIGEM_INVALIDA' },
     });
   });
 });

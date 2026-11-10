@@ -252,6 +252,7 @@ const { canWrite, loading: billingLoading } = usePlatformBillingWriteAccess();
         }}
       />
 
+
       <ActionConfirmationDialog
         open={deleteDialog.open}
         title="Excluir modalidade"

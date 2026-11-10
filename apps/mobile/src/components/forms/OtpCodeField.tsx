@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, TextInput, View } from 'react-native';
+import { StyleSheet, Text, TextInput, View, type TextInputInstance } from 'react-native';
 
 import { colors, radius, spacing } from '@/theme/tokens';
 
@@ -13,7 +13,7 @@ type OtpCodeFieldProps = {
 
 export function OtpCodeField({ value, onChangeText, disabled = false, autoFocus = false, error = false }: OtpCodeFieldProps) {
   const [focused, setFocused] = useState(false);
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<TextInputInstance>(null);
   const digits = useMemo(() => Array.from({ length: 6 }, (_, index) => value[index] ?? ''), [value]);
   const activeIndex = Math.min(value.length, digits.length - 1);
 

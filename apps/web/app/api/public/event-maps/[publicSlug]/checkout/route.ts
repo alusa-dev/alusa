@@ -39,7 +39,12 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     // Malformed/empty JSON is a client validation error, not an unexpected
     // server exception (and should not produce an error stack in the logs).
     const body = publicCheckoutSchema.parse(await request.json().catch(() => null));
-    const data = await completePublicEventMapCheckout(publicSlug, body);
+    const data = await completePublicEventMapCheckout(publicSlug, {
+      ...body,
+      metaMarketingConsent: body.metaMarketingConsent && Boolean(body.metaMarketingConsentAnonymousId),
+      metaMarketingConsentAnonymousId: body.metaMarketingConsent ? body.metaMarketingConsentAnonymousId : null,
+      metaMarketingClientUserAgent: body.metaMarketingConsent ? request.headers.get('user-agent') : null,
+    });
 
     const requestId = getRequestId(request);
     after(async () => {

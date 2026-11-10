@@ -17,6 +17,9 @@ export async function GET(
     if (!auth.ok) {
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
+    if (auth.role !== 'ADMIN' || auth.authContext === 'PORTAL') {
+      return NextResponse.json({ error: 'SEM_PERMISSAO' }, { status: 403 });
+    }
 
     const rawParams = await params;
     const result = await getPausaResumo(rawParams.id, auth.contaId);

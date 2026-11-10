@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { SectionCard, StepHeader } from '@/components/shared/wizard/layout';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -34,6 +34,9 @@ interface StepTaxaProps {
 
 export function StepTaxa({ ctx }: StepTaxaProps) {
   const { state, update } = ctx;
+  const isentaDirtyRef = useRef(false);
+  const valorDirtyRef = useRef(false);
+  const justificationDirtyRef = useRef(false);
   const isFamiliar = state.modoMatricula === 'FAMILIAR';
   const [isenta, setIsenta] = useState(Boolean(state.taxaIsenta));
   const [valorTexto, setValorTexto] = useState(() => {
@@ -55,38 +58,84 @@ export function StepTaxa({ ctx }: StepTaxaProps) {
     const deveGerarCobranca = !isenta && valorNumerico > 0;
     const pagoImediatamente = false;
 
-    const formaPagamentoFinal =
+    const formaPagamentoFinal: WizardContextValue['state']['formaPagamentoTaxa'] =
       !isenta && valorNumerico > 0
         ? formaPagamento === 'CARTAO'
           ? 'CARTAO_CREDITO'
           : formaPagamento
         : undefined;
 
-    update({
+    const patch = {
       taxaIsenta: isenta,
       taxaMatricula: isenta ? 0 : valorNumerico,
       taxaJustificativa: isenta ? justificativa.trim() || undefined : undefined,
       formaPagamentoTaxa: formaPagamentoFinal,
       pagarTaxaAgora: pagoImediatamente,
       gerarCobrancaTaxa: deveGerarCobranca,
-    });
-  }, [isenta, valorTexto, justificativa, formaPagamento, update]);
+    };
+    const changed =
+      state.taxaIsenta !== patch.taxaIsenta ||
+      state.taxaMatricula !== patch.taxaMatricula ||
+      state.taxaJustificativa !== patch.taxaJustificativa ||
+      state.formaPagamentoTaxa !== patch.formaPagamentoTaxa ||
+      state.pagarTaxaAgora !== patch.pagarTaxaAgora ||
+      state.gerarCobrancaTaxa !== patch.gerarCobrancaTaxa;
+
+    if (changed) update(patch);
+  }, [
+    isenta,
+    valorTexto,
+    justificativa,
+    formaPagamento,
+    state.taxaIsenta,
+    state.taxaMatricula,
+    state.taxaJustificativa,
+    state.formaPagamentoTaxa,
+    state.pagarTaxaAgora,
+    state.gerarCobrancaTaxa,
+    update,
+  ]);
 
   useEffect(() => {
-    setIsenta(Boolean(state.taxaIsenta));
-    if (state.taxaIsenta) {
-      setValorTexto('0,00');
-    } else if (typeof state.taxaMatricula === 'number') {
-      const valorPadrao = formatCurrencyInput(Math.round(state.taxaMatricula * 100));
-      setValorTexto(valorPadrao);
+    const nextIsenta = Boolean(state.taxaIsenta);
+    if (nextIsenta === isenta) {
+      isentaDirtyRef.current = false;
+      return;
     }
-    setJustificativa(state.taxaJustificativa ?? '');
-  }, [state.taxaIsenta, state.taxaMatricula, state.taxaJustificativa]);
+    if (isentaDirtyRef.current) return;
+    setIsenta(nextIsenta);
+  }, [state.taxaIsenta, isenta]);
+
+  useEffect(() => {
+    const nextValue = state.taxaIsenta
+      ? '0,00'
+      : typeof state.taxaMatricula === 'number'
+        ? formatCurrencyInput(Math.round(state.taxaMatricula * 100))
+        : null;
+    if (nextValue === valorTexto) {
+      valorDirtyRef.current = false;
+      return;
+    }
+    if (nextValue !== null && (valorDirtyRef.current || isentaDirtyRef.current)) return;
+    if (nextValue !== null) setValorTexto(nextValue);
+  }, [state.taxaIsenta, state.taxaMatricula, valorTexto]);
+
+  useEffect(() => {
+    const nextJustificativa = state.taxaJustificativa ?? '';
+    if (nextJustificativa === justificativa) {
+      justificationDirtyRef.current = false;
+      return;
+    }
+    if (justificationDirtyRef.current && isenta) return;
+    justificationDirtyRef.current = false;
+    setJustificativa(nextJustificativa);
+  }, [state.taxaJustificativa, justificativa, isenta]);
 
   const valorNumerico = useMemo(() => parseCurrency(valorTexto), [valorTexto]);
   const canContinue = isenta || valorNumerico > 0;
 
   const handleValorChange = (event: ChangeEvent<HTMLInputElement>) => {
+    valorDirtyRef.current = true;
     const digits = event.target.value.replace(/\D/g, '');
     if (!digits) {
       setValorTexto('0,00');
@@ -119,7 +168,10 @@ export function StepTaxa({ ctx }: StepTaxaProps) {
                   ? 'border-transparent bg-violet-200/80 text-gray-900'
                   : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'
               }`}
-              onClick={() => setIsenta(false)}
+              onClick={() => {
+                isentaDirtyRef.current = true;
+                setIsenta(false);
+              }}
             >
               <span className="text-sm font-semibold">Cobrar taxa</span>
               <span className="block text-xs text-gray-500 mt-0.5">Gera link de pagamento</span>
@@ -131,7 +183,10 @@ export function StepTaxa({ ctx }: StepTaxaProps) {
                   ? 'border-transparent bg-violet-200/80 text-gray-900'
                   : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-100'
               }`}
-              onClick={() => setIsenta(true)}
+              onClick={() => {
+                isentaDirtyRef.current = true;
+                setIsenta(true);
+              }}
             >
               <span className="text-sm font-semibold">Isentar taxa</span>
               <span className="block text-xs text-gray-500 mt-0.5">Libera o aluno imediatamente</span>
@@ -162,7 +217,10 @@ export function StepTaxa({ ctx }: StepTaxaProps) {
                     <button
                       key={value}
                       type="button"
-                      onClick={() => setValorTexto(formatCurrencyInput(Math.round(value * 100)))}
+                      onClick={() => {
+                        valorDirtyRef.current = true;
+                        setValorTexto(formatCurrencyInput(Math.round(value * 100)));
+                      }}
                       className="rounded-full border border-gray-300 px-2.5 py-0.5 text-xs text-gray-600 hover:bg-gray-100"
                     >
                       {formatCurrencyDisplay(value)}
@@ -225,7 +283,10 @@ export function StepTaxa({ ctx }: StepTaxaProps) {
             <Textarea
               id="taxa-justificativa"
               value={justificativa}
-              onChange={(event) => setJustificativa(event.target.value)}
+              onChange={(event) => {
+                justificationDirtyRef.current = true;
+                setJustificativa(event.target.value);
+              }}
               placeholder="Ex.: Bolsista integral, campanha promocional, indicação, etc."
               className="min-h-[80px] resize-none rounded-md border-gray-300 text-sm"
             />

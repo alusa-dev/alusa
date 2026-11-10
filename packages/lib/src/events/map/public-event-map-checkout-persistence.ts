@@ -5,6 +5,7 @@ import { prisma } from '../../prisma';
 import { getPublicReservationExpiration } from './public-reservation-policy';
 import { decimal, lockEventMapForReservation, lockPublicEventMapReservation, toAuditJson, toMoney } from './event-map-order-operations';
 import { eventMapDateToLocalDateTime, eventMapLocalDateTimeToDate, type PublicCheckoutInput } from './event-map.schema';
+import { META_MARKETING_CONSENT_POLICY_VERSION, resolveMetaMarketingConsentTransition } from './meta-marketing-consent';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -231,11 +232,19 @@ export async function preparePublicEventMapCheckout(publicSlug: string, input: P
 
     const totalAmount = publicSeats.reduce((sum, seat) => sum + toMoney(seat.unitPrice), 0);
     const proposedExpiresAt = getPublicReservationExpiration(new Date(), input.paymentMethod);
+    const createdMarketingConsent = resolveMetaMarketingConsentTransition({
+      previous: { consentAt: null, revokedAt: null, anonymousId: null, policyVersion: null },
+      accepted: input.metaMarketingConsent,
+      anonymousId: input.metaMarketingConsentAnonymousId ?? null,
+      userAgent: input.metaMarketingClientUserAgent ?? null,
+      now: new Date(),
+    });
     const order = reservation.order ?? await tx.eventMapOrder.upsert({
       where: { reservationId: reservation.id },
       create: {
         contaId: map.contaId, eventId: map.eventId, eventMapId: map.id, versionId: map.publishedVersionId!, reservationId: reservation.id,
         buyerName: input.buyerName, buyerEmail: input.buyerEmail, buyerDocument, buyerPhone: input.buyerPhone,
+        ...createdMarketingConsent.data,
         ...(input.whatsappConsent ? { whatsappOptInAt: new Date(), whatsappOptInSource: 'PUBLIC_CHECKOUT' } : {}), totalAmount: decimal(totalAmount),
         status: 'PAYMENT_PENDING', paymentProvider: 'ASAAS', paymentMethod: input.paymentMethod, expiresAt: proposedExpiresAt, accessToken: createPublicToken('order'),
       },
@@ -285,11 +294,24 @@ export async function preparePublicEventMapCheckout(publicSlug: string, input: P
     const now = new Date();
     const isRevokingWhatsAppConsent = !input.whatsappConsent && Boolean(order.whatsappOptInAt) && !order.whatsappOptOutAt;
     const isRenewingWhatsAppConsent = input.whatsappConsent && (!order.whatsappOptInAt || Boolean(order.whatsappOptOutAt));
+    const marketingConsentTransition = resolveMetaMarketingConsentTransition({
+      previous: {
+        consentAt: order.metaMarketingConsentAt,
+        revokedAt: order.metaMarketingConsentRevokedAt,
+        anonymousId: order.metaMarketingConsentAnonymousId,
+        policyVersion: order.metaMarketingConsentPolicyVersion,
+      },
+      accepted: input.metaMarketingConsent,
+      anonymousId: input.metaMarketingConsentAnonymousId ?? null,
+      userAgent: input.metaMarketingClientUserAgent ?? null,
+      now,
+    });
     await tx.eventMapReservation.update({ where: { id: reservation.id }, data: { status: 'HELD', expiresAt } });
     await tx.eventMapOrder.update({
       where: { id: order.id },
       data: {
         expiresAt,
+        ...marketingConsentTransition.data,
         ...(isRenewingWhatsAppConsent
           ? { whatsappOptInAt: now, whatsappOptInSource: 'PUBLIC_CHECKOUT', whatsappOptOutAt: null, whatsappOptOutSource: null }
           : isRevokingWhatsAppConsent
@@ -315,6 +337,17 @@ export async function preparePublicEventMapCheckout(publicSlug: string, input: P
         action: order.whatsappOptOutAt
           ? 'events.map.public.checkout.whatsapp_consent_renewed'
           : 'events.map.public.checkout.whatsapp_consent_granted',
+        entityType: 'EventMapOrder',
+        entityId: order.id,
+        metadata: toAuditJson({ eventId: map.eventId, reservationId: reservation.id, consentSource: 'PUBLIC_CHECKOUT' }),
+      } });
+    }
+    if (marketingConsentTransition.kind === 'REVOKED') {
+      await tx.auditLog.create({ data: {
+        contaId: map.contaId,
+        actorType: 'SYSTEM',
+        actorId: null,
+        action: 'events.map.public.checkout.meta_marketing_consent_revoked',
         entityType: 'EventMapOrder',
         entityId: order.id,
         metadata: toAuditJson({ eventId: map.eventId, reservationId: reservation.id, consentSource: 'PUBLIC_CHECKOUT' }),

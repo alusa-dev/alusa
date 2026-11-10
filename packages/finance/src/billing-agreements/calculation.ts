@@ -533,11 +533,6 @@ function buildPlan(input: {
     effectiveDate: input.change.effectiveDate,
     adjustment: desired.adjustment,
   });
-  const agreementValidUntil =
-    desired.agreementValidUntil?.slice(0, 10) ??
-    (input.change.kind === 'PAUSE_ALLOCATION' || input.change.kind === 'RESUME_ALLOCATION'
-      ? input.context.agreement.validUntil?.slice(0, 10) ?? null
-      : null);
   const hasOverdueDebt = input.context.charges.some((charge) => charge.status === 'OVERDUE');
   const remoteAction =
     desired.desiredRecurringAmountCents === 0 &&
@@ -550,6 +545,13 @@ function buildPlan(input: {
           agreement: input.context.agreement,
           resultingAmountCents: desired.desiredRecurringAmountCents,
         });
+  const preserveAgreementEndDate =
+    input.change.kind === 'PAUSE_ALLOCATION' ||
+    input.change.kind === 'RESUME_ALLOCATION' ||
+    remoteAction === 'PAUSE_SUBSCRIPTION';
+  const agreementValidUntil =
+    desired.agreementValidUntil?.slice(0, 10) ??
+    (preserveAgreementEndDate ? input.context.agreement.validUntil?.slice(0, 10) ?? null : null);
   return {
     plan: {
       agreementId: input.context.agreement.id,

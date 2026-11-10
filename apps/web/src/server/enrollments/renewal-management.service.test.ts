@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { getRenewalCampaignOverview } from './renewal-management.service';
+import { getRenewalCampaignOverview, listRenewalManagement } from './renewal-management.service';
+import { listarRematriculasElegiveis } from './renewal.service';
+
+vi.mock('./renewal.service', () => ({
+  listarRematriculasElegiveis: vi.fn().mockResolvedValue({ referencia: new Date(), ate: new Date(), total: 0, itens: [] }),
+}));
 
 function basePrisma(overrides: Record<string, unknown> = {}) {
   return {
@@ -41,6 +46,16 @@ function basePrisma(overrides: Record<string, unknown> = {}) {
 }
 
 describe('getRenewalCampaignOverview', () => {
+  it('encaminha targetPeriodId ao cálculo de elegibilidade da campanha', async () => {
+    const prisma = basePrisma({
+      rematriculaCampanha: { findMany: vi.fn().mockResolvedValue([]) },
+      rematriculaProcesso: { findMany: vi.fn().mockResolvedValue([]) },
+      rematriculaParticipante: { findMany: vi.fn().mockResolvedValue([]) },
+    });
+    await listRenewalManagement({ contaId: 'conta-1', targetPeriodId: '2027.2' }, { prisma: prisma as never });
+    expect(listarRematriculasElegiveis).toHaveBeenCalledWith(expect.objectContaining({ contaId: 'conta-1', targetPeriodId: '2027.2' }));
+  });
+
   it('agrupa alunos por turma e considera reservas na ocupação', async () => {
     const prisma = basePrisma({
       reservaVagaFutura: {

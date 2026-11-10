@@ -1,7 +1,6 @@
-export const META_PIXEL_MAP_SLUGS = new Set([
-  'map_58c37147e01c496f92bc6f5f',
-  'map_dc0c9a1a841941138d558b3d',
-]);
+import { META_PIXEL_MAP_SLUGS } from '@alusa/shared';
+
+export { META_PIXEL_MAP_SLUGS } from '@alusa/shared';
 
 export function hasCurrentMarketingConsent(value: unknown, policyVersion: string): boolean {
   if (!value || typeof value !== 'object') return false;
@@ -23,6 +22,10 @@ export function shouldSendMetaPixelPurchase(input: {
 
 export function metaPixelPurchaseDedupeKey(orderId: string) {
   return `alusa.meta-pixel.purchase.${orderId}`;
+}
+
+export function metaPixelPurchaseEventId(orderId: string) {
+  return `alusa_purchase_${orderId}`;
 }
 
 export function metaPixelPurchaseEventId(orderId: string) {

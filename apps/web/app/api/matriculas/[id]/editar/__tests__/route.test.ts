@@ -36,6 +36,9 @@ const {
     combo: {
       findFirst: vi.fn(),
     },
+    turma: {
+      findFirst: vi.fn(),
+    },
   },
   resolveMatriculaFinancialContextMock: vi.fn(),
   updateFamilyFinancialLocalStateMock: vi.fn(),
@@ -170,6 +173,49 @@ describe('PATCH /api/matriculas/[id]/editar', () => {
     expect(prismaMock.cobranca.updateMany).not.toHaveBeenCalled();
     expect(prismaMock.charge.updateMany).not.toHaveBeenCalled();
     expect(data.asyncSync).toMatchObject({ status: 'PENDING', operationId: 'financial-command-1' });
+  });
+
+  it('rejeita mudança de curso antes de resolver contexto financeiro ou emitir comando', async () => {
+    prismaMock.matricula.findFirst.mockResolvedValue({
+      id: 'mat-1', turmaId: 'ballet-class', vinculosAcademicos: [{ modalidadeId: 'ballet' }],
+      planoId: null, comboId: null, asaasSubscriptionId: 'sub_123',
+    });
+    prismaMock.turma.findFirst.mockResolvedValue({ id: 'jazz-class', modalidadeId: 'jazz' });
+
+    const response = await PATCH(
+      buildRequest({ contaId: 'conta-1', turmaId: 'jazz-class' }),
+      { params: Promise.resolve({ id: 'mat-1' }) },
+    );
+    const data = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(data.error.code).toBe('TRANSFERENCIA_ACADEMICA_NECESSARIA');
+    expect(data.error.message).toContain('nova matrícula');
+    expect(resolveMatriculaFinancialContextMock).not.toHaveBeenCalled();
+    expect(getSubscriptionMock).not.toHaveBeenCalled();
+    expect(editarMatriculaMock).not.toHaveBeenCalled();
+  });
+
+  it('permite trocar turma dentro do mesmo curso', async () => {
+    prismaMock.matricula.findFirst.mockResolvedValue({
+      id: 'mat-1', turmaId: 'ballet-class-a', vinculosAcademicos: [{ modalidadeId: 'ballet' }],
+      planoId: null, comboId: null, asaasSubscriptionId: null,
+    });
+    prismaMock.turma.findFirst.mockResolvedValue({ id: 'ballet-class-b', modalidadeId: 'ballet' });
+    resolveMatriculaFinancialContextMock.mockResolvedValue(null);
+
+    const response = await PATCH(
+      buildRequest({ contaId: 'conta-1', turmaId: 'ballet-class-b' }),
+      { params: Promise.resolve({ id: 'mat-1' }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(prismaMock.turma.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'ballet-class-b', contaId: 'conta-1' },
+    }));
+    expect(editarMatriculaMock).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-1', turmaId: 'ballet-class-b', financialCommand: undefined,
+    }));
   });
 
   it('enfileira valor e ciclo recorrentes quando o combo muda', async () => {

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { secureStorage, type SecureStorage } from '@/lib/storage/secure-storage';
-import type { PersistedSession, SavedAccessProfile } from '../types/session';
+import { resolveAuthContext, type AuthContext, type PersistedSession, type SavedAccessProfile } from '../types/session';
 
 const SESSION_STORAGE_KEY = 'alusa.mobile.session.v1';
 const SAVED_ACCESS_PROFILE_KEY = 'alusa.mobile.saved-access-profile.v1';
@@ -29,12 +29,14 @@ const sessionSchema = z.object({
   refreshToken: z.string().nullable().optional(),
   expiresAt: z.string().nullable().optional(),
   activeContaId: z.string().nullable().optional(),
+  authContext: z.enum(['OWNER', 'COLLABORATOR', 'PORTAL']).optional(),
   user: userSchema,
 });
 
 const savedAccessProfileSchema = z.object({
   user: userSchema,
   activeContaId: z.string().nullable().optional(),
+  authContext: z.enum(['OWNER', 'COLLABORATOR', 'PORTAL']).optional(),
   biometricEnabled: z.boolean(),
   favorite: z.boolean().optional(),
 });
@@ -49,18 +51,43 @@ export function getSavedAccessProfileKey(profile: Pick<SavedAccessProfile, 'user
 }
 
 function biometricSessionKey(profile: Pick<SavedAccessProfile, 'user' | 'activeContaId'>) {
+  return `alusa.mobile.biometric-session.v1.${encodeSecureStoreKey(getSavedAccessProfileKey(profile))}`;
+}
+
+function legacyBiometricSessionKey(profile: Pick<SavedAccessProfile, 'user' | 'activeContaId'>) {
   return `alusa.mobile.biometric-session.v1.${encodeURIComponent(getSavedAccessProfileKey(profile))}`;
+}
+
+function encodeSecureStoreKey(value: string) {
+  return `u-${Array.from(value, (character) => character.codePointAt(0)!.toString(16)).join('-')}`;
+}
+
+async function clearLegacyBiometricSession(profile: Pick<SavedAccessProfile, 'user' | 'activeContaId'>, storage: SecureStorage) {
+  try {
+    await storage.deleteItem(legacyBiometricSessionKey(profile));
+  } catch {
+    // Previous versions encoded colons as %, which SecureStore rejects on iOS.
+  }
 }
 
 function profileFromSession(session: PersistedSession, biometricEnabled: boolean): SavedAccessProfile {
   return {
     user: session.user,
     activeContaId: session.activeContaId,
+    authContext: resolveAuthContext(session.authContext, session.user.role),
     biometricEnabled,
   };
 }
 
-export async function readPersistedSession(storage: SecureStorage = secureStorage) {
+function sessionWithAuthContext(session: z.infer<typeof sessionSchema>, fallback?: AuthContext): PersistedSession {
+  return { ...session, authContext: resolveAuthContext(session.authContext ?? fallback, session.user.role) };
+}
+
+function profileWithAuthContext(profile: z.infer<typeof savedAccessProfileSchema>): SavedAccessProfile {
+  return { ...profile, authContext: resolveAuthContext(profile.authContext, profile.user.role) };
+}
+
+export async function readPersistedSession(storage: SecureStorage = secureStorage, authContextFallback?: AuthContext) {
   const raw = await storage.getItem(SESSION_STORAGE_KEY);
   if (!raw) return null;
 
@@ -70,7 +97,9 @@ export async function readPersistedSession(storage: SecureStorage = secureStorag
       await storage.deleteItem(SESSION_STORAGE_KEY);
       return null;
     }
-    return parsed.data satisfies PersistedSession;
+    const session = sessionWithAuthContext(parsed.data, authContextFallback);
+    if (!parsed.data.authContext) await storage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+    return session;
   } catch {
     await storage.deleteItem(SESSION_STORAGE_KEY);
     return null;
@@ -96,7 +125,11 @@ export async function readSavedAccessProfiles(storage: SecureStorage = secureSto
       await storage.deleteItem(SAVED_ACCESS_PROFILE_KEY);
       return [];
     }
-    return parsed.data satisfies SavedAccessProfile[];
+    const profiles = parsed.data.map(profileWithAuthContext);
+    if (parsed.data.some((profile) => !profile.authContext)) {
+      await storage.setItem(SAVED_ACCESS_PROFILE_KEY, JSON.stringify(profiles));
+    }
+    return profiles;
   } catch {
     await storage.deleteItem(SAVED_ACCESS_PROFILE_KEY);
     return [];
@@ -157,9 +190,11 @@ export async function updateSavedAccessProfilesUser(
 }
 
 export async function writeBiometricSession(session: PersistedSession, storage: SecureStorage = secureStorage) {
-  const profile = profileFromSession(session, true);
-  await storage.setItem(biometricSessionKey(profile), JSON.stringify(session), biometricStorageOptions);
-  const savedProfile = await writeSavedAccessProfile(session, true, storage);
+  const normalizedSession = sessionWithAuthContext(sessionSchema.parse(session));
+  const profile = profileFromSession(normalizedSession, true);
+  await storage.setItem(biometricSessionKey(profile), JSON.stringify(normalizedSession), biometricStorageOptions);
+  const savedProfile = await writeSavedAccessProfile(normalizedSession, true, storage);
+  await clearLegacyBiometricSession(profile, storage);
   await storage.deleteItem(SESSION_STORAGE_KEY);
   return savedProfile;
 }
@@ -187,11 +222,15 @@ export async function readBiometricSession(profile: SavedAccessProfile, storage:
     ) {
       return null;
     }
-    if (fromLegacyKey) {
-      await storage.setItem(key, raw, biometricStorageOptions);
-      await storage.deleteItem(LEGACY_BIOMETRIC_SESSION_KEY);
+    const session = {
+      ...parsed.data,
+      authContext: resolveAuthContext(parsed.data.authContext ?? profile.authContext, parsed.data.user.role),
+    } satisfies PersistedSession;
+    if (fromLegacyKey || !parsed.data.authContext) {
+      await storage.setItem(key, JSON.stringify(session), biometricStorageOptions);
+      if (fromLegacyKey) await storage.deleteItem(LEGACY_BIOMETRIC_SESSION_KEY);
     }
-    return parsed.data satisfies PersistedSession;
+    return session;
   } catch {
     await clearBiometricSession(profile, storage);
     return null;
@@ -200,11 +239,13 @@ export async function readBiometricSession(profile: SavedAccessProfile, storage:
 
 export async function clearBiometricSession(profile: SavedAccessProfile, storage: SecureStorage = secureStorage) {
   await storage.deleteItem(biometricSessionKey(profile));
+  await clearLegacyBiometricSession(profile, storage);
   return updateSavedAccessProfile(profile, { biometricEnabled: false }, storage);
 }
 
 export async function removeSavedAccessProfile(profile: SavedAccessProfile, storage: SecureStorage = secureStorage) {
   await storage.deleteItem(biometricSessionKey(profile));
+  await clearLegacyBiometricSession(profile, storage);
   const profileKey = getSavedAccessProfileKey(profile);
   const profiles = await readSavedAccessProfiles(storage);
   const remaining = profiles.filter((item) => getSavedAccessProfileKey(item) !== profileKey);
@@ -218,7 +259,10 @@ export async function removeSavedAccessProfile(profile: SavedAccessProfile, stor
 
 export async function clearAllSavedAccessProfiles(storage: SecureStorage = secureStorage) {
   const profiles = await readSavedAccessProfiles(storage);
-  await Promise.all(profiles.map((profile) => storage.deleteItem(biometricSessionKey(profile))));
+  await Promise.all(profiles.map(async (profile) => {
+    await storage.deleteItem(biometricSessionKey(profile));
+    await clearLegacyBiometricSession(profile, storage);
+  }));
   await storage.deleteItem(LEGACY_BIOMETRIC_SESSION_KEY);
   await storage.deleteItem(SAVED_ACCESS_PROFILE_KEY);
 }

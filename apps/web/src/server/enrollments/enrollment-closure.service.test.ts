@@ -39,6 +39,31 @@ function buildPrisma(candidates: Array<{
 }
 
 describe('closeExpiredEnrollmentsWithoutSuccessor', () => {
+  it('does not close a paused enrollment merely because its expected return date passed', async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const transaction = vi.fn();
+    const prisma = {
+      matricula: { findMany },
+      $transaction: transaction,
+    };
+
+    const result = await closeExpiredEnrollmentsWithoutSuccessor(
+      { contaId: 'conta-1', now: new Date('2026-11-05T12:00:00.000Z'), timeZone: 'America/Manaus' },
+      { prisma: prisma as never },
+    );
+
+    expect(result).toEqual({ processed: 0, closed: [] });
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        contaId: 'conta-1',
+        status: { in: [StatusMatricula.ATIVA, StatusMatricula.PAUSADA] },
+        dataFimContrato: { lt: expect.any(Date) },
+      }),
+      select: expect.not.objectContaining({ dataRetornoPrevista: true }),
+    }));
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
   it('marca matriculas vencidas sem sucessora como ENCERRADA', async () => {
     const now = new Date('2026-07-02T12:00:00.000Z');
     const { prisma, tx } = buildPrisma([

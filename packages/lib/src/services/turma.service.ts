@@ -1,4 +1,4 @@
-import type { Turma } from '@prisma/client';
+import type { PrismaClient, Turma } from '@prisma/client';
 import { logLibOperationalEvent } from '../observability/operational-log';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../prisma';
@@ -9,6 +9,22 @@ import {
   getAcademicDateBoundsForInstant,
 } from '../utils/date-only';
 import { buildSeatOccupancyWhereClause } from './matricula-occupancy';
+
+export async function isTurmaUsedByEnrollment(
+  reader: Pick<PrismaClient, 'matricula' | 'matriculaTurma'>,
+  input: { contaId: string; turmaId: string },
+) {
+  const directEnrollment = await reader.matricula.findFirst({
+    where: { contaId: input.contaId, turmaId: input.turmaId },
+    select: { id: true },
+  });
+  if (directEnrollment) return true;
+  const classMembership = await reader.matriculaTurma.findFirst({
+    where: { contaId: input.contaId, turmaId: input.turmaId },
+    select: { id: true },
+  });
+  return Boolean(classMembership);
+}
 
 function parseHora(h: string): number {
   const [hh, mm] = h.split(':').map(Number);
@@ -213,6 +229,10 @@ export async function createTurma(input: TurmaCreateInput): Promise<Turma> {
     where: { id: data.modalidadeId, contaId: input.contaId },
   });
   if (!modalidade) throw new Error('Modalidade não encontrada');
+  if (data.cicloAcademicoId) {
+    const cycle = await prisma.cicloAcademico.findFirst({ where: { id: data.cicloAcademicoId, contaId: input.contaId, modalidadeId: data.modalidadeId }, select: { id: true } });
+    if (!cycle) throw new Error('Ciclo acadêmico inválido para esta modalidade');
+  }
   const sala = await prisma.sala.findFirst({ where: { id: data.salaId, contaId: input.contaId } });
   if (!sala) throw new Error('Sala não encontrada');
   await validarConflitosSala({
@@ -228,6 +248,7 @@ export async function createTurma(input: TurmaCreateInput): Promise<Turma> {
       contaId: input.contaId,
       nome: data.nome,
       modalidadeId: data.modalidadeId,
+      cicloAcademicoId: data.cicloAcademicoId ?? null,
       salaId: data.salaId,
       diasSemana: data.diasSemana,
       horaInicio: data.horaInicio,
@@ -257,6 +278,15 @@ export async function updateTurma(input: TurmaUpdateInput): Promise<Turma> {
   if (!current) throw new Error('Turma não encontrada');
   const merged = { ...current, ...input } as TurmaCreateInput;
   const data = turmaSchema.parse(merged);
+  if (data.cicloAcademicoId) {
+    const cycle = await prisma.cicloAcademico.findFirst({ where: { id: data.cicloAcademicoId, contaId: input.contaId, modalidadeId: data.modalidadeId }, select: { id: true } });
+    if (!cycle) throw new Error('Ciclo acadêmico inválido para esta modalidade');
+  }
+  if (current.cicloAcademicoId !== (data.cicloAcademicoId ?? null)) {
+    if (await isTurmaUsedByEnrollment(prisma, { contaId: input.contaId, turmaId: current.id })) {
+      throw new Error('Ciclo acadêmico não pode ser alterado após a turma receber matrículas');
+    }
+  }
   if (input.nome && input.nome !== current.nome) {
     const dup = await prisma.turma.findFirst({
       where: { contaId: input.contaId, nome: input.nome, id: { not: input.id } },
@@ -277,6 +307,7 @@ export async function updateTurma(input: TurmaUpdateInput): Promise<Turma> {
     data: {
       nome: data.nome,
       modalidadeId: data.modalidadeId,
+      cicloAcademicoId: data.cicloAcademicoId ?? null,
       salaId: data.salaId,
       diasSemana: data.diasSemana,
       horaInicio: data.horaInicio,

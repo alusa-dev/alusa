@@ -130,6 +130,29 @@ function getSnapshotText(item: RematriculaProcessSummary['itens'][number] | null
   return typeof value === 'string' && value.trim() ? value : null;
 }
 
+function getRemoteCancellationSummary(
+  status: string | null | undefined,
+  financeAgreements: RematriculaProcessSummary['financeiros'],
+) {
+  const labels: Record<string, string> = {
+    CANCELLED: 'O cancelamento das cobranças ou assinaturas futuras foi confirmado.',
+    REQUIRES_RECONCILIATION: 'O resultado exige conferência financeira.',
+    FAILED: 'Não foi possível confirmar o cancelamento financeiro; confira os efeitos futuros.',
+  };
+  if (
+    status === 'NOT_NEEDED' &&
+    financeAgreements.every((agreement) => !agreement.asaasPaymentId && !agreement.asaasSubscriptionId)
+  ) {
+    return 'Nenhuma cobrança do próximo ciclo foi criada.';
+  }
+  return status ? labels[status] ?? 'Resultado financeiro registrado.' : 'Resultado financeiro não informado.';
+}
+
+function getEnrollmentStatusLabel(status: string | null | undefined) {
+  const labels: Record<string, string> = { ATIVA: 'Ativa', CANCELADA: 'Cancelada', CONCLUIDA: 'Concluída', PENDENTE: 'Pendente' };
+  return status ? labels[status] ?? status : 'Status não informado';
+}
+
 type DetailsDialogProps = {
   process: RematriculaProcessSummary | null;
   onOpenChange: (_open: boolean) => void;
@@ -148,28 +171,35 @@ export function RematriculaProcessDetailsDialog({
     <DetailsDialog
       open={Boolean(process)}
       onOpenChange={onOpenChange}
-      title="Detalhes da rematrícula"
+      title={process?.status === 'CANCELLED' ? 'Rematrícula cancelada' : 'Detalhes da rematrícula'}
     >
       {process ? (
         <>
               <section className="space-y-4">
                 <div>
-                  <p className="text-xs text-slate-500">Mensalidade</p>
+                  <p className="text-xs text-slate-500">{process.status === 'CANCELLED' ? 'Mensalidade planejada' : 'Mensalidade'}</p>
                   <p className="mt-1 text-3xl font-medium tracking-tight text-slate-950">
                     {formatCurrency(process.monthlyTotal)}
                   </p>
                 </div>
                 <div>
-                  <DetailsDialogRow label="Customer ID" value={firstItem?.aluno?.customerId ?? 'Não informado'} />
                   <DetailsDialogRow
                     label="Status"
-                    value={<span className="text-emerald-700">{getProcessLabel(process.status)}</span>}
+                    value={<span className={process.status === 'CANCELLED' ? 'text-slate-700' : 'text-emerald-700'}>{getProcessLabel(process.status)}</span>}
                   />
                   <DetailsDialogRow
                     label="Origem"
                     value={process.origin === 'CAMPAIGN' ? process.campanha?.nome ?? 'Campanha' : 'Rematrícula avulsa'}
                   />
                   <DetailsDialogRow label="Período de destino" value={process.targetPeriodId} />
+                  {process.status === 'CANCELLED' ? (
+                    <>
+                      <DetailsDialogRow label="Cancelada em" value={formatDate(process.cancellation?.cancelledAt)} />
+                      <DetailsDialogRow label="Motivo do cancelamento" value={process.cancellation?.reason || 'Não informado'} />
+                      <DetailsDialogRow label="Resultado financeiro" value={getRemoteCancellationSummary(process.cancellation?.remoteStatus, process.financeiros)} />
+                      <DetailsDialogRow label="Próximo ciclo" value="O próximo ciclo não será ativado." />
+                    </>
+                  ) : null}
                 </div>
               </section>
 
@@ -182,8 +212,8 @@ export function RematriculaProcessDetailsDialog({
                       <DetailsDialogRow label="Data de nascimento" value={formatDate(item.aluno?.dataNascimento)} />
                       <DetailsDialogRow label="CPF" value={item.aluno?.cpf ?? 'Não informado'} />
                       <DetailsDialogRow
-                        label="Vínculo atual"
-                        value={item.turmaAtual?.nome ?? item.comboAtual?.nome ?? 'Sem turma atual'}
+                        label="Matrícula de origem"
+                        value={`${item.turmaAtual?.nome ?? item.comboAtual?.nome ?? 'Sem turma informada'} · ${getEnrollmentStatusLabel(item.matriculaAtual?.status)}`}
                       />
                     </div>
                   ))}
@@ -191,13 +221,13 @@ export function RematriculaProcessDetailsDialog({
               </DetailsDialogSection>
 
               <DetailsDialogSection>
-                <h3 className="text-sm font-medium text-slate-900">Próximo ciclo</h3>
+                <h3 className="text-sm font-medium text-slate-900">{process.status === 'CANCELLED' ? 'Próximo ciclo planejado (histórico)' : 'Próximo ciclo'}</h3>
                 <div>
                   <DetailsDialogRow label="Plano" value={futureEnrollment?.plano?.nome ?? getSnapshotText(firstItem, 'planName') ?? 'Não informado'} />
                   <DetailsDialogRow label="Turma ou combo" value={futureEnrollment?.turma?.nome ?? futureEnrollment?.combo?.nome ?? getSnapshotText(firstItem, 'className') ?? getSnapshotText(firstItem, 'comboName') ?? 'Não informado'} />
                   <DetailsDialogRow label="Data de início" value={formatDate(futureEnrollment?.dataInicio ?? process.effectiveAt)} />
                   <DetailsDialogRow label="Término do contrato" value={formatDate(futureEnrollment?.dataFimContrato)} />
-                  <DetailsDialogRow label="Decisão" value={getDecisionLabel(firstItem?.decision)} />
+                  <DetailsDialogRow label={process.status === 'CANCELLED' ? 'Decisão registrada' : 'Decisão'} value={getDecisionLabel(firstItem?.decision)} />
                   <DetailsDialogRow label="Reserva" value={getReservaLabel(process.reservas[0]?.status)} />
                   <DetailsDialogRow label="Contrato futuro" value={getContratoFuturoLabel(process.contratos[0]?.status)} />
                   <DetailsDialogRow label="Financeiro futuro" value={getFinanceiroFuturoLabel(process.financeiros[0]?.status)} />
@@ -205,7 +235,7 @@ export function RematriculaProcessDetailsDialog({
               </DetailsDialogSection>
 
               <DetailsDialogSection>
-                <h3 className="text-sm font-medium text-slate-900">Condições de pagamento</h3>
+                <h3 className="text-sm font-medium text-slate-900">{process.status === 'CANCELLED' ? 'Condições de pagamento planejadas (histórico)' : 'Condições de pagamento'}</h3>
                 <div>
                   <DetailsDialogRow label="Mensalidade" value={formatCurrency(process.monthlyTotal)} />
                   <DetailsDialogRow label="Taxa de matrícula" value={futureEnrollment?.taxaIsenta ? 'Isenta' : formatCurrency(futureEnrollment?.taxaMatricula ?? process.enrollmentFeeTotal)} />

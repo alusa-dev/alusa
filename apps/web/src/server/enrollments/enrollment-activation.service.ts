@@ -75,7 +75,13 @@ export async function activateEnrollmentAtContractStart(input: {
         },
         data: { status: decision.targetStatus },
       });
-      if (updated.count === 1) return decision;
+      if (updated.count === 1) {
+        if (decision.targetStatus === 'ATIVA') await tx.matriculaVinculoAcademico.updateMany({
+          where: { contaId: input.contaId, matriculaId: input.matriculaId, vigenciaIniciadaEm: null },
+          data: { vigenciaIniciadaEm: new Date() },
+        });
+        return decision;
+      }
     }
 
     throw new Error('MATRICULA_ATIVACAO_CONCORRENTE_RETRY');

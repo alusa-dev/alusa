@@ -39,6 +39,16 @@ export function getEnrollmentWarningMessage(message: string): string {
   return TECHNICAL_TERMS.test(message) ? 'Uma atualização das cobranças ainda está pendente. Confira novamente em alguns minutos.' : message;
 }
 
+export function getEnrollmentCancellationSuccessMessage(warnings: string[]): string {
+  const hasOverdueCharge = warnings.some((warning) =>
+    /está vencida e permanece em aberto|cobranças vencidas já emitidas no acordo permanecem em aberto/i.test(warning),
+  );
+
+  return hasOverdueCharge
+    ? 'Débitos vencidos continuam pendentes. Esta matrícula não gerará novas cobranças.'
+    : 'Esta matrícula não gerará novas cobranças.';
+}
+
 export function getEnrollmentPendingMessage(): string {
   return 'O pedido de cancelamento ainda está sendo confirmado. A matrícula continua como estava. Aguarde alguns minutos e confira novamente; você não precisa fazer o pedido outra vez agora.';
 }

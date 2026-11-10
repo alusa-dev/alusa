@@ -8,6 +8,7 @@ import { AppText } from '@/components/primitives/AppText';
 import { Screen } from '@/components/layout/Screen';
 import { TextField } from '@/components/primitives/TextField';
 import { authService } from '@/features/auth/services/auth-service';
+import { createUnlockLoginInput } from '@/features/auth/services/unlock-login-input';
 import {
   clearBiometricSession,
   establishBiometricSession,
@@ -89,11 +90,7 @@ export default function UnlockScreen() {
     setError(null);
 
     try {
-      const session = await authService.login({
-        email: profile.user.email,
-        password,
-        contaId: profile.activeContaId,
-      });
+      const session = await authService.login(createUnlockLoginInput(profile, password));
       if (profile.biometricEnabled) {
         try {
           await establishBiometricSession(session);

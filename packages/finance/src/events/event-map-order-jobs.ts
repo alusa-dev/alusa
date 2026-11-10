@@ -19,6 +19,8 @@ import {
 import { listPaymentRefunds } from '../use-cases/asaas-ops';
 import { confirmPublicEventMapOrderPayment } from './confirm-public-event-map-order-payment';
 
+const META_MARKETING_USER_AGENT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
 import { withWebhookJobLock } from '../foundation/webhook-job-lock.service';
 import {
   resolveFinanceReconciliationIssueByDedupe,
@@ -219,7 +221,36 @@ type ExpireEventMapReservationsDependencies = {
     paymentCreationUpdatedAt: Date;
     reservationId: string;
   }) => Promise<ExternalPaymentResolution>;
+  cleanupExpiredMetaMarketingData?: (input: { contaId: string; cutoff: Date }) => Promise<void>;
 };
+
+export function buildExpiredEventMapOrderUpdateData(input: {
+  now: Date;
+  deletedAsaasPaymentId?: string | null;
+  noRemotePaymentConfirmed?: boolean;
+}) {
+  const confirmedNoPayment = Boolean(input.deletedAsaasPaymentId || input.noRemotePaymentConfirmed);
+  return {
+    status: 'EXPIRED' as const,
+    cancelledAt: input.now,
+    paymentStatus: input.deletedAsaasPaymentId || input.noRemotePaymentConfirmed ? 'DELETED' : 'EXPIRED',
+    ...(confirmedNoPayment ? {
+      metaMarketingClientUserAgent: null,
+      metaMarketingConsentAnonymousId: null,
+    } : {}),
+  };
+}
+
+export function buildExpiredMetaMarketingCleanupWhere(contaId: string, now: Date) {
+  return {
+    contaId,
+    status: { in: ['EXPIRED' as const, 'CANCELLED' as const] },
+    paymentStatus: { in: ['DELETED', 'EXPIRED'] },
+    paidAt: null,
+    expiresAt: { lt: new Date(now.getTime() - META_MARKETING_USER_AGENT_RETENTION_MS) },
+    metaMarketingClientUserAgent: { not: null },
+  };
+}
 
 function toAuditJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value ?? null)) as Prisma.InputJsonValue;
@@ -746,14 +777,7 @@ const defaultExpireEventMapReservationsDependencies = {
                 ? { asaasPaymentId: input.deletedAsaasPaymentId }
                 : { asaasPaymentId: null }),
             },
-            data: {
-              status: 'EXPIRED',
-              cancelledAt: input.now,
-              paymentStatus:
-                input.deletedAsaasPaymentId || input.noRemotePaymentConfirmed
-                  ? 'DELETED'
-                  : 'EXPIRED',
-            },
+            data: buildExpiredEventMapOrderUpdateData(input),
           });
           if (orderUpdate.count !== 1) {
             throw new ReservationExpirationConflict('order_state_changed');
@@ -811,6 +835,13 @@ const defaultExpireEventMapReservationsDependencies = {
       }
       throw error;
     }
+  },
+  cleanupExpiredMetaMarketingData: async ({ contaId, cutoff }) => {
+    const now = new Date(cutoff.getTime() + META_MARKETING_USER_AGENT_RETENTION_MS);
+    await prisma.eventMapOrder.updateMany({
+      where: buildExpiredMetaMarketingCleanupWhere(contaId, now),
+      data: { metaMarketingClientUserAgent: null, metaMarketingConsentAnonymousId: null },
+    });
   },
 } satisfies ExpireEventMapReservationsDependencies;
 
@@ -962,6 +993,14 @@ async function expireEventMapReservationsUnlocked(
           contaId,
           reason: error instanceof Error ? error.message : String(error),
         });
+      }
+    }
+    if (dependencies.cleanupExpiredMetaMarketingData) {
+      const cutoff = new Date(now.getTime() - META_MARKETING_USER_AGENT_RETENTION_MS);
+      try {
+        await dependencies.cleanupExpiredMetaMarketingData({ contaId, cutoff });
+      } catch {
+        logEventsFinance('finance.events.public_event_map.expired_marketing_data_cleanup.failed', { errors: 1 }, 'warn');
       }
     }
   }

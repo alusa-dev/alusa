@@ -105,7 +105,7 @@ export default function InstallmentsScreen() {
         renderItem={({ item }) => <InstallmentCard item={item} onPress={() => router.push({ pathname: '/(app)/parcelamentos/[installmentId]', params: { installmentId: item.id } })} />}
         ListHeaderComponent={header}
         ListEmptyComponent={loading ? <InstallmentsSkeleton /> : error ? <ErrorState title="Não foi possível carregar" message={error} actionLabel="Tentar novamente" onAction={() => void loadInstallments()} /> : <EmptyState title="Nenhum parcelamento encontrado" message={search || statusFilter !== 'ALL' ? 'Revise a busca ou o filtro e tente novamente.' : 'Os parcelamentos da conta aparecerão aqui quando forem criados.'} />}
-        ListFooterComponent={loadingMore ? <View style={styles.footer}><ActivityIndicator color={colors.brand} /><AppText variant="small" tone="muted">Carregando mais parcelamentos...</AppText></View> : null}
+        ListFooterComponent={loadingMore ? <View style={styles.footer}><ActivityIndicator color={colors.brand} /><AppText variant="small" tone="muted">Carregando mais parcelamentos...</AppText></View> : undefined}
         contentContainerStyle={styles.listContent}
         onEndReached={() => void loadMore()}
         onEndReachedThreshold={0.45}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Keyboard, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Animated, Keyboard, Pressable, StyleSheet, TextInput, View, type TextInputInstance } from 'react-native';
 import { ArrowLeftIcon, FunnelIcon, MagnifyingGlassIcon, XMarkIcon } from 'react-native-heroicons/outline';
 
 import { AppText } from '@/components/primitives/AppText';
@@ -31,7 +31,7 @@ export function InlineSearchHeader({
 }: InlineSearchHeaderProps) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchWidth, setSearchWidth] = useState(0);
-  const searchInputRef = useRef<TextInput>(null);
+  const searchInputRef = useRef<TextInputInstance>(null);
   const searchProgress = useRef(new Animated.Value(0)).current;
   const closeAnimationId = useRef(0);
 

@@ -33,10 +33,6 @@ function brl(value: unknown) {
   return Number(value ?? 0);
 }
 
-function legacyEncryptedSecret(value: string) {
-  return `v1:${Buffer.from(value, 'utf8').toString('base64')}`;
-}
-
 async function parseJson(response: APIResponse) {
   const text = await response.text();
   let body: unknown = null;
@@ -70,7 +66,9 @@ async function authenticate(page: Page, seed: { userId: string; userEmail: strin
       name: 'Gestão E2E',
       role: seed.role,
       contaId: seed.contaId,
+      authContext: 'OWNER',
       emailVerified: true,
+      accountActive: true,
       sessionVersion: 0,
     },
   });
@@ -86,6 +84,26 @@ async function authenticate(page: Page, seed: { userId: string; userEmail: strin
       sameSite: 'Lax',
     },
   ]);
+  await page.route('**/api/finance/account-status**', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          items: [],
+          overallStatus: 'APPROVED',
+          commercialInfoStatus: 'APPROVED',
+          commercialInfoScheduledDate: null,
+          commercialInfoExpiration: null,
+          statusLabels: {},
+          lastCheckedAt: new Date().toISOString(),
+        },
+      }),
+    });
+  });
+  const sessionResponse = await page.goto('/api/auth/session');
+  const sessionBody = await sessionResponse?.json();
+  expect(sessionBody?.user?.contaId).toBe(seed.contaId);
 }
 
 async function seedFinancialAccount(contaId: string) {
@@ -109,7 +127,8 @@ async function seedFinancialAccount(contaId: string) {
       asaasAccountId,
       externalReference: `acc-ref-${randomUUID()}`,
       status: 'APPROVED',
-      apiKeyEncrypted: legacyEncryptedSecret('$aact_hmlg_e2e_key'),
+      // Keep local mock gate state without any credential that can reach Asaas.
+      apiKeyEncrypted: null,
       apiKeyStatus: 'CONNECTED',
       operationalStatus: 'OPERATIONAL',
       webhookStatus: 'ACTIVE',
@@ -167,11 +186,12 @@ async function seedSchool(options: { role?: string } = {}) {
     },
   });
 
+  const userEmail = `gestao-rematricula-${randomUUID()}@e2e.alusa`;
   const user = await prisma.usuario.create({
     data: {
       contaId: conta.id,
       nome: 'Gestão E2E',
-      email: `gestao-rematricula-${randomUUID()}@e2e.alusa`,
+      email: userEmail,
       senhaHash: 'hash_nao_usado_no_e2e',
       role,
       status: 'ATIVO',
@@ -190,10 +210,41 @@ async function seedSchool(options: { role?: string } = {}) {
     },
   });
   await prisma.conta.update({ where: { id: conta.id }, data: { ownerUserId: user.id } });
+  await prisma.authCredential.create({
+    data: {
+      context: 'OWNER',
+      normalizedEmail: userEmail.toLowerCase(),
+      userId: user.id,
+      passwordHash: 'not-used-e2e',
+      emailVerifiedAt: new Date(),
+    },
+  });
   await seedFinancialAccount(conta.id);
 
   const modalidade = await prisma.modalidade.create({
     data: { contaId: conta.id, nome: `Ballet E2E ${randomUUID().slice(0, 6)}`, status: 'ATIVO' },
+    select: { id: true },
+  });
+  const sourceCycle = await prisma.cicloAcademico.create({
+    data: {
+      contaId: conta.id,
+      modalidadeId: modalidade.id,
+      nome: String(currentContractEnd.getUTCFullYear()),
+      sequencia: 1,
+      dataInicio: dateAtNoonUtc(`${currentContractEnd.getUTCFullYear()}-01-01`),
+      dataFim: dateAtNoonUtc(`${currentContractEnd.getUTCFullYear()}-12-31`),
+    },
+    select: { id: true },
+  });
+  const targetCycle = await prisma.cicloAcademico.create({
+    data: {
+      contaId: conta.id,
+      modalidadeId: modalidade.id,
+      nome: targetPeriodId,
+      sequencia: 2,
+      dataInicio: dateAtNoonUtc(`${targetYear}-01-01`),
+      dataFim: dateAtNoonUtc(`${targetYear}-12-31`),
+    },
     select: { id: true },
   });
   const sala = await prisma.sala.create({
@@ -205,6 +256,7 @@ async function seedSchool(options: { role?: string } = {}) {
     data: {
       contaId: conta.id,
       modalidadeId: modalidade.id,
+      cicloAcademicoId: sourceCycle.id,
       salaId: sala.id,
       nome: 'Ballet Clássico - Matutino',
       diasSemana: ['SEGUNDA', 'QUARTA'],
@@ -216,10 +268,27 @@ async function seedSchool(options: { role?: string } = {}) {
     select: { id: true, nome: true },
   });
 
+  const nextCycleClass = await prisma.turma.create({
+    data: {
+      contaId: conta.id,
+      modalidadeId: modalidade.id,
+      cicloAcademicoId: targetCycle.id,
+      salaId: sala.id,
+      nome: 'Ballet Clássico - Próximo Ciclo',
+      diasSemana: ['TERCA', 'QUINTA'],
+      horaInicio: '15:00',
+      horaFim: '16:00',
+      capacidade: 30,
+      status: 'ATIVO',
+    },
+    select: { id: true, nome: true },
+  });
+
   const afternoonClass = await prisma.turma.create({
     data: {
       contaId: conta.id,
       modalidadeId: modalidade.id,
+      cicloAcademicoId: targetCycle.id,
       salaId: sala.id,
       nome: 'Ballet Clássico - Vespertino',
       diasSemana: ['TERCA', 'QUINTA'],
@@ -235,6 +304,7 @@ async function seedSchool(options: { role?: string } = {}) {
     data: {
       contaId: conta.id,
       modalidadeId: modalidade.id,
+      cicloAcademicoId: targetCycle.id,
       salaId: sala.id,
       nome: 'Ballet Lotado E2E',
       diasSemana: ['SEXTA'],
@@ -281,6 +351,36 @@ async function seedSchool(options: { role?: string } = {}) {
     },
     select: { id: true, nome: true },
   });
+  await prisma.contratoModeloCampo.createMany({
+    data: [contractModel.id, alternateContractModel.id].flatMap((modeloId) => [
+      {
+        contaId: conta.id,
+        modeloId,
+        tipo: 'ASSINATURA',
+        papel: 'ESCOLA',
+        pagina: 1,
+        x: 10,
+        y: 10,
+        largura: 20,
+        altura: 10,
+        obrigatorio: true,
+        ordem: 0,
+      },
+      {
+        contaId: conta.id,
+        modeloId,
+        tipo: 'ASSINATURA',
+        papel: 'RESPONSAVEL_OU_ALUNO',
+        pagina: 1,
+        x: 40,
+        y: 10,
+        largura: 20,
+        altura: 10,
+        obrigatorio: true,
+        ordem: 1,
+      },
+    ]),
+  });
 
   async function enrollmentForAluno(input: {
     nome: string;
@@ -325,6 +425,19 @@ async function seedSchool(options: { role?: string } = {}) {
         prazoDesconto: 7,
       },
       select: { id: true },
+    });
+
+    await prisma.matriculaVinculoAcademico.create({
+      data: {
+        contaId: conta.id,
+        matriculaId: matricula.id,
+        modalidadeId: modalidade.id,
+        cicloAcademicoId: sourceCycle.id,
+        vigenciaIniciadaEm: currentContractStart,
+        classificacao: 'PRIMEIRO_INGRESSO',
+        classificacaoOrigem: 'AUTOMATICA',
+        classificacaoMotivo: 'PRIMEIRO_VINCULO',
+      },
     });
 
     await prisma.cobranca.create({
@@ -394,7 +507,8 @@ async function seedSchool(options: { role?: string } = {}) {
     futureEndKey,
     futureExtendedEndKey,
     currentContractEndKey: dateInputKey(currentContractEnd),
-    classes: { current: currentClass, afternoon: afternoonClass, full: fullClass },
+    cycles: { source: sourceCycle.id, target: targetCycle.id },
+    classes: { current: currentClass, nextCycle: nextCycleClass, afternoon: afternoonClass, full: fullClass },
     plans: { basic: planBasic, annual: planAnnual, family: planFamily },
     contractModels: { default: contractModel, alternate: alternateContractModel },
     enrollments: {
@@ -453,15 +567,20 @@ async function createIndividualRenewal(
     taxaIsenta?: boolean;
     taxaMatricula?: number;
     vencimentoDia?: number;
+    targetPeriodId?: string;
+    comboId?: string;
+    uiRequestId?: string;
   },
 ) {
   const response = await page.request.post('/api/rematriculas', {
     data: {
       matriculaId: input.matriculaId,
       campaignId: input.campaignId ?? null,
-      targetPeriodId: seed.targetPeriodId,
+      targetPeriodId: input.targetPeriodId ?? seed.targetPeriodId,
+      comboId: input.comboId,
+      uiRequestId: input.uiRequestId,
       planoId: input.planoId ?? seed.plans.basic.id,
-      turmaId: input.turmaId ?? seed.classes.current.id,
+      turmaId: input.turmaId ?? seed.classes.nextCycle.id,
       contractModelId: input.contractModelId ?? seed.contractModels.default.id,
       dataInicio: input.dataInicio ?? seed.futureStartKey,
       dataFimContrato: input.dataFimContrato ?? seed.futureEndKey,
@@ -493,6 +612,15 @@ async function latestProcessForEnrollment(contaId: string, matriculaOrigemId: st
   });
 }
 
+test.beforeAll(async () => {
+  if (process.env.ASAAS_API_KEY !== 'E2E_BLOCKED_NO_PROVIDER_CREDENTIAL') {
+    throw new Error('E2E exige o sentinel local sem credencial de provedor.');
+  }
+  if (process.env.ASAAS_BASE_URL !== 'https://127.0.0.1:1/v3') {
+    throw new Error('E2E exige ASAAS_BASE_URL local para bloquear tráfego de saída.');
+  }
+});
+
 test.afterAll(async () => {
   await prisma.$disconnect();
 });
@@ -516,6 +644,12 @@ test('bloqueia acesso sem autenticação e mostra estados básicos autenticados'
   await expect(modal.getByRole('button', { name: 'Criar campanha' })).toBeDisabled();
   await expect(modal.getByText('Nome da campanha')).toBeVisible();
   await expect(modal.getByText('Período de destino')).toBeVisible();
+  const targetYearSelect = modal.getByRole('combobox', { name: 'Período de destino' });
+  await targetYearSelect.click();
+  const currentYear = new Date().getFullYear();
+  await expect(page.getByRole('option', { name: String(currentYear) })).toBeVisible();
+  await page.getByRole('option', { name: String(currentYear + 1) }).click();
+  await expect(targetYearSelect).toContainText(String(currentYear + 1));
 
   const response = await page.request.get(`/api/rematriculas?contaId=${seed.contaId}&diasAntecedencia=365`);
   const body = await expectOk(response);
@@ -548,9 +682,19 @@ test('cria, edita, valida janela e arquiva campanhas sem vazar para outra conta'
   });
   await expectOk(update);
 
+  const browserErrors: string[] = [];
+  page.on('pageerror', (error) => browserErrors.push(error.message));
+  page.on('console', (message) => { if (message.type() === 'error') browserErrors.push(message.text()); });
+  const listResponsePromise = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === '/api/rematriculas' && response.request().method() === 'GET',
+  );
   await page.goto('/reenrollments');
+  const listResponse = await listResponsePromise;
+  const listBody = await listResponse.json().catch(() => null);
+  expect(listResponse.status(), JSON.stringify({ body: listBody, browserErrors })).toBe(200);
   await expect(page.getByText('Rematrículas Antecipadas Editada')).toBeVisible();
-  await expect(page.getByText('0 Rematriculados')).toBeVisible();
+  const campaignRow = page.getByRole('row').filter({ hasText: 'Rematrículas Antecipadas Editada' });
+  await expect(campaignRow.getByRole('cell').nth(1)).toHaveText('0');
 
   const hardDelete = await page.request.delete(`/api/rematriculas/campanhas/${campaign.id}`);
   await expect(await hardDelete.json()).toMatchObject({ mode: 'HARD_DELETE' });
@@ -579,6 +723,187 @@ test('cria, edita, valida janela e arquiva campanhas sem vazar para outra conta'
   );
 });
 
+test('cria campanha semestral pela UI preservando targetPeriodId no backend', async ({ page }) => {
+  const seed = await setupAuthenticatedPage(page);
+  await page.goto('/reenrollments');
+  await page.getByRole('button', { name: 'Criar campanha' }).click();
+  const dialog = page.getByRole('dialog');
+  const target = dialog.getByRole('combobox', { name: 'Período de destino' });
+  await target.click();
+  const targetYear = Number(seed.targetPeriodId) + 1;
+  await page.getByRole('option', { name: `${targetYear} · 2º semestre` }).click();
+  await dialog.getByPlaceholder('Ex.: Rematrículas 2027').fill('Campanha semestral E2E');
+  await dialog.getByRole('button', { name: 'Criar campanha' }).click();
+  await expect(page.getByText('Campanha semestral E2E')).toBeVisible();
+  await expect(prisma.rematriculaCampanha.findFirst({
+    where: { contaId: seed.contaId, nome: 'Campanha semestral E2E' },
+    select: { targetPeriodId: true },
+  })).resolves.toEqual({ targetPeriodId: `${targetYear}.2` });
+});
+
+test('rematricula até ciclo semestral YYYY.2 cria matrícula futura vinculada ao ciclo', async ({ page }) => {
+  const seed = await setupAuthenticatedPage(page);
+  const targetYear = Number(seed.targetPeriodId) + 1;
+  const targetPeriodId = `${targetYear}.2`;
+  const sourceCycle = await prisma.cicloAcademico.create({
+    data: {
+      contaId: seed.contaId,
+      modalidadeId: (await prisma.matriculaVinculoAcademico.findFirstOrThrow({
+        where: { contaId: seed.contaId, matriculaId: seed.enrollments.breno }, select: { modalidadeId: true },
+      })).modalidadeId,
+      nome: `${targetYear}.1`,
+      sequencia: 3,
+      dataInicio: dateAtNoonUtc(`${targetYear}-01-01`),
+      dataFim: dateAtNoonUtc(`${targetYear}-06-30`),
+    },
+    select: { id: true, modalidadeId: true },
+  });
+  const targetCycle = await prisma.cicloAcademico.create({
+    data: {
+      contaId: seed.contaId,
+      modalidadeId: sourceCycle.modalidadeId,
+      nome: targetPeriodId,
+      sequencia: 4,
+      dataInicio: dateAtNoonUtc(`${targetYear}-07-01`),
+      dataFim: dateAtNoonUtc(`${targetYear}-12-31`),
+    },
+    select: { id: true },
+  });
+  const classRoom = await prisma.turma.findFirstOrThrow({
+    where: { contaId: seed.contaId, cicloAcademicoId: seed.cycles.target }, select: { salaId: true },
+  });
+  const semesterClass = await prisma.turma.create({
+    data: {
+      contaId: seed.contaId,
+      modalidadeId: sourceCycle.modalidadeId,
+      cicloAcademicoId: targetCycle.id,
+      salaId: classRoom.salaId,
+      nome: `Ballet ${targetPeriodId}`,
+      diasSemana: ['SEGUNDA'],
+      horaInicio: '09:00',
+      horaFim: '10:00',
+      capacidade: 30,
+      status: 'ATIVO',
+    },
+    select: { id: true },
+  });
+  await prisma.matriculaVinculoAcademico.updateMany({
+    where: { contaId: seed.contaId, matriculaId: seed.enrollments.breno },
+    data: { cicloAcademicoId: sourceCycle.id },
+  });
+  const campaign = await createCampaign(page, seed, { targetPeriodId, nome: `Campanha ${targetPeriodId}` });
+  const start = `${targetYear}-07-01`;
+  const end = `${targetYear}-12-31`;
+  const result = await createIndividualRenewal(page, seed, {
+    matriculaId: seed.enrollments.breno,
+    campaignId: campaign.id,
+    targetPeriodId,
+    turmaId: semesterClass.id,
+    dataInicio: start,
+    dataFimContrato: end,
+  });
+  expect(result.response.status(), result.body.text).toBe(200);
+  const futureId = result.body.body.novaMatricula?.id as string | undefined;
+  expect(futureId).toBeTruthy();
+  await expect(prisma.rematriculaItem.findFirstOrThrow({
+    where: { contaId: seed.contaId, matriculaFuturaId: futureId! },
+    select: { targetPeriodId: true },
+  })).resolves.toEqual({ targetPeriodId });
+  await expect(prisma.matriculaVinculoAcademico.findFirstOrThrow({
+    where: { contaId: seed.contaId, matriculaId: futureId! },
+    select: { cicloAcademicoId: true, classificacao: true, vigenciaIniciadaEm: true },
+  })).resolves.toEqual({
+    cicloAcademicoId: targetCycle.id,
+    classificacao: 'REMATRICULA',
+    vigenciaIniciadaEm: null,
+  });
+});
+
+test('renovação de combo persiste vínculos por modalidade e classificação independente', async ({ page }) => {
+  const seed = await setupAuthenticatedPage(page);
+  const campaign = await createCampaign(page, seed);
+  const modality = await prisma.modalidade.create({
+    data: { contaId: seed.contaId, nome: `Teatro combo ${randomUUID().slice(0, 6)}`, status: 'ATIVO' },
+    select: { id: true },
+  });
+  const cycle = await prisma.cicloAcademico.create({
+    data: {
+      contaId: seed.contaId,
+      modalidadeId: modality.id,
+      nome: seed.targetPeriodId,
+      sequencia: 1,
+      dataInicio: dateAtNoonUtc(`${seed.targetPeriodId}-01-01`),
+      dataFim: dateAtNoonUtc(`${seed.targetPeriodId}-12-31`),
+    },
+    select: { id: true },
+  });
+  await prisma.historicoAcademicoCobertura.create({
+    data: {
+      contaId: seed.contaId,
+      modalidadeId: modality.id,
+      coberturaDesde: dateAtNoonUtc('2000-01-01'),
+      revisadoPor: seed.userId,
+      motivo: 'Histórico conferido para comprovar novo curso no combo de rematrícula.',
+      revisadoEm: new Date(),
+    },
+  });
+  const existingClass = await prisma.turma.findFirstOrThrow({
+    where: { contaId: seed.contaId, cicloAcademicoId: seed.cycles.target },
+    select: { salaId: true },
+  });
+  const theaterClass = await prisma.turma.create({
+    data: {
+      contaId: seed.contaId,
+      modalidadeId: modality.id,
+      cicloAcademicoId: cycle.id,
+      salaId: existingClass.salaId,
+      nome: `Teatro ${seed.targetPeriodId}`,
+      diasSemana: ['TERCA'],
+      horaInicio: '10:00',
+      horaFim: '11:00',
+      capacidade: 30,
+      status: 'ATIVO',
+    },
+    select: { id: true },
+  });
+  const combo = await prisma.combo.create({
+    data: {
+      contaId: seed.contaId,
+      nome: `Combo Ballet Teatro ${randomUUID().slice(0, 6)}`,
+      valor: 250,
+      periodicidade: 'MENSAL',
+    },
+    select: { id: true },
+  });
+  await prisma.comboTurma.createMany({
+    data: [seed.classes.nextCycle.id, theaterClass.id].map((turmaId) => ({ contaId: seed.contaId, comboId: combo.id, turmaId })),
+  });
+
+  const created = await createIndividualRenewal(page, seed, {
+    matriculaId: seed.enrollments.breno,
+    campaignId: campaign.id,
+    comboId: combo.id,
+  });
+  expect(created.response.status(), created.body.text).toBe(200);
+  const futureId = created.body.body.novaMatricula?.id as string | undefined;
+  expect(futureId).toBeTruthy();
+  const links = await prisma.matriculaVinculoAcademico.findMany({
+    where: { contaId: seed.contaId, matriculaId: futureId! },
+    select: { modalidadeId: true, cicloAcademicoId: true, classificacao: true },
+  });
+  expect(links).toHaveLength(2);
+  expect(links).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      modalidadeId: (await prisma.matriculaVinculoAcademico.findFirstOrThrow({
+        where: { contaId: seed.contaId, matriculaId: seed.enrollments.breno }, select: { modalidadeId: true },
+      })).modalidadeId,
+      cicloAcademicoId: seed.cycles.target,
+      classificacao: 'REMATRICULA',
+    }),
+    expect.objectContaining({ modalidadeId: modality.id, cicloAcademicoId: cycle.id, classificacao: 'PRIMEIRO_INGRESSO' }),
+  ]));
+});
+
 test('realiza rematrícula individual pela campanha e preserva ciclo financeiro atual', async ({ page }) => {
   const seed = await setupAuthenticatedPage(page);
   const campaign = await createCampaign(page, seed);
@@ -603,23 +928,34 @@ test('realiza rematrícula individual pela campanha e preserva ciclo financeiro 
   await expect(renewalModal).toBeVisible();
   await renewalModal.locator('input[type="date"]').nth(0).fill(seed.futureStartKey);
   await renewalModal.locator('input[type="date"]').nth(1).fill(seed.futureEndKey);
+  await renewalModal.getByRole('combobox').nth(1).click();
+  await page.getByRole('option', { name: /Ballet Clássico - Próximo Ciclo/ }).click();
   await renewalModal.getByRole('combobox').nth(2).click();
   await page.getByRole('option', { name: seed.contractModels.default.nome }).click();
+  const previewResponsePromise = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/rematriculas/preview' &&
+      response.request().method() === 'POST',
+  );
   const saveResponsePromise = page.waitForResponse(
     (response) =>
-      response.url().includes('/api/rematriculas') &&
+      new URL(response.url()).pathname === '/api/rematriculas' &&
       response.request().method() === 'POST',
   );
   await renewalModal.getByRole('button', { name: 'Salvar' }).click();
+  const previewResponse = await previewResponsePromise;
+  const previewBody = await previewResponse.json();
+  expect(previewResponse.status(), JSON.stringify(previewBody)).toBe(200);
+  expect(previewBody.blockers, JSON.stringify(previewBody)).toEqual([]);
   const saveResponse = await saveResponsePromise;
   const saveBody = await saveResponse.text();
   const saveRequestBody = saveResponse.request().postData();
   expect(saveResponse.ok(), `${saveBody}\n\nrequest=${saveRequestBody}`).toBeTruthy();
   await expect(renewalModal).toBeHidden({ timeout: 20_000 });
 
-  await expect(page.getByText('Breno de Alencar Bezerra')).toBeVisible();
-  await expect(page.getByText('Aguardando início')).toBeVisible();
-  await expect(page.getByText('Agendado')).toBeVisible();
+  // This route renders the campaign's class/occupancy overview after save;
+  // the created process and its scheduled state are verified from Prisma below.
+  await expect(page.getByText('Ballet Clássico - Próximo Ciclo')).toBeVisible();
   await expect(page.getByText('SCHEDULED')).toHaveCount(0);
 
   const renewalProcess = await latestProcessForEnrollment(seed.contaId, seed.enrollments.breno);
@@ -633,6 +969,14 @@ test('realiza rematrícula individual pela campanha e preserva ciclo financeiro 
   expect(item.matriculaFuturaId).toBeTruthy();
   expect(item.matriculaFutura?.status).toBe('AGUARDANDO_CONFIRMACAO');
   expect(item.matriculaFutura?.rematriculadaDeId).toBe(seed.enrollments.breno);
+  const futureAcademicLink = await prisma.matriculaVinculoAcademico.findFirstOrThrow({
+    where: { contaId: seed.contaId, matriculaId: item.matriculaFuturaId! },
+  });
+  expect(futureAcademicLink).toMatchObject({
+    cicloAcademicoId: seed.cycles.target,
+    classificacao: 'REMATRICULA',
+  });
+  expect(futureAcademicLink.vigenciaIniciadaEm).toBeNull();
   expect(item.matriculaOrigem.status).toBe('ATIVA');
   expect(renewalProcess.reservas[0]?.status).toBe('RESERVED');
   expect(renewalProcess.contratos[0]?.status).toBe('WAITING_SIGNATURE');
@@ -772,8 +1116,7 @@ test('rematrícula familiar parcial gera apenas vínculos renovados e financeiro
   const seed = await setupAuthenticatedPage(page);
   const campaign = await createCampaign(page, seed);
 
-  const response = await page.request.post('/api/rematriculas/familiar', {
-    data: {
+  const familyPayload = {
       campaignId: campaign.id,
       targetPeriodId: seed.targetPeriodId,
       responsavelId: seed.responsavel.id,
@@ -790,7 +1133,7 @@ test('rematrícula familiar parcial gera apenas vínculos renovados e financeiro
         {
           matriculaId: seed.enrollments.davi,
           decision: 'REMATRICULAR_AGORA',
-          turmaId: seed.classes.current.id,
+          turmaId: seed.classes.nextCycle.id,
           planoId: seed.plans.basic.id,
         },
         {
@@ -804,9 +1147,21 @@ test('rematrícula familiar parcial gera apenas vínculos renovados e financeiro
           decisionReason: 'Decisão pendente da família.',
         },
       ],
-    },
+    };
+  const [response, concurrentReplay] = await Promise.all([
+    page.request.post('/api/rematriculas/familiar', { data: familyPayload }),
+    page.request.post('/api/rematriculas/familiar', { data: familyPayload }),
+  ]);
+  const [firstResult, concurrentResult] = await Promise.all([
+    expectStatus(response, 202),
+    expectStatus(concurrentReplay, 202),
+  ]);
+  expect(concurrentResult.familyId).toBe(firstResult.familyId);
+  const changedIntent = await page.request.post('/api/rematriculas/familiar', {
+    data: { ...familyPayload, taxaMatricula: 81 },
   });
-  await expectStatus(response, 202);
+  const changedIntentBody = await expectStatus(changedIntent, 409);
+  expect(changedIntentBody.error.code).toBe('IDEMPOTENCY_CONFLICT');
 
   const renewalProcess = await latestProcessForEnrollment(seed.contaId, seed.enrollments.davi);
   expect(renewalProcess.holderType).toBe('RESPONSIBLE');
@@ -823,12 +1178,103 @@ test('rematrícula familiar parcial gera apenas vínculos renovados e financeiro
   expect(brl(renewalProcess.financeiros[0]?.monthlyTotal)).toBe(150);
   expect(renewalProcess.contratos).toHaveLength(1);
   expect(renewalProcess.reservas).toHaveLength(1);
+  const renewedFutureId = renewalProcess.itens.find((item) => item.matriculaOrigemId === seed.enrollments.davi)?.matriculaFuturaId;
+  expect(renewedFutureId).toBeTruthy();
+  await expect(prisma.rematriculaProcesso.count({
+    where: { contaId: seed.contaId, idempotencyKey: familyPayload.uiRequestId },
+  })).resolves.toBe(1);
+  await expect(prisma.matricula.count({
+    where: { contaId: seed.contaId, rematriculadaDeId: seed.enrollments.davi },
+  })).resolves.toBe(1);
+  await expect(prisma.matriculaVinculoAcademico.count({
+    where: { contaId: seed.contaId, matriculaId: renewedFutureId! },
+  })).resolves.toBe(1);
+  await expect(prisma.matriculaVinculoAcademico.findFirst({
+    where: { contaId: seed.contaId, matriculaId: renewedFutureId! },
+    select: { modalidadeId: true, cicloAcademicoId: true, classificacao: true, vigenciaIniciadaEm: true },
+  })).resolves.toEqual({
+    modalidadeId: (await prisma.matriculaVinculoAcademico.findFirstOrThrow({
+      where: { contaId: seed.contaId, matriculaId: seed.enrollments.davi }, select: { modalidadeId: true },
+    })).modalidadeId,
+    cicloAcademicoId: seed.cycles.target,
+    classificacao: 'REMATRICULA',
+    vigenciaIniciadaEm: null,
+  });
+
+  const effectiveStart = new Date(`${seed.futureStartKey}T00:00:00.000Z`);
+  const sourceContractEnd = new Date(effectiveStart);
+  sourceContractEnd.setUTCDate(sourceContractEnd.getUTCDate() - 1);
+  await prisma.matricula.update({
+    where: { id: seed.enrollments.davi },
+    data: { dataFimContrato: sourceContractEnd },
+  });
+  await prisma.contratoFuturo.updateMany({
+    where: { contaId: seed.contaId, processoId: renewalProcess.id },
+    data: { status: 'SIGNED_SCHEDULED', signedAt: new Date() },
+  });
+  await prisma.acordoFinanceiroFuturo.updateMany({
+    where: { contaId: seed.contaId, processoId: renewalProcess.id },
+    data: { status: 'ACTIVE' },
+  });
+  const activationNow = new Date(effectiveStart);
+  activationNow.setUTCDate(activationNow.getUTCDate() + 1);
+  const activation = await page.request.post(
+    `/api/jobs/rematriculas/activate?contaId=${seed.contaId}&now=${encodeURIComponent(activationNow.toISOString())}`,
+    { headers: { 'x-cron-token': process.env.CRON_SECRET ?? 'test-cron-secret' } },
+  );
+  const activationBody = await expectOk(activation);
+  expect(activationBody.processed).toBeGreaterThanOrEqual(1);
+
+  const replayAfterActivation = await page.request.post('/api/rematriculas/familiar', { data: familyPayload });
+  const activatedReplay = await expectStatus(replayAfterActivation, 202);
+  expect(activatedReplay.status).toBe('EFFECTIVE');
+  expect(activatedReplay.step).toBe('CYCLE_EFFECTIVE');
+  expect(activatedReplay.academicStatus).toBe('ATIVA');
+  expect(activatedReplay.targetBillingStatus).toBe('ACTIVE');
+  expect(activatedReplay.contractStatus).toBe('ACTIVE');
+  expect(activatedReplay.results.find((item: { matriculaId: string }) => item.matriculaId === seed.enrollments.davi)?.status).toBe('success');
 
   const stillActive = await prisma.matricula.findMany({
     where: { id: { in: [seed.enrollments.fernanda, seed.enrollments.nicole] } },
     select: { id: true, status: true },
   });
   expect(stillActive.every((item) => item.status === 'ATIVA')).toBe(true);
+});
+
+test('replay individual idêntico é idempotente e reutilização divergente da chave conflita', async ({ page }) => {
+  const seed = await setupAuthenticatedPage(page);
+  const intent = { matriculaId: seed.enrollments.breno, uiRequestId: `individual-${randomUUID()}` };
+  const first = await createIndividualRenewal(page, seed, intent);
+  expect(first.response.status(), first.body.text).toBe(200);
+  const replay = await createIndividualRenewal(page, seed, intent);
+  expect(replay.response.status(), replay.body.text).toBe(200);
+  const futureId = first.body.body.novaMatricula?.id as string;
+
+  await expect(prisma.rematriculaProcesso.count({
+    where: { contaId: seed.contaId, idempotencyKey: intent.uiRequestId },
+  })).resolves.toBe(1);
+  await expect(prisma.matricula.count({
+    where: { contaId: seed.contaId, rematriculadaDeId: seed.enrollments.breno },
+  })).resolves.toBe(1);
+  await expect(prisma.matriculaVinculoAcademico.count({
+    where: { contaId: seed.contaId, matriculaId: futureId },
+  })).resolves.toBe(1);
+
+  const changed = await createIndividualRenewal(page, seed, {
+    ...intent,
+    taxaMatricula: 121,
+  });
+  const conflict = await expectStatus(changed.response, 409);
+  expect(conflict.error.code).toBe('IDEMPOTENCY_CONFLICT');
+  await expect(prisma.rematriculaProcesso.count({
+    where: { contaId: seed.contaId, idempotencyKey: intent.uiRequestId },
+  })).resolves.toBe(1);
+  await expect(prisma.matricula.count({
+    where: { contaId: seed.contaId, rematriculadaDeId: seed.enrollments.breno },
+  })).resolves.toBe(1);
+  await expect(prisma.matriculaVinculoAcademico.count({
+    where: { contaId: seed.contaId, matriculaId: futureId },
+  })).resolves.toBe(1);
 });
 
 test('bloqueia duplicidade ativa, capacidade lotada e isolamento multi-tenant', async ({ page }) => {
@@ -873,6 +1319,10 @@ test('bloqueia duplicidade ativa, capacidade lotada e isolamento multi-tenant', 
 test('efetiva processo vencido pelo job sem alterar cobranças do ciclo atual', async ({ page }) => {
   const seed = await setupAuthenticatedPage(page);
   const beforeChargeCount = await prisma.cobranca.count({ where: { matriculaId: seed.enrollments.bryan } });
+  await prisma.matricula.update({
+    where: { id: seed.enrollments.bryan },
+    data: { dataFimContrato: addDays(new Date(), -1) },
+  });
   const created = await createIndividualRenewal(page, seed, {
     matriculaId: seed.enrollments.bryan,
     dataInicio: dateInputKey(addDays(new Date(), 1)),
@@ -881,9 +1331,16 @@ test('efetiva processo vencido pelo job sem alterar cobranças do ciclo atual', 
   expect(created.response.ok(), created.body.text).toBeTruthy();
   const renewalProcess = await latestProcessForEnrollment(seed.contaId, seed.enrollments.bryan);
 
-  await prisma.matricula.update({
-    where: { id: seed.enrollments.bryan },
-    data: { dataFimContrato: addDays(new Date(), -1) },
+  // The activation job requires an already signed future contract and
+  // provisioned future finance; satisfy those persisted prerequisites without
+  // invoking an external provider in this test.
+  await prisma.contratoFuturo.updateMany({
+    where: { contaId: seed.contaId, processoId: renewalProcess.id },
+    data: { status: 'SIGNED_SCHEDULED', signedAt: new Date() },
+  });
+  await prisma.acordoFinanceiroFuturo.updateMany({
+    where: { contaId: seed.contaId, processoId: renewalProcess.id },
+    data: { status: 'ACTIVE' },
   });
 
   const activate = await page.request.post(
@@ -898,11 +1355,29 @@ test('efetiva processo vencido pelo job sem alterar cobranças do ciclo atual', 
     include: { itens: { include: { matriculaOrigem: true, matriculaFutura: true } }, reservas: true, contratos: true, financeiros: true },
   });
   expect(effective.status).toBe('EFFECTIVE');
-  expect(effective.itens[0]?.matriculaOrigem.status).toBe('CANCELADA');
+  expect(effective.itens[0]?.matriculaOrigem.status).toBe('ENCERRADA');
   expect(effective.itens[0]?.matriculaFutura?.status).toBe('ATIVA');
+  const academicLink = await prisma.matriculaVinculoAcademico.findFirstOrThrow({
+    where: { contaId: seed.contaId, matriculaId: effective.itens[0]!.matriculaFuturaId! },
+    select: { vigenciaIniciadaEm: true },
+  });
+  expect(academicLink.vigenciaIniciadaEm).not.toBeNull();
+  const firstActivationTimestamp = academicLink.vigenciaIniciadaEm?.getTime();
   expect(effective.reservas[0]?.status).toBe('CONVERTED');
   expect(effective.contratos[0]?.status).toBe('ACTIVE');
-  expect(effective.financeiros[0]?.status).toBe('READY_TO_PROVISION');
+  expect(effective.financeiros[0]?.status).toBe('ACTIVE');
+
+  const replayActivation = await page.request.post(
+    `/api/jobs/rematriculas/activate?contaId=${seed.contaId}&now=${encodeURIComponent(addDays(new Date(), 3).toISOString())}`,
+    { headers: { 'x-cron-token': process.env.CRON_SECRET ?? 'test-cron-secret' } },
+  );
+  const replayBody = await expectOk(replayActivation);
+  expect(replayBody.processed).toBe(0);
+  const linkAfterReplay = await prisma.matriculaVinculoAcademico.findFirstOrThrow({
+    where: { contaId: seed.contaId, matriculaId: effective.itens[0]!.matriculaFuturaId! },
+    select: { vigenciaIniciadaEm: true },
+  });
+  expect(linkAfterReplay.vigenciaIniciadaEm?.getTime()).toBe(firstActivationTimestamp);
   await expect(prisma.cobranca.count({ where: { matriculaId: seed.enrollments.bryan } })).resolves.toBe(beforeChargeCount);
 });
 

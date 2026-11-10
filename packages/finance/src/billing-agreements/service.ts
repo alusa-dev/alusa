@@ -125,6 +125,7 @@ async function updateEligiblePendingPayments(input: {
   plan: BillingAgreementPlan;
   payments: AsaasSubscriptionPaymentSnapshot[];
   assertLeaseOwned: () => Promise<void>;
+  description?: string;
 }): Promise<void> {
   const targets = new Map(
     input.plan.chargeImpacts
@@ -154,6 +155,13 @@ async function updateEligiblePendingPayments(input: {
         { paymentId: payment.id, status: fresh.status },
       );
     }
+    if (input.description !== undefined && fresh.status !== 'PENDING') {
+      throw new BillingAgreementError(
+        'REMOTE_STATE_DIVERGED',
+        'A descrição só pode ser sincronizada enquanto a cobrança permanecer pendente.',
+        { paymentId: payment.id, status: fresh.status },
+      );
+    }
     if (
       fresh.billingType !== 'UNDEFINED' &&
       fresh.billingType !== 'BOLETO' &&
@@ -173,6 +181,9 @@ async function updateEligiblePendingPayments(input: {
       valueCents: impact.targetAmountCents,
       billingType: fresh.billingType,
       dueDate: fresh.dueDate,
+      ...(input.description !== undefined && fresh.status === 'PENDING'
+        ? { description: input.description }
+        : {}),
     });
     const confirmed = await input.deps.asaas.getPayment({
       contaId: input.contaId,
@@ -180,6 +191,7 @@ async function updateEligiblePendingPayments(input: {
     });
     if (
       confirmed.valueCents !== impact.targetAmountCents ||
+      (input.description !== undefined && fresh.status === 'PENDING' && confirmed.description !== input.description) ||
       (confirmed.status !== 'PENDING' && confirmed.status !== 'OVERDUE')
     ) {
       throw new BillingAgreementError(
@@ -245,6 +257,7 @@ async function createOrRecoverSubscription(input: {
   deps: BillingAgreementLifecycleDependencies;
   context: BillingAgreementContext;
   plan: BillingAgreementPlan;
+  change: CommitBillingAgreementChangeInput;
   contaId: string;
   idempotencyKey: string;
   externalReference: string;
@@ -266,6 +279,9 @@ async function createOrRecoverSubscription(input: {
     if (existing.valueCents !== input.plan.resultingAmountCents) {
       throw new BillingAgreementError('REMOTE_STATE_DIVERGED', 'Assinatura recuperada com valor divergente.');
     }
+    if (input.change.description !== undefined && existing.description !== input.change.description) {
+      throw new BillingAgreementError('REMOTE_STATE_DIVERGED', 'A descrição da assinatura recuperada diverge da descrição solicitada.');
+    }
     return existing;
   }
   const nextDueDate = input.nextDueDate ?? input.context.agreement.nextDueDate;
@@ -281,7 +297,7 @@ async function createOrRecoverSubscription(input: {
     cycle: input.context.agreement.cycle,
     nextDueDate,
     endDate: providerEndDate(input.plan.agreementValidUntil),
-    description: input.context.agreement.description,
+    description: input.change.description ?? input.context.agreement.description,
     externalReference: input.externalReference,
     idempotencyKey: input.idempotencyKey,
   });
@@ -296,7 +312,10 @@ async function createOrRecoverSubscription(input: {
     expectedAmountCents: input.plan.resultingAmountCents,
     allowDesiredAmount: true,
   });
-  if (confirmed.valueCents !== input.plan.resultingAmountCents) {
+  if (
+    confirmed.valueCents !== input.plan.resultingAmountCents ||
+    (input.change.description !== undefined && confirmed.description !== input.change.description)
+  ) {
     throw new BillingAgreementError('REMOTE_OPERATION_UNCERTAIN', 'A criação da assinatura não pôde ser confirmada.');
   }
   return confirmed;
@@ -324,7 +343,7 @@ async function executeRemotePlan(input: {
     confirmed: false,
   };
   if (
-    plan.remoteAction === 'NONE' ||
+    (plan.remoteAction === 'NONE' && input.change.description === undefined) ||
     plan.remoteAction === 'SCHEDULE_UPDATE' ||
     plan.remoteAction === 'SCHEDULE_PAUSE' ||
     plan.remoteAction === 'SCHEDULE_RESUME' ||
@@ -338,6 +357,7 @@ async function executeRemotePlan(input: {
       deps,
       context,
       plan,
+      change: input.change,
       contaId,
       idempotencyKey: stableFinancialHash(`${contaId}:${input.change.uiRequestId}:${plan.agreementId}:create`),
       externalReference: context.agreement.externalReference,
@@ -420,6 +440,7 @@ async function executeRemotePlan(input: {
       deps,
       context,
       plan,
+      change: input.change,
       contaId,
       idempotencyKey: stableFinancialHash(`${contaId}:${input.change.uiRequestId}:${plan.agreementId}:replace`),
       externalReference,
@@ -549,6 +570,7 @@ async function executeRemotePlan(input: {
     plan.remoteAction === 'PAUSE_SUBSCRIPTION' ? before.valueCents : plan.resultingAmountCents;
   const alreadyConfirmed =
     before.valueCents === targetRemoteValue &&
+    (input.change.description === undefined || before.description === input.change.description) &&
     (!status || before.status === status) &&
     (!targetEndDate || before.endDate === targetEndDate);
   if (!alreadyConfirmed) {
@@ -560,6 +582,7 @@ async function executeRemotePlan(input: {
       updatePendingPayments: plan.updatePendingPayments,
       status,
       ...(targetEndDate ? { endDate: targetEndDate } : {}),
+      ...(input.change.description !== undefined ? { description: input.change.description } : {}),
       nextDueDate:
         (plan.remoteAction === 'RESUME_SUBSCRIPTION' ||
           (input.change.kind === 'RESUME_ALLOCATION' && plan.remoteAction === 'UPDATE_SUBSCRIPTION')) &&
@@ -576,12 +599,16 @@ async function executeRemotePlan(input: {
   if (
     after.deleted ||
     after.valueCents !== expectedRemoteValue ||
+    (input.change.description !== undefined && after.description !== input.change.description) ||
     (status && after.status !== status) ||
     (targetEndDate && after.endDate !== targetEndDate)
   ) {
     throw new BillingAgreementError('REMOTE_OPERATION_UNCERTAIN', 'A atualização da assinatura não pôde ser confirmada.');
   }
-  await updateEligiblePendingPayments({ deps, contaId, plan, payments: paymentsBefore, assertLeaseOwned: input.assertLeaseOwned });
+  await updateEligiblePendingPayments({
+    deps, contaId, plan, payments: paymentsBefore, assertLeaseOwned: input.assertLeaseOwned,
+    ...(input.change.description !== undefined ? { description: input.change.description } : {}),
+  });
   if (plan.remoteAction === 'PAUSE_SUBSCRIPTION') {
     await cancelEligiblePendingPayments({
       deps,

@@ -1,9 +1,9 @@
-import type { PersistedSession } from '@/features/session/types/session';
+import type { AuthContext, PersistedSession } from '@/features/session/types/session';
 
 export type LoginInput = {
   email: string;
   password: string;
-  authContext?: 'OWNER' | 'COLLABORATOR' | 'PORTAL';
+  authContext: AuthContext;
   contaId?: string | null;
   deviceId?: string | null;
   deviceName?: string | null;

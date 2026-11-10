@@ -2,6 +2,7 @@ import { prisma } from '@alusa/database';
 import { convergeStandaloneInstallmentPlanStatus } from '@alusa/lib/services/standalone-installment-plan-status.service';
 import type { PaymentStatus } from '@alusa/asaas';
 import { confirmPublicEventMapOrderPayment } from '../events/confirm-public-event-map-order-payment';
+import { enqueueFinanceSideEffect } from './finance-side-effect-outbox.service';
 import { refundEventTicketSalesByPayment } from '../events/refund-event-ticket-sales-by-payment';
 import {
   cancelPublicEventMapOrderByPayment,
@@ -2085,6 +2086,14 @@ async function handlePaymentWebhookCore(
         if (!reconciled && payload.payment.externalReference?.startsWith('event-map-order:')) {
           throw new Error('EVENT_MAP_PAID_PAYMENT_REQUIRES_RETRY', confirmationError ? { cause: confirmationError } : undefined);
         }
+      }
+      if (confirmed) {
+        await enqueueFinanceSideEffect({
+          contaId,
+          effectType: 'META_EVENT_MAP_PURCHASE',
+          dedupeKey: `${contaId}:META_EVENT_MAP_PURCHASE:${confirmed.orderId}`,
+          payload: { orderId: confirmed.orderId },
+        });
       }
       if (confirmed && incomingChargebackStatus === 'REVERSED') {
         // Only the provider's explicit terminal reversal removes the ticket

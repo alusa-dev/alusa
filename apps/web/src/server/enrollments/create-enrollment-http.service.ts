@@ -182,6 +182,9 @@ export async function createMatriculaHttp(params: {
   if (!allowedRoles.has(auth.role.toUpperCase())) {
     return errorResult(403, 'PERMISSAO_NEGADA', `Usuário com papel "${auth.role}" não tem permissão para criar matrículas.`);
   }
+  if (parsedBody.data.transferenciaOrigemVinculoId && auth.role.toUpperCase() !== 'ADMIN') {
+    return errorResult(403, 'TRANSFERENCIA_REQUER_ADMIN', 'Somente administrador pode formalizar transferência acadêmica.');
+  }
 
   try {
     await assertPlatformAccessForConta({ contaId: auth.contaId, capability: 'ENROLLMENT_WRITE' });

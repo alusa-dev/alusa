@@ -177,6 +177,8 @@ type BaseBillingAgreementChangeInput = {
   paidDecreaseHandling?: PaidDecreaseHandling;
   effectivePolicy: EffectivePolicy;
   effectiveDate: string;
+  /** Optional current family summary propagated only by the enrollment lifecycle. */
+  description?: string;
 };
 
 export type BillingAgreementChangeInput =

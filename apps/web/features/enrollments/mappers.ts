@@ -170,6 +170,7 @@ export function mapMatriculaRecordToResumoDTO(matricula: Record<string, unknown>
         }
       : null,
     isSharedSubscription: Boolean(matricula.isSharedSubscription),
+    taxaCompartilhadaStatus: matricula.taxaCompartilhadaStatus ?? null,
     turma: turma
       ? {
           id: String(turma.id ?? ''),
@@ -453,6 +454,8 @@ export function mapCreateMatriculaDTOToServiceInput(input: {
     planoId: parsed.planoId ?? undefined,
     turmaId: parsed.turmaId ?? undefined,
     comboId: parsed.comboId ?? undefined,
+    transferenciaOrigemVinculoId: parsed.transferenciaOrigemVinculoId,
+    transferenciaMotivo: parsed.transferenciaMotivo,
     responsavelFinanceiroId: parsed.responsavelFinanceiroId ?? undefined,
     modeloId: parsed.modeloId,
     taxaJustificativa: parsed.taxaJustificativa ?? undefined,

@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   outboxMock,
   webhookAsaasMock,
   eventMapOrderMock,
+  cookieConsentMock,
   eventTicketSaleMock,
   eventTicketMock,
   emitBillingNotificationsMock,
@@ -22,7 +23,8 @@ const {
     findMany: vi.fn(),
     updateMany: vi.fn(),
   },
-  eventMapOrderMock: { findFirst: vi.fn() },
+  eventMapOrderMock: { findFirst: vi.fn(), updateMany: vi.fn() },
+  cookieConsentMock: { findFirst: vi.fn() },
   eventTicketSaleMock: { findFirst: vi.fn() },
   eventTicketMock: { count: vi.fn() },
   emitBillingNotificationsMock: vi.fn(),
@@ -37,6 +39,7 @@ vi.mock('@alusa/database', () => ({
     financeWebhookSideEffectOutbox: outboxMock,
     webhookAsaas: webhookAsaasMock,
     eventMapOrder: eventMapOrderMock,
+    cookieConsent: cookieConsentMock,
     eventTicketSale: eventTicketSaleMock,
     eventTicket: eventTicketMock,
   },
@@ -72,6 +75,7 @@ vi.mock('../finance-side-effect-email-gateway', () => ({
 import { FinanceWebhookSideEffectStatus } from '@prisma/client';
 import {
   enqueueBillingNotificationSideEffects,
+  enqueueFinanceSideEffect,
   reconcileMissingBillingNotificationSideEffects,
   processFinanceWebhookSideEffectOutboxEvent,
 } from '../finance-side-effect-outbox.service';
@@ -124,11 +128,223 @@ describe('finance side-effect outbox leases', () => {
       _count: { items: 1 },
     });
     eventTicketMock.count.mockResolvedValue(1);
+    cookieConsentMock.findFirst.mockResolvedValue({ categories: { essential: true, analytics: false, marketing: true, preferences: false } });
     eventTicketSaleMock.findFirst.mockResolvedValue({ status: 'PAID', quantity: 1 });
     outboxMock.updateMany.mockResolvedValue({ count: 1 });
     outboxMock.create.mockResolvedValue({ id: 'effect-1' });
     webhookAsaasMock.findMany.mockResolvedValue([]);
     webhookAsaasMock.updateMany.mockResolvedValue({ count: 1 });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('skips Meta Purchase and clears client user-agent when marketing consent is absent', async () => {
+    const event = {
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'META_EVENT_MAP_PURCHASE',
+      payload: { orderId: 'order-no-consent' },
+      attempts: 0,
+    };
+    outboxMock.findUnique.mockResolvedValue(event);
+    eventMapOrderMock.findFirst.mockResolvedValue({
+      id: 'order-no-consent', contaId: 'conta-a', status: 'CONFIRMED', paymentStatus: 'RECEIVED',
+      totalAmount: 50, paidAt: new Date(), buyerEmail: 'buyer@example.com',
+      metaMarketingConsentAt: null, metaMarketingConsentRevokedAt: null,
+      metaMarketingConsentPolicyVersion: null, metaMarketingClientUserAgent: 'UA',
+      map: { contaId: 'conta-a', publicSlug: 'map_58c37147e01c496f92bc6f5f', status: 'PUBLISHED', publicEnabled: true },
+    });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processFinanceWebhookSideEffectOutboxEvent(event.id);
+
+    expect(result).toEqual({ processed: true, reason: 'meta_purchase_not_eligible' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(eventMapOrderMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'order-no-consent', contaId: 'conta-a' },
+      data: { metaMarketingClientUserAgent: null },
+    }));
+  });
+
+  it('sends an idempotent Meta Purchase form request and removes user-agent after success', async () => {
+    const event = {
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'META_EVENT_MAP_PURCHASE',
+      payload: { orderId: 'order-consented' },
+      attempts: 0,
+    };
+    outboxMock.findUnique.mockResolvedValue(event);
+    eventMapOrderMock.findFirst.mockResolvedValue({
+      id: 'order-consented', contaId: 'conta-a', status: 'CONFIRMED', paymentStatus: 'RECEIVED',
+      totalAmount: 50, paidAt: new Date('2026-11-10T12:00:00Z'), buyerEmail: ' Buyer@Example.com ',
+      metaMarketingConsentAt: new Date(), metaMarketingConsentRevokedAt: null,
+      metaMarketingConsentAnonymousId: 'anonymous-buyer-123',
+      metaMarketingConsentPolicyVersion: '2026-05-27', metaMarketingClientUserAgent: 'UA',
+      map: { contaId: 'conta-a', publicSlug: 'map_58c37147e01c496f92bc6f5f', status: 'PUBLISHED', publicEnabled: true },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubEnv('META_CONVERSIONS_API_ACCESS_TOKEN', 'server-secret');
+    vi.stubEnv('META_GRAPH_API_VERSION', 'v22.0');
+
+    const result = await processFinanceWebhookSideEffectOutboxEvent(event.id);
+
+    expect(result).toEqual({ processed: true });
+    const [url, request] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://graph.facebook.com/v22.0/1081285171574725/events');
+    expect(url).not.toContain('server-secret');
+    expect(request.headers).toEqual({ 'Content-Type': 'application/x-www-form-urlencoded' });
+    const form = new URLSearchParams(String(request.body));
+    expect(form.get('access_token')).toBe('server-secret');
+    const [purchase] = JSON.parse(form.get('data') ?? '[]');
+    expect(purchase).toMatchObject({ event_name: 'Purchase', event_id: 'order-consented', action_source: 'website' });
+    expect(purchase.user_data).toMatchObject({ client_user_agent: 'UA' });
+    expect(purchase.user_data.em[0]).toMatch(/^[a-f0-9]{64}$/);
+    expect(cookieConsentMock.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { anonymousId: 'anonymous-buyer-123', policyVersion: '2026-05-27' },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    }));
+    expect(eventMapOrderMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'order-consented', contaId: 'conta-a' }, data: { metaMarketingClientUserAgent: null },
+    }));
+  });
+
+  it('keeps Meta delivery retryable and redacts response failures', async () => {
+    const event = {
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'META_EVENT_MAP_PURCHASE', payload: { orderId: 'order-retry' }, attempts: 0,
+    };
+    outboxMock.findUnique.mockResolvedValue(event);
+    eventMapOrderMock.findFirst.mockResolvedValue({
+      id: 'order-retry', contaId: 'conta-a', status: 'CONFIRMED', paymentStatus: 'RECEIVED',
+      totalAmount: 50, paidAt: new Date(), buyerEmail: 'buyer@example.com',
+      metaMarketingConsentAt: new Date(), metaMarketingConsentRevokedAt: null,
+      metaMarketingConsentAnonymousId: 'anonymous-buyer-456',
+      metaMarketingConsentPolicyVersion: '2026-05-27', metaMarketingClientUserAgent: 'UA',
+      map: { contaId: 'conta-a', publicSlug: 'map_58c37147e01c496f92bc6f5f', status: 'PUBLISHED', publicEnabled: true },
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 503 })));
+    vi.stubEnv('META_CONVERSIONS_API_ACCESS_TOKEN', 'server-secret');
+    vi.stubEnv('META_GRAPH_API_VERSION', 'v22.0');
+
+    const result = await processFinanceWebhookSideEffectOutboxEvent(event.id);
+
+    expect(result).toEqual({ processed: false, reason: 'Meta Conversions API request failed.' });
+    expect(outboxMock.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: FinanceWebhookSideEffectStatus.PENDING, lastError: 'Meta Conversions API request failed.' }),
+    }));
+    expect(eventMapOrderMock.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('reuses event_id after an ambiguous network result and clears user-agent after exhaustion', async () => {
+    const firstAttempt = {
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'META_EVENT_MAP_PURCHASE', payload: { orderId: 'order-ambiguous' }, attempts: 0,
+    };
+    const secondAttempt = { ...firstAttempt, attempts: 1 };
+    outboxMock.findUnique.mockResolvedValueOnce(firstAttempt).mockResolvedValueOnce(secondAttempt);
+    eventMapOrderMock.findFirst.mockResolvedValue({
+      id: 'order-ambiguous', contaId: 'conta-a', status: 'CONFIRMED', paymentStatus: 'RECEIVED',
+      totalAmount: 50, paidAt: new Date(), buyerEmail: 'buyer@example.com',
+      metaMarketingConsentAt: new Date(), metaMarketingConsentRevokedAt: null,
+      metaMarketingConsentAnonymousId: 'anonymous-ambiguous',
+      metaMarketingConsentPolicyVersion: '2026-05-27', metaMarketingClientUserAgent: 'UA',
+      map: { contaId: 'conta-a', publicSlug: 'map_58c37147e01c496f92bc6f5f', status: 'PUBLISHED', publicEnabled: true },
+    });
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError('network timeout'))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubEnv('META_CONVERSIONS_API_ACCESS_TOKEN', 'server-secret');
+    vi.stubEnv('META_GRAPH_API_VERSION', 'v22.0');
+
+    await expect(processFinanceWebhookSideEffectOutboxEvent(firstAttempt.id)).resolves.toMatchObject({ processed: false });
+    await expect(processFinanceWebhookSideEffectOutboxEvent(secondAttempt.id)).resolves.toEqual({ processed: true });
+    const eventIds = fetchMock.mock.calls.map(([, request]) => {
+      const form = new URLSearchParams(String((request as RequestInit).body));
+      return JSON.parse(form.get('data') ?? '[]')[0].event_id;
+    });
+    expect(eventIds).toEqual(['order-ambiguous', 'order-ambiguous']);
+
+    const exhaustedAttempt = { ...firstAttempt, id: 'effect-exhausted', attempts: 4 };
+    outboxMock.findUnique.mockResolvedValueOnce(exhaustedAttempt);
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 503 }));
+    await processFinanceWebhookSideEffectOutboxEvent(exhaustedAttempt.id);
+    expect(outboxMock.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: FinanceWebhookSideEffectStatus.EXHAUSTED }),
+    }));
+    expect(eventMapOrderMock.updateMany).toHaveBeenLastCalledWith(expect.objectContaining({
+      where: { id: 'order-ambiguous', contaId: 'conta-a' }, data: { metaMarketingClientUserAgent: null },
+    }));
+  });
+
+  it('does not deliver or update an order resolved outside the outbox tenant', async () => {
+    const event = {
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'META_EVENT_MAP_PURCHASE', payload: { orderId: 'order-tenant-b' }, attempts: 0,
+    };
+    outboxMock.findUnique.mockResolvedValue(event);
+    eventMapOrderMock.findFirst.mockResolvedValue(null);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processFinanceWebhookSideEffectOutboxEvent(event.id);
+
+    expect(result).toEqual({ processed: true, reason: 'meta_purchase_not_eligible' });
+    expect(eventMapOrderMock.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'order-tenant-b', contaId: 'conta-a' },
+    }));
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(eventMapOrderMock.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('enqueues duplicate webhook deliveries as one tenant-scoped effect', async () => {
+    const params = {
+      contaId: 'conta-a', effectType: 'META_EVENT_MAP_PURCHASE' as const,
+      dedupeKey: 'conta-a:META_EVENT_MAP_PURCHASE:order-duplicate',
+      payload: { orderId: 'order-duplicate' },
+    };
+    outboxMock.create.mockResolvedValueOnce({ id: 'effect-once' }).mockRejectedValueOnce({ code: 'P2002' });
+
+    const first = await enqueueFinanceSideEffect(params);
+    const duplicate = await enqueueFinanceSideEffect(params);
+
+    expect(first).toEqual({ enqueued: true, skipped: false });
+    expect(duplicate).toEqual({ enqueued: false, skipped: true });
+    expect(outboxMock.create).toHaveBeenCalledTimes(2);
+    expect(outboxMock.create.mock.calls[0]?.[0]?.data).toMatchObject({ contaId: 'conta-a', dedupeKey: params.dedupeKey });
+    expect(outboxMock.create.mock.calls[1]?.[0]?.data?.dedupeKey).toBe(params.dedupeKey);
+  });
+
+  it('skips and clears user-agent when the latest CookieConsent revokes marketing', async () => {
+    const event = {
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'META_EVENT_MAP_PURCHASE', payload: { orderId: 'order-cookie-revoked' }, attempts: 0,
+    };
+    outboxMock.findUnique.mockResolvedValue(event);
+    eventMapOrderMock.findFirst.mockResolvedValue({
+      id: 'order-cookie-revoked', contaId: 'conta-a', status: 'CONFIRMED', paymentStatus: 'RECEIVED',
+      totalAmount: 50, paidAt: new Date(), buyerEmail: 'buyer@example.com',
+      metaMarketingConsentAt: new Date(), metaMarketingConsentRevokedAt: null,
+      metaMarketingConsentAnonymousId: 'anonymous-revoked',
+      metaMarketingConsentPolicyVersion: '2026-05-27', metaMarketingClientUserAgent: 'UA',
+      map: { contaId: 'conta-a', publicSlug: 'map_58c37147e01c496f92bc6f5f', status: 'PUBLISHED', publicEnabled: true },
+    });
+    cookieConsentMock.findFirst.mockResolvedValue({ categories: { essential: true, analytics: false, marketing: false, preferences: false } });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processFinanceWebhookSideEffectOutboxEvent(event.id);
+
+    expect(result).toEqual({ processed: true, reason: 'meta_purchase_not_eligible' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(eventMapOrderMock.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'order-cookie-revoked', contaId: 'conta-a' },
+      data: { metaMarketingClientUserAgent: null },
+    }));
   });
 
   it('usa a mesma chave para eventos Asaas semanticamente equivalentes', async () => {
@@ -217,6 +433,7 @@ describe('finance side-effect outbox leases', () => {
     expect(refundCobrancaMock).toHaveBeenCalledWith({
       paymentId: 'pay-1',
       contaId: 'conta-a',
+      idempotencyKey: event.id,
       value: 60,
       description: 'Estorno por assento revendido - pedido order-1',
     });

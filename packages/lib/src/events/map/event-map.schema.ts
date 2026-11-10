@@ -382,6 +382,9 @@ export const publicCheckoutSchema = z.object({
     (value) => value,
     'Autorize o recebimento pelo WhatsApp para continuar.',
   ),
+  metaMarketingConsent: z.boolean().default(false),
+  metaMarketingConsentAnonymousId: z.string().trim().min(8).max(128).optional().nullable(),
+  metaMarketingClientUserAgent: z.string().max(512).optional().nullable(),
   paymentMethod: z.enum(['PIX', 'CREDIT_CARD', 'BOLETO']),
 });
 

@@ -53,7 +53,7 @@ export function MetaPixelTracker({
 }: {
   publicSlug: string;
   mode: 'public' | 'preview';
-  order: { orderId: string; status: string; paymentStatus?: string | null; totalAmount?: number } | null;
+  order: { orderId: string; status: string; paymentStatus?: string | null; totalAmount?: number; metaMarketingConsentGranted?: boolean } | null;
   step: 'SELECTION' | 'IDENTIFICATION' | 'PAYMENT_METHOD' | 'CONFIRMATION';
 }) {
   const pageViewSent = useRef(false);
@@ -92,6 +92,7 @@ export function MetaPixelTracker({
         initiateCheckoutSent.current = true;
       }
       if (shouldSendMetaPixelPurchase({ publicSlug, mode, orderStatus: order?.status, paymentStatus: order?.paymentStatus })
+        && order?.metaMarketingConsentGranted === true
         && typeof order?.totalAmount === 'number') {
         const key = metaPixelPurchaseDedupeKey(order.orderId);
         const eventId = metaPixelPurchaseEventId(order.orderId);
@@ -124,7 +125,7 @@ export function MetaPixelTracker({
       window.removeEventListener('alusa-meta-pixel-ready', fire);
       window.removeEventListener('alusa-meta-pixel-error', retryPixel);
     };
-  }, [mode, order?.orderId, order?.paymentStatus, order?.status, order?.totalAmount, publicSlug, step]);
+  }, [mode, order?.metaMarketingConsentGranted, order?.orderId, order?.paymentStatus, order?.status, order?.totalAmount, publicSlug, step]);
 
   return null;
 }

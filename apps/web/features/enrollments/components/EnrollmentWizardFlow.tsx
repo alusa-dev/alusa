@@ -23,7 +23,6 @@ import type { WizardContextValue, WizardState } from './wizard/types';
 import type { MatriculaCreatedPayload } from '@/features/enrollments/services/enrollments-service';
 import { useMatriculaSubmit } from '@/hooks/use-matricula-submit';
 import { useMatriculaFamiliarSubmit } from '@/hooks/use-matricula-familiar-submit';
-import { FamilyEnrollmentWizardOutcome } from './FamilyEnrollmentWizardOutcome';
 import type { FamilyEnrollmentOutcome } from './wizard/types';
 import { toast, CustomToast } from '@/components/ui/toast';
 
@@ -35,6 +34,7 @@ interface MatriculaWizardFlowProps {
   variant?: WizardVariant;
   onClose?: () => void;
   onCompleted?: (_payload: MatriculaCreatedPayload) => void;
+  onFamilyCompleted?: (_outcome: FamilyEnrollmentOutcome) => void;
 }
 
 function canAdvanceFromModo(_state: WizardState) {
@@ -143,12 +143,12 @@ export function EnrollmentWizardFlow({
   variant = 'dialog',
   onClose,
   onCompleted,
+  onFamilyCompleted,
 }: MatriculaWizardFlowProps) {
   const prefersReducedMotion = useReducedMotion() ?? false;
   const wizard = useEnrollmentWizard(contaId);
-  const prevOpenRef = useRef<boolean | undefined>(open);
+  const prevOpenRef = useRef<boolean>(open ?? true);
   const prevContaRef = useRef<string | undefined>(contaId);
-  const [familyOutcome, setFamilyOutcome] = useState<FamilyEnrollmentOutcome | null>(null);
   const stepViewportRef = useRef<HTMLDivElement | null>(null);
   const [stepContentElement, setStepContentElement] = useState<HTMLDivElement | null>(null);
   const [stepContentHeight, setStepContentHeight] = useState<number | null>(null);
@@ -193,7 +193,9 @@ export function EnrollmentWizardFlow({
       toast.info('Existe uma tentativa familiar pendente. A confirmação original será reenviada; alterações atuais não serão enviadas.');
     },
     onSuccess: (outcome) => {
-      setFamilyOutcome(outcome);
+      wizard.reset({ contaId: contaId ?? '' });
+      onClose?.();
+      onFamilyCompleted?.(outcome);
     },
     onError: (error) => {
       logClientOperationalEvent('enrollment.family_create.failed', error);
@@ -212,15 +214,14 @@ export function EnrollmentWizardFlow({
 
   useEffect(() => {
     const isOpen = open ?? true;
-    const wasOpen = prevOpenRef.current ?? false;
+    const wasOpen = prevOpenRef.current;
     const contaChangedWhileOpen = isOpen && prevContaRef.current !== contaId;
     if ((isOpen && !wasOpen) || contaChangedWhileOpen) {
-      setFamilyOutcome(null);
       wizard.reset({ contaId: contaId ?? '' });
     }
     prevOpenRef.current = isOpen;
     prevContaRef.current = contaId;
-  }, [open, contaId, wizard]);
+  }, [open, contaId, wizard.reset]);
 
   const renderStep = useCallback(
     (ctx: WizardContextValue) => {
@@ -318,23 +319,6 @@ export function EnrollmentWizardFlow({
     if (wizard.step === 'modo') return;
     wizard.goBack();
   }, [wizard]);
-
-  if (familyOutcome) {
-    const firstSuccess = familyOutcome.results.find((result) => result.status === 'success');
-    return (
-      <FamilyEnrollmentWizardOutcome
-        onClose={() => {
-          if (firstSuccess) {
-            onCompleted?.({
-              matricula: { id: firstSuccess.matriculaId ?? '' },
-            } as unknown as MatriculaCreatedPayload);
-          }
-          setFamilyOutcome(null);
-          onClose?.();
-        }}
-      />
-    );
-  }
 
   return (
     <div

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, Pressable, StyleSheet, View, type TextInput } from 'react-native';
+import { Keyboard, Pressable, StyleSheet, View, type TextInputInstance } from 'react-native';
 import { router } from 'expo-router';
 import {
   AcademicCapIcon,
@@ -43,7 +43,7 @@ const searchItems = [
 type SearchItem = (typeof searchItems)[number];
 
 export default function SearchScreen() {
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<TextInputInstance>(null);
   const [search, setSearch] = useState('');
   const [history, setHistory] = useState<string[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);

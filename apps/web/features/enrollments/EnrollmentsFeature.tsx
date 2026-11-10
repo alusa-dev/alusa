@@ -20,6 +20,8 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
+  DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
 import TableLayout from '@/components/layout/TableLayout';
@@ -35,6 +37,7 @@ import useCurrentUser from '@/hooks/use-current-user';
 import { useMatriculas } from './hooks/use-enrollments';
 import { canCancelEnrollment } from './enrollment-action-eligibility';
 import {
+  getEnrollmentCancellationSuccessMessage,
   getEnrollmentActionErrorMessage,
   getEnrollmentPendingMessage,
   getEnrollmentWarningMessage,
@@ -42,12 +45,12 @@ import {
 import {
   pauseMatriculaRequest,
   reactivateMatriculaRequest,
+  regularizePauseRequest,
   updateMatriculaStatusRequest,
   resendCobrancaRequest,
   type MatriculaListItem,
   type MatriculaStatus,
   type MatriculaCreatedPayload,
-  type MatriculaStatusSyncData,
   type ResendCobrancaData,
   type MatriculaCobrancaStatus,
   type PausarMatriculaInput,
@@ -58,7 +61,7 @@ import dynamic from 'next/dynamic';
 const EnrollmentWizardDialog = dynamic(() => import('@/features/enrollments/components/EnrollmentWizardDialog'), {
   ssr: false,
 });
-import { EnrollmentDetailsDialog } from './components/EnrollmentDetailsDialog';
+import { PauseRegularizationDialog } from './components/PauseRegularizationDialog';
 import { PauseEnrollmentDialog } from '@/features/renewals/components/PauseEnrollmentDialog';
 import { ReactivateEnrollmentDialog } from '@/features/renewals/components/ReactivateEnrollmentDialog';
 import {
@@ -75,6 +78,7 @@ import { Badge, type StatusType } from '@/components/ui/badge';
 import { DocumentTextIcon } from '@heroicons/react/24/outline';
 import { PersonAvatar } from '@/components/shared/PersonAvatar';
 import { usePlatformBillingWriteAccess } from '@/hooks/use-platform-billing-write-access';
+import type { FamilyEnrollmentOutcome } from './components/wizard/types';
 
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
@@ -167,7 +171,8 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
   const [cancelTarget, setCancelTarget] = useState<MatriculaListItem | null>(null);
   const [pauseTarget, setPauseTarget] = useState<MatriculaListItem | null>(null);
   const [reactivateTarget, setReactivateTarget] = useState<MatriculaListItem | null>(null);
-  const [detailsTarget, setDetailsTarget] = useState<MatriculaListItem | null>(null);
+  const [regularizePauseTarget, setRegularizePauseTarget] = useState<MatriculaListItem | null>(null);
+  const [regularizingPause, setRegularizingPause] = useState(false);
   const [sortOrder, setSortOrder] = useState<SortOrderEF>('DESC');
   const [actionLoading, setActionLoading] = useState(false);
   const [taxaDialogOpen, setTaxaDialogOpen] = useState(false);
@@ -201,19 +206,6 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
       turmaId: initialTurmaId,
       classRosterPeriod: initialTurmaId && statusValue === 'FUTURAS' ? 'FUTURE' : undefined,
     });
-
-  const composeStatusToast = useCallback(
-    (baseDescription: string, info: MatriculaStatusSyncData, extras: string[] = []) => {
-      const expectedMessage = info.paymentSync.expectedWebhooks.length
-        ? 'As cobranças podem levar alguns instantes para aparecer atualizadas.'
-        : 'As cobranças serão atualizadas automaticamente.';
-      const warningMessages = info.paymentSync.warnings.map(getEnrollmentWarningMessage);
-      return [baseDescription, ...extras, ...warningMessages, expectedMessage]
-        .filter((part) => part && part.trim().length > 0)
-        .join(' ');
-    },
-    [],
-  );
 
   const handleCopyPix = useCallback(async (pixValue: string) => {
     if (!pixValue) return;
@@ -370,6 +362,38 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
     [actionLoading, reload],
   );
 
+  const handleRegularizarPausa = useCallback(async (reason: string) => {
+    if (!regularizePauseTarget || regularizingPause) return;
+    try {
+      setRegularizingPause(true);
+      await regularizePauseRequest({
+        id: regularizePauseTarget.id,
+        payload: { motivo: reason },
+      });
+      toast.custom((t) => (
+        <CustomToast
+          variant="success"
+          title="Prazo da pausa regularizado"
+          description="A matrícula continua pausada. Você pode decidir separadamente quando retomar o vínculo."
+          onClose={() => toast.dismiss(t)}
+        />
+      ));
+      setRegularizePauseTarget(null);
+      await reload();
+    } catch (error) {
+      toast.custom((t) => (
+        <CustomToast
+          variant="error"
+          title="Não foi possível regularizar a pausa"
+          description={error instanceof Error ? error.message : 'Confira a vigência do vínculo e tente novamente.'}
+          onClose={() => toast.dismiss(t)}
+        />
+      ));
+    } finally {
+      setRegularizingPause(false);
+    }
+  }, [regularizePauseTarget, regularizingPause, reload]);
+
   const handleCancelarMatricula = useCallback(
     async (matricula: MatriculaListItem) => {
       if (actionLoading) return;
@@ -392,10 +416,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
           await reload();
           return;
         }
-        const description = composeStatusToast(
-          'A matrícula foi cancelada.',
-          response.data,
-        );
+        const description = getEnrollmentCancellationSuccessMessage(response.data.paymentSync.warnings);
         toast.custom((t) => (
           <CustomToast
             variant="success"
@@ -419,7 +440,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         setCancelTarget(null);
       }
     },
-    [actionLoading, composeStatusToast, reload],
+    [actionLoading, reload],
   );
 
 
@@ -607,6 +628,9 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
           }
 
           if (!taxaCobranca) {
+            if (m.taxaCompartilhadaStatus) {
+              return <Badge status={m.taxaCompartilhadaStatus as StatusType} size="sm" />;
+            }
             return <span className="text-xs text-gray-500">Taxa não gerada</span>;
           }
 
@@ -762,7 +786,7 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
                     <EyeIcon className="mr-2 h-4 w-4" />
                     Ver detalhes
                   </DropdownMenuItem>
-                
+
                 {m.contratos.length > 0 ? (
                   <>
                     <DropdownMenuItem onClick={() => router.push(`/contracts/${m.contratos[0].id}`)}>
@@ -797,6 +821,18 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
                     >
                       <PlayIcon className="mr-2 h-4 w-4" />
                       Retomar matrícula
+                    </DropdownMenuItem>
+                  )}
+                  {isPausada && user?.role === 'ADMIN' && (
+                    <DropdownMenuItem
+                      onSelect={(event) => {
+                        event.preventDefault();
+                        setRegularizePauseTarget(m);
+                      }}
+                      data-testid={`matricula-action-regularizar-pausa-${m.id}`}
+                      disabled={actionLoading || regularizingPause || !canWrite || billingLoading}
+                    >
+                      Regularizar prazo da pausa
                     </DropdownMenuItem>
                   )}
                   {podeSerCancelada && (
@@ -845,10 +881,14 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
     ],
     [
       actionLoading,
+      billingLoading,
+      canWrite,
       formatTaxaStatus,
       initialTurmaId,
+      regularizingPause,
       router,
       statusValue,
+      user?.role,
     ],
   );
 
@@ -969,6 +1009,28 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
           ));
           reload();
         }}
+        onFamilyCreated={(outcome: FamilyEnrollmentOutcome) => {
+          const billingNeedsAttention = ['PARCIAL', 'FALHO', 'RESULTADO_INCERTO', 'CANCELADO'].includes(
+            outcome.billingProvisionStatus,
+          );
+          const billingIsPending = ['PENDENTE', 'PROCESSANDO'].includes(outcome.billingProvisionStatus);
+
+          toast.custom((t) => (
+            <CustomToast
+              variant={billingNeedsAttention ? 'warning' : 'success'}
+              title={billingNeedsAttention ? 'Matrículas criadas com pendência' : 'Matrículas familiares criadas'}
+              description={
+                billingNeedsAttention
+                  ? 'As matrículas e os contratos foram registrados, mas algumas cobranças precisam de conferência.'
+                  : billingIsPending
+                    ? 'As matrículas e os contratos foram registrados. As cobranças estão sendo atualizadas e podem levar alguns instantes para refletir a mudança.'
+                    : 'As matrículas e os contratos foram registrados.'
+              }
+              onClose={() => toast.dismiss(t)}
+            />
+          ));
+          reload();
+        }}
       />
 
       {/* Dialog de confirmação de cancelamento */}
@@ -1025,6 +1087,20 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
         }}
       />
 
+      <PauseRegularizationDialog
+        open={Boolean(regularizePauseTarget)}
+        matriculaId={regularizePauseTarget?.id ?? null}
+        alunoNome={regularizePauseTarget?.aluno.nome ?? 'aluno'}
+        submitting={regularizingPause}
+        canSubmit={canWrite && !billingLoading}
+        onOpenChange={(open) => {
+          if (!open && !regularizingPause) {
+            setRegularizePauseTarget(null);
+          }
+        }}
+        onConfirm={handleRegularizarPausa}
+      />
+
       {/* Dialog de confirmação de exclusão */}
       <ActionConfirmationDialog
         open={Boolean(deleteTarget)}
@@ -1051,16 +1127,6 @@ export default function MatriculasFeature({ initialTurmaId }: MatriculasFeatureP
           await handleDeletarMatricula(deleteTarget);
         }}
       />
-
-      {/* Dialog de detalhes da matrícula */}
-      {detailsTarget && (
-        <EnrollmentDetailsDialog
-          open={!!detailsTarget}
-          matricula={detailsTarget}
-          onOpenChange={(open) => !open && setDetailsTarget(null)}
-          onRefresh={() => void reload()}
-        />
-      )}
 
       {/* Dialog para taxa de matrícula - Design Refatorado */}
       <Dialog

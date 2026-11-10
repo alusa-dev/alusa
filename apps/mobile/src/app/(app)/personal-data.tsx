@@ -99,7 +99,14 @@ export default function PersonalDataScreen() {
     });
   }, [editing, hasChanges, save]);
 
-  useUnsavedChangesPrompt({ hasChanges, saving, onSave: save });
+  const discardChanges = useCallback(() => {
+    if (!profile) return;
+    setForm(toForm(profile));
+    setEditing(false);
+    setSaveError(null);
+  }, [profile]);
+
+  useUnsavedChangesPrompt({ hasChanges, saving, onSave: save, onDiscard: discardChanges });
 
   function update<K extends keyof PersonalForm>(key: K, value: PersonalForm[K]) {
     setForm((current) => (current ? { ...current, [key]: value } : current));

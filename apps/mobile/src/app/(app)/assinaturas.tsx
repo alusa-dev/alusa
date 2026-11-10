@@ -96,7 +96,7 @@ export default function SubscriptionsScreen() {
         renderItem={({ item }) => <SubscriptionCard item={item} onPress={() => router.push({ pathname: '/(app)/assinaturas/[subscriptionId]', params: { subscriptionId: item.id } })} />}
         ListHeaderComponent={header}
         ListEmptyComponent={loading ? <SubscriptionsSkeleton /> : error ? <ErrorState title="Não foi possível carregar" message={error} actionLabel="Tentar novamente" onAction={() => void loadSubscriptions()} /> : <EmptyState title="Nenhuma assinatura encontrada" message={search || statusFilter !== 'ALL' ? 'Revise a busca ou o filtro e tente novamente.' : 'As assinaturas da conta aparecerão aqui quando forem criadas.'} />}
-        ListFooterComponent={loadingMore ? <View style={styles.footer}><ActivityIndicator color={colors.brand} /><AppText variant="small" tone="muted">Carregando mais assinaturas...</AppText></View> : null}
+        ListFooterComponent={loadingMore ? <View style={styles.footer}><ActivityIndicator color={colors.brand} /><AppText variant="small" tone="muted">Carregando mais assinaturas...</AppText></View> : undefined}
         contentContainerStyle={styles.listContent}
         onEndReached={() => void loadMore()}
         onEndReachedThreshold={0.45}

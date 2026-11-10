@@ -54,6 +54,8 @@ function canonicalSnapshot(input: CriarMatriculaInput) {
     alunoId: input.alunoId,
     turmaId: input.turmaId ?? null,
     comboId: input.comboId ?? null,
+    transferenciaOrigemVinculoId: input.transferenciaOrigemVinculoId ?? null,
+    transferenciaMotivo: input.transferenciaMotivo ?? null,
     planoId: input.planoId ?? null,
     responsavelFinanceiroId: input.responsavelFinanceiroId ?? null,
     dataInicio: input.dataInicio.toISOString(),

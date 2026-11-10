@@ -68,6 +68,13 @@ describe('validarElegibilidadeRematricula', () => {
     expect(result).toEqual({ success: false, error: 'STATUS_INVALIDO' });
   });
 
+  it('só aceita encerramento natural quando a continuidade imediata foi comprovada', () => {
+    expect(validarElegibilidadeRematricula({ status: 'ENCERRADA', contratoExpirado: true, diasContratoExpirado: 4 }))
+      .toEqual({ success: false, error: 'STATUS_INVALIDO' });
+    expect(validarElegibilidadeRematricula({ status: 'ENCERRADA', contratoExpirado: true, diasContratoExpirado: 4, continuidadeImediataComprovada: true }))
+      .toEqual({ success: true });
+  });
+
   it('preserva bloqueio de contrato expirado quando a chamada nao informa os dias', () => {
     const result = validarElegibilidadeRematricula({
       status: 'ATIVA',

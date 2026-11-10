@@ -253,6 +253,7 @@ export interface RematriculaProcessSummary {
   comunicacoes: RematriculaCommunicationSummary[];
   createdAt: string;
   updatedAt: string;
+  cancellation?: { reason: string | null; cancelledAt: string | null; remoteStatus: string | null } | null;
 }
 
 export interface RematriculaCancelResult {
@@ -617,6 +618,18 @@ function normalizeProcess(raw: unknown): RematriculaProcessSummary {
     comunicacoes: Array.isArray(record.comunicacoes)
       ? (record.comunicacoes as RematriculaCommunicationSummary[])
       : [],
+    cancellation: (() => {
+      const cancellation = record.cancellation && typeof record.cancellation === 'object'
+        ? (record.cancellation as Record<string, unknown>)
+        : null;
+      return cancellation
+        ? {
+            reason: cancellation.reason == null ? null : String(cancellation.reason),
+            cancelledAt: parseDate(cancellation.cancelledAt),
+            remoteStatus: cancellation.remoteStatus == null ? null : String(cancellation.remoteStatus),
+          }
+        : null;
+    })(),
     createdAt: parseDate(record.createdAt) ?? new Date().toISOString(),
     updatedAt: parseDate(record.updatedAt) ?? new Date().toISOString(),
   };
@@ -977,6 +990,7 @@ export async function previewIndividualRematriculaRequest(
       }],
       effectiveAt: input.dataInicio,
       targetContractEndsAt: input.dataFimContrato,
+      contractModelId: input.contractModelId ?? null,
       financialTerms: {
         paymentMethod: input.formaPagamento ? normalizePaymentMethodForApi(input.formaPagamento) : null,
         enrollmentFeePaymentMethod: input.formaPagamentoTaxa ? normalizePaymentMethodForApi(input.formaPagamentoTaxa) : null,

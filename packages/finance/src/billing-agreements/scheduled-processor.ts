@@ -19,7 +19,36 @@ type ScheduledRemoteResult = {
   remoteStatus: string | null;
   validFrom: Date | null;
   validUntil: Date | null;
+  description?: string;
 };
+
+function requestedFamilyDescription(operation: { requestPayload: Prisma.JsonValue | null }): string | null {
+  const payload = operation.requestPayload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload) || !('description' in payload)) return null;
+  const description = payload.description;
+  return typeof description === 'string' && /^(Plano familiar|Combo familiar)\b/.test(description)
+    ? description
+    : null;
+}
+
+async function resolveScheduledFamilyDescription(input: {
+  contaId: string;
+  familyId: string;
+  enrollmentIds: string[];
+}): Promise<string> {
+  const family = await prisma.matriculaFamiliar.findFirst({
+    where: { id: input.familyId, contaId: input.contaId },
+    select: {
+      items: {
+        where: { matriculaId: { in: input.enrollmentIds } },
+        orderBy: { orderIndex: 'asc' },
+        select: { matricula: { select: { aluno: { select: { nome: true } } } } },
+      },
+    },
+  });
+  const names = family?.items.map((item) => item.matricula.aluno.nome).filter(Boolean) ?? [];
+  return (names.length > 0 ? `Plano familiar · ${names.join(', ')}` : 'Plano familiar').slice(0, 500);
+}
 
 function money(value: number) {
   return Number((value / 100).toFixed(2));
@@ -172,6 +201,20 @@ export async function processDueBillingAgreementChanges(input?: {
           ? null
           : new Date(Math.max(...relevantAllocations.map((allocation) => allocation.validUntil!.getTime())));
         const cancelling = operation.type === 'CANCEL' && agreement.id === operation.sourceAgreementId;
+        let description: string | undefined;
+        if (requestedFamilyDescription(operation) && !cancelling && agreement.asaasSubscriptionId) {
+          const standalone = await prisma.standaloneSubscription.findFirst({
+            where: { contaId: operation.contaId, billingAgreementId: agreement.id },
+            select: { familyGroupId: true },
+          });
+          if (standalone?.familyGroupId) {
+            description = await resolveScheduledFamilyDescription({
+              contaId: operation.contaId,
+              familyId: standalone.familyGroupId,
+              enrollmentIds: effectiveAllocations.map((allocation) => allocation.matriculaId),
+            });
+          }
+        }
         let resultingSubscriptionId = agreement.asaasSubscriptionId;
         let remoteStatus = agreement.remoteStatus;
         if (agreement.asaasSubscriptionId) {
@@ -212,6 +255,7 @@ export async function processDueBillingAgreementChanges(input?: {
               status,
               ...(resumeNextDueDate ? { nextDueDate: resumeNextDueDate } : {}),
               ...(targetEndDate ? { endDate: targetEndDate } : {}),
+              ...(description ? { description } : {}),
             });
             await heartbeat.assertOwned();
             await assertOperationLeaseOwned();
@@ -223,7 +267,8 @@ export async function processDueBillingAgreementChanges(input?: {
               confirmed.deleted ||
               confirmed.status !== status ||
               (targetCents > 0 && confirmed.valueCents !== targetCents) ||
-              (targetEndDate && confirmed.endDate !== targetEndDate)
+              (targetEndDate && confirmed.endDate !== targetEndDate) ||
+              (description && confirmed.description !== description)
             ) {
               throw new Error('RESULTADO_REMOTO_AGENDADO_NAO_CONFIRMADO');
             }
@@ -240,6 +285,7 @@ export async function processDueBillingAgreementChanges(input?: {
           remoteStatus,
           validFrom,
           validUntil,
+          ...(description ? { description } : {}),
         });
       }
 
@@ -249,6 +295,15 @@ export async function processDueBillingAgreementChanges(input?: {
         await heartbeat.assertOwned();
         await assertOperationLeaseOwned();
         for (const result of remoteResults) {
+          if (result.description && !result.cancelling && result.resultingSubscriptionId) {
+            await tx.standaloneSubscription.updateMany({
+              where: {
+                contaId: operation.contaId,
+                billingAgreementId: result.agreement.id,
+              },
+              data: { description: result.description },
+            });
+          }
           await tx.billingAllocation.updateMany({
             where: { contaId: operation.contaId, agreementId: result.agreement.id, status: 'SCHEDULED', validFrom: { lte: effectiveAt } },
             data: { status: 'ACTIVE' },

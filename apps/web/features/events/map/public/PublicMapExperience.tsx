@@ -59,6 +59,8 @@ import type { EventMapDocument } from '@alusa/domain';
 
 import { formatCpfCnpjBR, formatPhoneBR, isValidCpfCnpjBR, isValidPhoneBR, onlyDigits } from '@/lib/formatters';
 import { MetaPixelTracker } from './MetaPixelTracker';
+import { getStoredCookieConsentAnonymousId } from '@/lib/privacy/cookie-consent-anonymous-id';
+import { hasSyncedMarketingCookieConsent } from '@/lib/privacy/cookie-consent-sync';
 
 type PublicSeat = PublicMapViewModel['seats'][number];
 export function reconcilePublicMapSeatSelection<T extends { id: string; status: string }>(
@@ -77,6 +79,7 @@ type PublicMapOrderState = {
   status: string;
   paymentStatus?: string | null;
   totalAmount?: number;
+  metaMarketingConsentGranted?: boolean;
   refundRequestUrl?: string | null;
   ticketFulfillmentLastError?: string | null;
   ticketFulfillmentStatus: 'PENDING' | 'ISSUED' | 'FAILED' | 'REQUIRES_RECONCILIATION';
@@ -152,6 +155,7 @@ export function PublicMapExperience({
   const [buyerPhone, setBuyerPhone] = useState('');
   const [buyerPhoneConfirmation, setBuyerPhoneConfirmation] = useState('');
   const [whatsappConsent, setWhatsappConsent] = useState(false);
+  const [metaMarketingConsent, setMetaMarketingConsent] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<'PIX' | 'CREDIT_CARD' | 'BOLETO'>(
     initialOrder?.paymentMethod ?? 'PIX',
   );
@@ -399,6 +403,14 @@ export function PublicMapExperience({
         }),
       );
 
+      let marketingCookieConsent = false;
+      const consentAnonymousId = getStoredCookieConsentAnonymousId();
+      try {
+        marketingCookieConsent = hasSyncedMarketingCookieConsent(
+          JSON.parse(localStorage.getItem('alusa.cookie-consent.v1') ?? 'null'),
+        );
+      } catch { /* Consent must be current and synced before Meta sharing. */ }
+
       const checkout = await parseApiResponse<{
         orderId: string;
         accessToken: string;
@@ -407,6 +419,7 @@ export function PublicMapExperience({
         status: string;
         paymentStatus?: string | null;
         totalAmount: number;
+        metaMarketingConsentGranted: boolean;
         ticketFulfillmentStatus: 'PENDING' | 'ISSUED' | 'FAILED' | 'REQUIRES_RECONCILIATION';
         expiresAt: string;
         statusUrl?: string | null;
@@ -426,6 +439,8 @@ export function PublicMapExperience({
             buyerDocument: onlyDigits(buyerDocument),
             buyerPhone: onlyDigits(buyerPhone),
             whatsappConsent,
+            metaMarketingConsent: metaMarketingConsent && marketingCookieConsent && Boolean(consentAnonymousId),
+            metaMarketingConsentAnonymousId: metaMarketingConsent && marketingCookieConsent ? consentAnonymousId : null,
             paymentMethod,
           }),
         }),
@@ -529,6 +544,7 @@ export function PublicMapExperience({
           status: string;
           paymentStatus: string | null;
           totalAmount: number;
+          metaMarketingConsentGranted: boolean;
           refundRequestUrl: string | null;
           ticketFulfillmentLastError: string | null;
           ticketFulfillmentStatus: 'PENDING' | 'ISSUED' | 'FAILED' | 'REQUIRES_RECONCILIATION';
@@ -549,6 +565,7 @@ export function PublicMapExperience({
                 status: status.status,
                 paymentStatus: status.paymentStatus,
                 totalAmount: status.totalAmount,
+                metaMarketingConsentGranted: status.metaMarketingConsentGranted,
                 refundRequestUrl: status.refundRequestUrl,
                 ticketFulfillmentLastError: status.ticketFulfillmentLastError,
                 ticketFulfillmentStatus: status.ticketFulfillmentStatus,
@@ -1091,6 +1108,16 @@ export function PublicMapExperience({
                           </div>
                         </div>
                       </InfoCallout>
+                      <label className="flex items-start gap-2 text-sm leading-5 text-slate-600">
+                        <input
+                          id="public-map-marketing-consent"
+                          type="checkbox"
+                          checked={metaMarketingConsent}
+                          onChange={(event) => setMetaMarketingConsent(event.target.checked)}
+                          className="mt-0.5 h-4 w-4 shrink-0 accent-[#3e1f63]"
+                        />
+                        <span>Autorizo o uso dos meus dados para mensuração de compras e anúncios da Alusa e desta instituição no Meta. Opcional; posso comprar sem aceitar.</span>
+                      </label>
                     </div>
                   </div>
                 </div>

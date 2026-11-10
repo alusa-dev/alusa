@@ -39,6 +39,11 @@ if (!process.env.DATABASE_URL && process.env.DATABASE_URL_TEST) {
 
 const port = process.env.PLAYWRIGHT_PORT ?? '3001';
 const baseURL = `http://localhost:${port}`;
+const asaasStubEnabled = process.env.E2E_ASAAS_STUB === 'true';
+const asaasStubPort = process.env.E2E_ASAAS_STUB_PORT ?? '9443';
+const asaasStubHealthPort = process.env.E2E_ASAAS_STUB_HEALTH_PORT ?? '9444';
+const asaasStubUrl = `https://127.0.0.1:${asaasStubPort}/v3/`;
+const asaasStubCertificate = path.resolve(configDir, 'e2e/fixtures/asaas-stub/localhost-cert.pem');
 const useProductionServer = process.env.E2E_SERVER_MODE === 'production';
 const configuredPlaywrightHeap = process.env.PLAYWRIGHT_NODE_MAX_OLD_SPACE_SIZE;
 const nodeMaxOldSpaceSize = /^\d+$/.test(configuredPlaywrightHeap ?? '')
@@ -63,7 +68,19 @@ export default defineConfig({
     viewport: { width: 1280, height: 720 },
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
-  webServer: process.env.SKIP_WEB_SERVER === 'true' ? undefined : {
+  webServer: process.env.SKIP_WEB_SERVER === 'true' ? undefined : [
+    ...(asaasStubEnabled ? [{
+      command: 'node e2e/asaas-stub-server.mjs',
+      url: `http://127.0.0.1:${asaasStubHealthPort}/health`,
+      timeout: 15_000,
+      reuseExistingServer: false,
+      env: {
+        E2E_ASAAS_STUB: 'true',
+        E2E_ASAAS_STUB_PORT: asaasStubPort,
+        E2E_ASAAS_STUB_HEALTH_PORT: asaasStubHealthPort,
+      },
+    }] : []),
+    {
       command:
         'node -e "require(\'fs\').rmSync(process.env.NEXT_DIST_DIR || \'.next\', { recursive: true, force: true })" && ' +
         'pnpm -C ../.. prisma:generate && ' +
@@ -91,8 +108,15 @@ export default defineConfig({
       NEXTAUTH_URL: baseURL,
       NEXTAUTH_SECRET: process.env.NEXTAUTH_SECRET ?? 'testsecret',
       CRON_SECRET: process.env.CRON_SECRET ?? 'test-cron-secret',
-      ENCRYPTION_KEY: process.env.ENCRYPTION_KEY ?? '',
-      NEXT_DIST_DIR: '.next-playwright',
+      ENCRYPTION_KEY: process.env.ENCRYPTION_KEY ?? (asaasStubEnabled ? '0'.repeat(64) : ''),
+      ASAAS_API_KEY: asaasStubEnabled ? 'E2E_SYNTHETIC_ASAAS_KEY' : 'E2E_BLOCKED_NO_PROVIDER_CREDENTIAL',
+      ASAAS_BASE_URL: asaasStubEnabled ? asaasStubUrl : 'https://127.0.0.1:1/v3',
+      ...(asaasStubEnabled ? {
+        E2E_ASAAS_STUB: 'true',
+        E2E_ASAAS_STUB_PORT: asaasStubPort,
+        NODE_EXTRA_CA_CERTS: asaasStubCertificate,
+      } : {}),
+      NEXT_DIST_DIR: process.env.NEXT_DIST_DIR ?? '.next-playwright',
       ...(useProductionServer ? {
         RLS_RUNTIME_ENABLED: process.env.RLS_RUNTIME_ENABLED ?? 'true',
         DATABASE_RLS_URL: process.env.DATABASE_RLS_URL ?? '',
@@ -113,5 +137,6 @@ export default defineConfig({
         E2E_REDIS_EMULATOR: process.env.E2E_REDIS_EMULATOR ?? 'false',
       } : {}),
     },
-  },
+    },
+  ],
 });

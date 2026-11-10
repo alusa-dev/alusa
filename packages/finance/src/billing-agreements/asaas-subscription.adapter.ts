@@ -50,6 +50,7 @@ function mapSubscription(subscription: AsaasSubscription): AsaasSubscriptionSnap
     endDate: subscription.endDate ?? null,
     externalReference: subscription.externalReference ?? null,
     deleted: subscription.deleted,
+    description: subscription.description ?? null,
   };
 }
 
@@ -61,6 +62,7 @@ function mapPayment(payment: AsaasPayment): AsaasSubscriptionPaymentSnapshot {
     dueDate: payment.dueDate,
     billingType: payment.billingType,
     deleted: payment.deleted ?? false,
+    description: payment.description ?? null,
   };
 }
 
@@ -146,6 +148,7 @@ export function createAsaasBillingAgreementPort(): AsaasSubscriptionPort {
           status: input.status,
           nextDueDate: input.nextDueDate,
           endDate: input.endDate,
+          description: input.description,
         },
         { contaId: input.contaId },
       );
@@ -168,6 +171,7 @@ export function createAsaasBillingAgreementPort(): AsaasSubscriptionPort {
           value: centsToDecimal(input.valueCents),
           billingType: input.billingType,
           dueDate: input.dueDate,
+          description: input.description,
         },
         { contaId: input.contaId },
       );

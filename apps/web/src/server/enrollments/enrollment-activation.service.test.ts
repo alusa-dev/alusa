@@ -38,6 +38,7 @@ describe('activateEnrollmentAtContractStart', () => {
         }),
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
+      matriculaVinculoAcademico: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     };
   });
 
@@ -80,6 +81,10 @@ describe('activateEnrollmentAtContractStart', () => {
       data: { status: 'ATIVA' },
     });
     expect(mocks.tx.matricula.updateMany.mock.calls[0][0].data).not.toHaveProperty('taxaStatus');
+    expect(mocks.tx.matriculaVinculoAcademico.updateMany).toHaveBeenCalledWith({
+      where: { contaId: 'conta-1', matriculaId: 'mat-1', vigenciaIniciadaEm: null },
+      data: { vigenciaIniciadaEm: expect.any(Date) },
+    });
     expect(mocks.assertStudentCapacity).toHaveBeenCalledWith(expect.objectContaining({
       tx: mocks.tx,
       contaId: 'conta-1',
@@ -99,6 +104,46 @@ describe('activateEnrollmentAtContractStart', () => {
     await expect(activateEnrollmentAtContractStart({ contaId: 'conta-1', matriculaId: 'mat-1' }))
       .resolves.toEqual({ action: 'KEEP', reason: 'FEE_NOT_PAID' });
     expect(mocks.tx.matricula.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('não efetiva matrícula futura nem inicia a vigência acadêmica', async () => {
+    const futureStart = new Date();
+    futureStart.setUTCDate(futureStart.getUTCDate() + 5);
+    mocks.tx.matricula.findFirst.mockResolvedValueOnce({
+      alunoId: 'aluno-1', status: 'AGUARDANDO_CONFIRMACAO', taxaIsenta: true,
+      taxaMatricula: 0, taxaStatus: 'ISENTO', dataInicio: futureStart,
+    });
+
+    await expect(activateEnrollmentAtContractStart({ contaId: 'conta-1', matriculaId: 'mat-1' }))
+      .resolves.toEqual({ action: 'KEEP', reason: 'STATUS_NOT_WAITING_FOR_START' });
+    expect(mocks.tx.matricula.updateMany).not.toHaveBeenCalled();
+    expect(mocks.tx.matriculaVinculoAcademico.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('preenche a vigência uma vez e trata replay após ativação como idempotente', async () => {
+    const dueEnrollment = {
+      alunoId: 'aluno-1',
+      status: 'AGUARDANDO_CONFIRMACAO',
+      taxaIsenta: true,
+      taxaMatricula: 0,
+      taxaStatus: 'ISENTO',
+      dataInicio: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    };
+    mocks.tx.matricula.findFirst
+      .mockResolvedValueOnce(dueEnrollment)
+      .mockResolvedValueOnce({ ...dueEnrollment, status: 'ATIVA' });
+
+    await expect(activateEnrollmentAtContractStart({ contaId: 'conta-1', matriculaId: 'mat-1' }))
+      .resolves.toEqual({ action: 'TRANSITION', targetStatus: 'ATIVA' });
+    await expect(activateEnrollmentAtContractStart({ contaId: 'conta-1', matriculaId: 'mat-1' }))
+      .resolves.toEqual({ action: 'KEEP', reason: 'STATUS_NOT_WAITING_FOR_START' });
+
+    expect(mocks.tx.matricula.updateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.tx.matriculaVinculoAcademico.updateMany).toHaveBeenCalledTimes(1);
+    expect(mocks.tx.matriculaVinculoAcademico.updateMany).toHaveBeenCalledWith({
+      where: { contaId: 'conta-1', matriculaId: 'mat-1', vigenciaIniciadaEm: null },
+      data: { vigenciaIniciadaEm: expect.any(Date) },
+    });
   });
 
   it('não muda estado terminal e mantém o escopo por conta', async () => {

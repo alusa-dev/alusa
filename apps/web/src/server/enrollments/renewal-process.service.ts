@@ -3,6 +3,11 @@ import { createHash } from 'crypto';
 import { Prisma, StatusMatricula, type PrismaClient } from '@prisma/client';
 import {
   buildRenewalPreview,
+  classifyEnrollment,
+  normalizeAcademicPeriodLabel,
+  inferAcademicPeriodFromStartForKnownTarget,
+  inferAcademicPeriodFromDateRange,
+  areAcademicPeriodsImmediatelyAdjacent,
   evaluateRenewalActivation,
   validarConflitosRematricula,
   validarDatasRematricula,
@@ -20,6 +25,7 @@ import {
   isAcademicDateInFuture,
 } from '@alusa/shared/date-only';
 import { issueEnrollmentContract } from '@/src/server/contracts/issue-enrollment-contract.service';
+import { getMissingContractSignatureFieldsMessage, hasRequiredContractSignatureFields } from '@/src/server/contracts/signature-fields';
 import { createRenewalPending } from './renewal-governance.service';
 import { enqueueFutureFinancialProvisioning } from './renewal-outbox.service';
 import {
@@ -30,8 +36,105 @@ import {
 } from './renewal-chain';
 import { assertStudentCapacity } from '@/src/server/platform-billing/capacity';
 import { calcularPrecoMatricula, type DescontoInput } from './enrollment-pricing';
+import { buildUnmappedPriorEnrollmentInCourseWhere, wasCancelledBeforeEffectiveStart } from './academic-history-query';
 
 type PrismaLike = PrismaClient | Prisma.TransactionClient;
+
+function resolveImmediateAcademicPeriod(input: {
+  sourceCycleSequence?: number | null;
+  sourceCycleName?: string | null;
+  sourcePeriodId?: string | null;
+  sourceStart?: Date | null;
+  sourceEnd?: Date | null;
+  targetCycleSequence?: number | null;
+  targetCycleName?: string | null;
+  targetPeriodId: string;
+}): boolean | null {
+  if (input.sourceCycleSequence != null && input.targetCycleSequence != null) {
+    return input.targetCycleSequence === input.sourceCycleSequence + 1;
+  }
+  const targetPeriod = normalizeAcademicPeriodLabel(input.targetPeriodId) ??
+    normalizeAcademicPeriodLabel(input.targetCycleName);
+  if (!targetPeriod) return null;
+  const inferredSourcePeriod = inferAcademicPeriodFromDateRange(input.sourceStart, input.sourceEnd);
+  const sourcePeriod = normalizeAcademicPeriodLabel(input.sourcePeriodId) ??
+    normalizeAcademicPeriodLabel(input.sourceCycleName) ??
+    inferredSourcePeriod;
+  const continuity = areAcademicPeriodsImmediatelyAdjacent(sourcePeriod, targetPeriod);
+  if (continuity !== null) return continuity;
+
+  // Campaigns target a known annual/semestral label. For legacy late entries,
+  // the contract interval may be shorter than a full cycle and therefore
+  // cannot establish cadence; only then use the start date's year/semester.
+  // Explicit source periods/cycles and sequence disagreements remain decisive.
+  if (
+    input.sourceCycleSequence == null &&
+    !input.sourcePeriodId?.trim() &&
+    !input.sourceCycleName?.trim() &&
+    inferredSourcePeriod == null
+  ) {
+    const sourceFromTargetCadence = inferAcademicPeriodFromStartForKnownTarget(
+      input.sourceStart,
+      input.targetPeriodId,
+    );
+    return areAcademicPeriodsImmediatelyAdjacent(sourceFromTargetCadence, targetPeriod);
+  }
+  return null;
+}
+
+function selectRelevantEffectiveAcademicLink<T extends {
+  vigenciaIniciadaEm: Date | null;
+  cicloAcademico?: { sequencia: number } | null;
+  matricula: { status: string; cancelledAt: Date | null; dataInicio: Date };
+}>(rows: T[]) {
+  const relevantHistory = rows.filter((link) => !wasCancelledBeforeEffectiveStart({
+    status: link.matricula.status,
+    cancelledAt: link.matricula.cancelledAt,
+    dataInicio: link.matricula.dataInicio,
+  }));
+  return {
+    relevantHistory,
+    effectiveLink: [...relevantHistory]
+      .filter((link) => link.vigenciaIniciadaEm != null)
+      .sort((a, b) => {
+        const sequenceDelta = (b.cicloAcademico?.sequencia ?? Number.NEGATIVE_INFINITY) -
+          (a.cicloAcademico?.sequencia ?? Number.NEGATIVE_INFINITY);
+        return sequenceDelta ||
+          (b.vigenciaIniciadaEm?.getTime() ?? 0) - (a.vigenciaIniciadaEm?.getTime() ?? 0) ||
+          b.matricula.dataInicio.getTime() - a.matricula.dataInicio.getTime();
+      })[0] ?? null,
+    latestRelevantLink: relevantHistory[0] ?? null,
+  };
+}
+
+async function resolveTargetAcademicCycle(
+  prisma: PrismaLike,
+  input: { contaId: string; modalidadeId: string; cicloAcademicoId: string | null; targetPeriodId: string },
+) {
+  if (input.cicloAcademicoId) {
+    return prisma.cicloAcademico.findFirst({
+      where: { id: input.cicloAcademicoId, contaId: input.contaId, modalidadeId: input.modalidadeId },
+      select: { id: true, sequencia: true, nome: true, dataInicio: true },
+    });
+  }
+  const matches = await prisma.cicloAcademico.findMany({
+    where: { contaId: input.contaId, modalidadeId: input.modalidadeId, nome: input.targetPeriodId },
+    take: 2,
+    select: { id: true, sequencia: true, nome: true, dataInicio: true },
+  });
+  return matches.length === 1 ? matches[0] : null;
+}
+
+async function hasUnresolvedUnmappedCourseHistory(
+  prisma: PrismaLike,
+  input: { contaId: string; alunoId: string; currentMatriculaId: string; modalidadeId: string },
+) {
+  const rows = await prisma.matricula.findMany({
+    where: buildUnmappedPriorEnrollmentInCourseWhere(input),
+    select: { id: true, status: true, cancelledAt: true, dataInicio: true },
+  });
+  return rows.some((row) => !wasCancelledBeforeEffectiveStart(row));
+}
 
 export function resolveRenewalProvisionAt(date: Date, timezone?: string | null) {
   const key = getAcademicDateKey(date);
@@ -97,6 +200,7 @@ export type RenewalProcessInput = {
     mode: 'SEPARATE' | 'UNIFY_EXISTING';
     agreementId?: string | null;
   } | null;
+  overrideReason?: string | null;
 };
 
 export type ConfirmRenewalProcessInput = RenewalProcessInput & {
@@ -110,9 +214,14 @@ export const RENEWAL_IDEMPOTENCY_KEY_REQUIRES_NEW_INTENT =
   'IDEMPOTENCY_KEY_REQUIRES_NEW_INTENT';
 
 export type RenewalIdempotencyRecord = {
+  id?: string;
   status: string;
   previewHash: string | null;
   sourceVersion: string | null;
+  requestFingerprint?: string | null;
+  renewCount?: number;
+  pendingCount?: number;
+  nonRenewalCount?: number;
 };
 
 export type RenewalIdempotencyDecision =
@@ -130,15 +239,84 @@ export function classifyRenewalIdempotency(input: {
   existing: RenewalIdempotencyRecord | null;
   previewHash: string;
   sourceVersion: string;
+  requestFingerprint: string;
 }): RenewalIdempotencyDecision {
   if (!input.existing) return 'CREATE';
-  if (
-    input.existing.previewHash !== input.previewHash ||
-    input.existing.sourceVersion !== input.sourceVersion
-  ) {
-    return 'CONFLICT';
-  }
+  if (!input.existing.requestFingerprint || input.existing.requestFingerprint !== input.requestFingerprint) return 'CONFLICT';
   return input.existing.status === 'CANCELLED' ? 'REQUIRES_NEW_INTENT' : 'REPLAY';
+}
+
+function canonicalizeRenewalIntent(value: unknown): unknown {
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(canonicalizeRenewalIntent);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, canonicalizeRenewalIntent(child)]));
+  }
+  return value;
+}
+
+export function buildRenewalRequestFingerprint(input: RenewalProcessInput): string {
+  const semanticIntent = {
+    contaId: input.contaId,
+    origin: input.origin,
+    campaignId: input.campaignId ?? null,
+    targetPeriodId: input.targetPeriodId,
+    targetPeriodStartsAt: input.targetPeriodStartsAt ?? null,
+    holderType: input.holderType,
+    holderId: input.holderId,
+    sourceHolderId: input.sourceHolderId ?? null,
+    items: input.items,
+    effectiveAt: input.effectiveAt ?? null,
+    firstDueDate: input.firstDueDate ?? null,
+    targetContractEndsAt: input.targetContractEndsAt ?? null,
+    contractModelId: input.contractModelId ?? null,
+    financialTerms: input.financialTerms ?? null,
+    descontos: input.descontos ?? [],
+    futureBillingStrategy: input.futureBillingStrategy ?? null,
+    overrideReason: input.overrideReason?.trim() || null,
+  };
+  return createHash('sha256').update(stableStringify(canonicalizeRenewalIntent(semanticIntent))).digest('hex');
+}
+
+export async function findRenewalProcessReplay(
+  input: RenewalProcessInput & { idempotencyKey: string },
+  deps: { prisma: PrismaClient },
+) {
+  const existing = await deps.prisma.rematriculaProcesso.findFirst({
+    where: { contaId: input.contaId, idempotencyKey: input.idempotencyKey.trim() },
+    select: {
+      id: true,
+      status: true,
+      previewHash: true,
+      sourceVersion: true,
+      firstDueDate: true,
+      requestFingerprint: true,
+      renewCount: true,
+      pendingCount: true,
+      nonRenewalCount: true,
+    },
+  });
+  const decision = classifyRenewalIdempotency({
+    existing,
+    previewHash: '',
+    sourceVersion: '',
+    requestFingerprint: buildRenewalRequestFingerprint(input),
+  });
+  if (decision === 'CREATE') return null;
+  if (decision === 'CONFLICT') throw new Error(RENEWAL_IDEMPOTENCY_CONFLICT);
+  if (decision === 'REQUIRES_NEW_INTENT') throw new Error(RENEWAL_IDEMPOTENCY_KEY_REQUIRES_NEW_INTENT);
+  if (!existing) return null;
+  return {
+    processId: existing.id,
+    status: existing.status,
+    previewHash: existing.previewHash,
+    sourceVersion: existing.sourceVersion,
+    firstDueDate: existing.firstDueDate,
+    renewCount: existing.renewCount ?? 0,
+    pendingCount: existing.pendingCount ?? 0,
+    nonRenewalCount: existing.nonRenewalCount ?? 0,
+    idempotent: true,
+  };
 }
 
 function isRenewalProcessIdempotencyViolation(error: unknown): boolean {
@@ -287,6 +465,10 @@ async function loadSourceRows(prisma: PrismaLike, contaId: string, items: Renewa
           horaFim: true,
         },
       },
+      operacoes: {
+        where: { contaId, tipo: 'CANCELAMENTO', status: 'SINCRONIZADO' },
+        select: { observacao: true },
+      },
     },
   });
 }
@@ -324,6 +506,8 @@ async function resolveTargets(prisma: PrismaLike, contaId: string, items: Renewa
             id: true,
             nome: true,
             capacidade: true,
+            modalidadeId: true,
+            cicloAcademicoId: true,
             updatedAt: true,
             diasSemana: true,
             horaInicio: true,
@@ -348,6 +532,8 @@ async function resolveTargets(prisma: PrismaLike, contaId: string, items: Renewa
                     id: true,
                     nome: true,
                     capacidade: true,
+                    modalidadeId: true,
+                    cicloAcademicoId: true,
                     diasSemana: true,
                     horaInicio: true,
                     horaFim: true,
@@ -754,6 +940,26 @@ async function validateRenewalPreconditions(
   const sourceIds = Array.from(new Set(input.items.map((item) => item.sourceEnrollmentId)));
   const expectedSourceHolderId = input.sourceHolderId ?? input.holderId;
 
+  if (input.contractModelId && input.items.some((item) => item.decision === 'RENEW')) {
+    const contractModel = await prisma.contratoModelo.findFirst({
+      where: { id: input.contractModelId, contaId: input.contaId, status: 'ATIVO' },
+      select: { id: true, campos: { select: { papel: true, obrigatorio: true } } },
+    });
+    if (!contractModel) {
+      blockers.push({
+        sourceEnrollmentId: 'process',
+        code: 'CONTRACT_MODEL_NOT_FOUND',
+        message: 'O modelo de contrato ativo selecionado não foi encontrado nesta conta.',
+      });
+    } else if (!hasRequiredContractSignatureFields(contractModel.campos)) {
+      blockers.push({
+        sourceEnrollmentId: 'process',
+        code: 'CONTRACT_MODEL_SIGNATURE_FIELDS_REQUIRED',
+        message: getMissingContractSignatureFieldsMessage(contractModel.campos),
+      });
+    }
+  }
+
   for (const item of input.items) {
     if (item.decision !== 'RENEW' || item.target.type !== 'CLASS') continue;
     if (!item.target.targetId.trim()) {
@@ -774,6 +980,142 @@ async function validateRenewalPreconditions(
         code: 'TARGET_CLASS_REQUIRED',
         message: 'O combo selecionado não possui turmas vinculadas para o próximo ciclo.',
       });
+    }
+  }
+
+  // A renewal campaign records the requested operation; continuity is proven
+  // separately from the academic period sequence and effective course history.
+  for (const item of input.items) {
+    if (item.decision !== 'RENEW') continue;
+    const source = sourceById.get(item.sourceEnrollmentId);
+    if (!source) continue;
+    const formalCancellation = source.status === StatusMatricula.CANCELADA &&
+      source.cancelledAt != null &&
+      source.operacoes?.some((operation) => Boolean(operation.observacao?.trim()));
+    if (formalCancellation) {
+      blockers.push({
+        sourceEnrollmentId: item.sourceEnrollmentId,
+        code: 'ACADEMIC_ENROLLMENT_FORMALLY_CLOSED',
+        message: 'A matrícula de origem foi encerrada formalmente. Para retorno ao curso, crie uma nova matrícula pelo fluxo normal.',
+      });
+      continue;
+    }
+    const destinationClasses = item.target.type === 'CLASS'
+      ? [targets.classesById.get(item.target.targetId)].filter((row): row is NonNullable<typeof row> => Boolean(row))
+      : (targets.combosById.get(item.target.targetId)?.turmas ?? []).map((row) => row.turma);
+    const cycleIdsByCourse = new Map<string, Set<string | null>>();
+    for (const turma of destinationClasses) {
+      const cycles = cycleIdsByCourse.get(turma.modalidadeId) ?? new Set<string | null>();
+      cycles.add(turma.cicloAcademicoId ?? null);
+      cycleIdsByCourse.set(turma.modalidadeId, cycles);
+    }
+    if (Array.from(cycleIdsByCourse.values()).some((cycles) => cycles.size > 1)) {
+      blockers.push({
+        sourceEnrollmentId: item.sourceEnrollmentId,
+        code: 'COMBO_ACADEMIC_CYCLE_CONFLICT',
+        message: 'O combo contém turmas da mesma modalidade em ciclos acadêmicos conflitantes. Corrija o combo antes da rematrícula.',
+      });
+      break;
+    }
+    const byCourse = new Map(destinationClasses.map((turma) => [turma.modalidadeId, turma.cicloAcademicoId]));
+    for (const [modalidadeId, cicloAcademicoId] of byCourse) {
+      // Legacy unit doubles that predate academic links cannot model this
+      // invariant; the generated Prisma client always exposes both delegates.
+      if (!('matriculaVinculoAcademico' in prisma) || !('cicloAcademico' in prisma)) continue;
+      const [courseHistoryRows, targetCycle] = await Promise.all([
+        prisma.matriculaVinculoAcademico.findMany({
+          where: { contaId: input.contaId, modalidadeId, matricula: { contaId: input.contaId, alunoId: source.alunoId } },
+          orderBy: [
+            { cicloAcademico: { sequencia: 'desc' } },
+            { vigenciaIniciadaEm: 'desc' },
+            { matricula: { dataInicio: 'desc' } },
+          ],
+          select: {
+            cicloAcademico: { select: { sequencia: true, nome: true } },
+            vigenciaIniciadaEm: true,
+            transferenciaDestino: { select: { status: true } },
+            matricula: { select: { id: true, status: true, cancelledAt: true, dataInicio: true, dataFimContrato: true, rematriculaItensFuturos: { where: { contaId: input.contaId }, orderBy: { createdAt: 'desc' }, take: 1, select: { targetPeriodId: true } }, operacoes: { where: { contaId: input.contaId, tipo: 'CANCELAMENTO', status: 'SINCRONIZADO' }, select: { observacao: true }, take: 1 } } },
+          },
+        }),
+        resolveTargetAcademicCycle(prisma, { contaId: input.contaId, modalidadeId, cicloAcademicoId, targetPeriodId: input.targetPeriodId }),
+      ]);
+      const { relevantHistory, effectiveLink, latestRelevantLink } = selectRelevantEffectiveAcademicLink(courseHistoryRows);
+      const sourceLink = effectiveLink ?? latestRelevantLink;
+      if (!sourceLink) {
+        const hasUnmappedHistory = await hasUnresolvedUnmappedCourseHistory(prisma, {
+          contaId: input.contaId,
+          alunoId: source.alunoId,
+          currentMatriculaId: source.id,
+          modalidadeId,
+        });
+        if (hasUnmappedHistory) {
+          blockers.push({
+            sourceEnrollmentId: item.sourceEnrollmentId,
+            code: 'ACADEMIC_HISTORY_RECONCILIATION_REQUIRED',
+            message: 'Há matrícula histórica neste curso sem vínculo acadêmico reconciliado. Valide o histórico antes da rematrícula.',
+          });
+          break;
+        }
+        // No link or legacy enrollment in this course: a combo may add a new course.
+        continue;
+      }
+      if (relevantHistory.some((link) => link.transferenciaDestino?.status === 'PENDENTE')) {
+        blockers.push({
+          sourceEnrollmentId: item.sourceEnrollmentId,
+          code: 'ACADEMIC_TRANSFER_PENDING',
+          message: 'Há uma transferência acadêmica pendente neste curso. Formalize ou corrija a operação antes de continuar a rematrícula.',
+        });
+        break;
+      }
+      if (!sourceLink.vigenciaIniciadaEm) {
+        blockers.push({
+          sourceEnrollmentId: item.sourceEnrollmentId,
+          code: 'ACADEMIC_HISTORY_RECONCILIATION_REQUIRED',
+          message: 'O vínculo encontrado ainda não entrou em vigência; valide o histórico antes da rematrícula.',
+        });
+        break;
+      }
+      const formallyClosed = sourceLink?.matricula.status === StatusMatricula.CANCELADA &&
+        sourceLink.matricula.cancelledAt != null &&
+        sourceLink.matricula.operacoes.some((operation) => Boolean(operation.observacao?.trim()));
+      if (formallyClosed) {
+        blockers.push({
+          sourceEnrollmentId: item.sourceEnrollmentId,
+          code: 'ACADEMIC_ENROLLMENT_FORMALLY_CLOSED',
+          message: 'A matrícula de origem foi encerrada formalmente. Para retorno ao curso, crie uma nova matrícula pelo fluxo normal.',
+        });
+        break;
+      }
+      if (sourceLink.matricula.status === StatusMatricula.CANCELADA) {
+        blockers.push({
+          sourceEnrollmentId: item.sourceEnrollmentId,
+          code: 'ACADEMIC_HISTORY_RECONCILIATION_REQUIRED',
+          message: 'O vínculo foi cancelado sem uma operação formal rastreável. Valide o histórico antes da rematrícula.',
+        });
+        break;
+      }
+      const sourceIsEffectiveInCourse = Boolean(effectiveLink?.vigenciaIniciadaEm);
+      const periodContinuity = resolveImmediateAcademicPeriod({
+        sourceCycleSequence: sourceLink.cicloAcademico?.sequencia,
+        sourceCycleName: sourceLink.cicloAcademico?.nome,
+        sourcePeriodId: sourceLink.matricula.rematriculaItensFuturos[0]?.targetPeriodId,
+        sourceStart: sourceLink.matricula.dataInicio,
+        sourceEnd: sourceLink.matricula.dataFimContrato,
+        targetCycleSequence: targetCycle?.sequencia,
+        targetCycleName: targetCycle?.nome,
+        targetPeriodId: input.targetPeriodId,
+      });
+      if (sourceIsEffectiveInCourse && periodContinuity !== true) {
+        const knownGap = periodContinuity === false;
+        blockers.push({
+          sourceEnrollmentId: item.sourceEnrollmentId,
+          code: knownGap ? 'ACADEMIC_CYCLE_NOT_IMMEDIATE_SUCCESSOR' : 'ACADEMIC_HISTORY_RECONCILIATION_REQUIRED',
+          message: knownGap
+            ? 'O período de destino não é o imediatamente seguinte. Para retorno, use uma nova matrícula pelo fluxo normal.'
+            : 'O período acadêmico da origem ou do destino não pôde ser identificado com segurança. Reconcilie o histórico antes da rematrícula.',
+        });
+        break;
+      }
     }
   }
 
@@ -1745,6 +2087,7 @@ export async function confirmRenewalProcess(
   if (!idempotencyKey) {
     throw new Error(RENEWAL_IDEMPOTENCY_CONFLICT);
   }
+  const requestFingerprint = buildRenewalRequestFingerprint(input);
   const existing = await deps.prisma.rematriculaProcesso.findFirst({
     where: { contaId: input.contaId, idempotencyKey },
     include: { itens: true },
@@ -1753,6 +2096,7 @@ export async function confirmRenewalProcess(
     existing,
     previewHash: input.previewHash,
     sourceVersion: input.sourceVersion,
+    requestFingerprint,
   });
   if (idempotencyDecision === 'CONFLICT') {
     throw new Error(RENEWAL_IDEMPOTENCY_CONFLICT);
@@ -1825,6 +2169,7 @@ export async function confirmRenewalProcess(
         firstDueDate,
         confirmedAt: new Date(),
         idempotencyKey,
+        requestFingerprint,
         externalReference,
         renewCount: preview.renewCount,
         pendingCount: preview.pendingCount,
@@ -1906,6 +2251,103 @@ export async function confirmRenewalProcess(
           select: { id: true },
         });
         futureEnrollmentId = future.id;
+
+        const targetTurmas = item.target.type === 'CLASS'
+          ? [targets.classesById.get(item.target.targetId)].filter((row): row is NonNullable<typeof row> => Boolean(row))
+          : (targets.combosById.get(item.target.targetId)?.turmas ?? []).map((row) => row.turma);
+        const targetByCourse = new Map(targetTurmas.map((turma) => [turma.modalidadeId, turma.cicloAcademicoId]));
+        for (const [modalidadeId, cicloAcademicoId] of targetByCourse) {
+          const courseHistory = await tx.matriculaVinculoAcademico.findMany({
+            where: { contaId: input.contaId, modalidadeId, matricula: { contaId: input.contaId, alunoId: source.alunoId } },
+            orderBy: [
+              { cicloAcademico: { sequencia: 'desc' } },
+              { vigenciaIniciadaEm: 'desc' },
+              { matricula: { dataInicio: 'desc' } },
+            ],
+            select: {
+              vigenciaIniciadaEm: true,
+              cicloAcademico: { select: { sequencia: true, nome: true } },
+              transferenciaDestino: { select: { status: true } },
+              matricula: {
+                select: {
+                  id: true,
+                  status: true,
+                  cancelledAt: true,
+                  dataInicio: true,
+                  dataFimContrato: true,
+                  rematriculaItensFuturos: { where: { contaId: input.contaId }, orderBy: { createdAt: 'desc' }, take: 1, select: { targetPeriodId: true } },
+                  operacoes: { where: { contaId: input.contaId, tipo: 'CANCELAMENTO', status: 'SINCRONIZADO' }, select: { observacao: true }, take: 1 },
+                },
+              },
+            },
+          });
+          const { relevantHistory, effectiveLink: previous } = selectRelevantEffectiveAcademicLink(courseHistory);
+          const hasUnmappedHistory = await hasUnresolvedUnmappedCourseHistory(tx, {
+            contaId: input.contaId,
+            alunoId: source.alunoId,
+            currentMatriculaId: future.id,
+            modalidadeId,
+          });
+          const targetCycle = await resolveTargetAcademicCycle(tx, {
+            contaId: input.contaId,
+            modalidadeId,
+            cicloAcademicoId,
+            targetPeriodId: input.targetPeriodId,
+          });
+          const [coverage, student] = await Promise.all([
+            tx.historicoAcademicoCobertura.findFirst({
+              where: { contaId: input.contaId, modalidadeId },
+              select: { coberturaDesde: true },
+            }),
+            tx.aluno.findFirst({
+              where: { id: source.alunoId, contaId: input.contaId },
+              select: { createdAt: true },
+            }),
+          ]);
+          const historyCovered = Boolean(coverage && student && coverage.coberturaDesde <= student.createdAt);
+          const priorSequence = previous?.cicloAcademico?.sequencia ?? null;
+          const pendingTransfer = relevantHistory.some((link) => link.transferenciaDestino?.status === 'PENDENTE');
+          const definitiveBreak = Boolean(previous?.matricula.status === StatusMatricula.CANCELADA &&
+            previous.matricula.cancelledAt != null &&
+            previous.matricula.operacoes.some((operation) => Boolean(operation.observacao?.trim())));
+          const firstCourseEnrollment = historyCovered && relevantHistory.length === 0 && !hasUnmappedHistory;
+          const periodContinuity = previous?.vigenciaIniciadaEm
+            ? resolveImmediateAcademicPeriod({
+                sourceCycleSequence: priorSequence,
+                sourceCycleName: previous.cicloAcademico?.nome,
+                sourcePeriodId: previous.matricula.rematriculaItensFuturos[0]?.targetPeriodId,
+                sourceStart: previous.matricula.dataInicio,
+                sourceEnd: previous.matricula.dataFimContrato,
+                targetCycleSequence: targetCycle?.sequencia,
+                targetCycleName: targetCycle?.nome,
+                targetPeriodId: input.targetPeriodId,
+              })
+            : null;
+          const hasUnresolvedCourseLink = relevantHistory.some((link) => link.vigenciaIniciadaEm == null);
+          const reliableHistory = firstCourseEnrollment || definitiveBreak || (
+            previous?.vigenciaIniciadaEm != null && periodContinuity === true && !pendingTransfer &&
+            !hasUnmappedHistory && !hasUnresolvedCourseLink && previous.matricula.status !== StatusMatricula.CANCELADA
+          );
+          const decision = classifyEnrollment({
+            formalTransfer: false,
+            pendingTransferWithEvidence: pendingTransfer,
+            historyReliable: reliableHistory,
+            hasEffectiveEnrollmentInCourse: previous?.vigenciaIniciadaEm != null,
+            definitiveBreak,
+            provenUnjustifiedGap: periodContinuity === false && previous?.vigenciaIniciadaEm != null,
+            immediatelyNextCycle: periodContinuity === true,
+          });
+          await tx.matriculaVinculoAcademico.create({
+            data: {
+              contaId: input.contaId,
+              matriculaId: future.id,
+              modalidadeId,
+              cicloAcademicoId: targetCycle?.id ?? cicloAcademicoId,
+              classificacao: decision.classification,
+              classificacaoMotivo: decision.reasonCode,
+            },
+          });
+        }
       }
 
       const createdItem = await tx.rematriculaItem.create({
@@ -2364,7 +2806,9 @@ export async function confirmRenewalProcess(
     };
     });
   } catch (error) {
-    if (isRenewalProcessIdempotencyViolation(error)) {
+    const previewChangedDuringConcurrentSameIntent =
+      error instanceof Error && error.message === 'PREVIEW_DESATUALIZADO';
+    if (isRenewalProcessIdempotencyViolation(error) || previewChangedDuringConcurrentSameIntent) {
       const concurrent = await deps.prisma.rematriculaProcesso.findFirst({
         where: { contaId: input.contaId, idempotencyKey },
       });
@@ -2372,6 +2816,7 @@ export async function confirmRenewalProcess(
         existing: concurrent,
         previewHash: input.previewHash,
         sourceVersion: input.sourceVersion,
+        requestFingerprint,
       });
       if (concurrentDecision === 'CONFLICT') {
         throw new Error(RENEWAL_IDEMPOTENCY_CONFLICT);
@@ -2809,7 +3254,8 @@ export async function activateDueRenewalProcesses(
       });
       if (!full) return { processId: processo.id, status: 'REQUIRES_ATTENTION' as const };
 
-      const sourceIds = full.itens.map((item) => item.matriculaOrigemId);
+      const renewedItems = full.itens.filter((item) => item.decision === 'RENEW');
+      const sourceIds = renewedItems.map((item) => item.matriculaOrigemId);
       const sources = await tx.matricula.findMany({
         where: { contaId: input.contaId, id: { in: sourceIds } },
         select: { id: true, dataFimContrato: true, status: true },
@@ -2823,7 +3269,6 @@ export async function activateDueRenewalProcesses(
           item.decision === 'RENEW' &&
           !full.reservas.some((reserva) => reserva.itemId === item.id && reserva.status === 'RESERVED'),
       );
-      const renewedItems = full.itens.filter((item) => item.decision === 'RENEW');
       const contractRequired = full.contratos.length > 0;
       const contractStatus = full.contratos.some((contract) =>
         contract.status !== 'SIGNED_SCHEDULED' && contract.status !== 'ACTIVE',
@@ -2916,6 +3361,10 @@ export async function activateDueRenewalProcesses(
           status: 'ATIVA',
           ...(contractRequired ? { statusContrato: 'ATIVO' } : {}),
         },
+      });
+      await tx.matriculaVinculoAcademico.updateMany({
+        where: { contaId: input.contaId, matriculaId: { in: futureIds }, vigenciaIniciadaEm: null },
+        data: { vigenciaIniciadaEm: now },
       });
       await tx.reservaVagaFutura.updateMany({
         where: { contaId: input.contaId, processoId: full.id, status: 'RESERVED' },

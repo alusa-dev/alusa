@@ -193,6 +193,8 @@ export async function editMatriculaForHttp(input: {
     where: { id: matriculaId, aluno: { contaId } },
     select: {
       id: true,
+      turmaId: true,
+      vinculosAcademicos: { select: { modalidadeId: true } },
       planoId: true,
       comboId: true,
       asaasSubscriptionId: true,
@@ -204,6 +206,35 @@ export async function editMatriculaForHttp(input: {
     },
   });
   if (!currentMatricula) fail(404, 'NAO_ENCONTRADO', 'Matrícula não encontrada');
+
+  // A regular class edit may move a student between classes within the same
+  // modality. Changing modality is an academic transfer and must use the
+  // enrollment wizard so the source link and transfer audit are recorded.
+  if (body.turmaId !== undefined && body.turmaId !== currentMatricula.turmaId && body.turmaId &&
+    (currentMatricula.turmaId || currentMatricula.vinculosAcademicos?.length)) {
+    const destinationClass = await matriculaRouteRepository.turma.findFirst({
+      where: { id: body.turmaId, contaId },
+      select: { id: true, modalidadeId: true },
+    });
+    if (!destinationClass) fail(404, 'TURMA_NAO_ENCONTRADA', 'Turma não encontrada para a conta informada.');
+    const linkedModalities = (currentMatricula.vinculosAcademicos ?? []).map((link) => link.modalidadeId);
+    const sourceClass = linkedModalities.length === 0 && currentMatricula.turmaId
+      ? await matriculaRouteRepository.turma.findFirst({
+          where: { id: currentMatricula.turmaId, contaId },
+          select: { id: true, modalidadeId: true },
+        })
+      : null;
+    const sourceModalities = linkedModalities.length > 0
+      ? linkedModalities
+      : sourceClass ? [sourceClass.modalidadeId] : [];
+    if (sourceModalities.length > 0 && !sourceModalities.includes(destinationClass.modalidadeId)) {
+      fail(
+        409,
+        'TRANSFERENCIA_ACADEMICA_NECESSARIA',
+        'A turma pertence a outro curso. Inicie uma nova matrícula e selecione o vínculo acadêmico atual como origem da transferência.',
+      );
+    }
+  }
 
   const financialContext = await resolveMatriculaFinancialContext({ db: matriculaRouteRepository, matriculaId: currentMatricula.id, contaId });
   const targetSubscriptionId = financialContext?.asaasSubscriptionId ?? currentMatricula.asaasSubscriptionId ?? null;
@@ -320,7 +351,7 @@ export async function editMatriculaForHttp(input: {
           'updatePendingPayments',
         ],
         ...(nextSubscriptionCycle ? { cycle: nextSubscriptionCycle } : {}),
-        message: 'A alteração acadêmica foi salva e a atualização financeira está na fila de sincronização. O estado financeiro será confirmado após a resposta do Asaas.',
+        message: 'Os dados foram salvos. As cobranças estão sendo atualizadas e podem levar alguns instantes para refletir a mudança.',
       } : null,
     },
   };

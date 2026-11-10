@@ -4,6 +4,9 @@ import type { PrismaClient } from '@prisma/client';
 import {
   pausarMatricula,
   reativarMatricula,
+  regularizarPausaVencida,
+  avaliarElegibilidadeRegularizacaoPausa,
+  getPausaResumo,
   PausaBusinessError,
 } from '@/src/server/enrollments/enrollment-pause.service';
 
@@ -80,6 +83,8 @@ function createPrismaMock(overrides?: {
   findFirst?: unknown;
   turmaCount?: number;
   pendingOperations?: unknown[];
+  pauseOperation?: unknown;
+  regularizationOperations?: unknown[];
   localCharges?: unknown[];
   overdueCharges?: number;
   openEnrollmentFee?: number;
@@ -106,6 +111,9 @@ function createPrismaMock(overrides?: {
         version: (args.where?.version ?? 1) + (args.data?.version?.increment ?? 0),
       })),
     },
+    matriculaVinculoAcademico: {
+      updateMany: vi.fn(async () => ({ count: 1 })),
+    },
     turma: {
       findMany: vi.fn(async () => {
         const turma = (overrides?.findFirst as { turma?: { id: string; nome: string; capacidade: number } } | undefined)?.turma;
@@ -131,16 +139,39 @@ function createPrismaMock(overrides?: {
       updateMany: vi.fn(async () => ({ count: 0 })),
     },
     matriculaOperacao: {
+      findFirst: vi.fn(async (args: { where?: { tipo?: string } }) =>
+        args.where?.tipo === 'PAUSA' ? overrides?.pauseOperation ?? null : null),
+      findMany: vi.fn(async (args: { where?: { tipo?: string } }) =>
+        args.where?.tipo === 'REGULARIZACAO_PAUSA' ? overrides?.regularizationOperations ?? [] : overrides?.pendingOperations ?? []),
       create: vi.fn(async () => ({ id: 'op-1', correlationId: 'corr-uuid-mock' })),
       updateMany: vi.fn(async () => ({ count: 0 })),
     },
     matriculaLog: {
       create: vi.fn(async () => ({ id: 'log-1' })),
     },
+    conta: { findFirst: vi.fn(async () => ({ timezone: 'America/Manaus' })) },
+    platformBillingAccount: {
+      findUnique: vi.fn(async () => ({
+        id: 'platform-account-1',
+        status: 'ACTIVE',
+        accessStatus: 'ACTIVE',
+        restrictionReason: null,
+        restrictedAt: null,
+        cancelAtPeriodEnd: false,
+        currentPeriodEnd: null,
+        gracePeriodEndsAt: null,
+        trialEndsAt: null,
+        firstPaidAt: new Date('2025-01-01T00:00:00.000Z'),
+        lastSuccessfulPaymentAt: null,
+        paymentMethodStatus: 'ACTIVE',
+      })),
+      update: vi.fn(async () => ({})),
+    },
     $executeRaw: vi.fn(async () => 1),
   };
 
   const root = {
+    conta: { findFirst: vi.fn(async () => ({ timezone: 'America/Manaus' })) },
     billingAllocation: {
       findFirst: vi.fn(async () => null),
     },
@@ -149,8 +180,10 @@ function createPrismaMock(overrides?: {
       updateMany: vi.fn(async () => ({ count: 1 })),
     },
     matriculaOperacao: {
-      findFirst: vi.fn(async () => null),
-      findMany: vi.fn(async () => overrides?.pendingOperations ?? []),
+      findFirst: vi.fn(async (args: { where?: { tipo?: string } }) =>
+        args.where?.tipo === 'PAUSA' ? overrides?.pauseOperation ?? null : null),
+      findMany: vi.fn(async (args: { where?: { tipo?: string } }) =>
+        args.where?.tipo === 'REGULARIZACAO_PAUSA' ? overrides?.regularizationOperations ?? [] : overrides?.pendingOperations ?? []),
       create: vi.fn(async () => ({
         id: 'op-1',
         correlationId: 'corr-uuid-mock',
@@ -378,6 +411,87 @@ describe('enrollment-pause.service', () => {
   // REATIVAR
   // -----------------------------------------------------------------------
   describe('reativarMatricula', () => {
+    it.each([
+      ['missing end date', null],
+      ['expired end date', new Date('2025-12-31T12:00:00.000Z')],
+    ])('blocks reactivation with %s before reconciliation or writes', async (_label, dataFimContrato) => {
+      const { root } = createPrismaMock({
+        findFirst: pausadaMatricula({ dataFimContrato }),
+      });
+
+      await expect(reativarMatricula({ prisma: root, ...baseReativarInput }))
+        .rejects.toMatchObject({ code: 'VINCULO_ACADEMICO_ENCERRADO', statusCode: 409 });
+
+      expect(root.matricula.findFirst).toHaveBeenCalledTimes(1);
+      expect(root.$transaction).not.toHaveBeenCalled();
+      expect(root.matriculaOperacao.findFirst).not.toHaveBeenCalled();
+      expect(root.matriculaOperacao.findMany).not.toHaveBeenCalled();
+      expect(getSubscriptionMock).not.toHaveBeenCalled();
+      expect(ativarAssinaturaMock).not.toHaveBeenCalled();
+      expect(listSubscriptionPaymentsMock).not.toHaveBeenCalled();
+    });
+
+    it('bloqueia reativação após prazo vencido antes de qualquer consulta financeira', async () => {
+      const { root } = createPrismaMock({
+        findFirst: pausadaMatricula({ dataRetornoPrevista: new Date('2026-11-01T00:00:00.000Z') }),
+        pauseOperation: { id: 'pause-op-1' },
+      });
+
+      await expect(reativarMatricula({ prisma: root, ...baseReativarInput }))
+        .rejects.toMatchObject({ code: 'PAUSA_PRAZO_VENCIDO_REGULARIZACAO_OBRIGATORIA', statusCode: 409 });
+      expect(getSubscriptionMock).not.toHaveBeenCalled();
+      expect(ativarAssinaturaMock).not.toHaveBeenCalled();
+      expect((root as unknown as { matriculaOperacao: { create: ReturnType<typeof vi.fn> } }).matriculaOperacao.create)
+        .not.toHaveBeenCalled();
+    });
+
+    it('regulariza prazo vencido com operação auditável sem alterar matrícula ou contrato', async () => {
+      const { tx } = createPrismaMock({
+        findFirst: pausadaMatricula({ dataRetornoPrevista: new Date('2026-11-01T00:00:00.000Z') }),
+        pauseOperation: { id: 'pause-op-1' },
+      });
+
+      const result = await regularizarPausaVencida({
+        tx: tx as never,
+        contaId: 'conta-1', matriculaId: 'mat-1', actorId: 'admin-1',
+        motivo: 'Instituição confirmou retorno com a família.',
+      });
+
+      expect(result).toMatchObject({ id: 'op-1' });
+      expect(tx.matriculaOperacao.create).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({
+          contaId: 'conta-1', matriculaId: 'mat-1', tipo: 'REGULARIZACAO_PAUSA',
+          status: 'SINCRONIZADO', actorId: 'admin-1',
+          observacao: 'Instituição confirmou retorno com a família.',
+          metadata: { pausaOperacaoId: 'pause-op-1', dataRetornoPrevista: '2026-11-01' },
+        }),
+      }));
+      expect(tx.matricula.update).not.toHaveBeenCalled();
+    });
+
+    it('retorna a regularização existente em retry sem criar uma segunda operação', async () => {
+      const existing = {
+        id: 'regularization-existing',
+        correlationId: 'corr-existing',
+        metadata: { pausaOperacaoId: 'pause-op-1', dataRetornoPrevista: '2026-11-01' },
+        createdAt: new Date('2026-11-02T12:00:00.000Z'),
+      };
+      const { tx } = createPrismaMock({
+        findFirst: pausadaMatricula({ dataRetornoPrevista: new Date('2026-11-01T00:00:00.000Z') }),
+        pauseOperation: { id: 'pause-op-1' },
+        regularizationOperations: [existing],
+      });
+
+      const result = await regularizarPausaVencida({
+        tx: tx as never,
+        contaId: 'conta-1', matriculaId: 'mat-1', actorId: 'admin-retry',
+        motivo: 'Retry da regularização já registrada.',
+      });
+
+      expect(result).toMatchObject({ id: 'regularization-existing', jaRegularizada: true });
+      expect(tx.matriculaOperacao.create).not.toHaveBeenCalled();
+    });
+
     it('reativa matrícula pausada com assinatura', async () => {
       const { root, tx } = createPrismaMock({ findFirst: pausadaMatricula() });
 
@@ -406,6 +520,10 @@ describe('enrollment-pause.service', () => {
           data: expect.objectContaining({ status: 'ATIVA', statusFinanceiro: 'ADIMPLENTE' }),
         }),
       );
+      expect(tx.matriculaVinculoAcademico.updateMany).toHaveBeenCalledWith({
+        where: { contaId: 'conta-1', matriculaId: 'mat-1', vigenciaIniciadaEm: null },
+        data: { vigenciaIniciadaEm: new Date(`${baseReativarInput.dataRetornoEfetiva}T12:00:00.000Z`) },
+      });
       expect(tx.$executeRaw).toHaveBeenCalledWith(expect.anything(), 'conta-1', 'aluno-1');
     });
 
@@ -613,5 +731,86 @@ describe('enrollment-pause.service', () => {
         nextDueDate: '2025-08-01',
       });
     });
+  });
+});
+
+describe('eligibilidade server-side da regularização de pausa', () => {
+  const baseEligibility = {
+    status: 'PAUSADA',
+    pausaAtiva: true,
+    dataRetornoPrevista: new Date('2026-06-29T00:00:00.000Z'),
+    dataFimContrato: new Date('2026-07-30T00:00:00.000Z'),
+    timeZone: 'America/Manaus',
+    now: new Date('2026-06-30T05:00:00.000Z'),
+    possuiOperacaoPausa: true,
+    possuiRegularizacao: false,
+  };
+
+  it('bloqueia prazo previsto ainda futuro no timezone da Conta', () => {
+    const result = avaliarElegibilidadeRegularizacaoPausa({
+      ...baseEligibility,
+      dataRetornoPrevista: new Date('2026-07-01T00:00:00.000Z'),
+    });
+    expect(result).toMatchObject({ elegivel: false, codigo: 'PRAZO_RETORNO_NAO_VENCIDO', exigeRegularizacao: false });
+  });
+
+  it('permite prazo vencido enquanto o contrato permanece vigente', () => {
+    expect(avaliarElegibilidadeRegularizacaoPausa(baseEligibility)).toEqual({
+      elegivel: true, exigeRegularizacao: true, codigo: null, mensagem: null,
+    });
+  });
+
+  it('expõe a elegibilidade calculada no resumo da pausa e lê timezone da Conta', async () => {
+    const now = new Date();
+    const returnDate = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000);
+    const contractEnd = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const mockPrisma = {
+      matricula: {
+        findFirst: vi.fn().mockResolvedValue({
+          id: 'mat-1', status: 'PAUSADA', pausaAtiva: true,
+          dataInicioPausa: new Date('2026-06-01T00:00:00.000Z'),
+          dataRetornoPrevista: returnDate,
+          dataFimContrato: contractEnd,
+          manterVaga: true, cobrarDurantePausa: false, motivoPausa: 'Motivo de pausa',
+          integrationStatus: 'SINCRONIZADO', warningCode: null, asaasSubscriptionId: null, operacoes: [],
+        }),
+      },
+      conta: { findFirst: vi.fn().mockResolvedValue({ timezone: 'America/Manaus' }) },
+      matriculaOperacao: {
+        findFirst: vi.fn().mockResolvedValue({ id: 'pause-op-1' }),
+        findMany: vi.fn().mockResolvedValue([]),
+      },
+    } as unknown as PrismaClient;
+
+    const summary = await getPausaResumo('mat-1', 'conta-1', mockPrisma);
+
+    expect(summary.regularizacaoPausa).toEqual({ elegivel: true, exigeRegularizacao: true, codigo: null, mensagem: null });
+    expect(mockPrisma.conta.findFirst).toHaveBeenCalledWith({ where: { id: 'conta-1' }, select: { timezone: true } });
+    expect(mockPrisma.matricula.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'mat-1', aluno: { contaId: 'conta-1' } },
+      select: expect.objectContaining({
+        dataFimContrato: true,
+        operacoes: expect.objectContaining({
+          where: { contaId: 'conta-1', tipo: { in: ['PAUSA', 'REATIVACAO'] } },
+        }),
+      }),
+    }));
+  });
+
+  it.each([
+    ['contrato vencido', new Date('2026-06-29T00:00:00.000Z')],
+    ['sem data final confirmada', null],
+  ])('bloqueia regularização com %s', (_description, dataFimContrato) => {
+    const result = avaliarElegibilidadeRegularizacaoPausa({ ...baseEligibility, dataFimContrato });
+    expect(result).toMatchObject({
+      elegivel: false,
+      codigo: 'CONTRATO_ENCERRADO_REGULARIZACAO_NAO_APLICAVEL',
+      exigeRegularizacao: false,
+    });
+  });
+
+  it('bloqueia uma pausa já regularizada', () => {
+    const result = avaliarElegibilidadeRegularizacaoPausa({ ...baseEligibility, possuiRegularizacao: true });
+    expect(result).toMatchObject({ elegivel: false, codigo: 'PAUSA_JA_REGULARIZADA', exigeRegularizacao: false });
   });
 });

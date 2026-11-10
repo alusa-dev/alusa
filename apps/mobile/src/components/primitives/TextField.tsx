@@ -5,6 +5,7 @@ import {
   TextInput,
   View,
   type StyleProp,
+  type TextInputInstance,
   type TextInputProps,
   type TextStyle,
   type ViewStyle,
@@ -23,7 +24,7 @@ export type TextFieldProps = TextInputProps & {
   errorStyle?: StyleProp<TextStyle>;
 };
 
-export const TextField = forwardRef<TextInput, TextFieldProps>(
+export const TextField = forwardRef<TextInputInstance, TextFieldProps>(
   ({ label, size = 'default', error, style, onFocus, onBlur, leftIcon, rightElement, shellStyle, errorStyle, ...props }, ref) => {
     const [focused, setFocused] = useState(false);
     return (

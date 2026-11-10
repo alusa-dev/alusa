@@ -24,6 +24,7 @@ const {
   mockCancelEventMapOrder,
   mockRefundTicketSales,
   mockHandleChargeInvoicePaymentEvent,
+  mockEnqueueFinanceSideEffect,
 } = vi.hoisted(() => {
   const mockWebhookLockTails = new Map<string, Promise<void>>();
   const mockSerializeWebhookLocks = async (params: {
@@ -75,8 +76,13 @@ const {
   mockCancelEventMapOrder: vi.fn(async () => null),
   mockRefundTicketSales: vi.fn(async () => null),
   mockHandleChargeInvoicePaymentEvent: vi.fn(async () => undefined),
+  mockEnqueueFinanceSideEffect: vi.fn(async () => ({ status: 'ENQUEUED' })),
   };
 });
+
+vi.mock('../finance-side-effect-outbox.service', () => ({
+  enqueueFinanceSideEffect: mockEnqueueFinanceSideEffect,
+}));
 
 vi.mock('../../core/idempotency.service', () => ({
   withSessionAdvisoryLock: mockWithSessionAdvisoryLock,
@@ -277,6 +283,7 @@ describe('handlePaymentWebhook', () => {
     mockCancelEventMapOrder.mockResolvedValue(null);
     mockRefundTicketSales.mockResolvedValue(null);
     mockHandleChargeInvoicePaymentEvent.mockResolvedValue(undefined);
+    mockEnqueueFinanceSideEffect.mockResolvedValue({ status: 'ENQUEUED' } as never);
     vi.mocked(prisma.$transaction).mockImplementation(
       async (callback: (_tx: unknown) => Promise<unknown>) => callback(prisma),
     );
@@ -4019,6 +4026,51 @@ describe('handlePaymentWebhook', () => {
       contaId: 'conta-1', asaasPaymentId: 'pay-event-map-valid',
       externalReference: 'event-map-order:order-1',
     }));
+  });
+
+  it('enfileira Purchase com dedupe estável em replay de PAYMENT_RECEIVED', async () => {
+    const { prisma } = await import('@alusa/database');
+    const order = { id: 'order-meta-replay', status: 'PAYMENT_PENDING', paymentStatus: 'PENDING', asaasPaymentId: null };
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValue(order as never);
+    mockConfirmEventMapOrderPayment.mockResolvedValue({ orderId: order.id, status: 'CONFIRMED' } as never);
+    const payload = {
+      event: 'PAYMENT_RECEIVED', eventId: 'evt-meta-replay',
+      payment: { id: 'pay-meta-replay', status: 'RECEIVED', value: 60, externalReference: `event-map-order:${order.id}` },
+    } as never;
+
+    const first = await handlePaymentWebhook('conta-meta', payload);
+    const replay = await handlePaymentWebhook('conta-meta', payload);
+
+    expect(first.success).toBe(true);
+    expect(replay.success).toBe(true);
+    expect(mockEnqueueFinanceSideEffect).toHaveBeenCalledTimes(2);
+    for (const [input] of mockEnqueueFinanceSideEffect.mock.calls) {
+      expect(input).toMatchObject({
+        contaId: 'conta-meta',
+        effectType: 'META_EVENT_MAP_PURCHASE',
+        dedupeKey: `conta-meta:META_EVENT_MAP_PURCHASE:${order.id}`,
+        payload: { orderId: order.id },
+      });
+    }
+  });
+
+  it.each([
+    { event: 'PAYMENT_CHARGEBACK_REQUESTED', status: 'CHARGEBACK_REQUESTED' },
+    { event: 'PAYMENT_REFUNDED', status: 'REFUNDED' },
+  ])('não enfileira Purchase em $event', async ({ event, status }) => {
+    const { prisma } = await import('@alusa/database');
+    vi.mocked(prisma.eventMapOrder.findFirst).mockResolvedValue({
+      id: `order-${event.toLowerCase()}`, status: 'CONFIRMED', paymentStatus: 'RECEIVED', asaasPaymentId: 'pay-terminal',
+    } as never);
+
+    const result = await handlePaymentWebhook('conta-meta', {
+      event,
+      eventId: `evt-${event.toLowerCase()}`,
+      payment: { id: 'pay-terminal', status, value: 60, externalReference: `event-map-order:order-${event.toLowerCase()}` },
+    } as never);
+
+    expect(result.success).toBe(true);
+    expect(mockEnqueueFinanceSideEffect).not.toHaveBeenCalled();
   });
 
   it.each(['REQUESTED', 'IN_DISPUTE', 'DISPUTE_LOST', 'DONE'])(

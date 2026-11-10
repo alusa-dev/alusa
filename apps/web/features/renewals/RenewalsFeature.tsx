@@ -386,6 +386,23 @@ export default function RematriculasFeature() {
   const [campaignEndsAt, setCampaignEndsAt] = useState('');
   const [campaignSaving, setCampaignSaving] = useState(false);
   const [editingCampaign, setEditingCampaign] = useState<RematriculaCampaignSummary | null>(null);
+  const currentYear = new Date().getFullYear();
+  const campaignPeriodSelectOptions = useMemo(() => {
+    const options = Array.from({ length: 11 }, (_, index) => {
+      const year = String(currentYear + index);
+      return [
+        { value: year, label: year },
+        { value: `${year}.1`, label: `${year} · 1º semestre` },
+        { value: `${year}.2`, label: `${year} · 2º semestre` },
+      ];
+    }).flat();
+    // Preserve legacy campaign values when editing, even if they are outside
+    // the current year range or use a custom period identifier.
+    if (editingCampaign && campaignPeriod && !options.some((option) => option.value === campaignPeriod)) {
+      options.push({ value: campaignPeriod, label: campaignPeriod });
+    }
+    return options;
+  }, [campaignPeriod, currentYear, editingCampaign]);
   const [selectedProcess, setSelectedProcess] = useState<RematriculaProcessSummary | null>(null);
   const [editingProcess, setEditingProcess] = useState<RematriculaProcessSummary | null>(null);
   const [renewAgainProcess, setRenewAgainProcess] = useState<RematriculaProcessSummary | null>(null);
@@ -1571,13 +1588,17 @@ export default function RematriculasFeature() {
                     />
                   </div>
                   <div>
-                    <label className={modalLabelClass}>Período de destino</label>
-                    <Input
-                      value={campaignPeriod}
-                      onChange={(event) => setCampaignPeriod(event.target.value)}
-                      placeholder="Ex.: Ano letivo 2027"
-                      className={modalControlClass}
-                    />
+                    <label htmlFor="campaign-target-period" className={modalLabelClass}>Período de destino</label>
+                    <Select value={campaignPeriod} onValueChange={setCampaignPeriod}>
+                      <SelectTrigger id="campaign-target-period" className={modalControlClass}>
+                        <SelectValue placeholder="Selecione o ano" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {campaignPeriodSelectOptions.map((period) => (
+                          <SelectItem key={period.value} value={period.value}>{period.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="md:col-span-3">
                     <label className={modalLabelClass}>Descrição</label>

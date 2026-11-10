@@ -128,4 +128,17 @@ describe('MetaPixelTracker', () => {
     expect(localStorage.getItem(key)).toBe('1');
     expect(trackedCalls().filter((call) => call[1] === 'Purchase')).toHaveLength(0);
   });
+
+  it('does not send Purchase when cookie marketing consent exists but the order opt-in is absent', () => {
+    saveConsent(true);
+    render(tracker({
+      orderId: 'order-no-meta-consent',
+      status: 'CONFIRMED',
+      paymentStatus: 'RECEIVED',
+      totalAmount: 80,
+      metaMarketingConsentGranted: false,
+    }));
+    expect(trackedCalls().filter((call) => call[1] === 'Purchase')).toHaveLength(0);
+    expect(trackedCalls()).toContainEqual(['track', 'PageView']);
+  });
 });

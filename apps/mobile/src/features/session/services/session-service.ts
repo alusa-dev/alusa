@@ -15,7 +15,7 @@ import {
   updateSavedAccessProfilesUser,
 } from './session-storage';
 import { useSessionStore } from '../stores/session-store';
-import type { PersistedSession, SavedAccessProfile } from '../types/session';
+import { resolveAuthContext, type PersistedSession, type SavedAccessProfile } from '../types/session';
 
 export { clearBiometricSession, removeSavedAccessProfile, updateSavedAccessProfile } from './session-storage';
 
@@ -32,7 +32,7 @@ export async function hydrateSession(
     if (useSessionStore.getState().status !== 'bootstrapping') return useSessionStore.getState().session;
     useSessionStore.getState().setSavedProfile(savedProfile);
 
-    const session = await readPersistedSession();
+    const session = await readPersistedSession(undefined, savedProfile?.authContext);
     if (useSessionStore.getState().status !== 'bootstrapping') return useSessionStore.getState().session;
     if (!session) {
       useSessionStore.getState().setAnonymous();
@@ -62,16 +62,32 @@ export async function hydrateSession(
 }
 
 export async function establishSession(session: PersistedSession) {
-  const profile = await writeSavedAccessProfile(session);
-  await writePersistedSession(session);
+  const state = useSessionStore.getState();
+  const normalizedSession = {
+    ...session,
+    authContext: resolveAuthContext(
+      session.authContext ?? state.session?.authContext ?? state.savedProfile?.authContext,
+      session.user.role,
+    ),
+  } satisfies PersistedSession;
+  const profile = await writeSavedAccessProfile(normalizedSession);
+  await writePersistedSession(normalizedSession);
   useSessionStore.getState().setSavedProfile(profile);
-  useSessionStore.getState().setAuthenticated(session);
+  useSessionStore.getState().setAuthenticated(normalizedSession);
 }
 
 export async function establishBiometricSession(session: PersistedSession) {
-  const profile = await writeBiometricSession(session);
+  const state = useSessionStore.getState();
+  const normalizedSession = {
+    ...session,
+    authContext: resolveAuthContext(
+      session.authContext ?? state.session?.authContext ?? state.savedProfile?.authContext,
+      session.user.role,
+    ),
+  } satisfies PersistedSession;
+  const profile = await writeBiometricSession(normalizedSession);
   useSessionStore.getState().setSavedProfile(profile);
-  useSessionStore.getState().setAuthenticated(session);
+  useSessionStore.getState().setAuthenticated(normalizedSession);
 }
 
 export async function enableBiometrics(session: PersistedSession) {

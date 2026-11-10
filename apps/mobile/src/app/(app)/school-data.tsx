@@ -176,7 +176,17 @@ export default function SchoolDataScreen() {
     });
   }, [canEdit, editing, hasChanges, save]);
 
-  useUnsavedChangesPrompt({ hasChanges, saving, onSave: save });
+  const discardChanges = useCallback(() => {
+    if (!profile) return;
+    cepLookupSequence.current += 1;
+    setForm(toForm(profile));
+    setEditing(false);
+    setCepStatus('idle');
+    setCepError(null);
+    setSaveError(null);
+  }, [profile]);
+
+  useUnsavedChangesPrompt({ hasChanges, saving, onSave: save, onDiscard: discardChanges });
 
   function update<K extends keyof SchoolForm>(key: K, value: SchoolForm[K]) {
     setForm((current) => (current ? { ...current, [key]: value } : current));

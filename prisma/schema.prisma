@@ -364,6 +364,25 @@ enum StatusMatricula {
   CANCELADA
 }
 
+enum ClassificacaoAcademica {
+  PRIMEIRO_INGRESSO
+  REMATRICULA
+  RETORNO
+  TRANSFERENCIA
+  HISTORICO_INDETERMINADO
+}
+
+enum OrigemClassificacaoAcademica {
+  AUTOMATICA
+  MANUAL_ADMIN
+  TRANSFERENCIA_FORMAL
+}
+
+enum StatusTransferenciaAcademica {
+  PENDENTE
+  FORMALIZADA
+}
+
 enum CalendarEventType {
   AULA
   AULA_EXPERIMENTAL
@@ -1153,6 +1172,7 @@ enum IntegrationSyncStatus {
 enum TipoOperacaoMatricula {
   PAUSA
   REATIVACAO
+  REGULARIZACAO_PAUSA
   CANCELAMENTO
   RECONCILIACAO
 }
@@ -1538,6 +1558,13 @@ model Conta {
   pagamentos                        Pagamento[]
   turmaProfessores                  TurmaProfessor[]
   matriculaTurmas                   MatriculaTurma[]
+  matriculaVinculosAcademicos       MatriculaVinculoAcademico[]
+  ciclosAcademicos                  CicloAcademico[]
+  coberturasHistoricas              HistoricoAcademicoCobertura[]
+  auditoriasCoberturaHistorica      HistoricoAcademicoCoberturaAudit[]
+  auditoriasClassificacao           MatriculaClassificacaoAudit[]
+  auditoriasVinculoAcademico         MatriculaVinculoAcademicoAudit[]
+  transferenciasAcademicas          TransferenciaAcademicaVinculo[]
   comboTurmas                       ComboTurma[]
   calendarEventProfessores          CalendarEventProfessor[]
   lancamentos                       Lancamento[]
@@ -2165,6 +2192,7 @@ model Turma {
   contaId      String
   nome         String
   modalidadeId String
+  cicloAcademicoId String?
   salaId       String
   diasSemana   String[]
   horaInicio   String
@@ -2179,6 +2207,7 @@ model Turma {
 
   conta                Conta                    @relation(fields: [contaId], references: [id], onDelete: Cascade)
   modalidade           Modalidade               @relation(fields: [modalidadeId], references: [id])
+  cicloAcademico       CicloAcademico?           @relation(fields: [contaId, modalidadeId, cicloAcademicoId], references: [contaId, modalidadeId, id], onDelete: Restrict)
   sala                 Sala                     @relation(fields: [salaId], references: [id])
   matriculas           Matricula[]
   combos               ComboTurma[]
@@ -2196,6 +2225,7 @@ model Turma {
   @@index([contaId, createdAt], name: "idx_turma_conta_created")
   @@index([contaId, updatedAt], name: "idx_turma_conta_updated")
   @@index([modalidadeId])
+  @@index([contaId, cicloAcademicoId], name: "idx_turma_conta_ciclo")
   @@index([salaId])
 }
 
@@ -2210,9 +2240,36 @@ model Modalidade {
 
   conta  Conta   @relation(fields: [contaId], references: [id], onDelete: Cascade)
   turmas Turma[]
+  ciclos CicloAcademico[]
+  matriculaVinculos MatriculaVinculoAcademico[]
+  coberturaHistorica HistoricoAcademicoCobertura?
+  auditoriasCobertura HistoricoAcademicoCoberturaAudit[]
 
   @@unique([contaId, nome], name: "uq_modalidade_conta_nome")
+  @@unique([contaId, id], name: "uq_modalidade_conta_id")
   @@index([contaId], name: "idx_modalidade_conta")
+}
+
+model CicloAcademico {
+  id           String   @id @default(cuid())
+  contaId      String
+  modalidadeId String
+  nome         String
+  sequencia    Int
+  dataInicio   DateTime
+  dataFim      DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  conta      Conta      @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  modalidade Modalidade @relation(fields: [contaId, modalidadeId], references: [contaId, id], onDelete: Restrict)
+  turmas     Turma[]
+  matriculaVinculos MatriculaVinculoAcademico[]
+
+  @@unique([contaId, id], name: "uq_ciclo_academico_conta_id")
+  @@unique([contaId, modalidadeId, id], name: "uq_ciclo_academico_conta_modalidade_id")
+  @@unique([contaId, modalidadeId, sequencia], name: "uq_ciclo_academico_conta_modalidade_sequencia")
+  @@index([contaId, modalidadeId, dataInicio, dataFim], name: "idx_ciclo_academico_conta_modalidade_datas")
 }
 
 model Sala {
@@ -2507,6 +2564,7 @@ model Matricula {
   checkoutLinks                  CheckoutLink[]
   logs                           MatriculaLog[]
   matriculaTurmas                MatriculaTurma[]
+  vinculosAcademicos              MatriculaVinculoAcademico[]
   contratos                      Contrato[]                   @relation("MatriculaContratos")
   contratoAtual                  Contrato?                    @relation("MatriculaContratoAtual", fields: [contratoAtualId], references: [id])
   subscriptions                  Subscription[]
@@ -2892,6 +2950,7 @@ model RematriculaProcesso {
   editableUntil         DateTime?
   confirmedAt           DateTime?
   idempotencyKey        String?
+  requestFingerprint    String?
   externalReference     String?
   version               Int                       @default(1)
   renewCount            Int                       @default(0)
@@ -3526,6 +3585,125 @@ model MatriculaTurma {
   @@index([contaId, turmaId], name: "idx_matricula_turma_conta_turma")
   @@index([matriculaId], name: "idx_matriculaturma_matricula")
   @@index([turmaId], name: "idx_matriculaturma_turma")
+}
+
+model MatriculaVinculoAcademico {
+  id                      String                 @id @default(cuid())
+  contaId                 String
+  matriculaId             String
+  modalidadeId            String
+  cicloAcademicoId        String?
+  vigenciaIniciadaEm      DateTime?
+  classificacao           ClassificacaoAcademica @default(HISTORICO_INDETERMINADO)
+  classificacaoOrigem     OrigemClassificacaoAcademica @default(AUTOMATICA)
+  classificacaoMotivo     String?
+  classificacaoDefinidaEm DateTime               @default(now())
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+
+  conta          Conta          @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  matricula      Matricula      @relation(fields: [contaId, matriculaId], references: [contaId, id], onDelete: Cascade)
+  modalidade     Modalidade     @relation(fields: [contaId, modalidadeId], references: [contaId, id], onDelete: Restrict)
+  cicloAcademico CicloAcademico? @relation(fields: [contaId, modalidadeId, cicloAcademicoId], references: [contaId, modalidadeId, id], onDelete: Restrict)
+  auditorias     MatriculaClassificacaoAudit[]
+  historicoAuditorias MatriculaVinculoAcademicoAudit[]
+  transferenciaOrigem TransferenciaAcademicaVinculo? @relation("TransferenciaOrigem")
+  transferenciaDestino TransferenciaAcademicaVinculo? @relation("TransferenciaDestino")
+
+  @@unique([contaId, matriculaId, modalidadeId], name: "uq_matricula_vinculo_academico_conta_matricula_modalidade")
+  @@unique([contaId, id], name: "uq_matricula_vinculo_academico_conta_id")
+  @@index([contaId, modalidadeId, cicloAcademicoId], name: "idx_matricula_vinculo_academico_curso_ciclo")
+}
+
+model HistoricoAcademicoCobertura {
+  id            String   @id @default(cuid())
+  contaId       String
+  modalidadeId  String
+  coberturaDesde DateTime
+  revisadoPor   String
+  revisadoEm    DateTime @default(now())
+  motivo        String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  conta      Conta      @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  modalidade Modalidade @relation(fields: [contaId, modalidadeId], references: [contaId, id], onDelete: Restrict)
+
+  @@unique([contaId, modalidadeId], name: "uq_historico_academico_cobertura_curso")
+}
+
+model HistoricoAcademicoCoberturaAudit {
+  id            String   @id @default(cuid())
+  contaId       String
+  modalidadeId  String
+  coberturaDesdeAnterior DateTime?
+  coberturaDesdeNova DateTime
+  motivo        String
+  autorId       String
+  createdAt     DateTime @default(now())
+
+  conta Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  modalidade Modalidade @relation(fields: [contaId, modalidadeId], references: [contaId, id], onDelete: Restrict)
+
+  @@index([contaId, modalidadeId, createdAt], name: "idx_historico_cobertura_audit_curso")
+}
+
+model MatriculaClassificacaoAudit {
+  id                 String                 @id @default(cuid())
+  contaId            String
+  vinculoAcademicoId String
+  de                 ClassificacaoAcademica
+  para               ClassificacaoAcademica
+  motivo             String
+  autorId            String
+  createdAt          DateTime               @default(now())
+
+  conta   Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  vinculo MatriculaVinculoAcademico @relation(fields: [contaId, vinculoAcademicoId], references: [contaId, id], onDelete: Restrict)
+
+  @@index([contaId, vinculoAcademicoId, createdAt], name: "idx_classificacao_audit_vinculo")
+}
+
+model MatriculaVinculoAcademicoAudit {
+  id                 String   @id @default(cuid())
+  contaId            String
+  vinculoAcademicoId String
+  cicloAcademicoIdAnterior String?
+  cicloAcademicoIdNovo String?
+  vigenciaIniciadaEmAnterior DateTime?
+  vigenciaIniciadaEmNova DateTime?
+  motivo             String
+  autorId            String
+  createdAt          DateTime @default(now())
+
+  conta   Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  vinculo MatriculaVinculoAcademico @relation(fields: [contaId, vinculoAcademicoId], references: [contaId, id], onDelete: Restrict)
+
+  @@index([contaId, vinculoAcademicoId, createdAt], name: "idx_vinculo_academico_audit_link")
+}
+
+model TransferenciaAcademicaVinculo {
+  /// A consistência entre status e campos de formalização é garantida por
+  /// `ck_transferencia_academica_status_formalizacao` na migration SQL.
+  id               String   @id @default(cuid())
+  contaId          String
+  origemVinculoId  String   @unique
+  destinoVinculoId String   @unique
+  status           StatusTransferenciaAcademica @default(FORMALIZADA)
+  motivo           String
+  solicitadaPor    String?
+  formalizadaEm    DateTime?
+  formalizadaPor   String?
+  createdAt        DateTime @default(now())
+
+  conta   Conta @relation(fields: [contaId], references: [id], onDelete: Restrict)
+  origem  MatriculaVinculoAcademico @relation("TransferenciaOrigem", fields: [contaId, origemVinculoId], references: [contaId, id], onDelete: Restrict)
+  destino MatriculaVinculoAcademico @relation("TransferenciaDestino", fields: [contaId, destinoVinculoId], references: [contaId, id], onDelete: Restrict)
+
+  @@index([contaId, formalizadaEm], name: "idx_transferencia_academica_conta_data")
+  @@index([contaId, status, createdAt], name: "idx_transferencia_academica_conta_status_created")
+  @@unique([contaId, origemVinculoId], name: "uq_transferencia_academica_origem")
+  @@unique([contaId, destinoVinculoId], name: "uq_transferencia_academica_destino")
 }
 
 model Desconto {
@@ -5315,6 +5493,11 @@ model EventMapOrder {
   whatsappOptInSource            String?                         @db.VarChar(32)
   whatsappOptOutAt                DateTime?
   whatsappOptOutSource            String?                         @db.VarChar(32)
+  metaMarketingConsentAt          DateTime?
+  metaMarketingConsentRevokedAt   DateTime?
+  metaMarketingConsentAnonymousId String?                         @db.VarChar(128)
+  metaMarketingConsentPolicyVersion String?                       @db.VarChar(32)
+  metaMarketingClientUserAgent    String?                         @db.VarChar(512)
   totalAmount                    Decimal                         @default(0) @db.Decimal(12, 2)
   status                         EventMapOrderStatus             @default(PAYMENT_PENDING)
   ticketFulfillmentStatus        EventMapTicketFulfillmentStatus @default(PENDING)

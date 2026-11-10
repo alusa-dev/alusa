@@ -1,5 +1,5 @@
 import { forwardRef } from 'react';
-import type { StyleProp, TextInput, TextStyle, ViewStyle } from 'react-native';
+import type { StyleProp, TextInputInstance, TextStyle, ViewStyle } from 'react-native';
 import { MagnifyingGlassIcon } from 'react-native-heroicons/outline';
 
 import { TextField, type TextFieldProps } from '@/components/primitives/TextField';
@@ -10,7 +10,7 @@ type SearchFieldProps = Omit<TextFieldProps, 'label' | 'leftIcon' | 'shellStyle'
   shellStyle?: StyleProp<ViewStyle>;
 };
 
-export const SearchField = forwardRef<TextInput, SearchFieldProps>(
+export const SearchField = forwardRef<TextInputInstance, SearchFieldProps>(
   ({ variant = 'outlined', style, shellStyle, ...props }, ref) => (
     <TextField
       ref={ref}

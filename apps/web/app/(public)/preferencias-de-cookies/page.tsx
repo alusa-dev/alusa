@@ -27,10 +27,10 @@ import {
 import { COOKIE_POLICY_VERSION } from '@/lib/privacy/legal-versions';
 import type { CookieCategories } from '@/lib/privacy/cookie-consent';
 import { defaultCookieCategories } from '@/lib/privacy/cookie-consent';
+import { COOKIE_CONSENT_STORAGE_KEY, persistCookieConsentForClient } from '@/lib/privacy/persist-cookie-consent-client';
 
-const STORAGE_KEY = 'alusa.cookie-consent.v1';
+const STORAGE_KEY = COOKIE_CONSENT_STORAGE_KEY;
 const ANON_KEY = 'alusa.anonymous-id';
-const CONSENT_EVENT = 'alusa-cookie-consent-updated';
 
 type CookieDetail = {
   name: string;
@@ -139,6 +139,9 @@ function getAnonymousId(): string {
 export default function CookiePreferencesPage() {
   const [categories, setCategories] = useState<CookieCategories>(defaultCookieCategories);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState(false);
+  const [retryChoice, setRetryChoice] = useState<{ categories: CookieCategories; decision: 'ACCEPT_ALL' | 'SAVE_PREFERENCES' } | null>(null);
 
   useEffect(() => {
     try {
@@ -164,35 +167,37 @@ export default function CookiePreferencesPage() {
   };
 
   const savePreferences = async (customCategories: CookieCategories, decision: 'ACCEPT_ALL' | 'SAVE_PREFERENCES') => {
-    const stored = {
-      policyVersion: COOKIE_POLICY_VERSION,
-      categories: customCategories,
-      decidedAt: new Date().toISOString(),
-    };
-
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
-    window.dispatchEvent(new CustomEvent(CONSENT_EVENT, { detail: stored }));
+    setRetryChoice({ categories: customCategories, decision });
+    setSyncing(true);
+    setSyncError(false);
 
     try {
-      await fetch('/api/privacy/cookie-consent', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          anonymousId: getAnonymousId(),
-          categories: customCategories,
-          decision,
-          policyVersion: COOKIE_POLICY_VERSION,
-        }),
+      const succeeded = await persistCookieConsentForClient({
+        categories: customCategories,
+        decision,
+        anonymousId: getAnonymousId(),
+      });
+      if (!succeeded) throw new Error('COOKIE_CONSENT_SYNC_FAILED');
+      setSyncError(false);
+      pushToast({
+        title: 'Configurações salvas',
+        description: 'Suas preferências foram confirmadas pelo servidor.',
+        variant: 'success',
       });
     } catch {
-      // Falha silenciosa no envio ao backend
+      setSyncError(true);
+      pushToast({
+        title: 'Não foi possível confirmar',
+        description: 'Sua escolha foi aplicada neste navegador, mas o servidor ainda não confirmou o salvamento. Tente novamente.',
+        variant: 'error',
+      });
+    } finally {
+      setSyncing(false);
     }
+  };
 
-    pushToast({
-      title: 'Configurações salvas',
-      description: 'Suas preferências de cookies foram atualizadas com sucesso.',
-      variant: 'success',
-    });
+  const retrySave = () => {
+    if (retryChoice) void savePreferences(retryChoice.categories, retryChoice.decision);
   };
 
   const handleSave = () => {
@@ -308,6 +313,7 @@ export default function CookiePreferencesPage() {
                                 <Switch
                                   checked={isChecked}
                                   onCheckedChange={(checked) => handleToggle(cat.key, checked)}
+                                  disabled={syncing}
                                 />
                               </div>
                             )}
@@ -373,21 +379,31 @@ export default function CookiePreferencesPage() {
               </div>
 
               <div className="mt-10 border-b border-slate-200 pb-12 sm:pb-16">
+                {syncError && (
+                  <div className="mx-auto mb-4 max-w-3xl rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800" role="alert">
+                    A preferência atualizada já está valendo neste navegador. O salvamento no servidor falhou, então o checkout não usará essa concessão até a confirmação.
+                    <Button type="button" variant="link" className="ml-1 h-auto p-0 text-red-900 underline" onClick={retrySave} disabled={syncing}>
+                      Tentar novamente
+                    </Button>
+                  </div>
+                )}
                 <div className="max-w-3xl mx-auto flex flex-col sm:flex-row gap-3 sm:justify-end">
                   <Button
                     type="button"
                     variant="outline"
                     onClick={handleAcceptAll}
+                    disabled={syncing}
                     className="h-11 border-slate-200 bg-white text-alusa-purple hover:bg-alusa-purple-tint hover:text-alusa-purple-hover font-semibold transition-colors order-2 sm:order-1"
                   >
-                    Aceitar todos os cookies
+                    {syncing ? 'Salvando…' : 'Aceitar todos os cookies'}
                   </Button>
                   <Button
                     type="button"
                     onClick={handleSave}
+                    disabled={syncing}
                     className="h-11 bg-alusa-purple text-white hover:bg-alusa-purple-hover font-semibold transition-colors order-1 sm:order-2"
                   >
-                    Salvar configurações
+                    {syncing ? 'Salvando…' : 'Salvar configurações'}
                   </Button>
                 </div>
               </div>

@@ -129,6 +129,7 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
       withPerfTimer('support.search', 'usuarios', () =>
       prisma.usuario.findMany({
         where: {
+          contaId: { not: null },
           OR: looksExactId ? [{ id: q }] : [{ id: q }, { nome: contains }, { email: contains }],
         },
         select: { id: true, contaId: true, nome: true, email: true, role: true, status: true },
@@ -350,14 +351,18 @@ export async function searchSupport(query: string): Promise<SupportSearchResult[
       contaId: item.id,
       meta: `${item.status} · ${item.financeStatus}`,
     })),
-    ...usuarios.map((item) => ({
-      type: 'Usuário' as const,
-      title: item.nome,
-      description: item.email,
-      href: `/contas/${item.contaId}/usuarios/${item.id}`,
-      contaId: item.contaId,
-      meta: `${item.role} · ${item.status}`,
-    })),
+    ...usuarios.flatMap((item) => {
+      if (!item.contaId) return [];
+
+      return [{
+        type: 'Usuário' as const,
+        title: item.nome,
+        description: item.email,
+        href: `/contas/${item.contaId}/usuarios/${item.id}`,
+        contaId: item.contaId,
+        meta: `${item.role} · ${item.status}`,
+      }];
+    }),
     ...alunos.map((item) => ({
       type: 'Aluno' as const,
       title: item.nome,

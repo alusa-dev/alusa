@@ -4,6 +4,7 @@ import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { type RematriculaElegivelItem } from '@/src/server/enrollments/renewal.service';
 import {
   confirmRenewalProcess,
+  findRenewalProcessReplay,
   previewRenewalProcess,
   RENEWAL_IDEMPOTENCY_CONFLICT,
   RENEWAL_IDEMPOTENCY_KEY_REQUIRES_NEW_INTENT,
@@ -33,6 +34,10 @@ import {
 } from '@/src/server/enrollments/payment-selection';
 import { assertPlatformAccessForConta } from '@/src/server/platform-billing/capacity';
 import { getAcademicDateDifference } from '@alusa/shared/date-only';
+import {
+  EnrollmentContractModelNotFoundError,
+  EnrollmentContractModelSignatureFieldsError,
+} from '@/src/server/contracts/issue-enrollment-contract.service';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -324,8 +329,6 @@ export async function postRematriculasRoute(req: Request) {
     if (!auth.user?.id || !auth.user.role || !allowedRoles.has(auth.user.role.toUpperCase())) {
       return jsonError(403, 'PERMISSAO_NEGADA', 'Usuário não tem permissão para rematricular.');
     }
-    await assertPlatformAccessForConta({ contaId: auth.contaId, capability: 'ENROLLMENT_WRITE' });
-
     const paymentSelection = resolveWizardPaymentSelection({
       formaPagamento: body.formaPagamento,
       formaPagamentoTaxa: body.formaPagamentoTaxa,
@@ -380,81 +383,6 @@ export async function postRematriculasRoute(req: Request) {
         'FORMA_PAGAMENTO_TAXA_INVALIDA',
         'Forma de pagamento da taxa de rematrícula não suporta cobrança no Asaas.',
       );
-    }
-
-    const gate = await guardFinancialAccountOr412(auth.contaId);
-    if (!gate.ok) return gate.response;
-
-    const rematriculaDecision = await loadRematriculaDecision({
-      contaId: auth.contaId,
-      matriculaId,
-    });
-
-    if (!rematriculaDecision) {
-      return jsonError(404, 'MATRICULA_NAO_ENCONTRADA', 'Matrícula não encontrada.');
-    }
-
-    const policySnapshot = {
-      policy: 'ALUSA_CANONICAL_RENEWAL_FLOW',
-      version: 1,
-      debtScope: 'QUALQUER_COBRANCA_EM_ABERTO',
-      financialPendingBehavior: 'RESERVA_VAGA_E_SEGURA_FINANCEIRO_FUTURO',
-    } satisfies Prisma.JsonObject;
-    const financialSnapshot = serializeFinancialSnapshot(rematriculaDecision.financialSnapshot);
-    const overrideReason =
-      typeof body.overrideReason === 'string' ? body.overrideReason.trim() : '';
-
-    if (rematriculaDecision.decision.actionStatus === 'BLOQUEADA') {
-      await auditBlockedAttempt({
-        matriculaId,
-        actorId: auth.user.id,
-        policySnapshot,
-        financialSnapshot,
-        reason: rematriculaDecision.decision.blockReason,
-        decisionMessage: rematriculaDecision.decision.message,
-      });
-
-      return jsonError(409, 'REMATRICULA_BLOQUEADA', rematriculaDecision.decision.message, {
-        actionStatus: rematriculaDecision.decision.actionStatus,
-        blockReason: rematriculaDecision.decision.blockReason,
-      });
-    }
-
-    if (rematriculaDecision.decision.actionStatus === 'REQUER_OVERRIDE') {
-      if (!rematriculaDecision.decision.canCurrentUserOverride) {
-        await auditBlockedAttempt({
-          matriculaId,
-          actorId: auth.user.id,
-          policySnapshot,
-          financialSnapshot,
-          reason: 'OVERRIDE_SEM_PERMISSAO',
-          decisionMessage: rematriculaDecision.decision.message,
-          overrideReason,
-        });
-
-        return jsonError(
-          403,
-          'OVERRIDE_SEM_PERMISSAO',
-          'Seu perfil não pode autorizar esta rematrícula.',
-        );
-      }
-
-      if (rematriculaDecision.decision.requiresOverrideReason && !overrideReason) {
-        await auditBlockedAttempt({
-          matriculaId,
-          actorId: auth.user.id,
-          policySnapshot,
-          financialSnapshot,
-          reason: 'OVERRIDE_MOTIVO_OBRIGATORIO',
-          decisionMessage: rematriculaDecision.decision.message,
-        });
-
-        return jsonError(
-          422,
-          'OVERRIDE_MOTIVO_OBRIGATORIO',
-          'Informe o motivo da autorização administrativa.',
-        );
-      }
     }
 
     const formaPagamento = toRematriculaPaymentMethod(paymentSelection.formaPagamento);
@@ -571,34 +499,137 @@ export async function postRematriculasRoute(req: Request) {
         notificationChannels: body.notificationChannels,
         notificationChannelsConfigured: body.notificationChannelsConfigured,
       },
+      overrideReason: body.overrideReason?.trim() || null,
     };
-
-    const preview = await previewRenewalProcess(renewalInput, { prisma });
-    if (preview.blockers.length > 0) {
-      return jsonError(422, 'PREVIEW_BLOQUEADO', preview.blockers[0]?.message ?? 'Preview bloqueado.', {
-        blockers: preview.blockers,
-        warnings: preview.warnings,
+    const idempotencyKey =
+      body.uiRequestId?.trim() ||
+      buildLegacyRenewalIdempotencyKey({
+        contaId: auth.contaId,
+        matriculaId,
+        targetPeriodId,
+        effectiveAt: dataInicioValue,
+        planId: targetPlanId,
+        targetId: targetComboId ?? targetClassId,
       });
-    }
+    const replay = await findRenewalProcessReplay({ ...renewalInput, idempotencyKey }, { prisma });
+    let confirmation;
+    let previewFirstDueDate: string | null = null;
+    if (replay) {
+      // A retry must not bypass the special authorization required by the
+      // persisted operation. Recompute the tenant-scoped policy decision before
+      // returning any stored enrollment or financial details.
+      const replayDecision = await loadRematriculaDecision({ contaId: auth.contaId, matriculaId });
+      if (!replayDecision) {
+        return jsonError(404, 'MATRICULA_NAO_ENCONTRADA', 'Matrícula não encontrada.');
+      }
+      if (replayDecision.decision.actionStatus === 'REQUER_OVERRIDE') {
+        const policySnapshot = {
+          policy: 'ALUSA_CANONICAL_RENEWAL_FLOW',
+          version: 1,
+          debtScope: 'QUALQUER_COBRANCA_EM_ABERTO',
+          financialPendingBehavior: 'RESERVA_VAGA_E_SEGURA_FINANCEIRO_FUTURO',
+        } satisfies Prisma.JsonObject;
+        const financialSnapshot = serializeFinancialSnapshot(replayDecision.financialSnapshot);
+        const overrideReason = typeof body.overrideReason === 'string' ? body.overrideReason.trim() : '';
+        if (!replayDecision.decision.canCurrentUserOverride) {
+          await auditBlockedAttempt({
+            matriculaId,
+            actorId: auth.user.id,
+            policySnapshot,
+            financialSnapshot,
+            reason: 'OVERRIDE_SEM_PERMISSAO',
+            decisionMessage: replayDecision.decision.message,
+            overrideReason,
+          });
+          return jsonError(403, 'OVERRIDE_SEM_PERMISSAO', 'Seu perfil não pode autorizar esta rematrícula.');
+        }
+        if (replayDecision.decision.requiresOverrideReason && !overrideReason) {
+          await auditBlockedAttempt({
+            matriculaId,
+            actorId: auth.user.id,
+            policySnapshot,
+            financialSnapshot,
+            reason: 'OVERRIDE_MOTIVO_OBRIGATORIO',
+            decisionMessage: replayDecision.decision.message,
+          });
+          return jsonError(422, 'OVERRIDE_MOTIVO_OBRIGATORIO', 'Informe o motivo da autorização administrativa.');
+        }
+      }
+      confirmation = replay;
+    } else {
+      await assertPlatformAccessForConta({ contaId: auth.contaId, capability: 'ENROLLMENT_WRITE' });
+      const gate = await guardFinancialAccountOr412(auth.contaId);
+      if (!gate.ok) return gate.response;
 
-    const confirmation = await confirmRenewalProcess(
-      {
+      const rematriculaDecision = await loadRematriculaDecision({ contaId: auth.contaId, matriculaId });
+      if (!rematriculaDecision) {
+        return jsonError(404, 'MATRICULA_NAO_ENCONTRADA', 'Matrícula não encontrada.');
+      }
+      const policySnapshot = {
+        policy: 'ALUSA_CANONICAL_RENEWAL_FLOW',
+        version: 1,
+        debtScope: 'QUALQUER_COBRANCA_EM_ABERTO',
+        financialPendingBehavior: 'RESERVA_VAGA_E_SEGURA_FINANCEIRO_FUTURO',
+      } satisfies Prisma.JsonObject;
+      const financialSnapshot = serializeFinancialSnapshot(rematriculaDecision.financialSnapshot);
+      const overrideReason = typeof body.overrideReason === 'string' ? body.overrideReason.trim() : '';
+
+      if (rematriculaDecision.decision.actionStatus === 'BLOQUEADA') {
+        await auditBlockedAttempt({
+          matriculaId,
+          actorId: auth.user.id,
+          policySnapshot,
+          financialSnapshot,
+          reason: rematriculaDecision.decision.blockReason,
+          decisionMessage: rematriculaDecision.decision.message,
+        });
+        return jsonError(409, 'REMATRICULA_BLOQUEADA', rematriculaDecision.decision.message, {
+          actionStatus: rematriculaDecision.decision.actionStatus,
+          blockReason: rematriculaDecision.decision.blockReason,
+        });
+      }
+
+      if (rematriculaDecision.decision.actionStatus === 'REQUER_OVERRIDE') {
+        if (!rematriculaDecision.decision.canCurrentUserOverride) {
+          await auditBlockedAttempt({
+            matriculaId,
+            actorId: auth.user.id,
+            policySnapshot,
+            financialSnapshot,
+            reason: 'OVERRIDE_SEM_PERMISSAO',
+            decisionMessage: rematriculaDecision.decision.message,
+            overrideReason,
+          });
+          return jsonError(403, 'OVERRIDE_SEM_PERMISSAO', 'Seu perfil não pode autorizar esta rematrícula.');
+        }
+        if (rematriculaDecision.decision.requiresOverrideReason && !overrideReason) {
+          await auditBlockedAttempt({
+            matriculaId,
+            actorId: auth.user.id,
+            policySnapshot,
+            financialSnapshot,
+            reason: 'OVERRIDE_MOTIVO_OBRIGATORIO',
+            decisionMessage: rematriculaDecision.decision.message,
+          });
+          return jsonError(422, 'OVERRIDE_MOTIVO_OBRIGATORIO', 'Informe o motivo da autorização administrativa.');
+        }
+      }
+
+      const preview = await previewRenewalProcess(renewalInput, { prisma });
+      if (preview.blockers.length > 0) {
+        return jsonError(422, 'PREVIEW_BLOQUEADO', preview.blockers[0]?.message ?? 'Preview bloqueado.', {
+          blockers: preview.blockers,
+          warnings: preview.warnings,
+        });
+      }
+      previewFirstDueDate = preview.firstDueDate;
+      confirmation = await confirmRenewalProcess({
         ...renewalInput,
         previewHash: preview.previewHash,
         sourceVersion: preview.sourceVersion,
-        idempotencyKey:
-          body.uiRequestId?.trim() ||
-          buildLegacyRenewalIdempotencyKey({
-            contaId: auth.contaId,
-            matriculaId,
-            targetPeriodId,
-            effectiveAt: dataInicioValue,
-            planId: targetPlanId,
-            targetId: targetComboId ?? targetClassId,
-          }),
-      },
-      { prisma },
-    );
+        idempotencyKey,
+      }, { prisma });
+    }
 
     const itemConfirmado = await prisma.rematriculaItem.findFirst({
       where: {
@@ -643,17 +674,26 @@ export async function postRematriculasRoute(req: Request) {
       },
     });
 
-    const primeiroVencimento = preview.firstDueDate
-      ? new Date(`${preview.firstDueDate}T00:00:00.000Z`).toISOString()
+    const firstDueDate = replay?.firstDueDate ?? (previewFirstDueDate ? new Date(`${previewFirstDueDate}T00:00:00.000Z`) : null);
+    const primeiroVencimento = firstDueDate
+      ? firstDueDate.toISOString()
       : dataInicioValue.toISOString();
 
     return NextResponse.json(
       createRematriculaResultDTOSchema.parse(
         mapCreateRematriculaResultToDTO({
           operationId: confirmation.processId,
-          status: 'PENDING',
+          status: novaMatricula?.status === 'PENDENTE_TAXA'
+            ? 'PENDING_FINANCE'
+            : novaMatricula?.status === 'ATIVA' || ['EFFECTIVE', 'COMPLETED'].includes(confirmation.status)
+              ? 'COMMITTED'
+              : 'PENDING',
           matriculaId: novaMatricula?.id ?? matriculaId,
-          message: 'Rematrícula confirmada. O próximo ciclo foi preparado e aguardará a data de início.',
+          message: novaMatricula?.status === 'PENDENTE_TAXA'
+            ? 'Rematrícula confirmada e aguardando a regularização da taxa.'
+            : novaMatricula?.status === 'ATIVA' || ['EFFECTIVE', 'COMPLETED'].includes(confirmation.status)
+              ? 'Rematrícula efetivada no ciclo de destino.'
+              : 'Rematrícula confirmada. O próximo ciclo foi preparado e aguardará a data de início.',
           novaMatricula: {
             id: novaMatricula?.id ?? matriculaId,
             planoId: novaMatricula?.planoId ?? targetPlanId,
@@ -685,6 +725,12 @@ export async function postRematriculasRoute(req: Request) {
     );
   } catch (error) {
     logEnrollmentOperationalEvent('api.renewal.create.failed', error);
+    if (error instanceof EnrollmentContractModelNotFoundError) {
+      return jsonError(422, 'CONTRACT_MODEL_NOT_FOUND', error.message);
+    }
+    if (error instanceof EnrollmentContractModelSignatureFieldsError) {
+      return jsonError(422, 'CONTRACT_MODEL_SIGNATURE_FIELDS_REQUIRED', error.message);
+    }
     if (error instanceof Error && error.message === RENEWAL_IDEMPOTENCY_CONFLICT) {
       return jsonError(
         409,

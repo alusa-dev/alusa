@@ -4,6 +4,8 @@ App iOS/Android da Alusa, criado dentro do monorepo existente com Expo Router.
 
 ## Rodando localmente
 
+Para o fluxo completo em iPhone, diagnóstico de conexão, SDK do Expo, banco e acessos salvos, consulte o [runbook de desenvolvimento mobile local](../../docs/runbooks/mobile-local-development.md).
+
 1. Instale as dependências na raiz do monorepo:
 
    ```bash

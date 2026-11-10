@@ -12,6 +12,9 @@ import {
   pausarMatriculaResultDTOSchema,
   reativarMatriculaInputDTOSchema,
   reativarMatriculaResultDTOSchema,
+  regularizarPausaInputDTOSchema,
+  registrarTransferenciaPendenteInputDTOSchema,
+  transferenciaAcademicaResultDTOSchema,
   updateMatriculaResultDTOSchema,
   type CreateMatriculaInputDTO,
   type CreateMatriculaResultDTO,
@@ -30,6 +33,9 @@ import {
   type PausarMatriculaResultDTO,
   type ReativarMatriculaInputDTO,
   type ReativarMatriculaResultDTO,
+  type RegularizarPausaInputDTO,
+  type RegistrarTransferenciaPendenteInputDTO,
+  type TransferenciaAcademicaResultDTO,
 } from '../dtos';
 
 export type MatriculaStatus = MatriculaStatusDTO;
@@ -51,6 +57,9 @@ export type PausarMatriculaInput = PausarMatriculaInputDTO;
 export type ReativarMatriculaInput = ReativarMatriculaInputDTO;
 export type PausarMatriculaResponse = PausarMatriculaResultDTO;
 export type ReativarMatriculaResponse = ReativarMatriculaResultDTO;
+export type RegularizarPausaInput = RegularizarPausaInputDTO;
+export type RegistrarTransferenciaPendenteInput = RegistrarTransferenciaPendenteInputDTO;
+export type TransferenciaAcademicaResult = TransferenciaAcademicaResultDTO;
 
 export type MatriculaStatusAsaasAction = 'SUSPEND' | 'ACTIVATE' | 'DELETE' | 'LOCAL_ONLY' | 'NONE';
 
@@ -153,6 +162,25 @@ async function parseResponse<T>(
     );
   }
   return parser.parse(json);
+}
+
+async function parseDataMutation<T>(input: {
+  response: Response;
+  parser: { parse: (_value: unknown) => T };
+  fallback: string;
+  messagesByCode?: Record<string, string>;
+}): Promise<T> {
+  const json = await input.response.json().catch(() => null) as {
+    data?: unknown;
+    error?: { code?: string; message?: string };
+  } | null;
+  if (!input.response.ok) {
+    const code = json?.error?.code;
+    throw new Error(
+      (code && input.messagesByCode?.[code]) || json?.error?.message || input.fallback,
+    );
+  }
+  return input.parser.parse(json?.data);
 }
 
 export async function listMatriculasRequest(
@@ -313,6 +341,69 @@ export async function reactivateMatriculaRequest(input: {
     reativarMatriculaResultDTOSchema,
     'Não foi possível reativar a matrícula.',
   );
+}
+
+export async function regularizePauseRequest(input: {
+  id: string;
+  payload: RegularizarPausaInput;
+}): Promise<void> {
+  const body = regularizarPausaInputDTOSchema.parse(input.payload);
+  const response = await fetch(`/api/matriculas/${input.id}/regularizar-pausa`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
+  await parseDataMutation({
+    response,
+    parser: { parse: (value) => value },
+    fallback: 'Não foi possível regularizar o prazo da pausa.',
+    messagesByCode: {
+      PAUSA_PRAZO_VENCIDO_REGULARIZACAO_OBRIGATORIA: 'O prazo da pausa precisa ser regularizado antes de retomar a matrícula.',
+      CONTRATO_ENCERRADO_REGULARIZACAO_NAO_APLICAVEL: 'O contrato terminou. Para o retorno, faça uma nova matrícula.',
+      PRAZO_RETORNO_NAO_VENCIDO: 'A regularização fica disponível após o vencimento da data prevista de retorno.',
+      VINCULO_ACADEMICO_ENCERRADO: 'Este vínculo não pode ser reativado. Faça uma nova matrícula para registrar o retorno.',
+    },
+  });
+}
+
+export async function registerPendingAcademicTransferRequest(input: {
+  destinationLinkId: string;
+  payload: RegistrarTransferenciaPendenteInput;
+}): Promise<TransferenciaAcademicaResult> {
+  const body = registrarTransferenciaPendenteInputDTOSchema.parse(input.payload);
+  const response = await fetch(`/api/matriculas/vinculos-academicos/${input.destinationLinkId}/transferencia`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return parseDataMutation({
+    response,
+    parser: transferenciaAcademicaResultDTOSchema,
+    fallback: 'Não foi possível registrar a transferência pendente.',
+    messagesByCode: {
+      TRANSFERENCIA_JA_REGISTRADA: 'Já existe uma transferência registrada para um destes vínculos.',
+      TRANSFERENCIA_ORIGEM_INVALIDA: 'O vínculo de origem não pode ser usado para esta transferência.',
+      VINCULO_NAO_ENCONTRADO: 'Um dos vínculos não está disponível nesta instituição.',
+    },
+  });
+}
+
+export async function formalizeAcademicTransferRequest(destinationLinkId: string): Promise<TransferenciaAcademicaResult> {
+  const response = await fetch(`/api/matriculas/vinculos-academicos/${destinationLinkId}/transferencia/formalizar`, {
+    method: 'PATCH',
+    headers: { Accept: 'application/json' },
+  });
+  return parseDataMutation({
+    response,
+    parser: transferenciaAcademicaResultDTOSchema,
+    fallback: 'Não foi possível formalizar a transferência.',
+    messagesByCode: {
+      TRANSFERENCIA_JA_FORMALIZADA: 'Esta transferência já foi formalizada.',
+      TRANSFERENCIA_ORIGEM_INVALIDA: 'A transferência não pode ser formalizada. Confira os vínculos e tente novamente.',
+      TRANSFERENCIA_CONCORRENTE: 'A transferência foi alterada por outra operação. Atualize os dados.',
+      CLASSIFICACAO_ALTERADA: 'A classificação mudou. Atualize os dados antes de formalizar.',
+    },
+  });
 }
 
 export async function getMatriculaPausaResumoRequest(id: string): Promise<MatriculaPausaResumo> {

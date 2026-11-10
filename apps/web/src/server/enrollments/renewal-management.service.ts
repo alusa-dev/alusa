@@ -269,6 +269,7 @@ function processDTO(processo: {
     sentAt: Date | null;
     createdAt: Date;
   }>;
+  auditLogs?: Array<{ reason: string | null; createdAt: Date; metadata: unknown }>;
 }) {
   return {
     id: processo.id,
@@ -291,6 +292,20 @@ function processDTO(processo: {
     previewHash: processo.previewHash,
     createdAt: processo.createdAt.toISOString(),
     updatedAt: processo.updatedAt.toISOString(),
+    cancellation: processo.auditLogs?.[0]
+      ? {
+          reason: processo.auditLogs[0].reason,
+          cancelledAt: processo.auditLogs[0].createdAt.toISOString(),
+          remoteStatus:
+            processo.auditLogs[0].metadata && typeof processo.auditLogs[0].metadata === 'object' &&
+            'remoteCancellation' in processo.auditLogs[0].metadata &&
+            processo.auditLogs[0].metadata.remoteCancellation &&
+            typeof processo.auditLogs[0].metadata.remoteCancellation === 'object' &&
+            'status' in processo.auditLogs[0].metadata.remoteCancellation
+              ? String(processo.auditLogs[0].metadata.remoteCancellation.status)
+              : null,
+        }
+      : null,
     itens:
       processo.itens?.map((item) => ({
         id: item.id,
@@ -576,6 +591,7 @@ export async function activateRenewalCampaign(
   const elegiveis = await listarRematriculasElegiveis({
     contaId: input.contaId,
     diasAntecedencia: readDiasAntecedencia(campaign.audienceDefinition),
+    targetPeriodId: campaign.targetPeriodId,
     currentUserRole: 'ADMIN',
   });
 
@@ -664,6 +680,7 @@ export async function listRenewalManagement(
       diasAntecedencia: input.diasAntecedencia,
       referencia: input.referencia,
       statusContrato: input.statusContrato,
+      targetPeriodId: input.targetPeriodId ?? undefined,
       search: input.search,
       currentUserRole: input.currentUserRole,
     }),
@@ -808,6 +825,12 @@ export async function listRenewalManagement(
           },
           orderBy: { createdAt: 'desc' },
           take: 10,
+        },
+        auditLogs: {
+          where: { action: 'RENEWAL_CANCELLED', contaId: input.contaId },
+          select: { reason: true, createdAt: true, metadata: true },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
         },
       },
       take: 100,

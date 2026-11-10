@@ -27,9 +27,11 @@ export type { BillingType, PaymentStatus } from './constants/billing';
 
 // Privacidade, LGPD e seguranca de dados
 export * from './privacy/data-classification';
+export * from './privacy/cookie-consent';
 export * from './privacy/data-map';
 export * from './privacy/masking';
 export * from './privacy/retention-policy';
 
 // Eventos escolares
 export * from './events/types';
+export * from './events/meta-event-map-allowlist';

@@ -94,6 +94,7 @@ export type AsaasSubscriptionSnapshot = {
   endDate: string | null;
   externalReference: string | null;
   deleted: boolean;
+  description?: string | null;
 };
 
 export type AsaasSubscriptionPaymentSnapshot = {
@@ -110,6 +111,7 @@ export type AsaasSubscriptionPaymentSnapshot = {
     | 'DEPOSIT'
     | 'PIX';
   deleted: boolean;
+  description?: string | null;
 };
 
 export interface AsaasSubscriptionPort {
@@ -151,6 +153,7 @@ export interface AsaasSubscriptionPort {
     nextDueDate?: string;
     /** Data limite inclusiva esperada pelo Asaas. */
     endDate?: string;
+    description?: string;
   }): Promise<AsaasSubscriptionSnapshot>;
 
   deleteSubscription(input: {
@@ -169,6 +172,7 @@ export interface AsaasSubscriptionPort {
     valueCents: number;
     billingType: 'UNDEFINED' | 'BOLETO' | 'CREDIT_CARD' | 'PIX';
     dueDate: string;
+    description?: string;
   }): Promise<AsaasSubscriptionPaymentSnapshot>;
 
   deletePayment(input: {

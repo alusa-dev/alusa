@@ -33,7 +33,7 @@ export default function LoginScreen() {
   const [step, setStep] = useState<LoginStep>('welcome');
   const [transitionDirection, setTransitionDirection] = useState<'forward' | 'back'>('forward');
   const [passwordVisible, setPasswordVisible] = useState(false);
-  const [authContext, setAuthContext] = useState<'OWNER' | 'COLLABORATOR' | 'PORTAL'>('COLLABORATOR');
+  const [authContext, setAuthContext] = useState<'OWNER' | 'COLLABORATOR' | 'PORTAL'>('OWNER');
   const [accounts, setAccounts] = useState<LoginAccount[]>([]);
   const login = useLogin();
   const {
@@ -86,7 +86,9 @@ export default function LoginScreen() {
 
   const errorMessage = login.error
     ? isApiError(login.error)
-      ? login.error.message
+      ? login.error.code === 'UNAUTHORIZED'
+        ? 'Não foi possível entrar com esses dados. Confira se o tipo de acesso selecionado está correto e tente novamente.'
+        : login.error.message
       : 'Não foi possível acessar a Alusa agora.'
     : null;
 
@@ -209,7 +211,7 @@ export default function LoginScreen() {
                   textContentType="password"
                   autoComplete="password"
                   returnKeyType="done"
-                  onSubmitEditing={submit}
+                  onSubmitEditing={() => { void submit(); }}
                   accessibilityLabel="Senha do aplicativo"
                   shellStyle={styles.underlineShell}
                   style={styles.underlinedInput}
@@ -268,7 +270,7 @@ function LoginErrorModal({ message, onClose }: { message: string | null; onClose
             Ops, algo está errado
           </AppText>
           <AppText variant="heading" tone="muted" style={styles.errorMessage}>
-            Por favor, verifique seu e-mail e sua senha e tente novamente.
+            {message || 'Não foi possível acessar sua conta. Tente novamente.'}
           </AppText>
           <Pressable
             accessibilityRole="button"

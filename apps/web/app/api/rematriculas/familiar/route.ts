@@ -15,6 +15,8 @@ import {
 } from '@/src/server/enrollments/renewal-process.service';
 import {
   confirmRenewalProcessFromHttp,
+  findRenewalProcessReplayFromHttp,
+  getRenewalProcessPersistedStates,
   listConfirmedRenewalItems,
   previewRenewalProcessFromHttp,
   validateFamilyRenewalReferences,
@@ -84,12 +86,6 @@ export async function POST(request: Request) {
   }
   const user = { id: auth.userId, contaId: auth.contaId, role: auth.role };
   try {
-    await assertPlatformAccessForConta({ contaId: user.contaId, capability: 'ENROLLMENT_WRITE' });
-  } catch {
-    return jsonError(402, 'PLATFORM_BILLING_ACCESS_RESTRICTED', 'Regularize o plano e faturamento para continuar.');
-  }
-
-  try {
     const raw = await request.json().catch(() => null);
     const body = rematriculaFamiliarCommitInputDTOSchema.parse(raw);
     const contaId = body.contaId?.trim() || user.contaId;
@@ -142,9 +138,6 @@ export async function POST(request: Request) {
       }
     }
 
-    const gate = await guardFinancialAccountOr412(contaId);
-    if (!gate.ok) return gate.response;
-
     const dataInicio = parseDate(body.dataInicio);
     const dataFimContrato = parseDate(body.dataFimContrato);
     const targetPeriodId = body.targetPeriodId ?? String(dataInicio.getUTCFullYear());
@@ -187,6 +180,88 @@ export async function POST(request: Request) {
         notificationChannelsConfigured: body.notificationChannelsConfigured,
       },
     };
+    const idempotencyKey = body.uiRequestId?.trim();
+    if (idempotencyKey) {
+      const replay = await findRenewalProcessReplayFromHttp({ ...renewalInput, idempotencyKey });
+      if (replay) {
+        const [confirmedItems, persistedStates] = await Promise.all([
+          listConfirmedRenewalItems({ contaId, processId: replay.processId }),
+          getRenewalProcessPersistedStates({ contaId, processId: replay.processId }),
+        ]);
+        if (!persistedStates) {
+          return jsonError(409, 'IDEMPOTENCY_CONFLICT', 'O processo idempotente não está disponível para replay.');
+        }
+        const renewedItems = persistedStates.itens.filter((item) => item.decision === 'RENEW');
+        const futureEnrollmentStatuses = renewedItems
+          .map((item) => item.matriculaFutura?.status)
+          .filter((status): status is NonNullable<typeof status> => Boolean(status));
+        const academicStatus = futureEnrollmentStatuses.length === 0
+          ? 'NO_TARGET_ENROLLMENT'
+          : futureEnrollmentStatuses.every((status) => status === 'ATIVA')
+            ? 'ATIVA'
+            : futureEnrollmentStatuses.every((status) => status === 'AGUARDANDO_CONFIRMACAO')
+              ? 'SCHEDULED'
+              : 'PARTIAL';
+        const targetBillingStatuses = persistedStates.financeiros.map((agreement) => agreement.status);
+        const targetBillingStatus = targetBillingStatuses.length === 0
+          ? 'NOT_APPLICABLE'
+          : targetBillingStatuses.every((status) => status === targetBillingStatuses[0])
+            ? targetBillingStatuses[0]!
+            : 'PARTIAL';
+        const contractStatuses = persistedStates.contratos.map((contract) => contract.status);
+        const contractStatus = contractStatuses.length === 0
+          ? 'NOT_SELECTED'
+          : contractStatuses.every((status) => status === contractStatuses[0])
+            ? contractStatuses[0]!
+            : 'PARTIAL';
+        const requestedDecisionByEnrollmentId = new Map(
+          body.itens.map((item) => [item.matriculaId, item.decision]),
+        );
+        const step = persistedStates.status === 'EFFECTIVE'
+          ? 'CYCLE_EFFECTIVE'
+          : renewedItems.length > 0
+            ? 'FUTURE_CYCLE_PREPARED'
+            : 'DECISIONS_SAVED';
+        return NextResponse.json(
+          {
+            familyId: replay.processId,
+            transitionId: replay.processId,
+            status: persistedStates.status,
+            step,
+            academicStatus,
+            sourceBillingStatus: 'CURRENT_UNCHANGED',
+            targetBillingStatus,
+            contractStatus,
+            previewHash: replay.previewHash,
+            sourceVersion: replay.sourceVersion,
+            warnings: [],
+            results: confirmedItems.map((item) => ({
+              matriculaId: item.matriculaOrigemId,
+              alunoId: item.matriculaOrigem.alunoId,
+              alunoNome: item.matriculaOrigem.aluno.nome,
+              decision:
+                item.decision === 'RENEW'
+                  ? requestedDecisionByEnrollmentId.get(item.matriculaOrigemId) ?? 'REMATRICULAR_AGORA'
+                  : item.decision === 'DECIDE_LATER'
+                    ? 'DECIDIR_DEPOIS'
+                    : 'NAO_CONTINUARA',
+              status: item.decision === 'RENEW' && item.matriculaFutura?.status !== 'ATIVA' ? 'pending' : 'success',
+              novaMatriculaId: item.matriculaFuturaId,
+            })),
+          },
+          { status: 202, headers: { 'cache-control': 'no-store' } },
+        );
+      }
+    }
+
+    try {
+      await assertPlatformAccessForConta({ contaId, capability: 'ENROLLMENT_WRITE' });
+    } catch {
+      return jsonError(402, 'PLATFORM_BILLING_ACCESS_RESTRICTED', 'Regularize o plano e faturamento para continuar.');
+    }
+    const gate = await guardFinancialAccountOr412(contaId);
+    if (!gate.ok) return gate.response;
+
     const preview = await previewRenewalProcessFromHttp(renewalInput);
     if (preview.blockers.length > 0) {
       return jsonError(422, 'PREVIEW_BLOQUEADO', preview.blockers[0]?.message ?? 'Preview bloqueado.', {

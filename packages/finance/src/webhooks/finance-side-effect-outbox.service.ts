@@ -1,7 +1,9 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { prisma } from '@alusa/database';
 import { FinanceWebhookSideEffectStatus, Prisma } from '@prisma/client';
+import { hasMarketingCookieConsent, isMetaPixelMapSlug } from '@alusa/shared';
+import { META_MARKETING_CONSENT_POLICY_VERSION } from '@alusa/lib/events/map/meta-marketing-consent';
 import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import {
   buildBillingNotificationDedupeKey,
@@ -43,6 +45,7 @@ export const FINANCE_SIDE_EFFECT_TYPES = [
   'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
   'EVENT_PUBLIC_ORDER_CREATED_EMAIL',
   'EVENT_MAP_LATE_PAYMENT_REFUND',
+  'META_EVENT_MAP_PURCHASE',
 ] as const;
 export type FinanceSideEffectType = (typeof FINANCE_SIDE_EFFECT_TYPES)[number];
 
@@ -95,6 +98,7 @@ type EventMapLatePaymentRefundPayload = {
   requestState: 'NOT_SUBMITTED' | 'SUBMITTING' | 'AWAITING_CUSTOMER_ACTION';
   bankSlipRefundRequestUrl?: string;
 };
+type MetaEventMapPurchasePayload = { orderId: string };
 
 export interface EnqueueBillingNotificationSideEffectsParams {
   contaId: string;
@@ -488,7 +492,7 @@ export async function markExhaustedFinanceWebhookSideEffects(params?: {
     },
     orderBy: { updatedAt: 'asc' },
     take: limit,
-    select: { id: true },
+    select: { id: true, contaId: true, effectType: true, payload: true },
   });
 
   if (!candidates.length) return { marked: 0 };
@@ -501,6 +505,16 @@ export async function markExhaustedFinanceWebhookSideEffects(params?: {
     },
     data: { status: FinanceWebhookSideEffectStatus.EXHAUSTED },
   });
+
+  if (result.count > 0) {
+    for (const candidate of candidates.filter((item) => item.effectType === 'META_EVENT_MAP_PURCHASE')) {
+      const payload = candidate.payload as MetaEventMapPurchasePayload;
+      await prisma.eventMapOrder.updateMany({
+        where: { id: payload.orderId, contaId: candidate.contaId },
+        data: { metaMarketingClientUserAgent: null },
+      });
+    }
+  }
 
   if (result.count > 0) {
     logFinanceOperationalEvent({
@@ -651,6 +665,73 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
       providerMessageId = (await sendEventPublicOrderCreatedEmail(
         event.payload as EventPublicOrderCreatedEmailPayload,
       )).id;
+    } else if (event.effectType === 'META_EVENT_MAP_PURCHASE') {
+      const payload = event.payload as MetaEventMapPurchasePayload;
+      const order = await prisma.eventMapOrder.findFirst({
+        where: { id: payload.orderId, contaId: event.contaId },
+        select: {
+          id: true, contaId: true, status: true, paymentStatus: true, totalAmount: true, paidAt: true,
+          buyerEmail: true, metaMarketingConsentAt: true, metaMarketingConsentRevokedAt: true,
+          metaMarketingConsentAnonymousId: true,
+          metaMarketingConsentPolicyVersion: true,
+          metaMarketingClientUserAgent: true,
+          map: { select: { contaId: true, publicSlug: true, status: true, publicEnabled: true } },
+        },
+      });
+      const cookieConsent = order?.metaMarketingConsentAnonymousId
+        ? await prisma.cookieConsent.findFirst({
+            where: {
+              anonymousId: order.metaMarketingConsentAnonymousId,
+              policyVersion: order.metaMarketingConsentPolicyVersion ?? '',
+            },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            select: { categories: true },
+          })
+        : null;
+      const activeMarketingConsent = hasMarketingCookieConsent(cookieConsent?.categories);
+      const paidStatuses = ['RECEIVED', 'CONFIRMED', 'RECEIVED_IN_CASH', 'PAID'];
+      if (!order || order.status !== 'CONFIRMED' || !paidStatuses.includes(order.paymentStatus?.toUpperCase() ?? '')
+        || !order.paidAt
+        || !order.metaMarketingConsentAt || order.metaMarketingConsentRevokedAt
+        || !order.metaMarketingConsentAnonymousId || !activeMarketingConsent
+        || order.metaMarketingConsentPolicyVersion !== META_MARKETING_CONSENT_POLICY_VERSION || order.map.contaId !== event.contaId
+        || order.map.status !== 'PUBLISHED' || !order.map.publicEnabled || !order.map.publicSlug || !isMetaPixelMapSlug(order.map.publicSlug)) {
+        await prisma.financeWebhookSideEffectOutbox.updateMany({
+          where: { id: eventId, status: FinanceWebhookSideEffectStatus.PROCESSING, lockToken },
+          data: { status: FinanceWebhookSideEffectStatus.PROCESSED, processedAt: new Date(), lockedAt: null, leaseExpiresAt: null, lockToken: null, deliveryStatus: 'SKIPPED', deliveryStatusAt: new Date() },
+        });
+        if (order) {
+          await prisma.eventMapOrder.updateMany({
+            where: { id: order.id, contaId: event.contaId },
+            data: { metaMarketingClientUserAgent: null },
+          });
+        }
+        return { processed: true, reason: 'meta_purchase_not_eligible' };
+      }
+      const accessToken = process.env.META_CONVERSIONS_API_ACCESS_TOKEN;
+      const apiVersion = process.env.META_GRAPH_API_VERSION;
+      if (!accessToken || !apiVersion || !/^v\d+\.\d+$/.test(apiVersion)) {
+        throw new SideEffectDeliveryError('Meta Conversions API is not configured.', true);
+      }
+      const email = createHash('sha256').update(order.buyerEmail.trim().toLowerCase()).digest('hex');
+      const response = await fetch(`https://graph.facebook.com/${apiVersion}/1081285171574725/events`, {
+        method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          data: JSON.stringify([{
+            event_name: 'Purchase', event_time: Math.floor(order.paidAt.getTime() / 1000),
+            event_id: order.id, action_source: 'website',
+            event_source_url: buildAppUrl(`/m/${order.map.publicSlug}`),
+            user_data: { em: [email], ...(order.metaMarketingClientUserAgent ? { client_user_agent: order.metaMarketingClientUserAgent } : {}) },
+            custom_data: { currency: 'BRL', value: Number(order.totalAmount) },
+          }]),
+          access_token: accessToken,
+        }),
+      });
+      if (!response.ok) throw new SideEffectDeliveryError('Meta Conversions API request failed.', true);
+      await prisma.eventMapOrder.updateMany({
+        where: { id: order.id, contaId: event.contaId },
+        data: { metaMarketingClientUserAgent: null },
+      });
     } else if (event.effectType === 'EVENT_MAP_LATE_PAYMENT_REFUND') {
       const payload = event.payload as EventMapLatePaymentRefundPayload;
       const refundGateway = getFinanceSideEffectRefundGateway();
@@ -774,6 +855,7 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
         await refundGateway.refundCobranca({
           paymentId: payload.asaasPaymentId,
           contaId: event.contaId,
+          idempotencyKey: eventId,
           value: payload.value,
           description: payload.description,
         });
@@ -865,6 +947,12 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
     }
 
     if (exhausted) {
+      if (event.effectType === 'META_EVENT_MAP_PURCHASE') {
+        await prisma.eventMapOrder.updateMany({
+          where: { id: (event.payload as MetaEventMapPurchasePayload).orderId, contaId: event.contaId },
+          data: { metaMarketingClientUserAgent: null },
+        });
+      }
       logFinanceOperationalEvent({
         severity: 'error',
         eventName: 'finance.webhook.outbox.effect.exhausted',

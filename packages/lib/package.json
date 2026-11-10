@@ -38,6 +38,10 @@
       "types": "./dist/events/map/event-map-order-operations.d.ts",
       "default": "./dist/events/map/event-map-order-operations.js"
     },
+    "./events/map/meta-marketing-consent": {
+      "types": "./dist/events/map/meta-marketing-consent.d.ts",
+      "default": "./dist/events/map/meta-marketing-consent.js"
+    },
     "./events/map/public-event-map-checkout-persistence": {
       "types": "./dist/events/map/public-event-map-checkout-persistence.d.ts",
       "default": "./dist/events/map/public-event-map-checkout-persistence.js"

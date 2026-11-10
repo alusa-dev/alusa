@@ -54,7 +54,7 @@ const request = (url: string, method = 'POST', body?: unknown) => new Request(ur
   ...(body === undefined ? {} : { body: JSON.stringify(body) }),
 });
 const routes = [
-  { name: 'refund', call: () => refund(request('http://localhost/refund') as never, params()), service: mocks.refund },
+  { name: 'refund', call: () => refund(new Request('http://localhost/refund', { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': 'refund-route-key-1' }, body: '{}' }) as never, params()), service: mocks.refund },
   { name: 'undo cash receive', call: () => undo(request('http://localhost/undo') as never, params()), service: mocks.undo },
   { name: 'payment method correction', call: () => changeMethod(request('http://localhost/payment-method', 'PUT', { formaPagamento: 'PIX' }) as never, params()), service: mocks.paymentMethod },
   { name: 'charge tax invoice cancellation', call: () => cancelChargeNf(request('http://localhost/nf'), params()), service: mocks.cancelChargeInvoice },
@@ -127,6 +127,25 @@ describe('FINANCIAL_CORRECTION route capability', () => {
     expect(response.status).toBe(403);
     expect(mocks.access).not.toHaveBeenCalled();
     expect(mocks.reverseTransaction).not.toHaveBeenCalled();
+  });
+
+  it('forwards the stable refund idempotency key to the refund command', async () => {
+    billingStatus = 'RESTRICTED';
+    const response = await refund(
+      new Request('http://localhost/refund', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'idempotency-key': 'refund-route-key-1' },
+        body: '{}',
+      }) as never,
+      params('charge_a'),
+    );
+
+    expect(response.status).toBe(202);
+    expect(mocks.refund).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta_a',
+      id: 'charge_a',
+      correlationId: 'refund-route-key-1',
+    }));
   });
 
   it('passes only the authenticated tenant to the reversal service under restricted and canceled billing', async () => {

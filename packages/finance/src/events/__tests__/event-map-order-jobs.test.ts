@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyEventMapOrderInconsistencies,
   expireEventMapReservations,
+  buildExpiredEventMapOrderUpdateData,
+  buildExpiredMetaMarketingCleanupWhere,
   getExpiredReservationDecision,
   inspectEventFinancialInconsistencies,
   reconcilePendingEventMapOrders,
@@ -112,6 +114,30 @@ describe('getExpiredReservationDecision', () => {
 
     expect(getExpiredReservationDecision(uncertain, now, { deletedAsaasPaymentId: 'pay-discovered' }))
       .toEqual({ expire: true });
+  });
+});
+
+describe('expired public order privacy cleanup', () => {
+  it('clears client user-agent when a tenant-scoped unpaid order expires', () => {
+    expect(buildExpiredEventMapOrderUpdateData({ now, noRemotePaymentConfirmed: true })).toEqual({
+      status: 'EXPIRED',
+      cancelledAt: now,
+      paymentStatus: 'DELETED',
+      metaMarketingClientUserAgent: null,
+      metaMarketingConsentAnonymousId: null,
+    });
+  });
+
+  it('bounds cleanup of unresolved expired orders to the owning tenant and retention cutoff', () => {
+    const where = buildExpiredMetaMarketingCleanupWhere('conta-1', now);
+    expect(where).toMatchObject({
+      contaId: 'conta-1',
+      status: { in: ['EXPIRED', 'CANCELLED'] },
+      paymentStatus: { in: ['DELETED', 'EXPIRED'] },
+      paidAt: null,
+      expiresAt: { lt: new Date('2025-12-11T12:00:00.000Z') },
+      metaMarketingClientUserAgent: { not: null },
+    });
   });
 });
 
