@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { prisma } from '@alusa/database';
 import { FinanceWebhookSideEffectStatus, Prisma } from '@prisma/client';
-import { hasMarketingCookieConsent, isMetaPixelMapSlug } from '@alusa/shared';
+import { hasMarketingCookieConsent, isMetaPixelMapSlug, metaPixelPurchaseEventId } from '@alusa/shared';
 import { META_MARKETING_CONSENT_POLICY_VERSION } from '@alusa/lib/events/map/meta-marketing-consent';
 import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import {
@@ -719,7 +719,7 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
         body: new URLSearchParams({
           data: JSON.stringify([{
             event_name: 'Purchase', event_time: Math.floor(order.paidAt.getTime() / 1000),
-            event_id: order.id, action_source: 'website',
+            event_id: metaPixelPurchaseEventId(order.id), action_source: 'website',
             event_source_url: buildAppUrl(`/m/${order.map.publicSlug}`),
             user_data: { em: [email], ...(order.metaMarketingClientUserAgent ? { client_user_agent: order.metaMarketingClientUserAgent } : {}) },
             custom_data: { currency: 'BRL', value: Number(order.totalAmount) },

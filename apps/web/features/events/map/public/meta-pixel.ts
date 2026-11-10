@@ -1,6 +1,7 @@
 import { META_PIXEL_MAP_SLUGS } from '@alusa/shared';
 
 export { META_PIXEL_MAP_SLUGS } from '@alusa/shared';
+export { metaPixelPurchaseEventId } from '@alusa/shared';
 
 export function hasCurrentMarketingConsent(value: unknown, policyVersion: string): boolean {
   if (!value || typeof value !== 'object') return false;
@@ -24,10 +25,3 @@ export function metaPixelPurchaseDedupeKey(orderId: string) {
   return `alusa.meta-pixel.purchase.${orderId}`;
 }
 
-export function metaPixelPurchaseEventId(orderId: string) {
-  return `alusa_purchase_${orderId}`;
-}
-
-export function metaPixelPurchaseEventId(orderId: string) {
-  return `alusa_purchase_${orderId}`;
-}

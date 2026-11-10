@@ -200,7 +200,7 @@ describe('finance side-effect outbox leases', () => {
     const form = new URLSearchParams(String(request.body));
     expect(form.get('access_token')).toBe('server-secret');
     const [purchase] = JSON.parse(form.get('data') ?? '[]');
-    expect(purchase).toMatchObject({ event_name: 'Purchase', event_id: 'order-consented', action_source: 'website' });
+    expect(purchase).toMatchObject({ event_name: 'Purchase', event_id: 'alusa_purchase_order-consented', action_source: 'website' });
     expect(purchase.user_data).toMatchObject({ client_user_agent: 'UA' });
     expect(purchase.user_data.em[0]).toMatch(/^[a-f0-9]{64}$/);
     expect(cookieConsentMock.findFirst).toHaveBeenCalledWith(expect.objectContaining({
@@ -267,7 +267,7 @@ describe('finance side-effect outbox leases', () => {
       const form = new URLSearchParams(String((request as RequestInit).body));
       return JSON.parse(form.get('data') ?? '[]')[0].event_id;
     });
-    expect(eventIds).toEqual(['order-ambiguous', 'order-ambiguous']);
+    expect(eventIds).toEqual(['alusa_purchase_order-ambiguous', 'alusa_purchase_order-ambiguous']);
 
     const exhaustedAttempt = { ...firstAttempt, id: 'effect-exhausted', attempts: 4 };
     outboxMock.findUnique.mockResolvedValueOnce(exhaustedAttempt);

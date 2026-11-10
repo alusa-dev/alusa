@@ -76,7 +76,7 @@ describe('MetaPixelTracker', () => {
 
   it('fires one BRL Purchase only after confirmed paid status, including across remounts', () => {
     saveConsent(true);
-    const order = { orderId: 'order-paid', status: 'PAYMENT_PENDING', paymentStatus: 'PENDING', totalAmount: 125.5 };
+    const order = { orderId: 'order-paid', status: 'PAYMENT_PENDING', paymentStatus: 'PENDING', totalAmount: 125.5, metaMarketingConsentGranted: true };
     const view = render(tracker(order, 'IDENTIFICATION'));
     expect(trackedCalls().filter((call) => call[1] === 'InitiateCheckout')).toHaveLength(1);
     expect(trackedCalls().filter((call) => call[1] === 'Purchase')).toHaveLength(0);
@@ -96,7 +96,7 @@ describe('MetaPixelTracker', () => {
 
   it('dispatches a paid Purchase when storage writes fail and keeps an in-memory dedupe', () => {
     saveConsent(true);
-    const paidOrder = { orderId: 'order-storage-failure', status: 'CONFIRMED', paymentStatus: 'RECEIVED', totalAmount: 45 };
+    const paidOrder = { orderId: 'order-storage-failure', status: 'CONFIRMED', paymentStatus: 'RECEIVED', totalAmount: 45, metaMarketingConsentGranted: true };
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('storage unavailable'); });
     const view = render(tracker(paidOrder, 'CONFIRMATION'));
     const pixel = window as Window & { fbq?: ((...args: unknown[]) => void) & { queue?: unknown[][]; callMethod?: (...args: unknown[]) => void } };
@@ -109,7 +109,7 @@ describe('MetaPixelTracker', () => {
 
   it('waits for callMethod before marking Purchase sent, retries one script failure, then dispatches after recovery', () => {
     saveConsent(true);
-    const paidOrder = { orderId: 'order-pixel-recovery', status: 'CONFIRMED', paymentStatus: 'RECEIVED', totalAmount: 72 };
+    const paidOrder = { orderId: 'order-pixel-recovery', status: 'CONFIRMED', paymentStatus: 'RECEIVED', totalAmount: 72, metaMarketingConsentGranted: true };
     render(tracker(paidOrder, 'CONFIRMATION'));
     const key = 'alusa.meta-pixel.purchase.order-pixel-recovery';
     expect(trackedCalls().filter((call) => call[1] === 'Purchase')).toHaveLength(0);

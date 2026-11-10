@@ -6,3 +6,7 @@ export const META_PIXEL_MAP_SLUGS: ReadonlySet<string> = new Set([
 export function isMetaPixelMapSlug(publicSlug: string): boolean {
   return META_PIXEL_MAP_SLUGS.has(publicSlug);
 }
+
+export function metaPixelPurchaseEventId(orderId: string): string {
+  return `alusa_purchase_${orderId}`;
+}
