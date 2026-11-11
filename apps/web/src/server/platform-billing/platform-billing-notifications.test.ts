@@ -48,10 +48,10 @@ describe('platform billing notification wording', () => {
   });
 
   it.each([
-    ['checkout.session.completed', /checkout da assinatura concluído/i, /registrou a conclusão do checkout/i],
-    ['customer.subscription.created', /assinatura criada/i, /registrou uma assinatura/i],
-    ['invoice.paid', /pagamento de fatura confirmado/i, /pagamento de uma fatura/i],
-    ['invoice.payment_failed', /pagamento da assinatura pendente/i, /sinalizou falha ou ação necessária/i],
+    ['checkout.session.completed', /dados da contratação recebidos/i, /etapa de checkout foi concluída.*acompanhe o status da assinatura/i],
+    ['customer.subscription.created', /assinatura criada/i, /assinatura do plano foi criada/i],
+    ['invoice.paid', /pagamento do plano confirmado/i, /pagamento do plano foi confirmado/i],
+    ['invoice.payment_failed', /pagamento não concluído/i, /não foi possível concluir o pagamento da fatura/i],
   ])('%s reports only what the Stripe event establishes', async (eventType, expectedTitle, expectedMessage) => {
     await notifyPlatformBillingEvent({ contaId: 'conta-a', eventId: `evt-${eventType}`, eventType });
 

@@ -317,6 +317,14 @@
     "./jobs/notify-contracts-expiring": {
       "types": "./dist/jobs/notify-contracts-expiring.d.ts",
       "default": "./dist/jobs/notify-contracts-expiring.js"
+    },
+    "./notifications/inbox-contract": {
+      "types": "./dist/notifications/inbox-contract.d.ts",
+      "default": "./dist/notifications/inbox-contract.js"
+    },
+    "./notifications/recipient-state": {
+      "types": "./dist/notifications/recipient-state.d.ts",
+      "default": "./dist/notifications/recipient-state.js"
     }
   },
   "scripts": {

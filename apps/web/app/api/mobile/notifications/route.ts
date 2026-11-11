@@ -5,7 +5,7 @@ import {
   type NotificationFeedView,
 } from '@alusa/lib/services/notifications.service';
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
+import { notificationBulkActionResponseSchema, notificationBulkActionSchema, notificationListQuerySchema, serializeNotificationFeed } from '@alusa/lib/notifications/inbox-contract';
 
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
@@ -13,12 +13,8 @@ import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 export const runtime = 'nodejs';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
-const listQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(50).default(20),
-  page: z.coerce.number().int().min(1).default(1),
-  view: z.enum(['active', 'archived', 'all']).default('active'),
-});
-const bulkActionSchema = z.object({ action: z.literal('markAllRead') }).strict();
+const listQuerySchema = notificationListQuerySchema(50, true);
+const bulkActionSchema = notificationBulkActionSchema;
 
 function response(body: unknown, status = 200) {
   return NextResponse.json(body, {
@@ -50,20 +46,6 @@ function forbidden() {
   return response({ error: { code: 'FORBIDDEN', message: 'Usuário sem permissão para acessar notificações.' } }, 403);
 }
 
-function serialize(result: Awaited<ReturnType<typeof listNotifications>>) {
-  return {
-    items: result.items.map((item) => ({
-      ...item,
-      createdAt: item.createdAt.toISOString(),
-      triggeredAt: item.triggeredAt.toISOString(),
-      readAt: item.readAt?.toISOString() ?? null,
-      archivedAt: item.archivedAt?.toISOString() ?? null,
-    })),
-    unreadCount: result.unreadCount,
-    totalCount: result.totalCount,
-  };
-}
-
 export async function GET(request: Request) {
   const actor = await authenticate(request);
   if (!actor) return unauthorized();
@@ -92,7 +74,7 @@ export async function GET(request: Request) {
       page: parsed.data.page,
       view: parsed.data.view as NotificationFeedView,
     });
-    return response(serialize(result));
+    return response(serializeNotificationFeed(result));
   } catch (error) {
     logApiOperationalEvent({
       severity: 'error',
@@ -123,7 +105,7 @@ export async function PATCH(request: Request) {
 
   try {
     const updatedCount = await markAllNotificationsAsRead({ contaId: actor.contaId, userId: actor.userId });
-    return response({ success: true, updatedCount });
+    return response(notificationBulkActionResponseSchema.parse({ success: true, updatedCount }));
   } catch (error) {
     logApiOperationalEvent({
       severity: 'error',

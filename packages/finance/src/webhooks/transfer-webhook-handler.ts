@@ -199,40 +199,43 @@ function buildTransferDoneMessage(params: {
   operation: string;
   datetime: Date;
 }): string {
-  const lines: string[] = ['A transferência foi concluída com sucesso.', ''];
-
+  const isPix = params.operation === 'Pix';
+  const operationLabel = isPix ? 'O Pix' : 'A transferência bancária';
+  const participle = isPix ? 'concluído' : 'concluída';
   const displayValue = params.netValue ?? params.value;
-  if (displayValue != null) {
-    lines.push(`**Valor enviado:** ${formatBRL(displayValue)}`);
-  }
+  const details = [
+    displayValue != null ? `de ${formatBRL(displayValue)}` : '',
+    params.recipient ? `para ${params.recipient}` : '',
+  ].filter(Boolean).join(' ');
+  const lines: string[] = [`${operationLabel}${details ? ` ${details}` : ''} foi ${participle} em ${formatBRTDateTime(params.datetime)}.`];
   if (params.feeValue != null) {
     lines.push(`**Custo da transferência:** ${formatBRL(params.feeValue)}`);
   }
-  if (params.recipient) {
-    lines.push(`**Destinatário:** ${params.recipient}`);
-  }
-  lines.push(`**Forma da transferência:** ${params.operation}`);
-  lines.push(`**Data e hora:** ${formatBRTDateTime(params.datetime)}`);
 
   return lines.join('\n');
 }
 
 function buildTransferFailedMessage(params: {
   value: number | null | undefined;
+  netValue: number | null | undefined;
+  feeValue: number | null | undefined;
   recipient: string | null;
   operation: string;
   failReason: string | null;
   datetime: Date;
 }): string {
-  const lines: string[] = ['A transferência não pôde ser concluída.', ''];
-
-  if (params.value != null) {
-    lines.push(`**Valor:** ${formatBRL(params.value)}`);
+  const operationLabel = params.operation === 'Pix' ? 'o Pix' : 'a transferência bancária';
+  const details = [
+    params.value != null ? `de ${formatBRL(params.value)}` : '',
+    params.recipient ? `para ${params.recipient}` : '',
+  ].filter(Boolean).join(' ');
+  const lines: string[] = [`Não foi possível concluir ${operationLabel}${details ? ` ${details}` : ''}.`];
+  if (params.netValue != null && params.netValue !== params.value) {
+    lines.push(`**Valor líquido informado:** ${formatBRL(params.netValue)}`);
   }
-  if (params.recipient) {
-    lines.push(`**Destinatário:** ${params.recipient}`);
+  if (params.feeValue != null) {
+    lines.push(`**Custo da transferência:** ${formatBRL(params.feeValue)}`);
   }
-  lines.push(`**Forma da transferência:** ${params.operation}`);
   lines.push(`**Data e hora:** ${formatBRTDateTime(params.datetime)}`);
   lines.push(`**O que fazer:** ${explainTransferFailure(params.failReason)}`);
 
@@ -241,21 +244,26 @@ function buildTransferFailedMessage(params: {
 
 function buildTransferCancelledMessage(params: {
   value: number | null | undefined;
+  netValue: number | null | undefined;
+  feeValue: number | null | undefined;
   recipient: string | null;
   operation: string;
   datetime: Date;
 }): string {
-  const lines: string[] = ['A transferência foi cancelada.', ''];
-
-  if (params.value != null) {
-    lines.push(`**Valor:** ${formatBRL(params.value)}`);
+  const isPix = params.operation === 'Pix';
+  const operationLabel = isPix ? 'O Pix' : 'A transferência bancária';
+  const participle = isPix ? 'cancelado' : 'cancelada';
+  const details = [
+    params.value != null ? `de ${formatBRL(params.value)}` : '',
+    params.recipient ? `para ${params.recipient}` : '',
+  ].filter(Boolean).join(' ');
+  const lines = [`${operationLabel}${details ? ` ${details}` : ''} foi ${participle} em ${formatBRTDateTime(params.datetime)}.`];
+  if (params.netValue != null && params.netValue !== params.value) {
+    lines.push(`**Valor líquido informado:** ${formatBRL(params.netValue)}`);
   }
-  if (params.recipient) {
-    lines.push(`**Destinatário:** ${params.recipient}`);
+  if (params.feeValue != null) {
+    lines.push(`**Custo da transferência:** ${formatBRL(params.feeValue)}`);
   }
-  lines.push(`**Forma da transferência:** ${params.operation}`);
-  lines.push(`**Data e hora:** ${formatBRTDateTime(params.datetime)}`);
-
   return lines.join('\n');
 }
 
@@ -562,6 +570,8 @@ export async function handleTransferWebhook(
         const failReason = officialTransfer?.failReason ?? payload.transfer.failReason ?? null;
         const failedMessage = buildTransferFailedMessage({
           value: officialTransfer?.value ?? null,
+          netValue: updates.netValue ?? null,
+          feeValue: updates.feeValue ?? null,
           recipient: notifRecipient,
           operation: notifOperation,
           failReason,
@@ -593,6 +603,8 @@ export async function handleTransferWebhook(
       if (nextStatus === 'CANCELED') {
         const cancelledMessage = buildTransferCancelledMessage({
           value: officialTransfer?.value ?? null,
+          netValue: updates.netValue ?? null,
+          feeValue: updates.feeValue ?? null,
           recipient: notifRecipient,
           operation: notifOperation,
           datetime: notifNow,

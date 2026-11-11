@@ -85,8 +85,8 @@ export async function notifyPlatformBillingEvent(input: {
         type: NotificationType.SYSTEM_ATTENTION,
         category: NotificationCategory.SYSTEM,
         severity: NotificationSeverity.CRITICAL,
-        title: 'Seu período gratuito terminou',
-        message: `Seu período gratuito terminou${trialEndDate ? ` em ${trialEndDate}` : ''}. ${planTerms === 'o plano escolhido' ? 'Escolha um plano e confirme o pagamento' : `O plano ${planTerms} está disponível para contratação`}. Enquanto isso, algumas alterações ficarão indisponíveis.`,
+        title: 'Seu período de teste terminou',
+        message: `Seu período de teste terminou${trialEndDate ? ` em ${trialEndDate}` : ''}. Para continuar, escolha um plano em Plano e faturamento e confirme a contratação.${planTerms !== 'o plano escolhido' ? ` O plano disponível é ${planTerms}.` : ''} Até lá, algumas alterações podem ficar indisponíveis.`,
         dedupeKey: `platform-billing:trial-expired:${account.id}`,
         relatedPath: '/account/billing-plan',
         entityType: 'PlatformBillingAccount',
@@ -273,8 +273,8 @@ function mapPlatformBillingEventToNotification(
   if (eventType === 'checkout.session.completed') {
     return {
       severity: NotificationSeverity.INFO,
-      title: 'Etapa de contratação concluída',
-      message: 'Recebemos seus dados para contratar o plano. A assinatura ainda aguarda confirmação; acompanhe a situação em Plano e faturamento.',
+      title: 'Dados da contratação recebidos',
+      message: 'A etapa de checkout foi concluída. Acompanhe o status da assinatura em Plano e faturamento.',
     };
   }
 
@@ -282,12 +282,11 @@ function mapPlatformBillingEventToNotification(
     return {
       severity: NotificationSeverity.INFO,
       title: 'Assinatura criada',
-      message:
-        'A assinatura do plano foi registrada. Confira a situação do plano e do acesso em Plano e faturamento.',
+      message: 'A assinatura do plano foi criada. Acompanhe a situação do plano em Plano e faturamento.',
       email: {
-        subject: 'Assinatura criada na Alusa',
-        preview: 'A assinatura foi criada para sua conta.',
-        actionLabel: 'Acompanhar assinatura',
+        subject: 'Assinatura criada',
+        preview: 'A assinatura do plano foi criada.',
+        actionLabel: 'Ver plano e faturamento',
       },
     };
   }
@@ -296,24 +295,37 @@ function mapPlatformBillingEventToNotification(
     return {
       severity: NotificationSeverity.SUCCESS,
       title: 'Pagamento do plano confirmado',
-      message: 'O pagamento do plano foi confirmado. Confira a situação atual em Plano e faturamento.',
+      message: 'O pagamento do plano foi confirmado. Consulte a situação da assinatura em Plano e faturamento.',
       email: {
         subject: 'Pagamento do plano confirmado',
-        preview: 'O pagamento da assinatura foi confirmado.',
+        preview: 'O pagamento do plano foi confirmado.',
+        actionLabel: 'Ver plano e faturamento',
       },
     };
   }
 
-  if (eventType === 'invoice.payment_failed' || eventType === 'invoice.payment_action_required') {
+  if (eventType === 'invoice.payment_failed') {
     return {
       severity: NotificationSeverity.WARNING,
-      title: 'Pagamento do plano pendente',
-      message:
-        'Não foi possível confirmar o pagamento do plano. Confira os dados de pagamento em Plano e faturamento para evitar restrições de acesso.',
+      title: 'Pagamento não concluído',
+      message: 'Não foi possível concluir o pagamento da fatura. Confira ou atualize a forma de pagamento em Plano e faturamento.',
       email: {
-        subject: 'Pagamento do plano pendente',
-        preview: 'Atualize o pagamento para evitar restrições no acesso.',
-        actionLabel: 'Regularizar pagamento',
+        subject: 'Pagamento não concluído',
+        preview: 'Confira a forma de pagamento para regularizar a assinatura.',
+        actionLabel: 'Atualizar forma de pagamento',
+      },
+    };
+  }
+
+  if (eventType === 'invoice.payment_action_required') {
+    return {
+      severity: NotificationSeverity.WARNING,
+      title: 'Ação necessária para concluir o pagamento',
+      message: 'A fatura precisa de uma ação sua para concluir o pagamento. Acesse Plano e faturamento e siga as instruções para confirmar.',
+      email: {
+        subject: 'Ação necessária para concluir o pagamento',
+        preview: 'Siga as instruções para confirmar o pagamento da fatura.',
+        actionLabel: 'Concluir pagamento',
       },
     };
   }
@@ -327,13 +339,15 @@ function mapPlatformBillingEventToNotification(
       : 'a faixa atual de alunos';
     return {
       severity: NotificationSeverity.WARNING,
-      title: 'Teste gratuito terminando',
+      title: 'Seu período de teste está terminando',
       message:
-        `Seu teste gratuito termina ${trialEndDate ? `em ${trialEndDate}` : 'em breve'}. A condição atual é ${terms}. Ao final, você escolhe se quer contratar e confirma o pagamento; sem confirmação, não haverá cobrança.`,
+        `Seu período de teste termina ${trialEndDate ? `em ${trialEndDate}` : 'em breve'}. A condição atual é ${terms}. Se quiser contratar, escolha um plano em Plano e faturamento e confirme o pagamento. Sem confirmação, não haverá cobrança.`,
       email: {
-        subject: 'Seu teste gratuito está terminando',
-        preview: trialEndDate ? `Termina em ${trialEndDate} · ${terms}.` : `Em breve · ${terms}.`,
-        actionLabel: 'Ver condição e contratar',
+        subject: 'Seu período de teste está terminando',
+        preview: trialEndDate
+          ? `Termina em ${trialEndDate}. Condição atual: ${terms}. Sem confirmação, não haverá cobrança.`
+          : `Termina em breve. Condição atual: ${terms}. Sem confirmação, não haverá cobrança.`,
+        actionLabel: 'Ver plano e faturamento',
       },
     };
   }
@@ -342,7 +356,7 @@ function mapPlatformBillingEventToNotification(
     return {
       severity: NotificationSeverity.INFO,
       title: 'Assinatura atualizada',
-      message: 'Os dados da sua assinatura foram atualizados. Confira a situação atual em Plano e faturamento.',
+      message: 'Os dados da assinatura foram atualizados. Consulte o status e verifique se há alguma ação pendente em Plano e faturamento.',
     };
   }
 
@@ -350,11 +364,11 @@ function mapPlatformBillingEventToNotification(
     return {
       severity: NotificationSeverity.CRITICAL,
       title: 'Assinatura encerrada',
-      message: 'A assinatura do plano foi encerrada. Confira a situação do acesso da conta em Plano e faturamento.',
+      message: 'A assinatura do plano foi encerrada. Consulte a situação do acesso da conta em Plano e faturamento.',
       email: {
         subject: 'Assinatura encerrada',
         preview: 'A assinatura do plano foi encerrada.',
-        actionLabel: 'Ver assinatura',
+        actionLabel: 'Ver plano e faturamento',
       },
     };
   }

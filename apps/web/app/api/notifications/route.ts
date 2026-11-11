@@ -1,45 +1,19 @@
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
 import {
   listNotifications,
   markAllNotificationsAsRead,
   type NotificationFeedView,
 } from '@alusa/lib/services/notifications.service';
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
-import {
-  buildNotificationFeedCacheKey,
-  clearNotificationCaches,
-  getNotificationCache,
-  setNotificationCache,
-} from '@/lib/notifications/notification-cache';
+import { notificationBulkActionResponseSchema, notificationBulkActionSchema, notificationListQuerySchema, serializeNotificationFeed } from '@alusa/lib/notifications/inbox-contract';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
-const listQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(100).optional(),
-  page: z.coerce.number().int().min(1).optional(),
-  view: z.enum(['active', 'archived', 'all']).optional(),
-});
-const bulkActionSchema = z.object({
-  action: z.literal('markAllRead'),
-});
+const listQuerySchema = notificationListQuerySchema(100);
+const bulkActionSchema = notificationBulkActionSchema;
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
-}
-
-function serialize(result: Awaited<ReturnType<typeof listNotifications>>) {
-  return {
-    items: result.items.map((item) => ({
-      ...item,
-      createdAt: item.createdAt.toISOString(),
-      triggeredAt: item.triggeredAt.toISOString(),
-      readAt: item.readAt?.toISOString() ?? null,
-      archivedAt: item.archivedAt?.toISOString() ?? null,
-    })),
-    unreadCount: result.unreadCount,
-    totalCount: result.totalCount,
-  };
 }
 
 export async function GET(req: NextRequest) {
@@ -68,19 +42,6 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const cacheKey = buildNotificationFeedCacheKey({
-      contaId: user.contaId,
-      userId: user.id,
-      view: parsed.data.view ?? 'active',
-      limit: parsed.data.limit ?? 'default',
-      page: parsed.data.page ?? 'default',
-    });
-    const cached = await getNotificationCache<ReturnType<typeof serialize>>(cacheKey);
-    if (cached.body && (cached.state === 'HIT' || cached.state === 'STALE')) {
-      timer.end('GET /notifications (cache hit)', { cacheState: cached.state });
-      return json(200, cached.body);
-    }
-
     const result = await withPerfTimer(
       'notifications',
       'listNotifications',
@@ -94,12 +55,8 @@ export async function GET(req: NextRequest) {
       { contaId: user.contaId }
     );
 
-    const body = serialize(result);
-    await setNotificationCache(cacheKey, body, {
-      ttlSeconds: 30,
-      staleWhileRevalidateSeconds: 90,
-    });
-    timer.end('GET /notifications (cache miss)');
+    const body = serializeNotificationFeed(result);
+    timer.end('GET /notifications (database read)');
     return json(200, body);
   } catch (error) {
     logApiOperationalEvent({
@@ -145,8 +102,7 @@ export async function PATCH(req: NextRequest) {
       { contaId: user.contaId }
     );
 
-    await clearNotificationCaches({ contaId: user.contaId, userId: user.id });
-    return json(200, { success: true, updatedCount });
+    return json(200, notificationBulkActionResponseSchema.parse({ success: true, updatedCount }));
   } catch (error) {
     logApiOperationalEvent({
       severity: 'error',

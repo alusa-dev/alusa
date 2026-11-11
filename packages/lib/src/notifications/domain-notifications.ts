@@ -54,6 +54,7 @@ export async function createEnrollmentLifecycleNotification(params: {
   motivo?: string | null;
   actorUserId?: string | null;
 }): Promise<void> {
+  const motivo = params.motivo?.trim().replace(/[.!?]+$/, '') || null;
   const config = {
     PAUSADA: {
       type: NotificationType.ENROLLMENT_PAUSED,
@@ -68,7 +69,7 @@ export async function createEnrollmentLifecycleNotification(params: {
     CANCELADA: {
       type: NotificationType.ENROLLMENT_CANCELLED,
       title: 'Matrícula cancelada',
-      message: `A matrícula de ${params.alunoNome} foi cancelada.`,
+      message: `A matrícula de ${params.alunoNome} foi cancelada.${motivo ? ` Motivo informado: ${motivo}.` : ''}`,
     },
   }[params.action];
 

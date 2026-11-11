@@ -7,6 +7,7 @@ const {
   cookieConsentMock,
   eventTicketSaleMock,
   eventTicketMock,
+  createPublicEventTicketInboxNotificationMock,
   emitBillingNotificationsMock,
   listPaymentRefundsMock,
   refundCobrancaMock,
@@ -27,6 +28,7 @@ const {
   cookieConsentMock: { findFirst: vi.fn() },
   eventTicketSaleMock: { findFirst: vi.fn() },
   eventTicketMock: { count: vi.fn() },
+  createPublicEventTicketInboxNotificationMock: vi.fn(),
   emitBillingNotificationsMock: vi.fn(),
   listPaymentRefundsMock: vi.fn(),
   refundCobrancaMock: vi.fn(),
@@ -58,6 +60,7 @@ vi.mock('@alusa/lib/notifications/emit-billing-notifications', () => ({
 vi.mock('@alusa/lib/services/notifications.service', () => ({
   normalizeBillingNotificationEvent: (event: string) => event,
   buildBillingNotificationDedupeKey: (event: string, paymentId: string) => `payment:confirmed:${paymentId}`,
+  createPublicEventTicketInboxNotification: createPublicEventTicketInboxNotificationMock,
 }));
 
 vi.mock('../../use-cases/asaas-ops', () => ({
@@ -139,6 +142,55 @@ describe('finance side-effect outbox leases', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
+  });
+
+  it('processes public ticket inbox effects with tenant-scoped order data', async () => {
+    const event = {
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'EVENT_PUBLIC_ORDER_TICKET_INBOX',
+      payload: { orderId: 'order-public-a', asaasPaymentId: 'pay-public-a' },
+      attempts: 0,
+    };
+    outboxMock.findUnique.mockResolvedValue(event);
+    createPublicEventTicketInboxNotificationMock.mockResolvedValue('created');
+
+    const result = await processFinanceWebhookSideEffectOutboxEvent(event.id);
+
+    expect(result).toEqual({ processed: true });
+    expect(createPublicEventTicketInboxNotificationMock).toHaveBeenCalledWith({
+      contaId: 'conta-a',
+      orderId: 'order-public-a',
+      asaasPaymentId: 'pay-public-a',
+      sourceType: 'EVENT_ORDER',
+    });
+    expect(outboxMock.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: expect.objectContaining({ id: event.id, status: FinanceWebhookSideEffectStatus.PROCESSING }),
+      data: expect.objectContaining({ status: FinanceWebhookSideEffectStatus.PROCESSED }),
+    }));
+  });
+
+  it('keeps public ticket inbox effects pending when ticket notification asks for retry', async () => {
+    const event = {
+      ...buildEvent(FinanceWebhookSideEffectStatus.PENDING),
+      effectType: 'EVENT_PUBLIC_ORDER_TICKET_INBOX',
+      payload: { orderId: 'order-public-a', asaasPaymentId: 'pay-public-a' },
+      attempts: 0,
+    };
+    outboxMock.findUnique.mockResolvedValue(event);
+    createPublicEventTicketInboxNotificationMock.mockResolvedValue('retry');
+
+    const result = await processFinanceWebhookSideEffectOutboxEvent(event.id);
+
+    expect(result).toEqual({ processed: false, reason: 'Pedido público ainda não está pronto para notificação de ingressos.' });
+    expect(createPublicEventTicketInboxNotificationMock).toHaveBeenCalledWith(expect.objectContaining({
+      contaId: 'conta-a',
+      orderId: 'order-public-a',
+      asaasPaymentId: 'pay-public-a',
+    }));
+    expect(outboxMock.updateMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      where: expect.objectContaining({ id: event.id, status: FinanceWebhookSideEffectStatus.PROCESSING }),
+      data: expect.objectContaining({ status: FinanceWebhookSideEffectStatus.PENDING }),
+    }));
   });
 
   it('skips Meta Purchase and clears client user-agent when marketing consent is absent', async () => {

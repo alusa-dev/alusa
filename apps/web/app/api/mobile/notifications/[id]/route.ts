@@ -4,7 +4,7 @@ import {
   updateNotificationRecipientState,
 } from '@alusa/lib/services/notifications.service';
 import { NextResponse } from 'next/server';
-import { z } from 'zod';
+import { notificationActionResponseSchema, notificationIdParamsSchema, notificationItemActionSchema } from '@alusa/lib/notifications/inbox-contract';
 
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
@@ -12,8 +12,8 @@ import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 export const runtime = 'nodejs';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
-const paramsSchema = z.object({ id: z.string().trim().min(1).max(191) });
-const bodySchema = z.object({ action: z.enum(['read', 'unread', 'archive', 'unarchive']) }).strict();
+const paramsSchema = notificationIdParamsSchema;
+const bodySchema = notificationItemActionSchema;
 
 function response(body: unknown, status = 200) {
   return NextResponse.json(body, {
@@ -69,7 +69,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
       action: parsed.data.action,
     });
     if (!updated) return response({ error: { code: 'NOT_FOUND', message: 'Notificação não encontrada.' } }, 404);
-    return response({ success: true });
+    return response(notificationActionResponseSchema.parse({ success: true }));
   } catch (error) {
     logApiOperationalEvent({
       severity: 'error',
@@ -103,7 +103,7 @@ export async function DELETE(request: Request, context: { params: Promise<{ id: 
       notificationId,
     });
     if (!deleted) return response({ error: { code: 'NOT_FOUND', message: 'Notificação não encontrada.' } }, 404);
-    return response({ success: true });
+    return response(notificationActionResponseSchema.parse({ success: true }));
   } catch (error) {
     logApiOperationalEvent({
       severity: 'error',

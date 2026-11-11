@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getUnreadNotificationCount } from '@alusa/lib/services/notifications.service';
 import { isTransientDatabaseError } from '@alusa/lib/database-retry';
-import {
-  buildNotificationUnreadCountCacheKey,
-  getNotificationCache,
-  setNotificationCache,
-} from '@/lib/notifications/notification-cache';
+import { notificationUnreadCountResponseSchema } from '@alusa/lib/notifications/inbox-contract';
 import { createPerfTimer, withPerfTimer } from '@/lib/perf-logger';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
@@ -33,13 +29,6 @@ export async function GET(req: NextRequest) {
       return json(403, { error: 'SEM_PERMISSAO', message: 'Usuário sem permissão para acessar notificações.' });
     }
 
-    const cacheKey = buildNotificationUnreadCountCacheKey(user.contaId, user.id);
-    const cached = await getNotificationCache<{ count: number }>(cacheKey);
-    if (cached.body && (cached.state === 'HIT' || cached.state === 'STALE')) {
-      timer.end('GET /notifications/unread-count (cache hit)', { cacheState: cached.state });
-      return json(200, cached.body);
-    }
-
     const requestKey = `${user.contaId}:${user.id}`;
     let countPromise = inFlightCounts.get(requestKey);
     if (!countPromise) {
@@ -58,22 +47,9 @@ export async function GET(req: NextRequest) {
     }
 
     const body = { count: await countPromise };
-    await setNotificationCache(cacheKey, body, {
-      ttlSeconds: 60,
-      staleWhileRevalidateSeconds: 240,
-    }).catch((cacheError) => {
-      logApiOperationalEvent({
-        severity: 'warn',
-        eventName: 'api.notifications.cache_write.failed',
-        route: '/api/notifications/unread-count',
-        method: 'GET',
-        requestId: getRequestId(req),
-        error: cacheError,
-      });
-    });
-    timer.end('GET /notifications/unread-count (cache miss)');
+    timer.end('GET /notifications/unread-count (database read)');
 
-    return json(200, body);
+    return json(200, notificationUnreadCountResponseSchema.parse(body));
   } catch (error) {
     logApiOperationalEvent({
       severity: 'error',

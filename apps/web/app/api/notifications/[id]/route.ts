@@ -1,18 +1,15 @@
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { NextRequest, NextResponse } from 'next/server';
-import { z } from 'zod';
 import {
   deleteNotificationRecipient,
   updateNotificationRecipientState,
 } from '@alusa/lib/services/notifications.service';
-import { clearNotificationCaches } from '@/lib/notifications/notification-cache';
+import { notificationActionResponseSchema, notificationIdParamsSchema, notificationItemActionSchema } from '@alusa/lib/notifications/inbox-contract';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 
 const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
-const paramsSchema = z.object({ id: z.string().min(1) });
-const bodySchema = z.object({
-  action: z.enum(['read', 'unread', 'archive', 'unarchive']),
-});
+const paramsSchema = notificationIdParamsSchema;
+const bodySchema = notificationItemActionSchema;
 
 function json(status: number, body: unknown) {
   return NextResponse.json(body, { status, headers: { 'cache-control': 'no-store' } });
@@ -61,8 +58,7 @@ export async function PATCH(
       return json(404, { error: 'NOTIFICACAO_NAO_ENCONTRADA', message: 'Notificação não encontrada.' });
     }
 
-    await clearNotificationCaches({ contaId: user.contaId, userId: user.id });
-    return json(200, { success: true });
+    return json(200, notificationActionResponseSchema.parse({ success: true }));
   } catch (error) {
     logApiOperationalEvent({
       severity: 'error',
@@ -109,8 +105,7 @@ export async function DELETE(
       return json(404, { error: 'NOTIFICACAO_NAO_ENCONTRADA', message: 'Notificação não encontrada.' });
     }
 
-    await clearNotificationCaches({ contaId: user.contaId, userId: user.id });
-    return json(200, { success: true });
+    return json(200, notificationActionResponseSchema.parse({ success: true }));
   } catch (error) {
     logApiOperationalEvent({
       severity: 'error',

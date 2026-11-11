@@ -7,6 +7,7 @@ import { META_MARKETING_CONSENT_POLICY_VERSION } from '@alusa/lib/events/map/met
 import { logFinanceOperationalEvent } from '../foundation/operational-log';
 import {
   buildBillingNotificationDedupeKey,
+  createPublicEventTicketInboxNotification,
   normalizeBillingNotificationEvent,
 } from '@alusa/lib/services/notifications.service';
 import {
@@ -42,6 +43,7 @@ class SideEffectDeliveryError extends Error {
 
 export const FINANCE_SIDE_EFFECT_TYPES = [
   'BILLING_NOTIFICATION',
+  'EVENT_PUBLIC_ORDER_TICKET_INBOX',
   'EVENT_PUBLIC_ORDER_TICKET_EMAIL',
   'EVENT_PUBLIC_ORDER_CREATED_EMAIL',
   'EVENT_MAP_LATE_PAYMENT_REFUND',
@@ -76,6 +78,7 @@ type EventPublicOrderTicketEmailPayload = {
   statusPath?: string | null;
   deliveryKey?: string;
 };
+type EventPublicOrderTicketInboxPayload = { orderId: string; asaasPaymentId: string };
 
 type EventPublicOrderCreatedEmailPayload = {
   orderId: string;
@@ -593,6 +596,20 @@ export async function processFinanceWebhookSideEffectOutboxEvent(
         sourceType: 'ASAAS_WEBHOOK' | 'ASAAS_SYNC';
       };
       await emitBillingNotifications([payload.candidate], payload.sourceType, { throwOnError: true });
+    } else if (event.effectType === 'EVENT_PUBLIC_ORDER_TICKET_INBOX') {
+      const payload = event.payload as EventPublicOrderTicketInboxPayload;
+      if (!payload.orderId || !payload.asaasPaymentId) {
+        throw new SideEffectDeliveryError('Payload da confirmação de venda pública incompleto.', false);
+      }
+      const result = await createPublicEventTicketInboxNotification({
+        contaId: event.contaId,
+        orderId: payload.orderId,
+        asaasPaymentId: payload.asaasPaymentId,
+        sourceType: 'EVENT_ORDER',
+      });
+      if (result === 'retry') {
+        throw new SideEffectDeliveryError('Pedido público ainda não está pronto para notificação de ingressos.', true);
+      }
     } else if (event.effectType === 'EVENT_PUBLIC_ORDER_TICKET_EMAIL') {
       const payload = event.payload as EventPublicOrderTicketEmailPayload;
       if (!payload.orderId || !payload.buyerEmail || !payload.ticketsPath) {

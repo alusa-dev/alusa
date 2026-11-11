@@ -8,6 +8,7 @@ import { NotificationType } from '@prisma/client';
  */
 export const INTERNAL_NOTIFICATION_TYPES = new Set<NotificationType>([
   NotificationType.ENROLLMENT_CANCELLED,
+  NotificationType.BILLING_CREATED,
   NotificationType.BILLING_OVERDUE,
   NotificationType.BILLING_CANCELLED,
   NotificationType.PAYMENT_CONFIRMED,

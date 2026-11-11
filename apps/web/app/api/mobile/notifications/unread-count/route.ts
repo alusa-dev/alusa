@@ -1,5 +1,6 @@
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 import { getUnreadNotificationCount } from '@alusa/lib/services/notifications.service';
+import { notificationUnreadCountResponseSchema } from '@alusa/lib/notifications/inbox-contract';
 import { NextResponse } from 'next/server';
 
 import { verifyMobileAccessToken } from '@/lib/mobile-auth-service';
@@ -41,7 +42,7 @@ export async function GET(request: Request) {
 
   try {
     const count = await getUnreadNotificationCount({ contaId: actor.contaId, userId: actor.userId });
-    return response({ count });
+    return response(notificationUnreadCountResponseSchema.parse({ count }));
   } catch (error) {
     logApiOperationalEvent({
       severity: 'error',

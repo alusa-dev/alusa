@@ -444,6 +444,7 @@ export async function markPublicEventMapOrderRefundProcessingByPayment(params: E
         contaId: params.contaId,
         OR: [{ asaasPaymentId: null }, { asaasPaymentId: params.asaasPaymentId }],
       },
+      include: { items: { select: { id: true, ticket: { select: { id: true } } } } },
     });
     if (!order) return null;
     if (isEventMapOrderRefundFinalized(order.status, order.paymentStatus)) {
@@ -463,6 +464,25 @@ export async function markPublicEventMapOrderRefundProcessingByPayment(params: E
       },
     });
     if (updated.count !== 1) return null;
+
+    if (
+      params.paymentStatus === 'REVERSED'
+      && order.status === 'CONFIRMED'
+      && order.ticketFulfillmentStatus === 'ISSUED'
+      && order.items.length > 0
+      && order.items.every((item) => Boolean(item.ticket))
+    ) {
+      await tx.financeWebhookSideEffectOutbox.createMany({
+        data: {
+          contaId: order.contaId,
+          effectType: 'EVENT_PUBLIC_ORDER_TICKET_INBOX',
+          dedupeKey: `${order.contaId}:EVENT_PUBLIC_ORDER_TICKET_INBOX:${order.id}:chargeback-reversed`,
+          payload: { orderId: order.id, asaasPaymentId: params.asaasPaymentId },
+          status: 'PENDING',
+        },
+        skipDuplicates: true,
+      });
+    }
 
     if (params.rawChargebackStatus) {
       await tx.auditLog.create({

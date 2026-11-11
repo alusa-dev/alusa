@@ -42,12 +42,17 @@ const prismaMock = {
     findFirst: vi.fn(),
     findMany: vi.fn(),
   },
+  standaloneInstallmentPlan: { findFirst: vi.fn() },
+  eventBillingGroup: { findFirst: vi.fn() },
+  eventParticipant: { findFirst: vi.fn() },
+  eventFinancialEntry: { findFirst: vi.fn() },
   charge: {
     findUnique: vi.fn(),
+    findFirst: vi.fn(),
     findMany: vi.fn(),
   },
   eventMapOrder: { findFirst: vi.fn() },
-  eventTicketSale: { findMany: vi.fn() },
+  eventTicketSale: { findMany: vi.fn(), findFirst: vi.fn() },
   asaasResourceOrigin: { findUnique: vi.fn() },
   notificationRecipient: {
     updateMany: vi.fn(),
@@ -80,6 +85,14 @@ const {
 describe('notifications.service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // clearAllMocks retains queued mockResolvedValueOnce implementations; reset
+    // one-shot query mocks so a prior scenario cannot leak into the next one.
+    txMock.notification.findUnique.mockReset();
+    txMock.notificationDigestEvent.findUnique.mockReset();
+    prismaMock.cobranca.findFirst.mockReset();
+    prismaMock.charge.findUnique.mockReset();
+    prismaMock.eventMapOrder.findFirst.mockReset();
+    prismaMock.eventTicketSale.findMany.mockReset();
     txMock.usuario.findMany.mockResolvedValue([]);
     txMock.notification.findUnique.mockResolvedValueOnce(null).mockResolvedValue({ id: 'notif-new' });
     txMock.notification.createMany.mockResolvedValue({ count: 1 });
@@ -104,6 +117,12 @@ describe('notifications.service', () => {
     prismaMock.conta.findUnique.mockReset();
     prismaMock.conta.findUnique.mockResolvedValue({ financeIntegrationMode: 'WHITELABEL_BAAS' });
     prismaMock.charge.findMany.mockResolvedValue([]);
+    prismaMock.charge.findFirst.mockResolvedValue(null);
+    prismaMock.standaloneInstallmentPlan.findFirst.mockResolvedValue(null);
+    prismaMock.eventBillingGroup.findFirst.mockResolvedValue(null);
+    prismaMock.eventParticipant.findFirst.mockResolvedValue(null);
+    prismaMock.eventFinancialEntry.findFirst.mockResolvedValue(null);
+    prismaMock.eventTicketSale.findFirst.mockResolvedValue(null);
     prismaMock.notificationRecipient.updateMany.mockResolvedValue({ count: 1 });
     prismaMock.notificationRecipient.findMany.mockResolvedValue([]);
     prismaMock.notificationRecipient.count.mockResolvedValue(0);
@@ -515,23 +534,43 @@ describe('notifications.service', () => {
     });
 
     expect(result).toMatchObject({ outcome: 'not_applicable', reason: 'event_ticket_payment', notificationId: null });
-    expect(prismaMock.eventMapOrder.findFirst).toHaveBeenCalledWith({
-      where: { contaId: 'conta-a', asaasPaymentId: 'pay-ticket' }, select: { id: true },
-    });
+    expect(prismaMock.eventMapOrder.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { contaId: 'conta-a', asaasPaymentId: 'pay-ticket' },
+      select: expect.objectContaining({ ticketFulfillmentStatus: true, items: expect.any(Object) }),
+    }));
     expect(prismaMock.eventTicketSale.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { contaId: 'conta-a', asaasPaymentId: 'pay-ticket' } }));
     expect(enqueuePending).not.toHaveBeenCalled();
     expect(txMock.notification.createMany).not.toHaveBeenCalled();
   });
 
   it('reconhece venda avulsa de ingresso sem pedido público vinculado', async () => {
-    prismaMock.eventTicketSale.findMany.mockResolvedValue([{ id: 'sale-1', eventMapOrderId: null }]);
+    prismaMock.eventTicketSale.findMany.mockResolvedValue([{
+      id: 'sale-1', eventId: 'event-1', eventMapOrderId: null,
+      buyerName: 'Comprador', totalAmount: 75, paymentMethod: 'PIX', event: { name: 'Evento Alusa' },
+    }]);
 
     const result = await createBillingWebhookNotification({
       contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-ticket',
     });
 
-    expect(result).toMatchObject({ outcome: 'not_applicable', reason: 'event_ticket_payment' });
+    expect(result).toMatchObject({ outcome: 'not_applicable', reason: 'no_recipients' });
     expect(enqueuePending).not.toHaveBeenCalled();
+  });
+
+  it('rejeita origem externa para venda avulsa local sem criar notificação', async () => {
+    prismaMock.asaasResourceOrigin.findUnique.mockResolvedValueOnce({ origin: 'EXTERNAL' });
+    prismaMock.eventTicketSale.findMany.mockResolvedValue([{
+      id: 'sale-external-origin', eventId: 'event-1', eventMapOrderId: null,
+      buyerName: 'Comprador', totalAmount: 75, paymentMethod: 'PIX', event: { name: 'Evento Alusa' },
+    }]);
+
+    const result = await createBillingWebhookNotification({
+      contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-external-ticket-sale',
+    });
+
+    expect(result).toMatchObject({ outcome: 'inconsistent', reason: 'external_origin_conflict' });
+    expect(txMock.notification.createMany).not.toHaveBeenCalled();
+    expect(txMock.notificationDigestEvent.createMany).not.toHaveBeenCalled();
   });
 
   it('deduplica a origem quando a venda administrativa aponta para o mesmo pedido público', async () => {
@@ -619,7 +658,7 @@ describe('notifications.service', () => {
       contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-legacy-external',
     });
 
-    expect(result).toMatchObject({ outcome: 'not_applicable', reason: 'external_payment' });
+    expect(result).toMatchObject({ outcome: 'not_applicable', reason: 'external_account_unlinked_payment' });
     expect(enqueuePending).not.toHaveBeenCalled();
   });
 
@@ -628,7 +667,7 @@ describe('notifications.service', () => {
     const result = await createBillingWebhookNotification({
       contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-panel', asaasSubscriptionId: 'sub-panel',
     });
-    expect(result).toMatchObject({ outcome: 'not_applicable', reason: 'external_subscription' });
+    expect(result).toMatchObject({ outcome: 'not_applicable', reason: 'external_account_unlinked_payment' });
     expect(enqueuePending).not.toHaveBeenCalled();
   });
 
@@ -639,7 +678,7 @@ describe('notifications.service', () => {
       contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-alusa-missing',
       externalReference: 'alusa:subscription:mat-a:plan-a',
     });
-    expect(result).toMatchObject({ outcome: 'inconsistent', reason: 'alusa_subscription_without_local_entity' });
+    expect(result).toMatchObject({ outcome: 'inconsistent', reason: 'external_origin_conflict' });
     expect(enqueuePending).not.toHaveBeenCalled();
   });
 
@@ -659,8 +698,9 @@ describe('notifications.service', () => {
     const whitelabelTenant = await createBillingWebhookNotification({
       contaId: 'conta-whitelabel', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-shared',
     });
-    expect(externalTenant).toMatchObject({ outcome: 'not_applicable', reason: 'external_payment' });
-    expect(whitelabelTenant).toMatchObject({ outcome: 'inconsistent', reason: 'alusa_payment_without_local_entity' });
+    expect(externalTenant).toMatchObject({ outcome: 'not_applicable', reason: 'external_account_unlinked_payment' });
+    expect(whitelabelTenant).toMatchObject({ outcome: 'entity_missing', notificationId: null });
+    expect(enqueuePending).toHaveBeenCalledWith(expect.objectContaining({ contaId: 'conta-whitelabel', asaasPaymentId: 'pay-shared' }));
     expect(prismaMock.asaasResourceOrigin.findUnique).toHaveBeenCalledWith(expect.objectContaining({
       where: { uq_asaas_resource_origin_tenant_resource: expect.objectContaining({ contaId: 'conta-whitelabel', asaasId: 'pay-shared' }) },
     }));
@@ -681,7 +721,7 @@ describe('notifications.service', () => {
       asaasSubscriptionId: 'sub-legacy',
     });
 
-    expect(result).toMatchObject({ outcome: 'not_applicable', reason: 'external_subscription' });
+    expect(result).toMatchObject({ outcome: 'not_applicable', reason: 'external_account_unlinked_payment' });
     expect(prismaMock.cobranca.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ contaId: 'conta-a' }),
     }));
@@ -700,7 +740,7 @@ describe('notifications.service', () => {
       asaasSubscriptionId: 'sub-legacy',
     });
 
-    expect(result).toMatchObject({ outcome: 'not_applicable', reason: 'external_subscription' });
+    expect(result).toMatchObject({ outcome: 'not_applicable', reason: 'external_account_unlinked_payment' });
     expect(enqueuePending).not.toHaveBeenCalled();
     expect(prismaMock.asaasResourceOrigin.findUnique).toHaveBeenNthCalledWith(2, {
       where: {
@@ -719,8 +759,8 @@ describe('notifications.service', () => {
       contaId: 'conta-a', eventName: 'PAYMENT_RECEIVED', asaasPaymentId: 'pay-alusa-missing',
     });
 
-    expect(result).toMatchObject({ outcome: 'inconsistent', reason: 'alusa_payment_without_local_entity' });
-    expect(enqueuePending).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ outcome: 'entity_missing', notificationId: null });
+    expect(enqueuePending).toHaveBeenCalledWith(expect.objectContaining({ contaId: 'conta-a', asaasPaymentId: 'pay-alusa-missing' }));
   });
 
   it('mantém assinatura Alusa sem entidade como inconsistência sem retry', async () => {
@@ -733,8 +773,8 @@ describe('notifications.service', () => {
       asaasPaymentId: 'pay-alusa-missing', asaasSubscriptionId: 'sub-alusa-missing',
     });
 
-    expect(result).toMatchObject({ outcome: 'inconsistent', reason: 'alusa_subscription_without_local_entity' });
-    expect(enqueuePending).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ outcome: 'entity_missing', notificationId: null });
+    expect(enqueuePending).toHaveBeenCalledWith(expect.objectContaining({ contaId: 'conta-a', asaasPaymentId: 'pay-alusa-missing' }));
   });
 
   it('sinaliza conflito quando pagamento e assinatura têm classificações opostas', async () => {
@@ -747,7 +787,7 @@ describe('notifications.service', () => {
       asaasPaymentId: 'pay-alusa', asaasSubscriptionId: 'sub-external',
     });
 
-    expect(result).toMatchObject({ outcome: 'inconsistent', reason: 'payment_origin_classification_conflict' });
+    expect(result).toMatchObject({ outcome: 'inconsistent', reason: 'external_origin_conflict' });
     expect(enqueuePending).not.toHaveBeenCalled();
   });
 
@@ -797,7 +837,7 @@ describe('notifications.service', () => {
           dedupeKey: expect.stringMatching(/^payment:confirmed:digest:/),
           entityType: 'PaymentDigest',
           sourceType: 'INBOX_DIGEST',
-          message: expect.stringContaining('Ana Carolina pagou sua mensalidade no valor de'),
+          message: expect.stringContaining('referente a cobrança acadêmica, Mensalidade março via Pix.'),
           metadata: expect.objectContaining({
             grouped: true,
             paymentCount: 1,
@@ -817,7 +857,7 @@ describe('notifications.service', () => {
     });
 
     expect(updated).toBe(true);
-    expect(prismaMock.notificationRecipient.updateMany).toHaveBeenCalledWith({
+    expect(txMock.notificationRecipient.updateMany).toHaveBeenCalledWith({
       where: {
         contaId: 'conta-1',
         userId: 'user-1',
@@ -828,7 +868,7 @@ describe('notifications.service', () => {
         readAt: expect.any(Date),
       }),
     });
-    expect(prismaMock.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(txMock.auditLog.create).toHaveBeenCalledTimes(1);
   });
 
   it('oculta o recipient sem remover a notificacao nem sua chave de deduplicacao', async () => {
@@ -856,7 +896,7 @@ describe('notifications.service', () => {
   });
 
   it('marca todas as notificações ativas como lidas', async () => {
-    prismaMock.notificationRecipient.updateMany.mockResolvedValueOnce({ count: 3 });
+    txMock.notificationRecipient.updateMany.mockResolvedValueOnce({ count: 3 });
 
     const updatedCount = await markAllNotificationsAsRead({
       contaId: 'conta-1',
@@ -864,18 +904,19 @@ describe('notifications.service', () => {
     });
 
     expect(updatedCount).toBe(3);
-    expect(prismaMock.notificationRecipient.updateMany).toHaveBeenCalledWith({
+    expect(txMock.notificationRecipient.updateMany).toHaveBeenCalledWith({
       where: {
         contaId: 'conta-1',
         userId: 'user-1',
         archivedAt: null,
         readAt: null,
+        deletedAt: null,
       },
       data: {
         readAt: expect.any(Date),
       },
     });
-    expect(prismaMock.auditLog.create).toHaveBeenCalledTimes(1);
+    expect(txMock.auditLog.create).toHaveBeenCalledTimes(1);
   });
 
   it('expõe normalização previsível para o conjunto suportado de eventos financeiros', () => {

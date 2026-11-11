@@ -24,6 +24,23 @@ function hasCompletePublicOrderTickets(order: { items: Array<{ ticket: EventTick
   return order.items.length > 0 && order.items.every((item) => Boolean(item.ticket));
 }
 
+async function enqueuePublicOrderTicketInbox(
+  tx: Prisma.TransactionClient,
+  params: { contaId: string; orderId: string; asaasPaymentId: string; transition?: 'confirmed' | 'chargeback-reversed' },
+) {
+  const transition = params.transition ?? 'confirmed';
+  await tx.financeWebhookSideEffectOutbox.createMany({
+    data: {
+      contaId: params.contaId,
+      effectType: 'EVENT_PUBLIC_ORDER_TICKET_INBOX',
+      dedupeKey: `${params.contaId}:EVENT_PUBLIC_ORDER_TICKET_INBOX:${params.orderId}:${transition}`,
+      payload: { orderId: params.orderId, asaasPaymentId: params.asaasPaymentId },
+      status: 'PENDING',
+    },
+    skipDuplicates: true,
+  });
+}
+
 function createPublicToken(prefix: string) {
   return `${prefix}_${globalThis.crypto.randomUUID().replaceAll('-', '').slice(0, 24)}`;
 }
@@ -126,6 +143,12 @@ export async function confirmPublicEventMapOrderPayment(params: {
     }
 
     if (order.status === 'CONFIRMED' && order.ticketFulfillmentStatus === 'ISSUED' && hasCompletePublicOrderTickets(order)) {
+      await enqueuePublicOrderTicketInbox(tx, {
+        contaId: order.contaId,
+        orderId: order.id,
+        asaasPaymentId: params.asaasPaymentId,
+        ...(params.chargebackStatus?.trim().toUpperCase() === 'REVERSED' ? { transition: 'chargeback-reversed' as const } : {}),
+      });
       return {
         orderId: order.id,
         status: order.status,
@@ -339,6 +362,13 @@ export async function confirmPublicEventMapOrderPayment(params: {
         paidAt,
         confirmedAt: paidAt,
       },
+    });
+
+    await enqueuePublicOrderTicketInbox(tx, {
+      contaId: order.contaId,
+      orderId: order.id,
+      asaasPaymentId: params.asaasPaymentId,
+      ...(params.chargebackStatus?.trim().toUpperCase() === 'REVERSED' ? { transition: 'chargeback-reversed' as const } : {}),
     });
 
     await tx.auditLog.create({
