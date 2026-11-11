@@ -3223,7 +3223,7 @@ export const legalHubItems = [
   },
   {
     title: legalPages.seguranca.title,
-    href: '/security',
+    href: '/seguranca',
     intro: legalPages.seguranca.intro,
     updatedAt: legalPages.seguranca.updatedAt,
   },

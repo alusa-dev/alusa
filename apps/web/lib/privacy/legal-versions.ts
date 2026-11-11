@@ -24,7 +24,7 @@ export const LEGAL_DOCUMENTS = [
     type: 'ASAAS_FINANCIAL_SERVICES',
     version: LEGAL_DOCUMENT_VERSION,
     title: 'Servicos Financeiros Asaas',
-    href: '/security#financeiro-asaas',
+    href: '/seguranca#financeiro-asaas',
   },
 ] as const;
 

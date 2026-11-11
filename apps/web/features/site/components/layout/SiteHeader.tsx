@@ -122,7 +122,7 @@ export function SiteHeader({ selfServiceEnabled = true }: { selfServiceEnabled?:
       '/termos',
       '/cookies',
       '/preferencias-de-cookies',
-      '/security',
+      '/seguranca',
       '/dpa',
       '/suboperadores',
       '/direitos-lgpd',

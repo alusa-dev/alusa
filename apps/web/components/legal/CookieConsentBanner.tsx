@@ -31,6 +31,7 @@ const publicPrefixes = [
   '/privacidade',
   '/termos',
   '/cookies',
+  '/seguranca',
   '/security',
   '/suboperadores',
   '/dpa',

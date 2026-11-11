@@ -121,6 +121,9 @@ const legacyRouteSegments: Record<string, string> = {
 
 function legacyDestination(pathname: string): string | null {
   if (pathname === '/admin/configuracoes/notificacoes') return null;
+  if (pathname === '/security') return '/seguranca';
+  // This is a published public legal page; keep the Portuguese URL from the site's links.
+  if (pathname === '/seguranca') return null;
   if (pathname.startsWith('/api/') || pathname === '/finance/minha-conta' || pathname.startsWith('/finance/minha-conta/')) return null;
   const sourceSegments = pathname.split('/');
   const translatedSegments = sourceSegments.map((segment, index) => {
