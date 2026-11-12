@@ -12,8 +12,6 @@ function mapError(error: unknown) {
     CONTRACT_NOT_FOUND: { status: 404, message: 'Contrato não encontrado' },
     CONTRACT_ALREADY_SIGNED: { status: 400, message: 'Contrato já assinado' },
     CONTRACT_CANCELLED: { status: 400, message: 'Contrato cancelado' },
-    CONTRACT_EXPIRED: { status: 400, message: 'Link expirado' },
-    CONTRACT_LINK_EXPIRED: { status: 400, message: 'Link expirado' },
     UNDERAGE_STUDENT: { status: 403, message: 'Aluno menor de idade não pode assinar o contrato' },
     MISSING_BIRTHDATE: { status: 403, message: 'Não foi possível validar a maioridade do aluno' },
     INVALID_CPF: { status: 400, message: 'CPF inválido' },

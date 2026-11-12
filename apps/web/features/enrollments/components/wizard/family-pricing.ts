@@ -1,8 +1,8 @@
 import type { WizardState } from './types';
 import {
-  calcularValorDescontoBeneficio,
-  calcularValorLiquidoComBeneficio,
-} from './beneficios';
+  calcularDescontoCondicao,
+  calcularValorLiquidoCondicao,
+} from './financial-condition';
 
 /**
  * Regra única do wizard: plano é um valor por matrícula; combo é um valor por
@@ -11,11 +11,11 @@ import {
 export function calculateFamilyMonthlyTotal(state: WizardState) {
   const total =
     state.modoTurmas === 'TURMAS'
-      ? calcularValorLiquidoComBeneficio(state.planoValor ?? 0, state.beneficioSelecionado) *
+      ? calcularValorLiquidoCondicao(state.planoValor ?? 0, state) *
         state.alunosFamiliares.length
       : state.alunosFamiliares.reduce(
           (sum, aluno) =>
-            sum + calcularValorLiquidoComBeneficio(aluno.comboValor ?? 0, state.beneficioSelecionado),
+            sum + calcularValorLiquidoCondicao(aluno.comboValor ?? 0, state),
           0,
         );
 
@@ -25,11 +25,11 @@ export function calculateFamilyMonthlyTotal(state: WizardState) {
 export function calculateFamilyBenefitTotal(state: WizardState) {
   const total =
     state.modoTurmas === 'TURMAS'
-      ? calcularValorDescontoBeneficio(state.planoValor ?? 0, state.beneficioSelecionado) *
+      ? calcularDescontoCondicao(state.planoValor ?? 0, state) *
         state.alunosFamiliares.length
       : state.alunosFamiliares.reduce(
           (sum, aluno) =>
-            sum + calcularValorDescontoBeneficio(aluno.comboValor ?? 0, state.beneficioSelecionado),
+            sum + calcularDescontoCondicao(aluno.comboValor ?? 0, state),
           0,
         );
 

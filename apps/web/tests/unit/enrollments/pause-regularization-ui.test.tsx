@@ -1,6 +1,8 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+afterEach(cleanup);
 
 const mocks = vi.hoisted(() => ({
   getMatriculaPausaResumoRequest: vi.fn(),

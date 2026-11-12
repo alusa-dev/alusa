@@ -36,6 +36,7 @@ vi.mock('@/lib/auth-options', () => ({
 
 vi.mock('@/src/server/enrollments/enrollment.service', () => ({
   criarMatricula: criarMatriculaMock,
+  resolveEnrollmentMonthlyAmount: vi.fn().mockResolvedValue(150),
   buscarMatriculaPorId: buscarMatriculaPorIdMock,
   listarMatriculas: vi.fn(),
   MatriculaRuleError: class MatriculaRuleError extends Error {
@@ -85,6 +86,7 @@ vi.mock('@/src/server/enrollments/subscription-payment-materialization', () => (
 }));
 
 const { POST } = await import('@/app/api/matriculas/route');
+const { resolveEnrollmentMonthlyAmount } = await import('@/src/server/enrollments/enrollment.service');
 
 const previewHash = 'a'.repeat(64);
 const sourceVersion = 'b'.repeat(64);
@@ -126,7 +128,7 @@ function buildRequest(overrides: Record<string, unknown> = {}) {
 }
 
 function mockMatriculaResult(overrides: Record<string, unknown> = {}) {
-  createImmediateEnrollmentMock.mockResolvedValue({
+  const result = {
     matricula: {
       id: 'mat-1',
       alunoId: 'aluno-1',
@@ -187,7 +189,9 @@ function mockMatriculaResult(overrides: Record<string, unknown> = {}) {
       },
       enrollmentFee: null,
     },
-  });
+  };
+  createImmediateEnrollmentMock.mockResolvedValue(result);
+  return result;
 }
 
 describe('POST /api/matriculas', () => {
@@ -200,6 +204,20 @@ describe('POST /api/matriculas', () => {
         role: 'ADMIN',
       },
     });
+  });
+
+  it('permite isenção com taxa e não cria assinatura mensal', async () => {
+    const result = mockMatriculaResult({ asaasSubscriptionId: null, condicaoFinanceira: 'ISENCAO_INTEGRAL', billingProvisionStatus: 'PENDENTE' });
+    criarMatriculaMock.mockResolvedValue({ ...result, immediateFinancialSync: undefined, cobrancas: { taxa: null, mensalidade: null } });
+    vi.mocked(resolveEnrollmentMonthlyAmount).mockResolvedValueOnce(0);
+    const response = await POST(buildRequest({
+      condicaoFinanceira: 'ISENCAO_INTEGRAL', condicaoMotivo: 'Bolsa de estudos',
+      condicaoValidaAte: '2027-03-31', valorMensalidadeOverride: 0,
+      taxaMatricula: 50, taxaIsenta: false, gerarCobrancaTaxa: true, formaPagamentoTaxa: 'PIX',
+    }));
+    expect(response.status).toBe(200);
+    expect(createImmediateEnrollmentMock).not.toHaveBeenCalled();
+    expect(criarMatriculaMock).toHaveBeenCalledWith(expect.objectContaining({ criarCobranca: false, gerarCobrancaTaxa: true, condicaoFinanceira: 'ISENCAO_INTEGRAL' }));
   });
 
   it('só retorna sucesso depois de confirmar assinatura e primeira mensalidade', async () => {

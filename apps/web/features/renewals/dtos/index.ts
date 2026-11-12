@@ -97,6 +97,13 @@ export const rematriculaDescontoResumoDTOSchema = z.object({
   nome: z.string(),
 });
 
+export const rematriculaFinancialConditionDTOSchema = z.object({
+  kind: z.enum(['NORMAL', 'BOLSA_PARCIAL', 'ISENCAO_INTEGRAL']),
+  percentage: z.number().nullable().optional(),
+  reason: z.string().nullable().optional(),
+  validUntil: z.string().nullable().optional(),
+});
+
 export type RematriculaDescontoResumoDTO = z.infer<typeof rematriculaDescontoResumoDTOSchema>;
 
 export const rematriculaFinanceiroDTOSchema = z.object({
@@ -116,6 +123,10 @@ export const rematriculaFinanceiroDTOSchema = z.object({
   taxaMatricula: z.number().nullable(),
   taxaIsenta: z.boolean(),
   taxaJustificativa: z.string().nullable(),
+  condicaoFinanceira: z.enum(['NORMAL', 'BOLSA_PARCIAL', 'ISENCAO_INTEGRAL']).default('NORMAL'),
+  condicaoPercentual: z.number().nullable().default(null),
+  condicaoMotivo: z.string().nullable().default(null),
+  condicaoValidaAte: z.string().nullable().default(null),
   multaPercentual: z.number().nullable(),
   jurosMensal: z.number().nullable(),
   descontoAntecipado: z.number().nullable(),
@@ -205,15 +216,8 @@ export const createRematriculaInputDTOSchema = z.object({
   taxaMatricula: z.union([z.number(), z.string()]).optional(),
   taxaIsenta: z.union([z.boolean(), z.string()]).optional(),
   taxaJustificativa: z.string().trim().optional(),
+  financialCondition: rematriculaFinancialConditionDTOSchema.optional(),
   criarCobranca: z.union([z.boolean(), z.string()]).optional(),
-  descontos: z
-    .array(
-      z.object({
-        id: z.string(),
-        cumulativo: z.boolean().optional(),
-      }),
-    )
-    .optional(),
   multaPercentual: z.union([z.number(), z.string()]).optional(),
   jurosMensal: z.union([z.number(), z.string()]).optional(),
   descontoAntecipado: z.union([z.number(), z.string()]).optional(),

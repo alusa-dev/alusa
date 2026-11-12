@@ -10,6 +10,8 @@ const allowedRoles = new Set(['ADMIN', 'FINANCEIRO', 'RECEPCAO']);
 const dateSchema = z.union([z.string().datetime(), z.string().date()]);
 
 const previewSchema = z.object({
+  condicaoFinanceira: z.enum(['NORMAL', 'BOLSA_PARCIAL', 'ISENCAO_INTEGRAL']).optional(),
+  condicaoPercentual: z.number().positive().max(99.99).optional(),
   contaId: z.string().trim().optional(),
   enrollmentMode: z.enum(['INDIVIDUAL', 'FAMILY']).optional().default('INDIVIDUAL'),
   familyPricingMode: z.enum(['AGGREGATE_PLAN', 'ITEMIZED_COMBOS']).optional(),
@@ -75,6 +77,8 @@ export async function POST(request: Request) {
       {
         contaId,
         enrollmentMode: body.enrollmentMode,
+        condicaoFinanceira: body.condicaoFinanceira,
+        condicaoPercentual: body.condicaoPercentual,
         familyPricingMode: body.familyPricingMode,
         aggregateMonthlyAmount: body.aggregateMonthlyAmount,
         aggregateEnrollmentFeeAmount: body.aggregateEnrollmentFeeAmount,

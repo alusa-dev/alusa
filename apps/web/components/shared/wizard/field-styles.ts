@@ -17,8 +17,8 @@ export const wizardTextareaFieldClass = cn(
 
 /** Filled fields used by the compact registration modals, matching the responsible form. */
 export const wizardSoftFieldInputClass = cn(
-  'wizard-field-input h-10 w-full rounded-[10px] border-0 bg-[#eff3f8] px-3 py-2 text-[13px] leading-5 text-[#30333b] shadow-none placeholder:text-[#8a9bb2] transition-colors duration-150',
-  'hover:border-0 hover:bg-[#e7edf5] focus:border-0 focus:bg-transparent focus:shadow-[inset_0_0_0_1px_#9ca3af] focus:outline-none focus:ring-0 focus-visible:border-0 focus-visible:outline-none focus-visible:ring-0',
+  'wizard-field-input h-10 w-full rounded-[10px] border border-transparent bg-[#eff3f8] px-3 py-2 text-[13px] leading-5 text-[#30333b] shadow-none placeholder:text-[#8a9bb2] transition-colors duration-150',
+  'hover:border-transparent hover:bg-[#e7edf5] focus:border-[#9ca3af] focus:bg-[#eff3f8] focus:shadow-none focus:outline-none focus:ring-0 focus-visible:border-[#9ca3af] focus-visible:bg-[#eff3f8] focus-visible:outline-none focus-visible:ring-0',
   'data-[state=open]:border-0 data-[state=open]:bg-transparent data-[state=open]:text-[#30333b] data-[state=open]:ring-0 data-[state=open]:shadow-[inset_0_0_0_1px_#9ca3af]',
   'disabled:cursor-not-allowed disabled:opacity-60',
   'alusa-dark:bg-[color:var(--color-bg-elevated)] alusa-dark:text-[color:var(--color-input-text)]',

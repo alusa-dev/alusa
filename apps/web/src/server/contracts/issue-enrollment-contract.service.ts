@@ -45,7 +45,6 @@ type IssueEnrollmentContractInput = {
   modeloId: string;
   actorId: string;
   contratoOrigemId?: string | null;
-  expirationDays?: number;
   onExisting?: 'return' | 'reject';
   source?: 'ENROLLMENT' | 'MANUAL' | 'RENEWAL';
 };
@@ -206,7 +205,7 @@ export async function issueEnrollmentContract(
       where: { id: input.matriculaId, contaId: input.contaId },
       data: { contratoAtualId: existing.id, statusContrato: 'AGUARDANDO_ASSINATURA' },
     });
-    return { contrato: existing, publicToken: null, tokenExpiraEm: existing.tokenExpiraEm, created: false };
+    return { contrato: existing, publicToken: null, tokenExpiraEm: null, created: false };
   }
 
   if (input.contratoOrigemId) {
@@ -266,8 +265,9 @@ export async function issueEnrollmentContract(
   } as Prisma.InputJsonValue;
   const signerContext = buildSignerContext(matriculaTenant);
   const { token: publicToken, tokenHash: tokenPublicoHash } = createPublicContractToken();
-  const expirationDays = Math.max(1, Math.min(90, input.expirationDays ?? 7));
-  const tokenExpiraEm = new Date(Date.now() + expirationDays * 24 * 60 * 60 * 1000);
+  // Links de assinatura não expiram. O campo permanece nullable para compatibilidade
+  // com contratos antigos que ainda carregam uma data histórica.
+  const tokenExpiraEm = null;
   const source = input.source ?? 'ENROLLMENT';
   const contrato = await tx.contrato.create({
     data: {
@@ -328,7 +328,7 @@ export async function issueEnrollmentContract(
     type: 'PUBLIC_LINK_CREATED',
     actorType: 'USER',
     actorId: input.actorId,
-    payload: { tokenPublicoHash, tokenExpiraEm: tokenExpiraEm.toISOString() },
+    payload: { tokenPublicoHash },
   });
   await tx.matricula.updateMany({
     where: { id: input.matriculaId, contaId: input.contaId },

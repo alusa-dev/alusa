@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { prepararPayloadMatricula } from '@/lib/validations/resumo.schema';
 import type { WizardState } from '@/features/enrollments/components/wizard/types';
+import { calcularValorLiquidoCondicao } from '@/features/enrollments/components/wizard/financial-condition';
 
 describe('Integração do Wizard com API', () => {
   const mockWizardState: WizardState = {
@@ -27,6 +28,13 @@ describe('Integração do Wizard com API', () => {
   });
 
   describe('prepararPayloadMatricula', () => {
+    it('serializa exatamente o valor exibido no caso de meio centavo', () => {
+      const state: WizardState = { ...mockWizardState, planoValor: 10.03, condicaoFinanceira: 'BOLSA_PARCIAL', condicaoPercentual: 50, condicaoMotivo: 'Bolsa', condicaoValidaAte: '2026-06-30' };
+      const result = prepararPayloadMatricula(state as unknown as Record<string, unknown>);
+      expect(result.valido).toBe(true);
+      expect(result.payload?.valorMensalidadeOverride).toBe(5.01);
+      expect(result.payload?.valorMensalidadeOverride).toBe(calcularValorLiquidoCondicao(10.03, state));
+    });
     it('deve preparar payload válido do wizard', () => {
       const result = prepararPayloadMatricula(
         mockWizardState as unknown as Record<string, unknown>,
@@ -125,31 +133,28 @@ describe('Integração do Wizard com API', () => {
       expect(result.valido).toBe(true);
     });
 
-    it('deve exigir seleção explícita quando a matrícula for marcada com benefício', () => {
+    it('deve exigir motivo e validade para uma condição financeira', () => {
       const stateSemSelecao = {
         ...mockWizardState,
-        modoBeneficio: 'COM' as const,
-        beneficioSelecionado: null,
+        condicaoFinanceira: 'BOLSA_PARCIAL' as const,
+        condicaoPercentual: 50,
+        condicaoMotivo: '',
+        condicaoValidaAte: undefined,
       };
 
       const result = prepararPayloadMatricula(stateSemSelecao as unknown as Record<string, unknown>);
 
       expect(result.valido).toBe(false);
-      expect(result.erros).toContain('Selecione um benefício para esta matrícula.');
+      expect(result.erros).toContain('Informe o motivo da condição financeira.');
     });
 
-    it('deve serializar benefício do catálogo como descontoId', () => {
+    it('deve serializar condição estruturada sem id do catálogo', () => {
       const stateComBeneficio = {
         ...mockWizardState,
-        modoBeneficio: 'COM' as const,
-        beneficioSelecionado: {
-          id: 'desconto-1',
-          nome: 'Convênio escola',
-          tipo: 'FIXO',
-          valor: 25,
-          escopo: 'MATRICULA',
-          origem: 'CATALOGO',
-        },
+        condicaoFinanceira: 'BOLSA_PARCIAL' as const,
+        condicaoPercentual: 25,
+        condicaoMotivo: 'Desempenho acadêmico',
+        condicaoValidaAte: '2026-06-30',
       };
 
       const result = prepararPayloadMatricula(
@@ -157,7 +162,9 @@ describe('Integração do Wizard com API', () => {
       );
 
       expect(result.valido).toBe(true);
-      expect(result.payload?.descontoIds).toEqual(['desconto-1']);
+      expect(result.payload?.condicaoFinanceira).toBe('BOLSA_PARCIAL');
+      expect(result.payload?.condicaoPercentual).toBe(25);
+      expect(result.payload?.descontoIds).toEqual([]);
     });
 
     it('deve aceitar combo ao invés de turma', () => {

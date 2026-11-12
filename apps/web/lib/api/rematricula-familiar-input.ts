@@ -42,6 +42,12 @@ export const rematriculaFamiliarItemSchema = z.object({
   planoId: z.preprocess(emptyToNull, z.string().trim().min(1).nullable().optional()),
   comboId: z.preprocess(emptyToNull, z.string().trim().min(1).nullable().optional()),
   decisionReason: z.preprocess(emptyToNull, z.string().trim().max(500).nullable().optional()),
+  financialCondition: z.object({
+    kind: z.enum(['NORMAL', 'BOLSA_PARCIAL', 'ISENCAO_INTEGRAL']),
+    percentage: z.number().nullable().optional(),
+    reason: z.string().trim().max(500).nullable().optional(),
+    validUntil: z.string().trim().date().nullable().optional(),
+  }).optional(),
 });
 
 const paymentMethodSchema = z.enum(['BOLETO', 'PIX', 'CARTAO_CREDITO']);
@@ -77,15 +83,6 @@ const rematriculaFamiliarBaseSchema = z.object({
   ),
   taxaIsenta: z.preprocess((value) => coerceBoolean(value, false), z.boolean()).default(false),
   taxaJustificativa: z.preprocess(emptyToUndefined, z.string().trim().max(500).optional()),
-  descontos: z
-    .array(
-      z.object({
-        id: z.string().trim().min(1),
-        cumulativo: z.boolean().optional(),
-      }),
-    )
-    .optional()
-    .default([]),
   multaPercentual: z.preprocess(coerceOptionalNumber, z.number().nonnegative().optional()),
   jurosMensal: z.preprocess(coerceOptionalNumber, z.number().nonnegative().optional()),
   descontoAntecipado: z.preprocess(coerceOptionalNumber, z.number().nonnegative().optional()),

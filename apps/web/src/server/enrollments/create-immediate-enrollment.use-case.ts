@@ -64,6 +64,10 @@ function canonicalSnapshot(input: CriarMatriculaInput) {
     taxaMatricula: input.taxaMatricula,
     taxaIsenta: input.taxaIsenta,
     taxaJustificativa: input.taxaJustificativa ?? null,
+    condicaoFinanceira: input.condicaoFinanceira ?? 'NORMAL',
+    condicaoPercentual: input.condicaoPercentual ?? null,
+    condicaoMotivo: input.condicaoMotivo ?? null,
+    condicaoValidaAte: input.condicaoValidaAte?.toISOString() ?? null,
     pagarTaxaAgora: input.pagarTaxaAgora,
     gerarCobrancaTaxa: input.gerarCobrancaTaxa,
     criarCobranca: input.criarCobranca,
@@ -486,6 +490,8 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
 
   const preview = await previewInitialEnrollmentBilling(
     {
+      condicaoFinanceira: input.condicaoFinanceira ?? 'NORMAL',
+      condicaoPercentual: input.condicaoPercentual,
       contaId: input.contaId,
       billingStrategy: input.billingStrategy ?? { kind: 'SEPARATE' },
       responsavelFinanceiroId: input.responsavelFinanceiroId ?? null,
@@ -501,7 +507,6 @@ export async function createImmediateEnrollment(input: CriarMatriculaInput) {
           comboId: input.comboId ?? null,
           planoId: input.planoId ?? null,
           taxaMatricula: input.taxaMatricula,
-          valorMensalidadeOverride: input.valorMensalidadeOverride ?? null,
         },
       ],
     },

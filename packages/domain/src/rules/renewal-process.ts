@@ -4,6 +4,12 @@ export type RenewalOrigin = 'CAMPAIGN' | 'STANDALONE';
 export type RenewalHolderType = 'STUDENT' | 'RESPONSIBLE';
 export type RenewalTargetType = 'CLASS' | 'COMBO';
 export type RenewalDecision = 'RENEW' | 'DECIDE_LATER' | 'DO_NOT_CONTINUE';
+export type RenewalFinancialCondition = {
+  kind: 'NORMAL' | 'BOLSA_PARCIAL' | 'ISENCAO_INTEGRAL';
+  percentage?: number | null;
+  reason?: string | null;
+  validUntil?: string | null;
+};
 
 export type RenewalProcessStatus =
   | 'DRAFT'
@@ -25,6 +31,7 @@ export type RenewalItemInput =
         targetId: string;
         planId: string;
       };
+      financialCondition?: RenewalFinancialCondition;
       /** When true, this item must receive its own future financial agreement. */
       separateBilling?: boolean;
     }

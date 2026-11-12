@@ -8,7 +8,7 @@ export type StepId =
   | 'turmasCombo'
   | 'taxa'
   | 'plano'
-  | 'bolsaBeneficios'
+  | 'condicaoFinanceira'
   | 'jurosMulta'
   | 'notificacoes'
   | 'financeiro'
@@ -74,6 +74,8 @@ export type WizardBillingStrategy =
   | { kind: 'JOIN_EXISTING_CURRENT_CYCLE'; financialGroupId: string; effectiveAt: string }
   | { kind: 'SCHEDULE_NEXT_CYCLE_UNIFICATION'; financialGroupId: string; effectiveAt: string };
 
+export type WizardEnrollmentFinancialCondition = 'NORMAL' | 'BOLSA_PARCIAL' | 'ISENCAO_INTEGRAL';
+
 export interface WizardAluno {
   id: string;
   nome: string;
@@ -84,15 +86,6 @@ export interface WizardAluno {
   foto?: string;
   email?: string;
   telefone?: string;
-}
-
-export interface WizardBeneficio {
-  id: string;
-  nome: string;
-  tipo: 'FIXO' | 'PERCENTUAL';
-  valor: number;
-  escopo: string;
-  origem: 'CATALOGO';
 }
 
 export interface WizardState {
@@ -113,8 +106,12 @@ export interface WizardState {
   planoId?: string;
   planoLabel?: string;
   planoValor?: number; // valor base do plano
-  modoBeneficio?: 'SEM' | 'COM';
-  beneficioSelecionado?: WizardBeneficio | null;
+  /** One-off financial terms agreed for this enrollment, independent from the discount catalog. */
+  condicaoFinanceira?: WizardEnrollmentFinancialCondition;
+  condicaoPercentual?: number;
+  condicaoMotivo?: string;
+  condicaoValidaAte?: string;
+  condicaoValidadeModo?: 'MATRICULA' | 'PERIODO';
   modeloId?: string;
   modeloNome?: string;
   vencimentoDia?: number;

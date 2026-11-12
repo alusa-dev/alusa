@@ -19,9 +19,6 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const contract = await findPublicEventContractByToken(token);
     if (!contract) return jsonSensitive({ error: { message: 'Contrato não encontrado' } }, { status: 404 });
     if (contract.status === 'CANCELADO') return jsonSensitive({ error: { message: 'Este contrato foi cancelado' } }, { status: 400 });
-    if (contract.status === 'EXPIRADO' || (contract.tokenExpiraEm && new Date() > contract.tokenExpiraEm)) {
-      return jsonSensitive({ error: { message: 'Link expirado' } }, { status: 400 });
-    }
     const tokenHash = hashPublicContractToken(token);
     void recordPublicEventContractEvidence({
       contaId: contract.contaId,

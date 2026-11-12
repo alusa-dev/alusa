@@ -9,6 +9,15 @@ const { getServerSessionMock, buscarMatriculaPorIdMock, getSubscriptionMock, pri
   buscarMatriculaPorIdMock: vi.fn(),
   getSubscriptionMock: vi.fn(),
   prismaMock: {
+    charge: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
+    familyFinancialAllocation: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    billingAllocation: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
     subscription: {
       findFirst: vi.fn(),
     },

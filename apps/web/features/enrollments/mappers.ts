@@ -110,11 +110,11 @@ function mapContratoRecordToDTO(contrato: Record<string, unknown>) {
 
   return {
     id: String(contrato.id ?? ''),
-    status: contrato.status,
+    status: contrato.status === 'EXPIRADO' ? 'PENDENTE' : contrato.status,
     tokenPublico: String(contrato.tokenPublico ?? ''),
     createdAt:
       toIsoString(contrato.createdAt as Nullable<Date | string>) ?? new Date(0).toISOString(),
-    tokenExpiraEm: toIsoString(contrato.tokenExpiraEm as Nullable<Date | string>),
+    tokenExpiraEm: null,
     template: template ? { nome: String(template.nome ?? '') } : undefined,
   };
 }
@@ -145,6 +145,10 @@ export function mapMatriculaRecordToResumoDTO(matricula: Record<string, unknown>
     taxaMatricula: Number(matricula.taxaMatricula ?? 0),
     taxaStatus: matricula.taxaStatus ?? StatusTaxaMatricula.PENDENTE,
     taxaIsenta: Boolean(matricula.taxaIsenta),
+    condicaoFinanceira: String(matricula.condicaoFinanceira ?? 'NORMAL'),
+    condicaoPercentual: matricula.condicaoPercentual == null ? null : Number(matricula.condicaoPercentual),
+    condicaoMotivo: matricula.condicaoMotivo ? String(matricula.condicaoMotivo) : null,
+    condicaoValidaAte: toIsoString(matricula.condicaoValidaAte as Nullable<Date | string>),
     vencimentoDia: Number(matricula.vencimentoDia ?? 0),
     aluno: {
       id: String(aluno.id ?? ''),
@@ -302,6 +306,12 @@ export function mapMatriculaRecordToResumoDTO(matricula: Record<string, unknown>
                 matricula.id ??
                 '',
             ),
+            localSubscriptionId:
+              (matricula.financialContext as Record<string, unknown>).localSubscriptionId != null
+                ? String(
+                    (matricula.financialContext as Record<string, unknown>).localSubscriptionId,
+                  )
+                : null,
             familyGroupId:
               (matricula.financialContext as Record<string, unknown>).familyGroupId != null
                 ? String((matricula.financialContext as Record<string, unknown>).familyGroupId)
@@ -412,6 +422,10 @@ export function mapMatriculaRecordToCoreDTO(matricula: Record<string, unknown>) 
     taxaStatus: matricula.taxaStatus ?? StatusTaxaMatricula.PENDENTE,
     taxaIsenta: Boolean(matricula.taxaIsenta),
     taxaJustificativa: matricula.taxaJustificativa ? String(matricula.taxaJustificativa) : null,
+    condicaoFinanceira: String(matricula.condicaoFinanceira ?? 'NORMAL'),
+    condicaoPercentual: matricula.condicaoPercentual == null ? null : Number(matricula.condicaoPercentual),
+    condicaoMotivo: matricula.condicaoMotivo ? String(matricula.condicaoMotivo) : null,
+    condicaoValidaAte: toIsoString(matricula.condicaoValidaAte as Nullable<Date | string>),
     vencimentoDia: Number(matricula.vencimentoDia ?? 0),
     asaasId: matricula.asaasId ? String(matricula.asaasId) : null,
     asaasSubscriptionId: matricula.asaasSubscriptionId
@@ -459,6 +473,10 @@ export function mapCreateMatriculaDTOToServiceInput(input: {
     responsavelFinanceiroId: parsed.responsavelFinanceiroId ?? undefined,
     modeloId: parsed.modeloId,
     taxaJustificativa: parsed.taxaJustificativa ?? undefined,
+    condicaoFinanceira: parsed.condicaoFinanceira,
+    condicaoPercentual: toNumber(parsed.condicaoPercentual, null),
+    condicaoMotivo: parsed.condicaoMotivo ?? undefined,
+    condicaoValidaAte: toDate(parsed.condicaoValidaAte),
     contaId: input.contaId,
     taxaMatricula: taxaMatriculaValue,
     taxaIsenta: taxaIsentaValue,
@@ -577,7 +595,7 @@ export function mapCreateMatriculaResultToDTO(input: {
       ? {
           id: result.contratoId,
           publicToken: result.contratoPublicToken ?? null,
-          tokenExpiraEm: result.contratoTokenExpiraEm?.toISOString() ?? null,
+          tokenExpiraEm: null,
         }
       : null,
     notificationSync: notificationSync

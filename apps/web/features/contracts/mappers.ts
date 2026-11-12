@@ -43,7 +43,8 @@ export function mapContratoRecordToDTO(
     hashPdf: String(contrato.hashPdf ?? ''),
     arquivoPdfAssinadoUrl: contrato.arquivoPdfAssinadoUrl ? String(contrato.arquivoPdfAssinadoUrl) : null,
     hashPdfAssinado: contrato.hashPdfAssinado ? String(contrato.hashPdfAssinado) : null,
-    status: contrato.status,
+    // EXPIRADO é um estado legado; novos fluxos mantêm o contrato pendente até assinar/cancelar.
+    status: contrato.status === 'EXPIRADO' ? 'PENDENTE' : contrato.status,
     assinadoPor: contrato.assinadoPor ? String(contrato.assinadoPor) : null,
     assinadoEmail: contrato.assinadoEmail ? String(contrato.assinadoEmail) : null,
     assinadoCpf: contrato.assinadoCpf ? String(contrato.assinadoCpf) : null,
@@ -53,7 +54,7 @@ export function mapContratoRecordToDTO(
     assinadoUserAgent: contrato.assinadoUserAgent ? String(contrato.assinadoUserAgent) : null,
     hashAssinatura: contrato.hashAssinatura ? String(contrato.hashAssinatura) : null,
     tokenPublico: dtoPublicToken,
-    tokenExpiraEm: toIsoString(contrato.tokenExpiraEm as Nullable<Date | string>),
+    tokenExpiraEm: null,
     createdAt: toIsoString(contrato.createdAt as Nullable<Date | string>) ?? new Date(0).toISOString(),
     updatedAt: toIsoString(contrato.updatedAt as Nullable<Date | string>) ?? new Date(0).toISOString(),
     modelo: modelo
@@ -199,8 +200,9 @@ export function mapPublicContratoRecordToDTO(contrato: Record<string, unknown>) 
     id: String(contrato.id ?? ''),
     arquivoPdfUrl: String(contrato.arquivoPdfUrl ?? ''),
     hashPdf: String(contrato.hashPdf ?? ''),
-    status: contrato.status,
-    tokenExpiraEm: toIsoString(contrato.tokenExpiraEm as Nullable<Date | string>),
+    // Expiração foi descontinuada; trata status legado como pendente para permitir assinatura.
+    status: contrato.status === 'EXPIRADO' ? 'PENDENTE' : contrato.status,
+    tokenExpiraEm: null,
     acceptanceText: CONTRACT_ACCEPTANCE_TEXT_V1,
     acceptanceVersion: CONTRACT_ACCEPTANCE_VERSION,
     consentimentos: renderedConsentimentos,

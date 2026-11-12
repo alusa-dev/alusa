@@ -43,7 +43,7 @@ describe('contratos DTO mappers', () => {
 
     expect(dto.matricula.aluno.nome).toBe('Maria');
     expect(dto.modelo?.nome).toBe('Contrato padrão');
-    expect(dto.tokenExpiraEm).toBe('2026-01-10T12:00:00.000Z');
+    expect(dto.tokenExpiraEm).toBeNull();
   });
 
   it('mapeia modelo de contrato com contador', () => {

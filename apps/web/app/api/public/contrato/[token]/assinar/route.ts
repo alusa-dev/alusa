@@ -20,9 +20,6 @@ function statusForDomainError(error: Error) {
       return { status: 400, message: 'Contrato já assinado' };
     case 'CONTRACT_CANCELLED':
       return { status: 400, message: 'Contrato cancelado' };
-    case 'CONTRACT_EXPIRED':
-    case 'CONTRACT_LINK_EXPIRED':
-      return { status: 400, message: 'Link expirado' };
     case 'UNDERAGE_STUDENT':
       return { status: 403, message: 'Aluno menor de idade não pode assinar o contrato' };
     case 'MISSING_BIRTHDATE':

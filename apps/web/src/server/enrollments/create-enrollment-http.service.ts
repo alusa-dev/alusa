@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { syncEnrollmentNotifications } from './enrollment-notifications.service';
 import { resolveTenantSession } from '@/lib/api/with-tenant-session';
 import { matriculaRouteRepository } from './enrollment-route.repository';
-import { criarMatricula, buscarMatriculaPorId } from './enrollment.service';
+import { criarMatricula, buscarMatriculaPorId, resolveEnrollmentMonthlyAmount } from './enrollment.service';
 import { isDeferredEnrollmentBillingResult, processEnrollmentBillingOutboxEvent } from './enrollment-billing-outbox.service';
 import { createImmediateEnrollment, ImmediateEnrollmentCreationError } from './create-immediate-enrollment.use-case';
 import {
@@ -225,9 +225,15 @@ export async function createMatriculaHttp(params: {
       : errorResult(400, 'PAYLOAD_INVALIDO', message);
   }
 
-  const willCreateSubscription = payload.criarCobranca === true;
+  // Keep retries on the saga ledger even if the catalog changed since the
+  // original request. The saga compares the full persisted fingerprint first.
+  const existingFinancialOperation = await matriculaRouteRepository.enrollmentCreationOperation.findFirst({
+    where: { contaId: auth.contaId, uiRequestId: commitIdempotencyKey }, select: { id: true },
+  });
+  const monthlyAmount = existingFinancialOperation ? null : await resolveEnrollmentMonthlyAmount(payload);
+  const willCreateSubscription = payload.criarCobranca === true && (monthlyAmount == null || monthlyAmount > 0);
   const willCreateEnrollmentFee = payload.gerarCobrancaTaxa === true && !payload.taxaIsenta && payload.taxaMatricula > 0;
-  if (willCreateEnrollmentFee && !willCreateSubscription) {
+  if (willCreateEnrollmentFee && monthlyAmount != null && monthlyAmount > 0 && !willCreateSubscription) {
     return errorResult(
       422,
       'ASSINATURA_OBRIGATORIA_PARA_MATRICULA_FINANCEIRA',
@@ -257,9 +263,10 @@ export async function createMatriculaHttp(params: {
   const sharedPayload = sharedFutureBillingStart
     ? { ...payload, deferSubscriptionUntil: sharedFutureBillingStart }
     : payload;
-  const operationResult = willCreateSubscription && usesSeparateSubscription
+  const effectivePayload = willCreateSubscription ? sharedPayload : { ...sharedPayload, criarCobranca: false };
+  const operationResult = existingFinancialOperation || (willCreateSubscription && usesSeparateSubscription)
     ? await createImmediateEnrollment(payload)
-    : await criarMatricula(sharedPayload);
+    : await criarMatricula(effectivePayload);
   let billingOutboxResult: Awaited<ReturnType<typeof processEnrollmentBillingOutboxEvent>> | null = null;
   const billingOutboxEventId = (operationResult as { billingOutboxEventId?: string | null }).billingOutboxEventId ?? null;
   if (billingOutboxEventId) {

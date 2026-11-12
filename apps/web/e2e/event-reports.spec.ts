@@ -52,7 +52,7 @@ test('event reports list opens an event-specific, explanatory report', async ({ 
   await expect(page.getByRole('tooltip').getByText('Capacidade estimada do evento, usada como base para calcular a ocupação.')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Receitas e resultado', exact: true })).toBeVisible();
   await expect(page.getByText(/^Em andamento ·/)).toBeVisible();
-  await expect(page.getByText(/Os valores previstos consideram inscrições ativas/)).toBeVisible();
+  await expect(page.getByText(/O previsto da Bilheteria soma as vendas registradas/)).toBeVisible();
   await expect(page.getByText('No total', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Bilheteria e ingressos', exact: true })).toBeVisible();
   await expect(page.getByText('Restam 0 ingressos disponíveis.', { exact: true })).toBeVisible();
@@ -68,7 +68,7 @@ test('event reports list opens an event-specific, explanatory report', async ({ 
     await expect(page.getByRole('heading', { name: 'Como estão as inscrições dos alunos?', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Ingressos e lotes planejados', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Ingressos registrados no planejamento', exact: true })).toBeVisible();
-    await expect(page.getByText(/ingressos disponíveis|Restam .* disponíveis/i)).toHaveCount(0);
+    await expect(page.getByText(/^Restam .* ingressos disponíveis\.$/i)).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Recebimentos por forma de pagamento', exact: true })).toHaveCount(0);
   }
 
@@ -79,7 +79,7 @@ test('event reports list opens an event-specific, explanatory report', async ({ 
     await expect(page.getByRole('heading', { name: 'Ingressos registrados', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Como ficaram as inscrições dos alunos?', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Receitas e resultado do evento encerrado', exact: true })).toBeVisible();
-    await expect(page.getByText(/ingressos disponíveis|Restam .* disponíveis/i)).toHaveCount(0);
+    await expect(page.getByText(/^Restam .* ingressos disponíveis\.$/i)).toHaveCount(0);
   }
 
   await prisma.schoolEvent.update({ where: { id: event.id }, data: { status: 'CANCELLED' } });
@@ -88,7 +88,7 @@ test('event reports list opens an event-specific, explanatory report', async ({ 
   await expect(page.getByRole('heading', { name: 'Ingressos do evento cancelado', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Como ficaram as inscrições dos alunos?', exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Registros financeiros do evento cancelado', exact: true })).toBeVisible();
-  await expect(page.getByText(/ingressos disponíveis|Restam .* disponíveis/i)).toHaveCount(0);
+  await expect(page.getByText(/^Restam .* ingressos disponíveis\.$/i)).toHaveCount(0);
 
   await page.getByRole('link', { name: 'Relatórios de eventos' }).click();
   await expect(page).toHaveURL(/\/events\/reports$/,{ timeout: 15_000 });

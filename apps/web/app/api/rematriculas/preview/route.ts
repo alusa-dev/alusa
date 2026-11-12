@@ -10,6 +10,12 @@ const renewalItemSchema = z.discriminatedUnion('decision', [
   z.object({
     decision: z.literal('RENEW'),
     sourceEnrollmentId: z.string().trim().min(1),
+    financialCondition: z.object({
+      kind: z.enum(['NORMAL', 'BOLSA_PARCIAL', 'ISENCAO_INTEGRAL']),
+      percentage: z.number().nullable().optional(),
+      reason: z.string().trim().max(500).nullable().optional(),
+      validUntil: z.string().date().nullable().optional(),
+    }).optional(),
     target: z.object({
       type: z.enum(['CLASS', 'COMBO']),
       targetId: z.string().trim().min(1),
@@ -36,7 +42,6 @@ const previewSchema = z.object({
       agreementId: z.string().trim().nullable().optional(),
     })
     .optional(),
-  descontos: z.array(z.object({ id: z.string().trim().min(1), cumulativo: z.boolean().optional() })).optional(),
   items: z.array(renewalItemSchema).min(1),
   effectiveAt: z.string().datetime().or(z.string().date()).nullable().optional(),
   targetContractEndsAt: z.string().datetime().or(z.string().date()).nullable().optional(),
@@ -105,7 +110,6 @@ export async function POST(request: Request) {
         holderType: body.holderType,
         holderId: body.holderId,
         futureBillingStrategy: body.futureBillingStrategy,
-        descontos: body.descontos,
         items: body.items,
         effectiveAt: parseDate(body.effectiveAt),
         targetContractEndsAt: parseDate(body.targetContractEndsAt),

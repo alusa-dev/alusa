@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMatriculaFamiliarInputSchema } from '@/src/server/enrollments/family-enrollment.schema';
 
 const { prismaMock } = vi.hoisted(() => ({
-  prismaMock: { familyEnrollmentOperation: { findFirst: vi.fn() } },
+  prismaMock: {
+    familyEnrollmentOperation: { findFirst: vi.fn() },
+    matricula: { findMany: vi.fn() },
+    matriculaFamiliar: { findFirst: vi.fn() },
+  },
 }));
 
 vi.mock('@/prisma/client', () => ({ prisma: prismaMock }));
@@ -62,6 +66,7 @@ function storedOperation(status: string, result: unknown = null) {
   return {
     id: 'operation-1',
     familyGroupId: 'family-1',
+    createdAt: new Date('2026-08-01T12:00:00.000Z'),
     status,
     previewHash: request.previewHash,
     sourceVersion: request.sourceVersion,
@@ -130,6 +135,20 @@ describe('executeCreateFamilyEnrollment idempotent HTTP responses', () => {
     prismaMock.familyEnrollmentOperation.findFirst.mockResolvedValue(
       storedOperation('COMPLETED', result),
     );
+    prismaMock.matricula.findMany.mockResolvedValue([{
+      id: 'matricula-1',
+      alunoId: 'aluno-1',
+      uiRequestId: 'family-request-1:aluno:aluno-1:item:0',
+      aluno: { nome: 'Aluno 1' },
+      contratos: [{ id: 'contrato-1' }],
+    }]);
+    prismaMock.matriculaFamiliar.findFirst.mockResolvedValue({
+      status: 'ATIVA',
+      academicStatus: 'COMPLETO',
+      billingProvisionStatus: 'PROVISIONADO',
+      standaloneSubscriptionId: null,
+      standaloneEnrollmentChargeId: null,
+    });
 
     const response = await execute();
 
@@ -138,7 +157,21 @@ describe('executeCreateFamilyEnrollment idempotent HTTP responses', () => {
     await expect(response.json()).resolves.toMatchObject({
       ...result,
       operationStatus: 'COMPLETED',
+      results: [{
+        itemId: 'item-1',
+        alunoId: 'aluno-1',
+        alunoNome: 'Aluno 1',
+        status: 'success',
+        matriculaId: 'matricula-1',
+        contratoId: 'contrato-1',
+      }],
     });
     expect(prismaMock.familyEnrollmentOperation.findFirst).toHaveBeenCalledTimes(1);
+    expect(prismaMock.matricula.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ contaId: 'conta-1', matriculaFamiliarId: 'family-1' }),
+    }));
+    expect(prismaMock.matriculaFamiliar.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'family-1', contaId: 'conta-1' },
+    }));
   });
 });

@@ -1,3 +1,4 @@
+import { isEnrollmentBenefitValidityInRange } from '@alusa/domain';
 import { z } from 'zod';
 
 const alunoItemSchema = z.object({
@@ -30,6 +31,10 @@ export const createMatriculaFamiliarInputSchema = z.object({
     .array(alunoItemSchema)
     .min(1, 'Informe ao menos uma matrícula para o agrupamento financeiro.'),
   descontoIds: z.array(z.string().trim().min(1)).optional().default([]),
+  condicaoFinanceira: z.enum(['NORMAL', 'BOLSA_PARCIAL', 'ISENCAO_INTEGRAL']).default('NORMAL'),
+  condicaoPercentual: z.number().positive().max(99.99).optional(),
+  condicaoMotivo: z.string().trim().max(500).optional(),
+  condicaoValidaAte: z.string().trim().date().optional(),
   taxaMatricula: z.number().nonnegative().optional().default(0),
   taxaIsenta: z.boolean().optional().default(false),
   taxaJustificativa: z.string().trim().max(500).optional(),
@@ -57,6 +62,13 @@ export const createMatriculaFamiliarInputSchema = z.object({
     .default([]),
   notificationChannelsConfigured: z.boolean().optional().default(false),
   uiRequestId: z.string().trim().min(1).max(120),
+}).superRefine((data, context) => {
+  if (data.condicaoFinanceira !== 'NORMAL') {
+    if (!data.condicaoMotivo) context.addIssue({ code: z.ZodIssueCode.custom, path: ['condicaoMotivo'], message: 'Informe o motivo da condição financeira.' });
+    if (!data.condicaoValidaAte || !isEnrollmentBenefitValidityInRange(data.condicaoValidaAte, data.dataInicio, data.dataFimContrato)) context.addIssue({ code: z.ZodIssueCode.custom, path: ['condicaoValidaAte'], message: 'A validade do benefício precisa estar dentro da vigência da matrícula.' });
+  }
+  if (data.condicaoFinanceira === 'BOLSA_PARCIAL' && !(data.condicaoPercentual && data.condicaoPercentual < 100)) context.addIssue({ code: z.ZodIssueCode.custom, path: ['condicaoPercentual'], message: 'Informe o percentual da bolsa entre 0 e 100.' });
+  if (data.condicaoFinanceira !== 'BOLSA_PARCIAL' && data.condicaoPercentual != null) context.addIssue({ code: z.ZodIssueCode.custom, path: ['condicaoPercentual'], message: 'Percentual só pode ser informado para bolsa parcial.' });
 });
 
 export type CreateMatriculaFamiliarBody = z.infer<

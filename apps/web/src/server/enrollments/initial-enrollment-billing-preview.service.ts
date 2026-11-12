@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { PeriodicidadePlano, Prisma, type PrismaClient } from '@prisma/client';
+import { allocateFamilyAmount } from '@alusa/finance/family-billing/allocation';
 
 import { calcularPrecoMatricula } from './enrollment-pricing';
 import {
@@ -61,6 +62,8 @@ export type InitialEnrollmentBillingPreviewItem = {
 
 export type InitialEnrollmentBillingPreviewInput = {
   contaId: string;
+  condicaoFinanceira?: 'NORMAL' | 'BOLSA_PARCIAL' | 'ISENCAO_INTEGRAL';
+  condicaoPercentual?: number | null;
   enrollmentMode?: 'INDIVIDUAL' | 'FAMILY';
   familyPricingMode?: 'AGGREGATE_PLAN' | 'ITEMIZED_COMBOS';
   aggregateMonthlyAmount?: number;
@@ -578,7 +581,10 @@ export async function previewInitialEnrollmentBilling(
     );
   }
 
-  const allocations = input.items.map((item) => {
+  const familyFeeAllocations = input.enrollmentMode === 'FAMILY' && input.aggregateEnrollmentFeeAmount !== undefined
+    ? allocateFamilyAmount({ total: input.aggregateEnrollmentFeeAmount, weights: input.items.map(() => 1), method: 'EQUAL_SPLIT' })
+    : undefined;
+  const allocations = input.items.map((item, index) => {
     const aluno = alunosById.get(item.alunoId);
     const combo = item.comboId ? combosById.get(item.comboId) : null;
     const plano = item.planoId ? planosById.get(item.planoId) : null;
@@ -598,11 +604,13 @@ export async function previewInitialEnrollmentBilling(
     }
 
     const baseAmount =
-      item.valorMensalidadeOverride && item.valorMensalidadeOverride > 0
+      input.condicaoFinanceira === undefined && item.valorMensalidadeOverride != null
         ? item.valorMensalidadeOverride
         : money(combo?.valor ?? plano?.valor);
     const price = calcularPrecoMatricula({
       planoValor: baseAmount,
+      condicaoFinanceira: input.condicaoFinanceira,
+      condicaoPercentual: input.condicaoPercentual,
       taxaMatricula: money(item.taxaMatricula),
       descontos: descontos.map((desconto) => ({
         tipo: desconto.tipo === 'PERCENTUAL' ? ('PERCENTUAL' as const) : ('FIXO' as const),
@@ -624,7 +632,7 @@ export async function previewInitialEnrollmentBilling(
       baseAmount,
       amount: price.planoLiquido,
       discountAmount: money(baseAmount - price.planoLiquido),
-      enrollmentFeeAmount: money(item.taxaMatricula),
+      enrollmentFeeAmount: familyFeeAllocations?.[index] ?? money(item.taxaMatricula),
     };
   });
 
@@ -698,7 +706,7 @@ export async function previewInitialEnrollmentBilling(
     allocations.reduce((sum, item) => sum + item.amount, 0),
   );
   const addedMonthlyAmount =
-    input.enrollmentMode === 'FAMILY' && input.aggregateMonthlyAmount !== undefined
+    input.condicaoFinanceira === undefined && input.enrollmentMode === 'FAMILY' && input.aggregateMonthlyAmount !== undefined
       ? money(input.aggregateMonthlyAmount)
       : calculatedAddedMonthlyAmount;
   const resultingMonthlyAmount =
@@ -901,11 +909,12 @@ export async function previewInitialEnrollmentBilling(
   const sourceVersion = hash(sourceSnapshot);
   const snapshot = {
     version: 1,
+    ...(input.condicaoFinanceira !== undefined ? { condicaoFinanceira: input.condicaoFinanceira, condicaoPercentual: input.condicaoPercentual ?? null } : {}),
     contaId: input.contaId,
     enrollmentMode: input.enrollmentMode ?? 'INDIVIDUAL',
     familyPricingMode: input.familyPricingMode ?? null,
     aggregateMonthlyAmount:
-      input.aggregateMonthlyAmount === undefined ? null : money(input.aggregateMonthlyAmount),
+      input.aggregateMonthlyAmount === undefined ? null : input.condicaoFinanceira !== undefined ? calculatedAddedMonthlyAmount : money(input.aggregateMonthlyAmount),
     aggregateEnrollmentFeeAmount:
       input.aggregateEnrollmentFeeAmount === undefined
         ? null

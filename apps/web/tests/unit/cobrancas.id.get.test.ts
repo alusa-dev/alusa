@@ -56,6 +56,7 @@ vi.mock('@alusa/finance', () => ({
       : null;
   }),
   recordAsaasReadIntent: vi.fn(),
+  readConfirmedAsaasLedgerFee: vi.fn(async () => null),
   mapChargeStatusToCobrancaDisplayStatus: vi.fn((status?: string | null) => ({
     CREATED: 'PENDENTE',
     PENDING_SYNC: 'PENDENTE',
@@ -139,6 +140,7 @@ import {
   getPayment,
   isAsaasEnabled,
   reconcileAcademicChargesWithAsaas,
+  readConfirmedAsaasLedgerFee,
   resolveOperationalChargePayment,
 } from '@alusa/finance';
 import { GET } from '@/app/api/cobrancas/[id]/route';
@@ -182,6 +184,7 @@ describe('GET /api/cobrancas/[id]', () => {
 
     vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce({ id: 'sub-1' } as never);
     vi.mocked(prisma.installmentPlan.findFirst).mockResolvedValueOnce(null as never);
+    vi.mocked(readConfirmedAsaasLedgerFee).mockResolvedValueOnce(3.32);
 
     const response = await GET(new NextRequest('http://localhost/api/cobrancas/cob-1'), {
       params: { id: 'cob-1' },
@@ -282,6 +285,7 @@ describe('GET /api/cobrancas/[id]', () => {
     vi.mocked(prisma.subscription.findFirst).mockResolvedValueOnce({ id: 'sub-1' } as never);
     vi.mocked(prisma.installmentPlan.findFirst).mockResolvedValueOnce(null as never);
     vi.mocked(isAsaasEnabled).mockReturnValueOnce(true);
+    vi.mocked(readConfirmedAsaasLedgerFee).mockResolvedValueOnce(2.4);
 
     const response = await GET(new NextRequest('http://localhost/api/cobrancas/cob-snapshot'), {
       params: { id: 'cob-snapshot' },

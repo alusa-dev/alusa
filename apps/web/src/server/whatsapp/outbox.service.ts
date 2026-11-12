@@ -303,7 +303,6 @@ export async function drainContractWhatsAppNotifications(
           select: {
             id: true,
             status: true,
-            tokenExpiraEm: true,
             tokenPublicoCriptografado: true,
             matricula: {
               select: {
@@ -348,7 +347,7 @@ export async function drainContractWhatsAppNotifications(
     }
 
     try {
-      if (notification.contrato.status !== 'PENDENTE' || (notification.contrato.tokenExpiraEm && notification.contrato.tokenExpiraEm <= now)) {
+      if (!['PENDENTE', 'EXPIRADO'].includes(notification.contrato.status)) {
         await prisma.contractWhatsAppNotification.update({ where: { id: notification.id }, data: { status: 'SKIPPED', processedAt: now, lockedAt: null, lockedBy: null, lastErrorCode: 'CONTRACT_NOT_SENDABLE' } });
         result.skipped += 1;
         continue;

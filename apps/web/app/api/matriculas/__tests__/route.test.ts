@@ -14,6 +14,7 @@ vi.mock('@/lib/auth-options', () => ({
 vi.mock('@/src/server/enrollments/enrollment.service', () => ({
   criarMatricula: vi.fn(),
   listarMatriculas: vi.fn(),
+  resolveEnrollmentMonthlyAmount: vi.fn(async () => 300),
   MatriculaRuleError: class MatriculaRuleError extends Error {
     constructor(readonly code: string, message: string) {
       super(message);
@@ -41,6 +42,15 @@ vi.mock('@/src/server/enrollments/create-immediate-enrollment.use-case', () => (
 
 vi.mock('@/src/prisma', () => ({
   prisma: {
+    enrollmentCreationOperation: {
+      findFirst: vi.fn(async () => null),
+    },
+    conta: {
+      findUnique: vi.fn(async () => null),
+    },
+    matricula: {
+      findFirst: vi.fn(async () => null),
+    },
     cobranca: {
       update: vi.fn(),
       findFirst: vi.fn(),

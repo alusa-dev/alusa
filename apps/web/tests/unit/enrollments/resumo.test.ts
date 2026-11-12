@@ -173,15 +173,13 @@ describe('Validações Resumo', () => {
       expect(resumo.totalInicial).toBe(150);
     });
 
-    it('considera benefício aplicado à mensalidade', () => {
+    it('considera bolsa parcial aplicada à mensalidade', () => {
       const resumo = gerarResumoFinanceiro({
         planoValor: 150,
         taxaMatricula: 120,
         taxaIsenta: false,
-        beneficioSelecionado: {
-          tipo: 'PERCENTUAL',
-          valor: 50,
-        },
+        condicaoFinanceira: 'BOLSA_PARCIAL',
+        condicaoPercentual: 50,
       });
 
       expect(resumo.valorBeneficio).toBe(75);

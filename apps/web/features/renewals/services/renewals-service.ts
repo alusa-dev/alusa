@@ -726,6 +726,10 @@ function normalizeFinanceiro(raw: unknown): RematriculaFinanceiro {
       typeof record.taxaJustificativa === 'string' && record.taxaJustificativa.length
         ? record.taxaJustificativa
         : null,
+    condicaoFinanceira: record.condicaoFinanceira === 'BOLSA_PARCIAL' || record.condicaoFinanceira === 'ISENCAO_INTEGRAL' ? record.condicaoFinanceira : 'NORMAL',
+    condicaoPercentual: parseOptionalNumber(record.condicaoPercentual) ?? null,
+    condicaoMotivo: typeof record.condicaoMotivo === 'string' ? record.condicaoMotivo : null,
+    condicaoValidaAte: typeof record.condicaoValidaAte === 'string' ? record.condicaoValidaAte : null,
     multaPercentual: parseOptionalNumber(record.multaPercentual),
     jurosMensal: parseOptionalNumber(record.jurosMensal),
     descontoAntecipado: parseOptionalNumber(record.descontoAntecipado),
@@ -908,8 +912,8 @@ export interface CreateRematriculaInput {
   taxaMatricula?: number;
   taxaIsenta?: boolean;
   taxaJustificativa?: string;
+  financialCondition?: { kind: 'NORMAL' | 'BOLSA_PARCIAL' | 'ISENCAO_INTEGRAL'; percentage?: number; reason?: string; validUntil?: string };
   criarCobranca?: boolean;
-  descontos?: Array<{ id: string; cumulativo?: boolean }>;
   multaPercentual?: number;
   jurosMensal?: number;
   descontoAntecipado?: number;
@@ -978,10 +982,10 @@ export async function previewIndividualRematriculaRequest(
       holderType: input.responsavelFinanceiroId ? 'RESPONSIBLE' : 'STUDENT',
       holderId: input.responsavelFinanceiroId ?? input.matriculaId,
       futureBillingStrategy: input.futureBillingStrategy,
-      descontos: input.descontos ?? [],
       items: [{
         decision: 'RENEW',
         sourceEnrollmentId: input.matriculaId,
+        financialCondition: input.financialCondition,
         target: {
           type: input.comboId ? 'COMBO' : 'CLASS',
           targetId,
@@ -1093,6 +1097,7 @@ export interface RematriculaFamiliarItemInput {
   /** Em modo COMBO, combo por aluno (alternativa ao combo global). */
   comboId?: string | null;
   decisionReason?: string | null;
+  financialCondition?: { kind: 'NORMAL' | 'BOLSA_PARCIAL' | 'ISENCAO_INTEGRAL'; percentage?: number; reason?: string; validUntil?: string };
 }
 
 export interface CreateRematriculaFamiliarInput {
@@ -1124,7 +1129,6 @@ export interface CreateRematriculaFamiliarInput {
   taxaMatricula?: number;
   taxaIsenta?: boolean;
   taxaJustificativa?: string;
-  descontos?: Array<{ id: string; cumulativo?: boolean }>;
   multaPercentual?: number;
   jurosMensal?: number;
   descontoAntecipado?: number;
@@ -1266,6 +1270,7 @@ function buildRematriculaFamiliarRequestBody(input: CreateRematriculaFamiliarInp
       turmaId: normalizeOptionalId(item.turmaId),
       planoId: !isCombo ? planoId : null,
       comboId: isCombo ? normalizeOptionalId(item.comboId) ?? comboIdGlobal : null,
+      financialCondition: item.financialCondition ?? { kind: 'NORMAL' },
     })),
     dataInicio: input.dataInicio,
     dataFimContrato: input.dataFimContrato,
@@ -1274,7 +1279,6 @@ function buildRematriculaFamiliarRequestBody(input: CreateRematriculaFamiliarInp
     vencimentoDia: input.vencimentoDia,
     taxaMatricula: input.taxaIsenta ? 0 : (input.taxaMatricula ?? 0),
     taxaIsenta: input.taxaIsenta ?? false,
-    descontos: input.descontos ?? [],
     notificationChannels: input.notificationChannels ?? [],
     notificationChannelsConfigured: input.notificationChannelsConfigured ?? false,
     contratoModeloId: normalizeOptionalId(input.contratoModeloId),

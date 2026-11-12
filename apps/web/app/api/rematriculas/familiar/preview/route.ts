@@ -29,6 +29,7 @@ function mapDecision(item: {
   turmaId?: string | null;
   planoId?: string | null;
   comboId?: string | null;
+  financialCondition?: { kind: 'NORMAL' | 'BOLSA_PARCIAL' | 'ISENCAO_INTEGRAL'; percentage?: number | null; reason?: string | null; validUntil?: string | null };
 }) {
   if (
     item.decision === 'REMATRICULAR_AGORA' ||
@@ -40,6 +41,7 @@ function mapDecision(item: {
       return {
         decision: 'RENEW' as const,
         sourceEnrollmentId: item.matriculaId,
+        financialCondition: item.financialCondition,
         target: { type: 'COMBO' as const, targetId: item.comboId, planId: item.planoId ?? item.comboId },
         separateBilling: item.decision === 'REMATRICULAR_SEPARADAMENTE',
       };
@@ -47,6 +49,7 @@ function mapDecision(item: {
     return {
       decision: 'RENEW' as const,
       sourceEnrollmentId: item.matriculaId,
+        financialCondition: item.financialCondition,
       target: { type: 'CLASS' as const, targetId: item.turmaId ?? '', planId: item.planoId ?? '' },
       separateBilling: item.decision === 'REMATRICULAR_SEPARADAMENTE',
     };
@@ -121,7 +124,6 @@ export async function POST(request: Request) {
         holderId,
         sourceHolderId: body.responsavelId,
         futureBillingStrategy: body.futureBillingStrategy,
-        descontos: body.descontos,
         items: body.itens.map(mapDecision),
         effectiveAt: dataInicio,
         targetContractEndsAt: parseRematriculaFamiliarDate(body.dataFimContrato),

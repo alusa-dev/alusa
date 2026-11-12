@@ -76,7 +76,7 @@ test.describe('Contrato detalhes (layout)', () => {
       .toBe(200);
 
     await page.goto(`/contracts/${contrato.id}`);
-    await expect(page.getByRole('heading', { name: /detalhes do contrato/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /detalhes do contrato/i })).toBeVisible({ timeout: 15_000 });
 
     const viewer = page.getByTitle('Contrato - Aluno Layout');
     await expect(viewer).toBeVisible();

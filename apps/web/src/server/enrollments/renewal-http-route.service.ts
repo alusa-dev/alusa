@@ -467,12 +467,12 @@ export async function postRematriculasRoute(req: Request) {
       holderId,
       sourceHolderId: origem.responsavelFinanceiroId,
       futureBillingStrategy: body.futureBillingStrategy,
-      descontos: body.descontos,
       contractModelId: body.contractModelId ?? null,
       items: [
         {
           decision: 'RENEW' as const,
           sourceEnrollmentId: matriculaId,
+          financialCondition: body.financialCondition,
           target: targetComboId
             ? { type: 'COMBO' as const, targetId: targetComboId, planId: targetPlanId }
             : { type: 'CLASS' as const, targetId: targetClassId!, planId: targetPlanId },

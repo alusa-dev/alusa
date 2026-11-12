@@ -8,7 +8,6 @@ import { mapPublicContratoRecordToDTO } from '@/features/contracts/mappers';
 import { jsonSensitive } from '@/lib/http-security';
 import { hashPublicContractToken } from '@alusa/lib/contracts/tokens';
 import { ipFromRequest } from '@/lib/rate-limit';
-import { expireContractSignatureLinks } from '@/src/server/contracts/expire-contract-signature-links.service';
 import { recordPublicContractEvidence } from '@/src/server/contracts/public-contract-evidence.service';
 import { findPublicContractByToken } from '@/src/server/contracts/contract-read.service';
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
@@ -28,17 +27,6 @@ export async function GET(
 
     if (contrato.status === 'CANCELADO') {
       return jsonSensitive({ error: { message: 'Este contrato foi cancelado' } }, { status: 400 });
-    }
-
-    if (contrato.status === 'EXPIRADO') {
-      return jsonSensitive({ error: { message: 'Link expirado' } }, { status: 400 });
-    }
-
-    if (contrato.tokenExpiraEm && new Date() > contrato.tokenExpiraEm) {
-      await expireContractSignatureLinks(
-        { contaId: contrato.contaId, contractId: contrato.id, limit: 1 },
-      ).catch(() => undefined);
-      return jsonSensitive({ error: { message: 'Link expirado' } }, { status: 400 });
     }
 
     void recordPublicContractEvidence({

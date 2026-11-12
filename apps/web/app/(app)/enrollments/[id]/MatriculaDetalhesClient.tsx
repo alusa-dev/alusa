@@ -14,6 +14,8 @@ import { PlanDetails } from '@/features/renewals/components/PlanDetails';
 import { EnrollmentFeeSection } from '@/features/renewals/components/EnrollmentFeeSection';
 import { PaymentSettings } from '@/features/renewals/components/PaymentSettings';
 import { EnrollmentActions } from '@/features/renewals/components/EnrollmentActions';
+import { EnrollmentFinancialConditionDetails } from '@/features/enrollments/components/EnrollmentFinancialConditionDetails';
+import { EnrollmentChargesSection } from '@/features/enrollments/components/EnrollmentChargesSection';
 import { cn } from '@/lib/utils';
 import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 
@@ -36,6 +38,10 @@ type MatriculaDetalhes = {
   vencimentoDia: number;
   taxaMatricula: number;
   taxaIsenta: boolean;
+  condicaoFinanceira?: 'NORMAL' | 'BOLSA_PARCIAL' | 'ISENCAO_INTEGRAL';
+  condicaoPercentual?: number | null;
+  condicaoMotivo?: string | null;
+  condicaoValidaAte?: string | null;
   asaasSubscriptionId?: string | null;
   jurosMensal?: number | null;
   jurosTipo?: 'FIXED' | 'PERCENTAGE' | null;
@@ -67,6 +73,7 @@ type MatriculaDetalhes = {
     mode: 'INDIVIDUAL' | 'FAMILY';
     sourceMatriculaId: string;
     targetMatriculaId: string;
+    localSubscriptionId: string | null;
     familyGroupId: string | null;
     responsavelFinanceiro: {
       id: string;
@@ -123,6 +130,9 @@ type MatriculaDetalhes = {
     vencimento: string;
     dataPagamento?: string | null;
     formaPagamento: string;
+    descricao?: string | null;
+    createdAt?: string;
+    competenciaInicio?: string;
     jurosPercentual?: number | null;
     multaPercentual?: number | null;
     descontoTipo?: string | null;
@@ -304,7 +314,7 @@ export function MatriculaDetalhesClient({ id }: { id: string }) {
             Voltar
           </button>
 
-          <EnrollmentHeader />
+          <EnrollmentHeader matriculaId={matricula.id} />
         </div>
 
         <div className={cn('space-y-8', DETAIL_SECTION_MAX)}>
@@ -333,6 +343,19 @@ export function MatriculaDetalhesClient({ id }: { id: string }) {
             turma={matricula.turma}
             combo={matricula.combo}
             isSharedSubscription={matricula.isSharedSubscription}
+          />
+
+          <EnrollmentFinancialConditionDetails
+            condition={matricula.condicaoFinanceira}
+            percentage={matricula.condicaoPercentual}
+            reason={matricula.condicaoMotivo}
+            validUntil={matricula.condicaoValidaAte}
+            originalMonthlyAmount={matricula.plano?.valor ?? matricula.combo?.valor ?? 0}
+          />
+
+          <EnrollmentChargesSection
+            charges={matricula.cobrancas}
+            subscriptionId={matricula.financialContext?.localSubscriptionId ?? null}
           />
 
           {/* Taxa de Matrícula */}

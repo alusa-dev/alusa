@@ -33,6 +33,13 @@ const {
     contractEvidence: {
       create: vi.fn(),
     },
+    conta: {
+      findUnique: vi.fn().mockResolvedValue({
+        contractNotificationsEnabled: false,
+        contractWhatsAppNotificationsEnabled: false,
+        contractEmailNotificationsEnabled: false,
+      }),
+    },
     matricula: {
       update: vi.fn(),
       updateMany: vi.fn(),
@@ -68,6 +75,12 @@ vi.mock('@/lib/auth/session', () => ({
 
 vi.mock('@/prisma/client', () => ({
   prisma: prismaMock,
+}));
+
+vi.mock('@/lib/prisma-tenant', () => ({
+  runWithTenant: vi.fn(async (_contaId: string, callback: (_tx: typeof transactionMock) => Promise<unknown>) =>
+    callback(transactionMock),
+  ),
 }));
 
 vi.mock('@alusa/finance', () => ({
@@ -261,7 +274,6 @@ describe('POST /api/contratos', () => {
       }),
     );
     const data = await response.json();
-
     expect(response.status).toBe(200);
     expect(createSubscriptionMock).not.toHaveBeenCalled();
     expect(prismaMock.subscription.update).toHaveBeenCalledWith({

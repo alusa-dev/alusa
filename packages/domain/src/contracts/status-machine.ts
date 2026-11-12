@@ -10,7 +10,8 @@ export type ContractStatusTransitionErrorCode =
   | 'CONTRACT_INVALID_STATUS_TRANSITION';
 
 export function canSignContract(status: ContractStatus) {
-  return status === 'PENDENTE';
+  // EXPIRADO é mantido apenas para leitura de registros legados; links não expiram mais.
+  return status === 'PENDENTE' || status === 'EXPIRADO';
 }
 
 export function canCancelContract(status: ContractStatus) {

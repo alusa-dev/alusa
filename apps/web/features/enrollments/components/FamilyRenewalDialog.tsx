@@ -50,7 +50,13 @@ import { FieldHelpTooltip } from '@/components/ui/field-help-tooltip';
 import { asaasNotificationPreferencesResultDTOSchema } from '@/features/settings/notifications/asaas/dtos';
 import { type CustomerNotificationChannel } from '@/features/settings/notifications/asaas/customer-channel-defaults';
 import { cn } from '@/lib/utils';
-import { RenewalDiscountSelector } from './RenewalDiscountSelector';
+import { SectionCard, StepHeader } from '@/components/shared/wizard/layout';
+import {
+  getRenewalFinancialConditionError,
+  RenewalFinancialConditionFields,
+  toRenewalFinancialConditionInput,
+  type RenewalFinancialCondition,
+} from './RenewalFinancialConditionFields';
 import {
   wizardSoftCheckboxClass,
   wizardSoftFieldInputClass,
@@ -92,6 +98,7 @@ type ItemConfig = {
   turmaId: string | null;
   comboId: string | null;
   decisionReason?: string | null;
+  financialCondition: RenewalFinancialCondition;
 };
 
 interface FamilyRenewalDialogProps {
@@ -213,7 +220,6 @@ export function FamilyRenewalDialog({
   const [descontoAntecipado, setDescontoAntecipado] = useState('');
   const [descontoTipo, setDescontoTipo] = useState<'FIXED' | 'PERCENTAGE'>('PERCENTAGE');
   const [prazoDesconto, setPrazoDesconto] = useState('');
-  const [selectedDiscountIds, setSelectedDiscountIds] = useState<string[]>([]);
   const [overrideReason, setOverrideReason] = useState('');
   const [configs, setConfigs] = useState<Record<string, ItemConfig>>({});
   const [novoResponsavelId, setNovoResponsavelId] = useState<string | null>(null);
@@ -340,6 +346,7 @@ export function FamilyRenewalDialog({
             turmaId: item.turma?.id ?? null,
             comboId: item.combo?.id ?? null,
             decisionReason: null,
+            financialCondition: { kind: 'NORMAL' },
           },
         ]),
       ),
@@ -347,10 +354,6 @@ export function FamilyRenewalDialog({
     setContratoModeloId(null);
     setFutureBillingStrategy(undefined);
     setFutureAgreementCandidates([]);
-    // Descontos das matrículas atuais não são herdados automaticamente.
-    // O usuário precisa selecionar explicitamente um desconto ativo para o novo ciclo.
-    setSelectedDiscountIds([]);
-
     // Inicializa modo a partir do estado atual: se algum tem combo, o padrão é COMBO.
     const firstCombo = itens.find((item) => item.combo?.id)?.combo?.id ?? null;
     const firstPlano = itens.find((item) => item.plano?.id)?.plano?.id ?? null;
@@ -421,6 +424,14 @@ export function FamilyRenewalDialog({
       ? selectedItems.every((item) => Boolean(configs[item.id]?.comboId))
       : Boolean(planoIdGlobal);
 
+  const financialConditionErrors = selectedItems
+    .map((item) => getRenewalFinancialConditionError(
+      configs[item.id]?.financialCondition ?? { kind: 'NORMAL' },
+      dataInicio,
+      dataFimContrato,
+    ))
+    .filter((error): error is string => Boolean(error));
+
   const disabled =
     !contaId ||
     !titular ||
@@ -434,7 +445,8 @@ export function FamilyRenewalDialog({
     !contratoModeloId ||
     (needsOverride && requiresOverrideReason && !overrideReason.trim()) ||
     (requiresPayerChange && !novoResponsavelId) ||
-    mixedPayerChange;
+    mixedPayerChange ||
+    financialConditionErrors.length > 0;
 
   function updateConfig(id: string, patch: Partial<ItemConfig>) {
     setConfigs((current) => ({
@@ -444,6 +456,7 @@ export function FamilyRenewalDialog({
         turmaId: current[id]?.turmaId ?? null,
         comboId: current[id]?.comboId ?? null,
         decisionReason: current[id]?.decisionReason ?? null,
+        financialCondition: current[id]?.financialCondition ?? { kind: 'NORMAL' },
         ...patch,
       },
     }));
@@ -494,6 +507,10 @@ export function FamilyRenewalDialog({
             ? null
             : configs[item.id]?.turmaId ?? item.turma?.id ?? null,
         comboId: modoTurmas === 'COMBO' ? configs[item.id]?.comboId ?? null : null,
+        financialCondition: toRenewalFinancialConditionInput(
+          configs[item.id]?.financialCondition ?? { kind: 'NORMAL' },
+          dataFimContrato,
+        ),
       })),
       dataInicio: new Date(dataInicio).toISOString(),
       dataFimContrato: new Date(dataFimContrato).toISOString(),
@@ -501,7 +518,6 @@ export function FamilyRenewalDialog({
       formaPagamentoTaxa,
       vencimentoDia,
       taxaIsenta,
-      descontos: selectedDiscountIds.map((id) => ({ id })),
       descontoTipo,
       notificationChannels: notificationChannelsTouched ? notificationChannels : [],
       notificationChannelsConfigured: notificationChannelsTouched,
@@ -927,9 +943,9 @@ export function FamilyRenewalDialog({
               </div>
             </div>
 
-            {/* Seção 4 — Condições de pagamento */}
+            {/* Seção 4 — Configurações de cobrança */}
             <div className={sectionClass}>
-              <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Condições de pagamento</span>
+              <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Configurações de cobrança</span>
               {modoTurmas === 'COMBO' ? (
                 <>
                   <p className="text-xs text-slate-500 alusa-dark:text-[color:var(--color-text-secondary)]">
@@ -1060,6 +1076,42 @@ export function FamilyRenewalDialog({
               )}
             </div>
 
+            {selectedItems.length > 0 ? (
+              <SectionCard>
+                <StepHeader title="Benefícios nas mensalidades" hint="Defina o benefício aplicado à mensalidade de cada aluno neste novo ciclo." />
+                <div className="space-y-5">
+                  {selectedItems.map((item) => {
+                    const condition = configs[item.id]?.financialCondition ?? { kind: 'NORMAL' as const };
+                    const conditionError = getRenewalFinancialConditionError(condition, dataInicio, dataFimContrato);
+                    return (
+                      <div key={item.id} className="space-y-3 border-b border-slate-200 pb-4 last:border-b-0 last:pb-0 alusa-dark:border-[color:var(--color-border-default)]">
+                        <h3 className="text-sm font-medium text-slate-800 alusa-dark:text-[color:var(--color-text-primary)]">{item.aluno.nome ?? 'Aluno'}</h3>
+                        <RenewalFinancialConditionFields
+                          studentName={item.aluno.nome ?? 'Aluno'}
+                          currentCondition={{
+                            kind: item.financeiro.condicaoFinanceira,
+                            percentage: item.financeiro.condicaoPercentual,
+                            reason: item.financeiro.condicaoMotivo,
+                            validUntil: item.financeiro.condicaoValidaAte,
+                          }}
+                          value={condition}
+                          startDate={dataInicio}
+                          endDate={dataFimContrato}
+                          baseAmount={modoTurmas === 'COMBO'
+                            ? Number(combosDisponiveis.find((combo) => combo.id === configs[item.id]?.comboId)?.valor ?? 0)
+                            : Number(planoSelecionado?.valor ?? 0)}
+                          groupId={item.id}
+                          showHeader={false}
+                          onChange={(financialCondition) => updateConfig(item.id, { financialCondition })}
+                        />
+                        {conditionError ? <p role="alert" className="text-xs text-rose-600">{conditionError}</p> : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              </SectionCard>
+            ) : null}
+
             {/* Seção 5 — Contrato */}
             <div className={sectionClass}>
               <div>
@@ -1187,10 +1239,6 @@ export function FamilyRenewalDialog({
                 </div>
               </div>
               <p className="mt-1 text-xs text-gray-500 alusa-dark:text-[color:var(--color-text-secondary)]">Deixe os campos vazios para não aplicar estas configurações.</p>
-            </div>
-
-            <div className={sectionClass}>
-              <RenewalDiscountSelector contaId={contaId} selectedIds={selectedDiscountIds} onChange={setSelectedDiscountIds} />
             </div>
 
             <div className={sectionClass}>

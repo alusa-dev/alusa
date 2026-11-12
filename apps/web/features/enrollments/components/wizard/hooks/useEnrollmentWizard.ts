@@ -7,7 +7,7 @@ const INDIVIDUAL_STEPS: StepId[] = [
   'turmasCombo',
   'taxa',
   'plano',
-  'bolsaBeneficios',
+  'condicaoFinanceira',
   'jurosMulta',
   'notificacoes',
   'financeiro',
@@ -20,7 +20,7 @@ const FAMILIAR_STEPS: StepId[] = [
   'alunosFamiliares',
   'taxa',
   'plano',
-  'bolsaBeneficios',
+  'condicaoFinanceira',
   'jurosMulta',
   'notificacoes',
   'financeiro',
@@ -53,8 +53,8 @@ const initialState: WizardState = {
   notificationChannelsInitialized: false,
   notificationChannelsConfigured: false,
   notificationChannelsTouched: false,
-  modoBeneficio: 'SEM',
-  beneficioSelecionado: null,
+  condicaoFinanceira: 'NORMAL',
+  condicaoMotivo: '',
 };
 
 export function useEnrollmentWizard(contaId?: string): WizardContextValue {

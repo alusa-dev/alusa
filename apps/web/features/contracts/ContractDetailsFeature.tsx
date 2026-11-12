@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { logClientOperationalEvent } from '@/lib/observability/client-operational-log';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -15,10 +15,11 @@ import {
   type Contract,
   type ContractEvent,
   getContractNotificationHistory,
-  resendContractNotification,
   type ContractNotificationHistory,
 } from './services/contracts-service';
 import { Badge, type StatusType } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { InfoCallout } from '@/components/ui/info-callout';
 import { ShareContractDialog } from './components/ShareContractDialog';
 import { PDFViewer } from './components/PDFViewer';
 import { toast } from '@/components/ui/toast';
@@ -45,6 +46,15 @@ type ContratoDetalhe = {
   assinadoEm: string | null;
   hashAssinatura: string | null;
   origem: 'MATRICULA' | 'EVENTO';
+};
+
+type SignatureTimelineEvent = {
+  id: string;
+  at: string;
+  kind: 'CREATED' | 'NOTIFICATION' | 'SIGNED';
+  title: string;
+  detail?: string;
+  error?: string | null;
 };
 
 function normalizeContrato(contrato: Contract): ContratoDetalhe {
@@ -87,6 +97,13 @@ function normalizeEventoContrato(contrato: ContractEvent): ContratoDetalhe {
   };
 }
 
+function formatContractCreatedAt(value: string) {
+  const date = new Date(value);
+  const dateLabel = date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const timeLabel = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).replace(':', 'h');
+  return `${dateLabel}, às ${timeLabel}`;
+}
+
 export function ContratoDetalhesFeature({ contratoId, origem = 'MATRICULA' }: ContratoDetalhesFeatureProps) {
   const router = useRouter();
   const [contrato, setContrato] = useState<ContratoDetalhe | null>(null);
@@ -96,9 +113,45 @@ export function ContratoDetalhesFeature({ contratoId, origem = 'MATRICULA' }: Co
   const [notificationHistory, setNotificationHistory] = useState<ContractNotificationHistory>({ email: [], whatsapp: [] });
   const [notificationHistoryError, setNotificationHistoryError] = useState(false);
   const [refreshingNotificationHistory, setRefreshingNotificationHistory] = useState(false);
-  const [resendingChannel, setResendingChannel] = useState<'EMAIL' | 'WHATSAPP' | null>(null);
-  const resendLockRef = useRef(false);
   const isEvento = contrato?.origem === 'EVENTO';
+  const signatureTimeline: SignatureTimelineEvent[] = contrato
+    ? [
+        {
+          id: 'contract-created',
+          at: contrato.createdAt,
+          kind: 'CREATED' as const,
+          title: 'Contrato criado',
+          detail: contrato.modelo?.nome ? `Modelo: ${contrato.modelo.nome}` : undefined,
+        },
+        ...notificationHistory.email.map((item) => ({
+          id: `email-${item.id}`,
+          at: item.processedAt ?? item.createdAt,
+          kind: 'NOTIFICATION' as const,
+          title: 'Envio por e-mail',
+          detail: `${notificationStatusLabel(item.status)} · ${item.recipientEmail}`,
+          error: item.lastError,
+        })),
+        ...notificationHistory.whatsapp.map((item) => ({
+          id: `whatsapp-${item.id}`,
+          at: item.processedAt ?? item.createdAt,
+          kind: 'NOTIFICATION' as const,
+          title: 'Envio por WhatsApp',
+          detail: item.status === 'SENT' && !item.providerAccepted
+            ? 'Enfileirado para envio'
+            : notificationStatusLabel(item.status),
+          error: item.lastError,
+        })),
+        ...(contrato.assinadoEm
+          ? [{
+              id: 'contract-signed',
+              at: contrato.assinadoEm,
+              kind: 'SIGNED' as const,
+              title: 'Contrato assinado',
+              detail: contrato.assinadoPor ? `Assinado por ${contrato.assinadoPor}` : undefined,
+            }]
+          : []),
+      ].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime())
+    : [];
 
   useEffect(() => {
     setLoading(true);
@@ -174,27 +227,6 @@ export function ContratoDetalhesFeature({ contratoId, origem = 'MATRICULA' }: Co
     }
   };
 
-  const handleResendChannel = async (channel: 'EMAIL' | 'WHATSAPP') => {
-    if (!contrato || isEvento || resendLockRef.current) return;
-    resendLockRef.current = true;
-    try {
-      setResendingChannel(channel);
-      await resendContractNotification(contrato.id, channel, crypto.randomUUID());
-      try {
-        setNotificationHistory(await getContractNotificationHistory(contrato.id));
-        setNotificationHistoryError(false);
-      } catch {
-        setNotificationHistoryError(true);
-      }
-      toast.success(channel === 'EMAIL' ? 'E-mail colocado na fila de envio.' : 'Reenvio por WhatsApp processado.');
-    } catch (error) {
-      toast.error((error as Error).message || 'Erro ao reenviar notificação');
-    } finally {
-      resendLockRef.current = false;
-      setResendingChannel(null);
-    }
-  };
-
   const refreshNotificationHistory = async () => {
     if (!contrato || isEvento || refreshingNotificationHistory) return;
     setRefreshingNotificationHistory(true);
@@ -208,39 +240,101 @@ export function ContratoDetalhesFeature({ contratoId, origem = 'MATRICULA' }: Co
     }
   };
 
-  const notificationStatusLabel = (status: string) => ({
-    PENDING: 'Aguardando envio',
-    PROCESSING: 'Em processamento',
-    SENT: 'Aceito pelo provedor',
-    FAILED: 'Falha temporária; nova tentativa prevista',
-    DLQ: 'Falha após as tentativas disponíveis',
-    SKIPPED: 'Envio cancelado: preferências, destinatário ou link alterados',
-  }[status] ?? 'Status indisponível');
+  function notificationStatusLabel(status: string) {
+    return ({
+      PENDING: 'Aguardando envio',
+      PROCESSING: 'Em processamento',
+      SENT: 'Aceito pelo provedor',
+      FAILED: 'Falha temporária; nova tentativa prevista',
+      DLQ: 'Falha após as tentativas disponíveis',
+      SKIPPED: 'Envio cancelado: preferências, destinatário ou link alterados',
+    }[status] ?? 'Status indisponível');
+  }
 
-  if (loading) return <div className="flex min-h-screen items-center justify-center bg-gray-50"><div className="h-12 w-12 animate-spin rounded-full border-b-2 border-brand-accent" /></div>;
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-white">
+        <div className="w-full min-w-0 px-6 pt-6 pb-0">
+          <div className="mb-4">
+            <Skeleton className="mb-4 h-11 w-24" />
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
+              <div className="min-w-0 flex-1 space-y-3">
+                <div className="flex items-center gap-3">
+                  <Skeleton className="h-10 w-64" />
+                </div>
+                <Skeleton className="h-4 w-72" />
+              </div>
+              <div className="flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap lg:w-auto">
+                <Skeleton className="h-10 w-full sm:w-40" />
+                <Skeleton className="h-10 w-full sm:w-36" />
+                <Skeleton className="h-10 w-full sm:w-28" />
+              </div>
+            </div>
+          </div>
+
+        <div className="w-full min-w-0 px-6 py-8">
+          <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
+            <div className="space-y-4 lg:col-span-8 xl:col-span-9">
+              <Skeleton className="h-12 w-full rounded-t-lg" />
+              <Skeleton className="h-[32rem] w-full rounded-b-lg" />
+            </div>
+            <div className="lg:col-span-4 xl:col-span-3">
+              <div className="space-y-5 rounded-xl border border-slate-200 p-6">
+                <Skeleton className="h-5 w-44" />
+                <Skeleton className="h-px w-full" />
+                <Skeleton className="h-3 w-16" />
+                <Skeleton className="h-4 w-40" />
+                <div className="grid grid-cols-2 gap-4">
+                  <Skeleton className="h-14 w-full" />
+                  <Skeleton className="h-14 w-full" />
+                </div>
+                <Skeleton className="h-3 w-28" />
+                <Skeleton className="h-4 w-36" />
+                <Skeleton className="h-24 w-full rounded-lg" />
+              </div>
+            </div>
+          </div>
+        </div>
+        </div>
+      </div>
+    );
+  }
   if (!contrato) return <div className="flex min-h-screen items-center justify-center bg-gray-50"><div className="text-center"><p className="mb-4 text-gray-600">Contrato não encontrado</p><Button onClick={() => router.back()}>Voltar</Button></div></div>;
 
   return (
     <div className="min-h-screen bg-white">
-      <div className="sticky top-0 z-10 bg-white px-6 py-5">
-        <div className="flex w-full min-w-0 flex-col gap-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-4">
-              <Button variant="ghost" size="icon" onClick={() => router.back()} className="-ml-2 hover:bg-gray-100" title="Voltar"><ArrowLeft className="h-5 w-5 text-gray-500" /></Button>
-              <div>
-                <div className="flex items-center gap-3"><h1 className="text-xl font-semibold tracking-tight text-gray-900">Detalhes do Contrato</h1><Badge status={contrato.status as StatusType} size="sm" /></div>
-                <p className="mt-0.5 text-sm text-gray-500">Contrato #{contrato.id.slice(0, 8)} • {contrato.aluno.nome}{contrato.evento ? ` • ${contrato.evento.name}` : ''}</p>
-              </div>
+      <div className="w-full min-w-0 px-6 pt-6 pb-0">
+        <div className="mb-4">
+          <button
+            type="button"
+            onClick={() => router.back()}
+            className="mb-4 flex min-h-11 items-center gap-2 rounded-md px-1 text-sm text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900 sm:mb-5"
+          >
+            <ArrowLeft className="h-4 w-4 shrink-0" />
+            Voltar
+          </button>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between lg:gap-6">
+            <div className="min-w-0 flex-1">
+              <h1 className="text-3xl font-bold leading-tight text-gray-900">Detalhes do Contrato</h1>
+              <p className="mt-2 text-sm text-gray-600">
+                Visualize o documento e acompanhe o processo de assinatura deste contrato.
+              </p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {(contrato.status === 'PENDENTE' || contrato.status === 'EXPIRADO') && <Button variant="outline" size="sm" onClick={handleShareContrato} disabled={sharing}><Share2 className="mr-2 h-4 w-4" />{sharing ? 'Gerando Link...' : 'Compartilhar Link'}</Button>}
-              {!isEvento && contrato.status === 'PENDENTE' && <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" onClick={() => void handleResendChannel('EMAIL')} disabled={resendingChannel !== null}>{resendingChannel === 'EMAIL' ? 'Enfileirando…' : 'Reenviar por e-mail'}</Button>
-                <Button variant="outline" size="sm" onClick={() => void handleResendChannel('WHATSAPP')} disabled={resendingChannel !== null}>{resendingChannel === 'WHATSAPP' ? 'Enviando…' : 'Reenviar por WhatsApp'}</Button>
-              </div>}
-              {contrato.status === 'ASSINADO' && !isEvento && <Button variant="outline" size="sm" onClick={handleGerarAditivo}>Gerar aditivo</Button>}
-              <Button variant="outline" size="sm" onClick={() => window.open(pdfUrl, '_blank', 'noopener,noreferrer')}><Eye className="mr-2 h-4 w-4" />Visualizar PDF</Button>
-              <Button size="sm" onClick={handleDownload} className="shadow-none"><Download className="mr-2 h-4 w-4" />Baixar</Button>
+            <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-stretch lg:w-auto lg:flex-initial lg:items-center lg:justify-end">
+            {(contrato.status === 'PENDENTE' || contrato.status === 'EXPIRADO') && (
+              <Button variant="outline" onClick={handleShareContrato} disabled={sharing} className="h-10 w-full justify-center border-gray-300 px-4 text-gray-700 hover:bg-gray-50 sm:w-auto">
+                <Share2 className="mr-2 h-4 w-4" />{sharing ? 'Gerando Link...' : 'Compartilhar Link'}
+              </Button>
+            )}
+            {contrato.status === 'ASSINADO' && !isEvento && (
+              <Button variant="outline" onClick={handleGerarAditivo} className="h-10 w-full justify-center border-gray-300 px-4 text-gray-700 hover:bg-gray-50 sm:w-auto">Gerar aditivo</Button>
+            )}
+            <Button variant="outline" onClick={() => window.open(pdfUrl, '_blank', 'noopener,noreferrer')} className="h-10 w-full justify-center border-gray-300 px-4 text-gray-700 hover:bg-gray-50 sm:w-auto">
+              <Eye className="mr-2 h-4 w-4" />Visualizar PDF
+            </Button>
+            <Button onClick={handleDownload} className="h-10 w-full justify-center px-4 shadow-none sm:w-auto">
+              <Download className="mr-2 h-4 w-4" />Baixar
+            </Button>
             </div>
           </div>
         </div>
@@ -250,22 +344,80 @@ export function ContratoDetalhesFeature({ contratoId, origem = 'MATRICULA' }: Co
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
           <div className="lg:col-span-8 xl:col-span-9"><div className="space-y-4">{pdfUrl ? <PDFViewer url={pdfUrl} title={`Contrato - ${contrato.aluno.nome}`} className="w-full" maxHeight="82vh" showDownload={false} /> : <div className="flex h-[32rem] items-center justify-center rounded-lg border bg-gray-50 font-medium text-gray-400">PDF não disponível</div>}
             {contrato.status === 'ASSINADO' && <div className="px-1 py-2"><p className="mb-1 text-sm font-semibold text-emerald-900">Assinatura Eletrônica Registrada</p><div className="space-y-1 text-sm text-emerald-800"><p><span className="font-medium">Assinado por:</span> {contrato.assinadoPor || 'N/A'}</p><p><span className="font-medium">CPF:</span> {contrato.assinadoCpf || 'N/A'}</p><p><span className="font-medium">Data:</span> {contrato.assinadoEm ? new Date(contrato.assinadoEm).toLocaleString() : 'N/A'}</p>{contrato.hashAssinatura && <p className="mt-2 break-all font-mono text-xs text-emerald-700/80">Hash: {contrato.hashAssinatura}</p>}</div></div>}
-            {!isEvento && (notificationHistoryError || notificationHistory.email.length > 0 || notificationHistory.whatsapp.length > 0) && <section aria-label="Histórico de notificações de assinatura" className="rounded-lg border border-slate-200 p-4 text-sm">
-              <h2 className="font-semibold text-slate-800">Histórico de notificações</h2>
-              {notificationHistoryError && <div role="status" className="mt-2 flex flex-wrap items-center gap-2 text-sm text-amber-800"><span>Não foi possível carregar o histórico de notificações.</span><Button variant="outline" size="sm" onClick={() => void refreshNotificationHistory()} disabled={refreshingNotificationHistory}>{refreshingNotificationHistory ? 'Atualizando…' : 'Tentar novamente'}</Button></div>}
-              <div className="mt-3 space-y-3">
-                {[...notificationHistory.email.map((item) => ({ ...item, channelName: 'E-mail' })), ...notificationHistory.whatsapp.map((item) => ({ ...item, channelName: 'WhatsApp' }))].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map((item) => (
-                  <div key={`${item.channelName}-${item.id}`} className="border-t border-slate-100 pt-3 first:border-0 first:pt-0">
-                    <p className="font-medium text-slate-800">{item.channelName} · {item.channelName === 'WhatsApp' && item.status === 'SENT' && !('providerAccepted' in item && item.providerAccepted) ? 'Enfileirado para envio' : notificationStatusLabel(item.status)}</p>
-                    <p className="mt-1 text-xs text-slate-500">{new Date(item.createdAt).toLocaleString('pt-BR')}{item.channelName === 'E-mail' && 'recipientEmail' in item ? ` · ${item.recipientEmail}` : ''}</p>
-                    {item.lastError && <p className="mt-1 text-xs text-red-700">{item.lastError}</p>}
-                    {'providerEmailId' in item && item.providerEmailId ? <p className="mt-1 text-xs text-slate-500">Identificador do provedor: {item.providerEmailId}</p> : null}
-                  </div>
-                ))}
-              </div>
-            </section>}
           </div></div>
-          <div className="space-y-6 lg:col-span-4 xl:col-span-3"><Card className="border-gray-200/70 shadow-sm ring-1 ring-gray-200/60"><CardHeader className="border-b border-gray-100 pb-3"><CardTitle className="text-base font-medium">Informações do Contrato</CardTitle></CardHeader><CardContent className="space-y-6 pt-6"><div className="space-y-4"><div><p className="text-xs font-medium uppercase tracking-wide text-gray-500">Aluno</p><p className="mt-1 text-sm font-medium text-gray-900">{contrato.aluno.nome}</p></div><div className="grid grid-cols-2 gap-4"><div><p className="text-xs font-medium uppercase tracking-wide text-gray-500">CPF do Aluno</p><p className="mt-1 font-mono text-sm font-medium text-gray-900">{contrato.aluno.cpf || 'Não informado'}</p></div><div><p className="text-xs font-medium uppercase tracking-wide text-gray-500">Status</p><div className="mt-1"><Badge status={contrato.status as StatusType} size="sm" /></div></div></div><div><p className="text-xs font-medium uppercase tracking-wide text-gray-500">Modelo Utilizado</p><p className="mt-1 text-sm font-medium text-gray-900">{contrato.modelo?.nome || 'Modelo Personalizado'}</p></div><div className="grid grid-cols-2 gap-4 border-t border-gray-100 pt-4"><div><p className="mb-1 text-xs font-medium text-gray-500">Criado em</p><p className="text-sm text-gray-700">{new Date(contrato.createdAt).toLocaleDateString()}</p><p className="text-xs text-gray-400">{new Date(contrato.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p></div>{contrato.tokenExpiraEm && <div><p className="mb-1 text-xs font-medium text-gray-500">Expira em</p><p className="text-sm text-gray-700">{new Date(contrato.tokenExpiraEm).toLocaleDateString()}</p><p className="text-xs text-gray-400">{new Date(contrato.tokenExpiraEm).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p></div>}</div></div>{contrato.status === 'PENDENTE' && <div className="rounded-lg border border-amber-100 bg-amber-50 p-4 text-sm"><p className="mb-1 flex items-center gap-2 font-semibold text-amber-800"><span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" /><span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" /></span>Aguardando Assinatura</p><p className="leading-relaxed text-amber-700/80">O link de assinatura está ativo e expira em <span className="font-medium text-amber-900">{contrato.tokenExpiraEm ? new Date(contrato.tokenExpiraEm).toLocaleDateString() : 'N/A'}</span>.</p></div>}</CardContent></Card></div>
+          <div className="space-y-6 lg:col-span-4 xl:col-span-3">
+            <Card className="border border-slate-200 shadow-none">
+              <CardHeader className="border-b border-gray-100 pb-3">
+                <CardTitle className="text-base font-medium">Informações do Contrato</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6 pt-6">
+                <div className="space-y-4">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Aluno</p>
+                    <p className="mt-1 text-sm font-medium text-gray-900">{contrato.aluno.nome}</p>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">CPF do Aluno</p>
+                      <p className="mt-1 font-mono text-sm font-medium text-gray-900">{contrato.aluno.cpf || 'Não informado'}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Status</p>
+                      <div className="mt-1"><Badge status={contrato.status as StatusType} size="sm" /></div>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Modelo Utilizado</p>
+                    <p className="mt-1 text-sm font-medium text-gray-900">{contrato.modelo?.nome || 'Modelo Personalizado'}</p>
+                  </div>
+                  <div className="border-t border-gray-100 pt-4">
+                    <p className="mb-1 text-xs font-medium text-gray-500">Criado em</p>
+                    <p className="text-sm text-gray-700">{formatContractCreatedAt(contrato.createdAt)}</p>
+                  </div>
+                </div>
+                {contrato.status === 'PENDENTE' && (
+                  <InfoCallout variant="warning" size="sm" title="Aguardando Assinatura">
+                    O link de assinatura está ativo para assinatura.
+                  </InfoCallout>
+                )}
+              </CardContent>
+            </Card>
+            {(notificationHistoryError || signatureTimeline.length > 0) && (
+              <section aria-label="Histórico de assinatura" className="rounded-lg border border-slate-200 p-4 text-sm">
+                <h2 className="font-semibold text-slate-800">Histórico de assinatura</h2>
+                {!isEvento && notificationHistoryError && (
+                  <div role="status" className="mt-2 flex flex-wrap items-center gap-2 text-sm text-amber-800">
+                    <span>Não foi possível carregar o histórico de assinatura.</span>
+                    <Button variant="outline" size="sm" onClick={() => void refreshNotificationHistory()} disabled={refreshingNotificationHistory}>
+                      {refreshingNotificationHistory ? 'Atualizando…' : 'Tentar novamente'}
+                    </Button>
+                  </div>
+                )}
+                {signatureTimeline.length > 0 && (
+                  <ol aria-label="Linha do tempo da assinatura" className="mt-4 space-y-0">
+                    {signatureTimeline.map((item, index) => (
+                      <li key={item.id} className="relative flex gap-3 pb-4 last:pb-0">
+                        <span className="relative w-3 shrink-0" aria-hidden="true">
+                          {index < signatureTimeline.length - 1 && (
+                            <span className="absolute left-1/2 top-[9px] bottom-[-25px] w-px -translate-x-1/2 bg-slate-200" />
+                          )}
+                          <span className={`relative z-10 mx-auto mt-1 block h-2.5 w-2.5 rounded-full ${item.kind === 'SIGNED' ? 'bg-emerald-600' : 'bg-[#5c2f91]'}`} />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-slate-800">{item.title}</p>
+                          <time dateTime={new Date(item.at).toISOString()} className="mt-1 block text-xs text-slate-500">
+                            {new Date(item.at).toLocaleString('pt-BR')}
+                          </time>
+                          {item.detail && <p className="mt-1 text-xs text-slate-500">{item.detail}</p>}
+                          {item.error && <p className="mt-1 text-xs text-red-700">{item.error}</p>}
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
+            )}
+          </div>
         </div>
       </div>
       <ShareContractDialog open={shareOpen} onOpenChange={setShareOpen} tokenPublico={contrato.tokenPublico} alunoNome={contrato.aluno.nome} publicPath={isEvento ? '/p/evento-contrato' : '/p/contrato'} />

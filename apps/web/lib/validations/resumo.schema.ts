@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { calculateEnrollmentFinancialCondition, isEnrollmentBenefitValidityInRange } from '@alusa/domain';
 
 /**
  * Schema completo de validação da matrícula antes da submissão
@@ -26,6 +27,10 @@ export const resumoMatriculaSchema = z
     transferenciaMotivo: z.string().optional(),
     comboValor: z.number().optional(), // valor do combo (R$)
     comboPeriodicidade: z.string().optional(), // periodicidade do combo
+    condicaoFinanceira: z.enum(['NORMAL', 'BOLSA_PARCIAL', 'ISENCAO_INTEGRAL']).optional(),
+    condicaoPercentual: z.number().positive().max(99.99).optional(),
+    condicaoMotivo: z.string().max(500).optional(),
+    condicaoValidaAte: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
     // Plano (opcional quando comboId é fornecido)
     planoId: z.string().optional(),
@@ -223,10 +228,8 @@ export function gerarResumoFinanceiro(state: {
   planoValor?: number;
   taxaMatricula?: number;
   taxaIsenta?: boolean;
-  beneficioSelecionado?: {
-    tipo?: 'FIXO' | 'PERCENTUAL';
-    valor?: number;
-  } | null;
+  condicaoFinanceira?: 'NORMAL' | 'BOLSA_PARCIAL' | 'ISENCAO_INTEGRAL';
+  condicaoPercentual?: number;
 }): {
   valorPlano: number;
   valorPlanoLiquido: number;
@@ -235,13 +238,9 @@ export function gerarResumoFinanceiro(state: {
   totalInicial: number;
 } {
   const valorPlano = state.planoValor ?? 0;
-  const beneficio = state.beneficioSelecionado;
-  const valorBeneficio = beneficio
-    ? beneficio.tipo === 'PERCENTUAL'
-      ? Math.max(0, Math.min(valorPlano, valorPlano * ((beneficio.valor ?? 0) / 100)))
-      : Math.max(0, Math.min(valorPlano, beneficio.valor ?? 0))
-    : 0;
-  const valorPlanoLiquido = Math.max(0, valorPlano - valorBeneficio);
+  const condition = calculateEnrollmentFinancialCondition(valorPlano, state);
+  const valorBeneficio = condition.benefitAmount;
+  const valorPlanoLiquido = condition.monthlyAmount;
   const valorTaxa = state.taxaIsenta ? 0 : (state.taxaMatricula ?? 0);
   const totalInicial = valorTaxa + valorPlanoLiquido;
 
@@ -361,12 +360,17 @@ export function prepararPayloadMatricula(state: Record<string, unknown>): {
     };
   }
 
-  const modoBeneficio = state.modoBeneficio === 'COM' ? 'COM' : 'SEM';
-  if (modoBeneficio === 'COM' && !(state.beneficioSelecionado as { id?: string } | undefined)?.id) {
-    return {
-      valido: false,
-      erros: ['Selecione um benefício para esta matrícula.'],
-    };
+  const condicao = state.condicaoFinanceira ?? 'NORMAL';
+  if (condicao !== 'NORMAL') {
+    if (typeof state.condicaoMotivo !== 'string' || !state.condicaoMotivo.trim()) {
+      return { valido: false, erros: ['Informe o motivo da condição financeira.'] };
+    }
+    if (typeof state.condicaoValidaAte !== 'string' || !isEnrollmentBenefitValidityInRange(state.condicaoValidaAte, typeof state.dataInicio === 'string' ? state.dataInicio : undefined, typeof state.dataFimContrato === 'string' ? state.dataFimContrato : undefined)) {
+      return { valido: false, erros: ['Informe a validade da condição financeira.'] };
+    }
+    if (condicao === 'BOLSA_PARCIAL' && (typeof state.condicaoPercentual !== 'number' || state.condicaoPercentual <= 0 || state.condicaoPercentual >= 100)) {
+      return { valido: false, erros: ['Informe um percentual de bolsa entre 0 e 100.'] };
+    }
   }
 
   const normalizePayment = (value: unknown) => {
@@ -395,6 +399,10 @@ export function prepararPayloadMatricula(state: Record<string, unknown>): {
     taxaMatricula: state.taxaIsenta ? 0 : (state.taxaMatricula ?? 0),
     taxaIsenta: state.taxaIsenta ?? false,
     taxaJustificativa: state.taxaJustificativa,
+    condicaoFinanceira: condicao,
+    condicaoPercentual: condicao === 'BOLSA_PARCIAL' ? state.condicaoPercentual : undefined,
+    condicaoMotivo: condicao === 'NORMAL' ? undefined : state.condicaoMotivo,
+    condicaoValidaAte: condicao === 'NORMAL' ? undefined : state.condicaoValidaAte,
     formaPagamentoTaxa: normalizePayment(state.formaPagamentoTaxa),
     pagarTaxaAgora: state.pagarTaxaAgora ?? false,
     gerarCobrancaTaxa: state.gerarCobrancaTaxa ?? false,
@@ -405,6 +413,11 @@ export function prepararPayloadMatricula(state: Record<string, unknown>): {
     vencimentoDia: state.vencimentoDia,
     formaPagamento: normalizePayment(state.formaPagamento),
     modeloId: state.modeloId,
+    valorMensalidadeOverride: (() => {
+      const base = state.modoTurmas === 'COMBO' ? Number(state.comboValor ?? 0) : Number(state.planoValor ?? 0);
+      if (condicao === 'BOLSA_PARCIAL' || condicao === 'ISENCAO_INTEGRAL') return calculateEnrollmentFinancialCondition(base, { condicaoFinanceira: condicao, condicaoPercentual: Number(state.condicaoPercentual ?? 0) }).monthlyAmount;
+      return undefined;
+    })(),
     notificationChannels: Array.isArray(state.notificationChannels) ? state.notificationChannels : [],
     notificationChannelsConfigured: state.notificationChannelsTouched === true,
 
@@ -414,12 +427,7 @@ export function prepararPayloadMatricula(state: Record<string, unknown>): {
     descontoAntecipado: state.descontoAntecipado,
     descontoTipo: state.descontoTipo, // 'FIXED' ou 'PERCENTAGE'
     prazoDesconto: state.prazoDesconto,
-    descontoIds:
-      (state.beneficioSelecionado as { origem?: string; id?: string } | undefined)?.origem ===
-      'CATALOGO'
-        ? [(state.beneficioSelecionado as { id?: string } | undefined)?.id].filter(Boolean)
-        : [],
-
+    descontoIds: [],
     // Metadata
     criarCobranca: state.criarCobranca ?? true,
     contaId: state.contaId,

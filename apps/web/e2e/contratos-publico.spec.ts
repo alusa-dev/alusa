@@ -152,12 +152,11 @@ test.describe('Contratos (público)', () => {
     await expect(response.json()).resolves.toMatchObject({ error: { message: /cpf não corresponde/i } });
   });
 
-  test('bloqueia link expirado', async ({ request }) => {
+  test('mantém o link disponível mesmo após a data de expiração legada', async ({ request }) => {
     const seed = await seedContratoPublico(prisma, { tokenExpiraEm: new Date(Date.now() - 60_000) });
     const response = await request.get(`/api/public/contrato/${seed.token}`);
 
-    expect(response.status()).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({ error: { message: 'Link expirado' } });
+    expect(response.status()).toBe(200);
   });
 
   test('bloqueia contrato cancelado', async ({ request }) => {

@@ -620,7 +620,7 @@ export function PaymentSettings({
 
         {/* Informações Gerais */}
         <div className="space-y-3">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="space-y-1">
               <label className={labelClass}>Forma de Pagamento Atual</label>
               <Input
@@ -630,8 +630,6 @@ export function PaymentSettings({
                 readOnly
               />
             </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1">
               <label className={labelClass}>Próximo vencimento</label>
               <Input
@@ -1123,14 +1121,13 @@ export function PaymentSettings({
         </div>
 
         {!asaasSubscriptionId && (
-          <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
-            <p className="text-xs text-amber-800">
-              <strong>Atenção:</strong>{' '}
+          <InfoCallout variant="warning" size="sm">
+            <InfoCalloutItem label="Atenção" labelTone="warning">
               {isFamilyBilling
                 ? 'Esta matrícula pertence a um grupo familiar, mas a assinatura financeira familiar ainda não foi resolvida. Gere ou sincronize a cobrança familiar para liberar as configurações.'
                 : 'Esta matrícula não possui vínculo financeiro ativo. As configurações de pagamento e comunicação automática não podem ser editadas.'}
-            </p>
-          </div>
+            </InfoCalloutItem>
+          </InfoCallout>
         )}
       </div>
     </div>

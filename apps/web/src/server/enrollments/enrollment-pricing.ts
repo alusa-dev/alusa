@@ -1,10 +1,12 @@
+import { calculateEnrollmentFinancialCondition, type EnrollmentFinancialCondition } from '@alusa/domain';
+
 export type DescontoInput = {
   tipo: 'FIXO' | 'PERCENTUAL';
   valor: number;
   cumulativo?: boolean;
 };
 
-export type CalcularPrecoInput = {
+export type CalcularPrecoInput = EnrollmentFinancialCondition & {
   planoValor: number;
   taxaMatricula?: number;
   descontos?: DescontoInput[];
@@ -34,7 +36,9 @@ export function calcularPrecoMatricula(input: CalcularPrecoInput): CalcularPreco
   const hasCumulativo = descontos.some((d) => d.cumulativo);
   const descontosAplicados = hasCumulativo ? valores : valores.length ? [Math.max(...valores)] : [];
   const totalDescontos = round2(descontosAplicados.reduce((acc, n) => acc + n, 0));
-  const planoLiquido = Math.max(0, round2(plano - totalDescontos));
+  const condition = calculateEnrollmentFinancialCondition(Math.max(0, round2(plano - totalDescontos)), input);
+  const planoLiquido = condition.monthlyAmount;
+  if (condition.benefitAmount > 0) descontosAplicados.push(condition.benefitAmount);
 
   return {
     plano: round2(plano),

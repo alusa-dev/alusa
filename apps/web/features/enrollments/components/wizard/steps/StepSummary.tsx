@@ -8,11 +8,7 @@ import {
   previewInitialEnrollmentBillingRequest,
   type InitialEnrollmentBillingPreviewResult,
 } from '@/features/enrollments/services/enrollments-service';
-import {
-  calcularValorDescontoBeneficio,
-  calcularValorLiquidoComBeneficio,
-  descreverBeneficioSelecionado,
-} from '../beneficios';
+import { calcularDescontoCondicao, calcularValorLiquidoCondicao } from '../financial-condition';
 import {
   calculateFamilyBenefitTotal,
   calculateFamilyMonthlyTotal,
@@ -133,11 +129,14 @@ function StepResumoFamiliar({ ctx }: StepSummaryProps) {
     [],
   );
 
-  const calcularLiquido = (valorBase: number) =>
-    calcularValorLiquidoComBeneficio(valorBase, state.beneficioSelecionado);
+  const calcularLiquido = (valorBase: number) => calcularValorLiquidoCondicao(valorBase, state);
   const valorBeneficio = calculateFamilyBenefitTotal(state);
   const totalMensalidades = calculateFamilyMonthlyTotal(state);
-  const beneficioDescricao = descreverBeneficioSelecionado(state.beneficioSelecionado);
+  const beneficioDescricao = state.condicaoFinanceira === 'ISENCAO_INTEGRAL'
+    ? 'Isenção integral'
+    : state.condicaoFinanceira === 'BOLSA_PARCIAL'
+      ? `Bolsa parcial (${state.condicaoPercentual ?? 0}%)`
+      : null;
 
   const totalTaxas = state.taxaIsenta ? 0 : (state.taxaMatricula ?? 0);
 
@@ -167,6 +166,8 @@ function StepResumoFamiliar({ ctx }: StepSummaryProps) {
     setBillingPreviewLoading(true);
     setBillingPreviewError(null);
     previewInitialEnrollmentBillingRequest({
+      condicaoFinanceira: state.condicaoFinanceira ?? 'NORMAL',
+      condicaoPercentual: state.condicaoFinanceira === 'BOLSA_PARCIAL' ? state.condicaoPercentual : undefined,
       contaId: state.contaId || undefined,
       enrollmentMode: 'FAMILY',
       familyPricingMode:
@@ -187,7 +188,7 @@ function StepResumoFamiliar({ ctx }: StepSummaryProps) {
       dataFimContrato: state.dataFimContrato,
       formaPagamento: paymentMethod,
       vencimentoDia: state.vencimentoDia,
-      descontoIds: state.beneficioSelecionado?.id ? [state.beneficioSelecionado.id] : [],
+      descontoIds: [],
       items: state.alunosFamiliares.map((aluno) => ({
         alunoId: aluno.id,
         turmaId: state.modoTurmas === 'TURMAS' ? aluno.turmaId ?? null : null,
@@ -219,8 +220,9 @@ function StepResumoFamiliar({ ctx }: StepSummaryProps) {
     };
   }, [
     state.alunosFamiliares,
-    state.beneficioSelecionado?.id,
     state.billingStrategy,
+    state.condicaoFinanceira,
+    state.condicaoPercentual,
     state.contaId,
     state.dataFimContrato,
     state.dataInicio,
@@ -334,6 +336,7 @@ function StepResumoFamiliar({ ctx }: StepSummaryProps) {
                 </span>
               </div>
             )}
+            {state.condicaoValidaAte && <div className="flex justify-between gap-4"><span className="text-slate-600">Condição acordada até</span><span>{new Date(`${state.condicaoValidaAte}T12:00:00`).toLocaleDateString('pt-BR')} · revisão manual</span></div>}
             <div className="flex justify-between gap-4">
               <span className="text-slate-600">Pagamento mensal</span>
               <span className="font-medium text-slate-900">{formaPagamentoLabel(state.formaPagamento)}</span>
@@ -426,15 +429,13 @@ function StepResumoIndividual({ ctx }: StepSummaryProps) {
 
   const valorMensalidade =
     state.modoTurmas === 'COMBO' ? (state.comboValor ?? 0) : (state.planoValor ?? 0);
-  const valorBeneficio = calcularValorDescontoBeneficio(
-    valorMensalidade,
-    state.beneficioSelecionado,
-  );
-  const valorMensalidadeLiquido = calcularValorLiquidoComBeneficio(
-    valorMensalidade,
-    state.beneficioSelecionado,
-  );
-  const beneficioDescricao = descreverBeneficioSelecionado(state.beneficioSelecionado);
+  const valorBeneficio = calcularDescontoCondicao(valorMensalidade, state);
+  const valorMensalidadeLiquido = calcularValorLiquidoCondicao(valorMensalidade, state);
+  const beneficioDescricao = state.condicaoFinanceira === 'ISENCAO_INTEGRAL'
+    ? 'Isenção integral'
+    : state.condicaoFinanceira === 'BOLSA_PARCIAL'
+      ? `Bolsa parcial (${state.condicaoPercentual ?? 0}%)`
+      : null;
 
   useEffect(() => {
     const alunoId = state.aluno?.id;
@@ -455,6 +456,8 @@ function StepResumoIndividual({ ctx }: StepSummaryProps) {
       : state.formaPagamento;
 
     previewInitialEnrollmentBillingRequest({
+      condicaoFinanceira: state.condicaoFinanceira ?? 'NORMAL',
+      condicaoPercentual: state.condicaoFinanceira === 'BOLSA_PARCIAL' ? state.condicaoPercentual : undefined,
       contaId: state.contaId || undefined,
       billingStrategy,
       strategy:
@@ -473,7 +476,7 @@ function StepResumoIndividual({ ctx }: StepSummaryProps) {
           ? formaPagamento
           : 'BOLETO',
       vencimentoDia: state.vencimentoDia,
-      descontoIds: state.beneficioSelecionado?.id ? [state.beneficioSelecionado.id] : [],
+      descontoIds: [],
       items: [
         {
           alunoId,
@@ -507,8 +510,9 @@ function StepResumoIndividual({ ctx }: StepSummaryProps) {
   }, [
     state.aluno?.id,
     state.aluno?.responsavel?.id,
-    state.beneficioSelecionado?.id,
     state.billingStrategy,
+    state.condicaoFinanceira,
+    state.condicaoPercentual,
     state.comboId,
     state.contaId,
     state.dataFimContrato,
@@ -648,6 +652,7 @@ function StepResumoIndividual({ ctx }: StepSummaryProps) {
                 </span>
               </div>
             )}
+            {state.condicaoValidaAte && <div className="flex justify-between gap-4"><span className="text-gray-600">Condição acordada até</span><span>{new Date(`${state.condicaoValidaAte}T12:00:00`).toLocaleDateString('pt-BR')} · revisão manual</span></div>}
             <div className="flex justify-between gap-4">
               <span className="text-gray-600">Pagamento mensal</span>
               <span className="font-medium text-gray-900">{formaPagamentoLabel(state.formaPagamento)}</span>

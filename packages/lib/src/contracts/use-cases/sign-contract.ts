@@ -206,9 +206,7 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
   if (!canSignContract(contrato.status)) {
     if (contrato.status === 'ASSINADO') throw new Error('CONTRACT_ALREADY_SIGNED');
     if (contrato.status === 'CANCELADO') throw new Error('CONTRACT_CANCELLED');
-    if (contrato.status === 'EXPIRADO') throw new Error('CONTRACT_EXPIRED');
   }
-  if (contrato.tokenExpiraEm && now > contrato.tokenExpiraEm) throw new Error('CONTRACT_LINK_EXPIRED');
 
   const consentimentos = resolveContractConsentAnswers(
     getContractConsentTerms(contrato),
@@ -361,7 +359,7 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
     }
 
     const updated = await tx.contrato.updateMany({
-      where: { id: contrato.id, contaId: contrato.contaId, status: 'PENDENTE' },
+      where: { id: contrato.id, contaId: contrato.contaId, status: { in: ['PENDENTE', 'EXPIRADO'] } },
       data: {
         status: 'ASSINADO',
         assinadoPor: signer.signer.nome,

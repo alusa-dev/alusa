@@ -2517,6 +2517,10 @@ model Matricula {
   taxaStatus                 StatusTaxaMatricula             @default(PENDENTE)
   taxaIsenta                 Boolean                         @default(false)
   taxaJustificativa          String?
+  condicaoFinanceira         String                          @default("NORMAL")
+  condicaoPercentual         Decimal?                        @db.Decimal(5, 2)
+  condicaoMotivo             String?
+  condicaoValidaAte          DateTime?                       @db.Date
   formaPagamento             FormaPagamento?                 @default(BOLETO)
   formaPagamentoTaxa         FormaPagamento?                 @default(BOLETO)
   vencimentoDia              Int                             @default(5)
@@ -6189,7 +6193,7 @@ model Contrato {
   tokenPublicoHash String?
   // Token cifrado para permitir entrega assíncrona do link sem persistir o valor em claro.
   tokenPublicoCriptografado String?
-  tokenExpiraEm    DateTime? // Expiração do link (padrão: 7 dias)
+  tokenExpiraEm    DateTime? // Campo legado: links de assinatura não expiram mais.
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -6338,7 +6342,7 @@ model EventoContrato {
   hashAssinatura              String?
   tokenPublico                String           @unique @default(cuid())
   tokenPublicoHash            String?
-  tokenExpiraEm               DateTime?
+  tokenExpiraEm               DateTime? // Campo legado: links de assinatura não expiram mais.
   createdByUserId             String?
   createdAt                   DateTime         @default(now())
   updatedAt                   DateTime         @updatedAt

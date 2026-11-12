@@ -30,9 +30,9 @@ describe('contract details notification history', () => {
       email: [], whatsapp: [{ id: 'job-1', status: 'SENT', attempts: 1, lastErrorCode: null, lastError: null, providerMessageId: null, providerAccepted: false, createdAt: '2026-10-30T00:00:00.000Z', processedAt: null }],
     });
     render(<ContratoDetalhesFeature contratoId="contract-1" />);
-    expect(await screen.findByText('Não foi possível carregar o histórico de notificações.')).toBeInTheDocument();
+    expect(await screen.findByText('Não foi possível carregar o histórico de assinatura.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Tentar novamente' }));
-    await waitFor(() => expect(screen.getByText(/WhatsApp · Enfileirado para envio/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('Enfileirado para envio')).toBeInTheDocument());
     expect(screen.queryByText(/WhatsApp · Aceito pelo provedor/)).not.toBeInTheDocument();
   });
 });

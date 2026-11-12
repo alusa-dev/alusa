@@ -48,7 +48,13 @@ import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 import { InfoCallout } from '@/components/ui/info-callout';
 import { FieldHelpTooltip } from '@/components/ui/field-help-tooltip';
-import { RenewalDiscountSelector } from './RenewalDiscountSelector';
+import { SectionCard } from '@/components/shared/wizard/layout';
+import {
+  getRenewalFinancialConditionError,
+  RenewalFinancialConditionFields,
+  toRenewalFinancialConditionInput,
+  type RenewalFinancialCondition,
+} from './RenewalFinancialConditionFields';
 
 const HERDAR_FORMA_VALUE = 'HERDAR';
 
@@ -270,7 +276,7 @@ export function RenewalDialog({
     'EMAIL',
     'SMS',
   ]);
-  const [selectedDiscountIds, setSelectedDiscountIds] = useState<string[]>([]);
+  const [financialCondition, setFinancialCondition] = useState<RenewalFinancialCondition>({ kind: 'NORMAL' });
   const [futureBillingStrategy, setFutureBillingStrategy] = useState<CreateRematriculaInput['futureBillingStrategy']>();
   const [futureAgreementCandidates, setFutureAgreementCandidates] = useState<NonNullable<Awaited<ReturnType<typeof previewIndividualRematriculaRequest>>['futureAgreementCandidates']>>([]);
 
@@ -410,11 +416,11 @@ export function RenewalDialog({
         : 'PERCENTAGE',
     );
     setOverrideReason('');
+    // O benefício da matrícula atual é apenas informativo. Cada novo ciclo
+    // exige uma decisão explícita e começa em pagamento normal.
+    setFinancialCondition({ kind: 'NORMAL' });
     setFutureBillingStrategy(undefined);
     setFutureAgreementCandidates([]);
-    // Descontos da matrícula atual não são herdados automaticamente.
-    // O usuário precisa selecionar explicitamente um desconto ativo para o novo ciclo.
-    setSelectedDiscountIds([]);
   }, [campaignId, item, mode, process]);
 
   useEffect(() => {
@@ -459,6 +465,9 @@ export function RenewalDialog({
   const requiresOverrideReason = Boolean(item?.financeiro.requiresOverrideReason);
   const needsOverride = item?.financeiro.rematriculaActionStatus === 'REQUER_OVERRIDE';
   const blockedByPolicy = item?.financeiro.rematriculaActionStatus === 'BLOQUEADA';
+  const financialConditionError = mode === 'CREATE'
+    ? getRenewalFinancialConditionError(financialCondition, dataInicio, dataFimContrato)
+    : null;
 
   const disabled =
     !contaId ||
@@ -470,6 +479,7 @@ export function RenewalDialog({
     !dataInicio ||
     !planoId ||
     !dataFimContrato ||
+    Boolean(financialConditionError) ||
     (mode === 'CREATE' && !contratoModeloId) ||
     (needsOverride && requiresOverrideReason && !overrideReason.trim());
 
@@ -577,6 +587,7 @@ export function RenewalDialog({
         : new Date(item.dataFimContrato).toISOString(),
       planoId: planoId ?? item.plano?.id ?? undefined,
       turmaId: turmaId ?? item.turma?.id ?? undefined,
+      financialCondition: toRenewalFinancialConditionInput(financialCondition, dataFimContrato),
       contractModelId: contratoModeloId,
       billingMode: 'INDIVIDUAL',
       futureBillingStrategy,
@@ -630,7 +641,6 @@ export function RenewalDialog({
       payload.prazoDesconto = Math.min(30, Math.max(0, prazoValor));
     }
 
-    payload.descontos = selectedDiscountIds.map((id) => ({ id }));
     payload.notificationChannels = notificationChannels;
     payload.notificationChannelsConfigured = true;
 
@@ -1001,7 +1011,7 @@ export function RenewalDialog({
 
               {/* Condições de Pagamento */}
               <div className={sectionClass}>
-                <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Condições de pagamento</span>
+                <span className="text-sm font-semibold text-slate-700 alusa-dark:text-[color:var(--color-text-primary)]">Configurações de cobrança</span>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <div className="space-y-1">
                     <div className="flex items-center gap-1.5">
@@ -1055,12 +1065,30 @@ export function RenewalDialog({
                     />
                   </div>
                 </div>
-                <RenewalDiscountSelector
-                  contaId={contaId}
-                  selectedIds={selectedDiscountIds}
-                  onChange={setSelectedDiscountIds}
-                />
               </div>
+
+              {mode === 'CREATE' ? (
+                <SectionCard>
+                  <RenewalFinancialConditionFields
+                    studentName={item?.aluno.nome ?? 'aluno'}
+                    currentCondition={item ? {
+                      kind: item.financeiro.condicaoFinanceira,
+                      percentage: item.financeiro.condicaoPercentual,
+                      reason: item.financeiro.condicaoMotivo,
+                      validUntil: item.financeiro.condicaoValidaAte,
+                    } : null}
+                    value={financialCondition}
+                    startDate={dataInicio}
+                    endDate={dataFimContrato}
+                    baseAmount={Number(planosDisponiveis.find((plan) => plan.id === planoId)?.valor ?? 0)}
+                    groupId={item?.id ?? 'renewal'}
+                    onChange={setFinancialCondition}
+                  />
+                  {financialConditionError ? (
+                    <p role="alert" className="text-xs text-rose-600">{financialConditionError}</p>
+                  ) : null}
+                </SectionCard>
+              ) : null}
 
               {/* Taxa de Matrícula */}
               <div className={sectionClass}>

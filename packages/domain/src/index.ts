@@ -1,4 +1,5 @@
 // Regras de matrícula
+export * from './rules/enrollment-financial-condition.js';
 export { classifyEnrollment } from './rules/enrollment-classification.js';
 export { validateEnrollmentTransfer } from './rules/enrollment-transfer.js';
 export type { EnrollmentTransferValidationInput, EnrollmentTransferValidationError } from './rules/enrollment-transfer.js';
@@ -62,6 +63,7 @@ export type {
   RenewalDecision,
   RenewalHolderType,
   RenewalItemInput,
+  RenewalFinancialCondition,
   RenewalOrigin,
   RenewalPreview,
   RenewalPreviewBlocker,

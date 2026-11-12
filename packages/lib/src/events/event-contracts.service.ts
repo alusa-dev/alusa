@@ -222,7 +222,7 @@ export function mapEventContract(contract: any) {
     assinadoDataNascimento: contract.assinadoDataNascimento?.toISOString?.() ?? null,
     assinadoEm: contract.assinadoEm?.toISOString?.() ?? null,
     tokenPublico: contract.tokenPublico?.startsWith('hash:') ? '' : contract.tokenPublico,
-    tokenExpiraEm: contract.tokenExpiraEm?.toISOString?.() ?? null,
+    tokenExpiraEm: null,
     consentimentos: consentTerms.map((term: any) => ({
       id: String(term.id),
       codigo: term.codigo ?? null,
@@ -295,7 +295,6 @@ export async function createEventContractForParticipant(
   if (!requiredSignature) throw new Error('MODELO_CONTRATO_EVENTO_SEM_ASSINATURA');
 
   const { tokenHash } = createPublicContractToken();
-  const tokenExpiraEm = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   const responsavel = participant.responsavel ?? participant.aluno.responsaveis[0]?.responsavel ?? null;
   const signerContext = isMaiorDeIdade(participant.aluno.dataNasc)
     ? {
@@ -335,7 +334,7 @@ export async function createEventContractForParticipant(
       status: 'PENDENTE',
       tokenPublico: `hash:${tokenHash}`,
       tokenPublicoHash: tokenHash,
-      tokenExpiraEm,
+      tokenExpiraEm: null,
       createdByUserId: input.userId,
     },
   });
@@ -366,7 +365,7 @@ export async function createEventContractForParticipant(
     type: 'PUBLIC_LINK_CREATED',
     actorType: 'USER',
     actorId: input.userId,
-    payload: { tokenExpiraEm: tokenExpiraEm.toISOString() },
+    payload: {},
   });
 
   return contrato;
@@ -399,7 +398,7 @@ export async function regenerateEventContractToken(ctx: EventContractContext, id
     const { token, tokenHash } = createPublicContractToken();
     await tx.eventoContrato.update({
       where: { id },
-      data: { tokenPublico: `hash:${tokenHash}`, tokenPublicoHash: tokenHash, tokenExpiraEm: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), status: 'PENDENTE' },
+      data: { tokenPublico: `hash:${tokenHash}`, tokenPublicoHash: tokenHash, tokenExpiraEm: null, status: 'PENDENTE' },
     });
     await recordEvidence(tx, { contaId: ctx.contaId, eventoContratoId: id, type: 'PUBLIC_LINK_CREATED', actorType: 'USER', actorId: ctx.userId, payload: { regenerated: true } });
     const record = await getEventContractRecord(tx, ctx.contaId, id);
@@ -449,8 +448,8 @@ export function mapPublicEventContractToDTO(contract: any) {
     id: contract.id,
     arquivoPdfUrl: contract.arquivoPdfUrl,
     hashPdf: contract.hashPdf,
-    status: contract.status,
-    tokenExpiraEm: contract.tokenExpiraEm?.toISOString?.() ?? null,
+    status: contract.status === 'EXPIRADO' ? 'PENDENTE' : contract.status,
+    tokenExpiraEm: null,
     acceptanceText: CONTRACT_ACCEPTANCE_TEXT_V1,
     acceptanceVersion: CONTRACT_ACCEPTANCE_VERSION,
     consentimentos: getEventContractConsentTerms(contract),
@@ -524,8 +523,6 @@ export async function signPublicEventContract(input: {
   const now = new Date();
   if (contract.status === 'ASSINADO') throw new Error('CONTRACT_ALREADY_SIGNED');
   if (contract.status === 'CANCELADO') throw new Error('CONTRACT_CANCELLED');
-  if (contract.status === 'EXPIRADO') throw new Error('CONTRACT_EXPIRED');
-  if (contract.tokenExpiraEm && now > contract.tokenExpiraEm) throw new Error('CONTRACT_LINK_EXPIRED');
 
   const consentTerms = getEventContractConsentTerms(contract);
   const consentimentos = resolveContractConsentAnswers(consentTerms, input.consentimentos ?? []);
@@ -628,7 +625,7 @@ export async function signPublicEventContract(input: {
       }
     }
     const updated = await tx.eventoContrato.updateMany({
-      where: { id: contract.id, contaId: contract.contaId, status: 'PENDENTE' },
+      where: { id: contract.id, contaId: contract.contaId, status: { in: ['PENDENTE', 'EXPIRADO'] } },
       data: { status: 'ASSINADO', assinadoPor: signer.signer.nome, assinadoCpf: signer.signer.cpf, assinadoDataNascimento: input.dataNascimento ? parseBrazilianDateOnlyToUtcDate(input.dataNascimento) : null, assinadoEmail: otpAuthorization.emailSnapshot, assinadoIp: input.ip ?? null, assinadoUserAgent: input.userAgent ?? null, assinadoEm: now, hashAssinatura: signatureHash, arquivoPdfAssinadoUrl: signedPdfUrl, hashPdfAssinado: signedPdf.hashSha256, decisoesConsentimento: consentimentosPayload },
     });
     if (updated.count !== 1) throw new Error('CONTRACT_ALREADY_SIGNED');

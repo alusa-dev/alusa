@@ -12,8 +12,6 @@ function mapError(error: unknown) {
     CONTRACT_NOT_FOUND: { status: 404, message: 'Contrato não encontrado' },
     CONTRACT_ALREADY_SIGNED: { status: 400, message: 'Contrato já assinado' },
     CONTRACT_CANCELLED: { status: 400, message: 'Contrato cancelado' },
-    CONTRACT_EXPIRED: { status: 400, message: 'Link expirado' },
-    CONTRACT_LINK_EXPIRED: { status: 400, message: 'Link expirado' },
     SIGNATURE_OTP_INVALID: { status: 400, message: 'Código inválido. Confira os números e tente novamente.' },
     SIGNATURE_OTP_EXPIRED: { status: 400, message: 'Este código expirou. Solicite um novo código.' },
     SIGNATURE_OTP_TOO_MANY_ATTEMPTS: { status: 429, message: 'Limite de tentativas atingido. Solicite um novo código.' },
@@ -34,8 +32,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!contract) throw new Error('CONTRACT_NOT_FOUND');
     if (contract.status === 'ASSINADO') throw new Error('CONTRACT_ALREADY_SIGNED');
     if (contract.status === 'CANCELADO') throw new Error('CONTRACT_CANCELLED');
-    if (contract.status === 'EXPIRADO') throw new Error('CONTRACT_EXPIRED');
-    if (contract.tokenExpiraEm && new Date() > contract.tokenExpiraEm) throw new Error('CONTRACT_LINK_EXPIRED');
 
     const result = await verifyPublicContractOtpWithEvidence({
       contaId: contract.contaId,

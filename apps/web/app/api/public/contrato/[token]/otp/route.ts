@@ -28,8 +28,6 @@ function mapError(error: unknown) {
     CONTRACT_NOT_FOUND: { status: 404, message: 'Contrato não encontrado' },
     CONTRACT_ALREADY_SIGNED: { status: 400, message: 'Contrato já assinado' },
     CONTRACT_CANCELLED: { status: 400, message: 'Contrato cancelado' },
-    CONTRACT_EXPIRED: { status: 400, message: 'Link expirado' },
-    CONTRACT_LINK_EXPIRED: { status: 400, message: 'Link expirado' },
     INVALID_CPF: { status: 400, message: 'CPF inválido' },
     UNDERAGE_STUDENT: { status: 403, message: 'Aluno menor de idade não pode assinar o contrato' },
     MISSING_BIRTHDATE: { status: 403, message: 'Não foi possível validar a maioridade do aluno' },
@@ -52,8 +50,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!contract) throw new Error('CONTRACT_NOT_FOUND');
     if (contract.status === 'ASSINADO') throw new Error('CONTRACT_ALREADY_SIGNED');
     if (contract.status === 'CANCELADO') throw new Error('CONTRACT_CANCELLED');
-    if (contract.status === 'EXPIRADO') throw new Error('CONTRACT_EXPIRED');
-    if (contract.tokenExpiraEm && new Date() > contract.tokenExpiraEm) throw new Error('CONTRACT_LINK_EXPIRED');
 
     const signer = resolvePublicContractSigner({
       cpf: body.cpf,

@@ -19,6 +19,8 @@ import { enqueueEnrollmentFinancialCommand, type EnrollmentFinancialCommand } fr
 import { runWithTenant } from '@/lib/prisma-tenant';
 import {
   resolvePayer,
+  calculateEnrollmentFinancialCondition,
+  isEnrollmentBenefitValidityInRange,
   classifyEnrollment,
   areAcademicPeriodsImmediatelyAdjacent,
   inferAcademicPeriodFromDateRange,
@@ -79,7 +81,8 @@ export class MatriculaConflictError extends Error {
     | 'CONFLITO_HORARIO'
     | 'TRANSFERENCIA_INCOMPLETA'
     | 'TRANSFERENCIA_ORIGEM_INVALIDA'
-    | 'COMBO_CICLO_ACADEMICO_CONFLITANTE';
+    | 'COMBO_CICLO_ACADEMICO_CONFLITANTE'
+    | 'CONDICAO_FINANCEIRA_INVALIDA';
 
   constructor(
     code:
@@ -90,7 +93,8 @@ export class MatriculaConflictError extends Error {
       | 'CONFLITO_HORARIO'
       | 'TRANSFERENCIA_INCOMPLETA'
       | 'TRANSFERENCIA_ORIGEM_INVALIDA'
-      | 'COMBO_CICLO_ACADEMICO_CONFLITANTE',
+      | 'COMBO_CICLO_ACADEMICO_CONFLITANTE'
+      | 'CONDICAO_FINANCEIRA_INVALIDA',
     message: string,
   ) {
     super(message);
@@ -166,6 +170,8 @@ export async function buildCriarMatriculaResultFromExisting(
 
   const preco = calcularPrecoMatricula({
     planoValor,
+    condicaoFinanceira: matricula.condicaoFinanceira,
+    condicaoPercentual: matricula.condicaoPercentual == null ? null : Number(matricula.condicaoPercentual),
     taxaMatricula: Number(matricula.taxaMatricula),
     descontos: matricula.descontos.map((item) => ({
       tipo: item.desconto.tipo === 'PERCENTUAL' ? ('PERCENTUAL' as const) : ('FIXO' as const),
@@ -595,6 +601,10 @@ export type CriarMatriculaInput = {
   taxaMatricula: number;
   taxaIsenta: boolean;
   taxaJustificativa?: string | null;
+  condicaoFinanceira?: 'NORMAL' | 'BOLSA_PARCIAL' | 'ISENCAO_INTEGRAL';
+  condicaoPercentual?: number | null;
+  condicaoMotivo?: string | null;
+  condicaoValidaAte?: Date | null;
   pagarTaxaAgora: boolean;
   gerarCobrancaTaxa: boolean;
   criarCobranca: boolean;
@@ -643,7 +653,53 @@ export type CriarMatriculaInput = {
   }) | null;
 };
 
+export function validarCondicaoFinanceiraMatricula(input: Pick<CriarMatriculaInput,
+  'condicaoFinanceira' | 'condicaoPercentual' | 'condicaoMotivo' | 'condicaoValidaAte'
+> & Partial<Pick<CriarMatriculaInput, 'dataInicio' | 'dataFimContrato'>>) {
+  const kind = input.condicaoFinanceira ?? 'NORMAL';
+  const reason = input.condicaoMotivo?.trim() ?? '';
+  const percentage = input.condicaoPercentual == null ? null : Number(input.condicaoPercentual);
+  const validUntil = input.condicaoValidaAte;
+  const validDate = validUntil instanceof Date && Number.isFinite(validUntil.getTime())
+    && isEnrollmentBenefitValidityInRange(validUntil.toISOString().slice(0, 10), input.dataInicio?.toISOString().slice(0, 10), input.dataFimContrato?.toISOString().slice(0, 10));
+
+  const invalid = kind === 'NORMAL'
+    ? percentage !== null || reason.length > 0 || validUntil != null
+    : !reason || !validDate || (kind === 'BOLSA_PARCIAL'
+      ? percentage === null || !Number.isFinite(percentage) || percentage <= 0 || percentage >= 100
+      : percentage !== null);
+
+  if (invalid) {
+    throw new MatriculaConflictError(
+      'CONDICAO_FINANCEIRA_INVALIDA',
+      'Informe motivo, validade e, para bolsa parcial, um percentual entre 0 e 100.',
+    );
+  }
+}
+
 type MatriculaCreationDb = PrismaClient | Prisma.TransactionClient;
+
+function assertEnrollmentMonthlyOverride(input: CriarMatriculaInput, baseAmount: number) {
+  const expected = calculateEnrollmentFinancialCondition(baseAmount, input).monthlyAmount;
+  if (input.valorMensalidadeOverride != null && (!Number.isFinite(input.valorMensalidadeOverride)
+    || Math.abs(input.valorMensalidadeOverride - expected) > 0.000001)) {
+    throw new MatriculaConflictError('CONDICAO_FINANCEIRA_INVALIDA', 'O valor mensal informado diverge do plano e da condição financeira. Gere uma nova prévia.');
+  }
+  return expected;
+}
+
+/** Resolve the amount from the tenant catalog before choosing any financial path. */
+export async function resolveEnrollmentMonthlyAmount(input: CriarMatriculaInput, db: MatriculaCreationDb = prisma) {
+  validarCondicaoFinanceiraMatricula(input);
+  const catalog = input.comboId
+    ? await db.combo.findFirst({ where: { id: input.comboId, contaId: input.contaId }, select: { valor: true } })
+    : input.planoId
+      ? await db.plano.findFirst({ where: { id: input.planoId, contaId: input.contaId }, select: { valor: true } })
+      : null;
+  if (!catalog) throw new MatriculaConflictError('CONDICAO_FINANCEIRA_INVALIDA', 'Plano ou combo não encontrado nesta conta.');
+  return assertEnrollmentMonthlyOverride(input, Number(catalog.valor));
+}
+
 
 async function loadMatriculaCreationReferences(
   db: MatriculaCreationDb,
@@ -720,7 +776,9 @@ export async function assertMatriculaCreationPreflight(
   input: CriarMatriculaInput,
   db: MatriculaCreationDb = prisma,
 ) {
+  validarCondicaoFinanceiraMatricula(input);
   const { aluno, plano, combo, turma } = await loadMatriculaCreationReferences(db, input);
+  assertEnrollmentMonthlyOverride(input, Number(combo?.valor ?? plano?.valor ?? 0));
   if (!aluno) throw new Error('Aluno não encontrado');
   if (aluno.status !== 'ATIVO') {
     throw new Error('Aluno inativo não pode receber nova matrícula');
@@ -948,6 +1006,8 @@ async function assertInitialEnrollmentBillingPreview(
   const billingStrategy = input.billingPreview.billingStrategy;
   const preview = await previewInitialEnrollmentBilling(
     {
+      condicaoFinanceira: input.condicaoFinanceira ?? 'NORMAL',
+      condicaoPercentual: input.condicaoPercentual,
       contaId: input.contaId,
       billingStrategy,
       responsavelFinanceiroId: input.responsavelFinanceiroId ?? null,
@@ -965,7 +1025,6 @@ async function assertInitialEnrollmentBillingPreview(
           comboId: input.comboId ?? null,
           planoId: input.planoId ?? null,
           taxaMatricula: input.taxaMatricula,
-          valorMensalidadeOverride: input.valorMensalidadeOverride ?? null,
         },
       ],
     },
@@ -1072,15 +1131,7 @@ export async function criarMatricula(input: CriarMatriculaInput) {
   const { plano, combo, targetTurmas } =
     await assertMatriculaCreationPreflight(input);
 
-  const valorOverride = Number(input.valorMensalidadeOverride ?? 0);
-  const planoValor =
-    Number.isFinite(valorOverride) && valorOverride > 0
-      ? valorOverride
-      : combo
-        ? Number(combo.valor)
-        : plano
-          ? Number(plano.valor)
-          : 0;
+  const planoValor = Number(combo?.valor ?? plano?.valor ?? 0);
 
   const primeiroVencimento = resolveFirstDueDate(input.dataInicio, input.vencimentoDia);
 
@@ -1187,6 +1238,8 @@ export async function criarMatricula(input: CriarMatriculaInput) {
 
     const preco = calcularPrecoMatricula({
       planoValor,
+      condicaoFinanceira: input.condicaoFinanceira,
+      condicaoPercentual: input.condicaoPercentual,
       taxaMatricula: input.taxaMatricula,
       descontos: descontosAplicaveis.map((desconto) => ({
         tipo: desconto.tipo,
@@ -1291,6 +1344,10 @@ export async function criarMatricula(input: CriarMatriculaInput) {
         taxaMatricula: input.taxaMatricula,
         taxaIsenta: input.taxaIsenta,
         taxaJustificativa: input.taxaJustificativa ?? undefined,
+        condicaoFinanceira: input.condicaoFinanceira ?? 'NORMAL',
+        condicaoPercentual: input.condicaoPercentual ?? null,
+        condicaoMotivo: input.condicaoMotivo ?? null,
+        condicaoValidaAte: input.condicaoValidaAte ?? null,
         formaPagamento: input.formaPagamento ?? FormaPagamento.BOLETO,
         vencimentoDia: input.vencimentoDia,
         status: statusInicial,

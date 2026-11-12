@@ -79,6 +79,7 @@ const FAMILY_ENROLLMENT_ACTIVE_OPERATION_STATUSES = [
 export type FamilyEnrollmentOperationCollisionRecord = {
   id: string;
   familyGroupId: string;
+  createdAt?: Date;
   status: string;
   previewHash: string | null;
   sourceVersion: string | null;
@@ -187,6 +188,111 @@ function operationResultObject(value: unknown): Record<string, unknown> {
     : {};
 }
 
+async function buildFamilyEnrollmentReplayPayload(input: {
+  contaId: string;
+  operation: FamilyEnrollmentOperationCollisionRecord;
+  body: CreateMatriculaFamiliarBody;
+}): Promise<Record<string, unknown> | null> {
+  const stored = operationResultObject(input.operation.result);
+  const storedResults = Array.isArray(stored.results) ? stored.results : [];
+  const hasCompleteStoredResults = input.body.alunos.every((item, index) => {
+    const expectedItemId = item.itemId ?? `${item.alunoId}:${index}`;
+    return storedResults.some((result) =>
+      result &&
+      typeof result === 'object' &&
+      'itemId' in result &&
+      result.itemId === expectedItemId &&
+      'alunoId' in result &&
+      result.alunoId === item.alunoId &&
+      'status' in result &&
+      result.status === 'success' &&
+      'matriculaId' in result &&
+      typeof result.matriculaId === 'string',
+    );
+  }) &&
+    stored.academicStatus === FamilyAcademicStatus.COMPLETO &&
+    storedResults.length === input.body.alunos.length;
+
+  if (hasCompleteStoredResults) {
+    return {
+      ...stored,
+      familyId: input.operation.familyGroupId,
+      operationId: input.operation.id,
+      operationStatus: input.operation.status,
+    };
+  }
+  if (!input.operation.createdAt) return null;
+
+  const requestedItems = input.body.alunos.map((item, index) => ({
+    itemId: item.itemId ?? `${item.alunoId}:${index}`,
+    alunoId: item.alunoId,
+    uiRequestId: `${input.body.uiRequestId}:aluno:${item.alunoId}:item:${index}`,
+  }));
+  const [matriculas, family] = await Promise.all([
+    prisma.matricula.findMany({
+      where: {
+        contaId: input.contaId,
+        matriculaFamiliarId: input.operation.familyGroupId,
+        uiRequestId: { in: requestedItems.map((item) => item.uiRequestId) },
+      },
+      select: {
+        id: true,
+        alunoId: true,
+        uiRequestId: true,
+        aluno: { select: { nome: true } },
+        contratos: {
+          where: { createdAt: { gte: input.operation.createdAt } },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { id: true },
+        },
+      },
+    }),
+    prisma.matriculaFamiliar.findFirst({
+      where: { id: input.operation.familyGroupId, contaId: input.contaId },
+      select: {
+        status: true,
+        academicStatus: true,
+        billingProvisionStatus: true,
+        standaloneSubscriptionId: true,
+        standaloneEnrollmentChargeId: true,
+      },
+    }),
+  ]);
+  if (!family) return null;
+
+  const matriculaByRequestId = new Map(matriculas.map((matricula) => [matricula.uiRequestId, matricula]));
+  const results = requestedItems.map((item) => {
+    const matricula = matriculaByRequestId.get(item.uiRequestId);
+    if (!matricula || matricula.alunoId !== item.alunoId) return null;
+    return {
+      itemId: item.itemId,
+      alunoId: matricula.alunoId,
+      alunoNome: matricula.aluno.nome,
+      status: 'success' as const,
+      matriculaId: matricula.id,
+      contratoId: matricula.contratos[0]?.id,
+    };
+  });
+  if (results.some((result) => result === null)) return null;
+  const completeResults = results.filter((result): result is NonNullable<typeof result> => result !== null);
+
+  return {
+    ...stored,
+    familyId: input.operation.familyGroupId,
+    operationId: input.operation.id,
+    operationStatus: input.operation.status,
+    academicStatus: family.academicStatus ?? FamilyAcademicStatus.COMPLETO,
+    billingProvisionStatus: family.billingProvisionStatus ?? MatriculaBillingProvisionStatus.PROVISIONADO,
+    paymentStatus:
+      family.standaloneSubscriptionId || family.standaloneEnrollmentChargeId
+        ? 'PENDENTE'
+        : 'SEM_COBRANCA',
+    status: family.status,
+    results: completeResults,
+  };
+}
+
 async function resolveFamilyEnrollmentOperationCollision(input: {
   error: unknown;
   body: CreateMatriculaFamiliarBody;
@@ -206,6 +312,7 @@ async function resolveFamilyEnrollmentOperationCollision(input: {
   const operationSelect = {
     id: true,
     familyGroupId: true,
+    createdAt: true,
     status: true,
     previewHash: true,
     sourceVersion: true,
@@ -277,12 +384,20 @@ async function resolveFamilyEnrollmentOperationCollision(input: {
     );
   }
   if (resolution.kind === 'REPLAY') {
+    const payload = await buildFamilyEnrollmentReplayPayload({
+      contaId: input.contaId,
+      operation: resolution.operation,
+      body: input.body,
+    });
+    if (!payload) {
+      return jsonError(
+        503,
+        'RESULTADO_MATRICULA_FAMILIAR_INCOMPLETO',
+        'A operação familiar foi concluída, mas os dados das matrículas não puderam ser recuperados com segurança.',
+      );
+    }
     return NextResponse.json(
-      {
-        ...operationResultObject(resolution.operation.result),
-        familyId: resolution.operation.familyGroupId,
-        operationStatus: resolution.operation.status,
-      },
+      payload,
       { status: 200, headers: { 'cache-control': 'no-store' } },
     );
   }
@@ -360,6 +475,8 @@ async function resolveFamilyPricing(params: {
   planoId?: string;
   alunos: Array<{ alunoId: string; comboId?: string }>;
   descontoIds: string[];
+  condicaoFinanceira?: 'NORMAL' | 'BOLSA_PARCIAL' | 'ISENCAO_INTEGRAL';
+  condicaoPercentual?: number;
 }) {
   const descontos = await resolveDescontos(params.contaId, params.descontoIds);
 
@@ -381,8 +498,10 @@ async function resolveFamilyPricing(params: {
       planoValor: Number(plano.valor),
       taxaMatricula: 0,
       descontos,
+      condicaoFinanceira: params.condicaoFinanceira,
+      condicaoPercentual: params.condicaoPercentual,
     });
-    const itemMonthlyValue = Number(calculo.planoLiquido.toFixed(2));
+    const itemMonthlyValue = calculo.planoLiquido;
     const itemBaseMonthlyValue = Number(plano.valor);
 
     return {
@@ -444,10 +563,13 @@ async function resolveFamilyPricing(params: {
       planoValor: Number(combo.valor),
       taxaMatricula: 0,
       descontos,
+      condicaoFinanceira: params.condicaoFinanceira,
+      condicaoPercentual: params.condicaoPercentual,
     });
-    totalMensalidade += calculo.planoLiquido;
+    const netValue = calculo.planoLiquido;
+    totalMensalidade += netValue;
     totalBaseMensalidade += Number(combo.valor);
-    itemWeights.push(calculo.planoLiquido);
+    itemWeights.push(netValue);
     itemBaseWeights.push(Number(combo.valor));
   }
 
@@ -728,16 +850,20 @@ export async function executeCreateFamilyEnrollment(params: {
     );
   }
   if (existingOperationResolution?.kind === 'REPLAY' && existingOperation) {
-    const stored =
-      existingOperation.result && typeof existingOperation.result === 'object'
-        ? (existingOperation.result as Record<string, unknown>)
-        : {};
+    const payload = await buildFamilyEnrollmentReplayPayload({
+      contaId,
+      operation: existingOperation,
+      body,
+    });
+    if (!payload) {
+      return jsonError(
+        503,
+        'RESULTADO_MATRICULA_FAMILIAR_INCOMPLETO',
+        'A operação familiar foi concluída, mas os dados das matrículas não puderam ser recuperados com segurança.',
+      );
+    }
     return NextResponse.json(
-      {
-        ...stored,
-        familyId: existingOperation.familyGroupId,
-        operationStatus: existingOperation.status,
-      },
+      payload,
       { status: 200, headers: { 'cache-control': 'no-store' } },
     );
   }
@@ -825,6 +951,8 @@ export async function executeCreateFamilyEnrollment(params: {
       planoId: body.planoId,
       alunos: body.alunos,
       descontoIds: body.descontoIds,
+      condicaoFinanceira: body.condicaoFinanceira,
+      condicaoPercentual: body.condicaoPercentual,
     });
 
     // 2) Validar formas de pagamento ANTES de qualquer escrita: feedback rápido
@@ -915,6 +1043,8 @@ export async function executeCreateFamilyEnrollment(params: {
     const familyPreview = await previewInitialEnrollmentBilling(
       {
         contaId,
+        condicaoFinanceira: body.condicaoFinanceira ?? 'NORMAL',
+        condicaoPercentual: body.condicaoPercentual,
         enrollmentMode: 'FAMILY',
         familyPricingMode:
           body.modoTurmas === 'TURMAS' ? 'AGGREGATE_PLAN' : 'ITEMIZED_COMBOS',
@@ -936,7 +1066,7 @@ export async function executeCreateFamilyEnrollment(params: {
           turmaId: body.modoTurmas === 'TURMAS' ? item.turmaId ?? null : null,
           comboId: body.modoTurmas === 'COMBO' ? item.comboId ?? null : null,
           planoId: body.modoTurmas === 'TURMAS' ? body.planoId ?? null : null,
-          taxaMatricula: body.taxaMatricula,
+          taxaMatricula: body.taxaIsenta ? 0 : body.taxaMatricula,
         })),
       },
       { prisma },
@@ -1088,6 +1218,10 @@ export async function executeCreateFamilyEnrollment(params: {
       taxaMatricula: body.taxaMatricula,
       taxaIsenta: body.taxaIsenta,
       taxaJustificativa: body.taxaJustificativa ?? null,
+      condicaoFinanceira: body.condicaoFinanceira,
+      condicaoPercentual: body.condicaoPercentual ?? null,
+      condicaoMotivo: body.condicaoMotivo ?? null,
+      condicaoValidaAte: body.condicaoValidaAte ? new Date(`${body.condicaoValidaAte}T00:00:00.000Z`) : null,
       pagarTaxaAgora: false,
       gerarCobrancaTaxa: false,
       criarCobranca: false,
@@ -1209,6 +1343,8 @@ export async function executeCreateFamilyEnrollment(params: {
       planoId: body.planoId,
       alunos: successfulItems,
       descontoIds: body.descontoIds,
+      condicaoFinanceira: body.condicaoFinanceira,
+      condicaoPercentual: body.condicaoPercentual,
     });
     const enrollmentFeeTotal = willCreateEnrollmentFeePlanned
       ? Number(body.taxaMatricula.toFixed(2))
@@ -1551,6 +1687,22 @@ export async function executeCreateFamilyEnrollment(params: {
           result: responsePayload as Prisma.InputJsonValue,
           lastError: financialError,
           completedAt: operationStatus === 'COMPLETED' ? new Date() : null,
+        },
+      }),
+      prisma.familyEnrollmentOperation.updateMany({
+        where: { id: operation.id, contaId, status: 'COMPLETED' },
+        data: {
+          result: {
+            ...responsePayload,
+            status: FamilyBillingStatus.ATIVO,
+            operationStatus: 'COMPLETED',
+            billingProvisionStatus:
+              shouldCreateSubscription || shouldCreateEnrollmentFee
+                ? MatriculaBillingProvisionStatus.PROVISIONADO
+                : MatriculaBillingProvisionStatus.NAO_APLICAVEL,
+            financialError: null,
+          } as Prisma.InputJsonValue,
+          lastError: null,
         },
       }),
       prisma.auditLog.create({

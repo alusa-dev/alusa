@@ -177,14 +177,6 @@ export function ContratoVisualizarFeature({ contratoId }: ContratoVisualizarFeat
                     })}
                   </p>
                 </div>
-                {contrato.tokenExpiraEm && contrato.status === 'PENDENTE' && (
-                  <div>
-                    <p className="text-sm font-medium text-gray-500">Expira em</p>
-                    <p className="text-gray-900">
-                      {new Date(contrato.tokenExpiraEm).toLocaleDateString('pt-BR')}
-                    </p>
-                  </div>
-                )}
               </CardContent>
             </Card>
 

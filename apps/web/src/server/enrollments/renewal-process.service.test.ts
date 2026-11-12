@@ -308,6 +308,46 @@ function chainEnrollment(overrides: Record<string, unknown> = {}) {
 }
 
 describe('renewal-process.service', () => {
+  it('aplica a condição financeira escolhida ao preço do próximo ciclo', async () => {
+    const preview = await previewRenewalProcess({
+      ...input,
+      targetContractEndsAt: new Date('2026-12-31T00:00:00.000Z'),
+      items: [{
+        ...input.items[0]!,
+        financialCondition: {
+          kind: 'BOLSA_PARCIAL',
+          percentage: 50,
+          reason: 'Bolsa de estudos',
+          validUntil: '2026-12-31',
+        },
+      }],
+    }, { prisma: basePrisma() as never });
+
+    expect(preview.blockers).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'INVALID_FINANCIAL_CONDITION' }),
+    ]));
+    expect(preview.targetEnrollments[0]?.monthlyAmount).toBe(75);
+  });
+
+  it('bloqueia benefício financeiro sem vigência dentro do novo ciclo', async () => {
+    const preview = await previewRenewalProcess({
+      ...input,
+      targetContractEndsAt: new Date('2026-12-31T00:00:00.000Z'),
+      items: [{
+        ...input.items[0]!,
+        financialCondition: {
+          kind: 'ISENCAO_INTEGRAL',
+          reason: 'Convênio',
+          validUntil: '2027-01-01',
+        },
+      }],
+    }, { prisma: basePrisma() as never });
+
+    expect(preview.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'INVALID_FINANCIAL_CONDITION', sourceEnrollmentId: 'mat-1' }),
+    ]));
+  });
+
   it('rejeita combo com ciclos conflitantes para a mesma modalidade antes do commit', async () => {
     const prisma = basePrisma({
       combo: {

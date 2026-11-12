@@ -113,12 +113,11 @@ export async function regenerateContractLinkForTenant(input: { contaId: string; 
   const contrato = await getContractForRegeneration({ contaId: input.contaId, id: input.contractId });
   if (!contrato) return { status: 'NOT_FOUND' as const };
   if (!['PENDENTE', 'RECUSADO', 'EXPIRADO'].includes(contrato.status)) return { status: 'NOT_REGENERATABLE' as const };
-  const novaExpiracao = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   const { token: tokenPublico, tokenHash: tokenPublicoHash } = createPublicContractToken();
   await runWithTenant(input.contaId, async (tx) => {
-    const updated = await tx.contrato.updateMany({ where: { id: contrato.id, contaId: input.contaId, status: contrato.status }, data: { tokenPublico: `hash:${tokenPublicoHash}`, tokenPublicoHash, tokenPublicoCriptografado: encryptSecret(tokenPublico), tokenExpiraEm: novaExpiracao, status: 'PENDENTE' } });
+    const updated = await tx.contrato.updateMany({ where: { id: contrato.id, contaId: input.contaId, status: contrato.status }, data: { tokenPublico: `hash:${tokenPublicoHash}`, tokenPublicoHash, tokenPublicoCriptografado: encryptSecret(tokenPublico), tokenExpiraEm: null, status: 'PENDENTE' } });
     if (updated.count !== 1) throw new Error('CONTRACT_CHANGED_CONCURRENTLY');
-    await createContractEvidence(tx as never, { contaId: input.contaId, contratoId: contrato.id, type: 'PUBLIC_LINK_CREATED', actorType: 'USER', actorId: input.actorId, payload: { tokenPublicoHash, tokenExpiraEm: novaExpiracao.toISOString(), regenerated: true } });
+    await createContractEvidence(tx as never, { contaId: input.contaId, contratoId: contrato.id, type: 'PUBLIC_LINK_CREATED', actorType: 'USER', actorId: input.actorId, payload: { tokenPublicoHash, regenerated: true } });
     await tx.matricula.updateMany({ where: { id: contrato.matricula.id, contaId: input.contaId }, data: { contratoAtualId: contrato.id, statusContrato: 'AGUARDANDO_ASSINATURA' } });
     const alunoMaior = isAdult(contrato.matricula.aluno.dataNasc);
     const rawLinkedGuardian = contrato.matricula.aluno.responsaveis[0]?.responsavel ?? null;

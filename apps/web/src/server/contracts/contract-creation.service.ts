@@ -14,6 +14,7 @@ export async function getContractCreationContext(input: { contaId: string; matri
       id: true, alunoId: true, dataInicio: true, dataFimContrato: true, vencimentoDia: true, formaPagamento: true,
       descontoAntecipado: true, prazoDesconto: true, descontoTipo: true, jurosMensal: true, multaPercentual: true, multaTipo: true,
       asaasSubscriptionId: true, billingMode: true,
+      condicaoFinanceira: true, condicaoPercentual: true,
       aluno: {
         select: {
           id: true, contaId: true, nome: true, cpf: true, dataNasc: true, email: true, telefone: true,
@@ -54,8 +55,8 @@ export async function syncContractSubscriptionForTenant(input: { contaId: string
   const cycle = mapPeriodicidadeToCycle(periodicidade);
   const mensalidade = matricula.cobrancas?.[0] ?? null;
   const billingType = mapFormaPagamentoToBillingType(mensalidade?.formaPagamento ?? matricula.formaPagamento ?? null);
-  const mensalidadeValue = mensalidade?.valor != null ? Number(mensalidade.valor) : calcularPrecoMatricula({ planoValor: Number(planoOuCombo?.valor ?? 0), descontos: (matricula.descontos ?? []).map((item) => ({ tipo: item.desconto.tipo === 'PERCENTUAL' ? 'PERCENTUAL' : 'FIXO', valor: Number(item.desconto.valor) })) }).planoLiquido;
-  if (matricula.billingMode === 'SHARED_PLAN') return null;
+  const mensalidadeValue = mensalidade?.valor != null ? Number(mensalidade.valor) : calcularPrecoMatricula({ planoValor: Number(planoOuCombo?.valor ?? 0), condicaoFinanceira: matricula.condicaoFinanceira, condicaoPercentual: matricula.condicaoPercentual == null ? null : Number(matricula.condicaoPercentual), descontos: (matricula.descontos ?? []).map((item) => ({ tipo: item.desconto.tipo === 'PERCENTUAL' ? 'PERCENTUAL' : 'FIXO', valor: Number(item.desconto.valor) })) }).planoLiquido;
+  if (matricula.billingMode === 'SHARED_PLAN' || matricula.condicaoFinanceira === 'ISENCAO_INTEGRAL') return null;
 
   const existingSubscription = await prisma.subscription.findFirst({ where: { contaId: input.contaId, matriculaId: matricula.id }, select: { id: true, contratoId: true, asaasSubscriptionId: true } });
   if (matricula.asaasSubscriptionId) {

@@ -266,7 +266,6 @@ Estado da classificação baseada nos resultados disponíveis no código:
 | `evaluate-financial-operational-health` | alertas não-INFO avaliados, abertos ou resolvidos classificam `worked`; sem alerta no escopo global é `empty`; avaliação direcionada por `contaId` sem alerta confirmado fica `unknown` |
 | `events-expire-reservations`, `events-reconcile-orders`, `events-reconcile-refunds`, `events-fulfill-tickets` | `processed` de candidatos elegíveis; lock/error sem item processado fica `unknown` |
 | `encerrar-contratos` | contratos elegíveis processados ou encerramentos familiares materializados; falha/escopo direcionado sem fechamento fica `unknown` |
-| `expire-contract-links` | links realmente expirados; no cron global, lista filtrada vazia significa `empty`; escopo direcionado sem atualização fica `unknown` |
 | `retry-enrollment-billing-provision` | tentativas reais nas outboxes ou retries individuais classificam `worked`; apenas scan ou dry-run sem tentativa fica `unknown`; sem candidatos confirma `empty` |
 | `whatsapp` | itens reclamados pelas filas; falha sem claim e fila pausada ficam `unknown` |
 | `webhook-scheduler` | contadores de candidatos/ações por etapa (incluindo `eligible` no side-effect outbox); não usa `scanned` ou enumeração como trabalho; `empty` exige evidência completa dos estágios normais, e health check sem confirmação suficiente, lock, falha ou detalhe incompleto fica `unknown` |

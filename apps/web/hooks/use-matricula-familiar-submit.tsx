@@ -60,11 +60,12 @@ function buildPayload(
       comboId: state.modoTurmas === 'COMBO' ? aluno.comboId : undefined,
     })),
     descontoIds:
-      (state.beneficioSelecionado as { origem?: string; id?: string } | undefined)?.origem ===
-      'CATALOGO'
-        ? [(state.beneficioSelecionado as { id?: string } | undefined)?.id].filter(Boolean)
-        : [],
-    taxaMatricula: state.taxaMatricula ?? 0,
+      [],
+    condicaoFinanceira: state.condicaoFinanceira ?? 'NORMAL',
+    condicaoPercentual: state.condicaoFinanceira === 'BOLSA_PARCIAL' ? state.condicaoPercentual : undefined,
+    condicaoMotivo: state.condicaoFinanceira === 'NORMAL' ? undefined : state.condicaoMotivo,
+    condicaoValidaAte: state.condicaoFinanceira === 'NORMAL' ? undefined : state.condicaoValidaAte,
+    taxaMatricula: state.taxaIsenta ? 0 : (state.taxaMatricula ?? 0),
     taxaIsenta: state.taxaIsenta ?? false,
     taxaJustificativa: state.taxaJustificativa,
     pagarTaxaAgora: state.pagarTaxaAgora ?? false,
@@ -120,8 +121,7 @@ export function useMatriculaFamiliarSubmit(options: UseMatriculaFamiliarSubmitOp
 
       if (!body) {
         const billingStrategy = state.billingStrategy ?? { kind: 'SEPARATE' as const };
-        const descontoIds =
-          state.beneficioSelecionado?.origem === 'CATALOGO' ? [state.beneficioSelecionado.id] : [];
+        const descontoIds: string[] = [];
         const previewPaymentMethod =
           state.formaPagamento === 'PIX' ||
           state.formaPagamento === 'BOLETO' ||
@@ -131,6 +131,8 @@ export function useMatriculaFamiliarSubmit(options: UseMatriculaFamiliarSubmitOp
               ? 'CARTAO_CREDITO'
               : 'BOLETO';
         const preview = await previewInitialEnrollmentBillingRequest({
+          condicaoFinanceira: state.condicaoFinanceira ?? 'NORMAL',
+          condicaoPercentual: state.condicaoFinanceira === 'BOLSA_PARCIAL' ? state.condicaoPercentual : undefined,
           contaId: state.contaId || undefined,
           enrollmentMode: 'FAMILY',
           familyPricingMode: state.modoTurmas === 'TURMAS' ? 'AGGREGATE_PLAN' : 'ITEMIZED_COMBOS',
@@ -156,7 +158,7 @@ export function useMatriculaFamiliarSubmit(options: UseMatriculaFamiliarSubmitOp
             turmaId: state.modoTurmas === 'TURMAS' ? (aluno.turmaId ?? null) : null,
             comboId: state.modoTurmas === 'COMBO' ? (aluno.comboId ?? null) : null,
             planoId: state.modoTurmas === 'TURMAS' ? (state.planoId ?? null) : null,
-            taxaMatricula: state.taxaMatricula ?? 0,
+            taxaMatricula: state.taxaIsenta ? 0 : (state.taxaMatricula ?? 0),
           })),
         });
         if (!preview.compatibility.compatible) {

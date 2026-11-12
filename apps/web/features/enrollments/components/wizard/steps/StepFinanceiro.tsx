@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Input } from '@/components/ui/input';
+import { isEnrollmentBenefitValidityInRange } from '@alusa/domain';
 import { DatePicker } from '@/components/ui/date-picker';
 import {
   Select,
@@ -12,7 +13,7 @@ import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { useContractTemplates } from '@/features/contracts/hooks/use-contract-templates';
 import type { WizardContextValue } from '../types';
-import { calcularValorLiquidoComBeneficio } from '../beneficios';
+import { calcularValorLiquidoCondicao, getConditionValidityMode } from '../financial-condition';
 import { calculateFamilyMonthlyTotal } from '../family-pricing';
 import { SectionCard, StepHeader } from '@/components/shared/wizard/layout';
 
@@ -157,10 +158,10 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
     }
 
     if (state.modoTurmas === 'COMBO') {
-      return calcularValorLiquidoComBeneficio(state.comboValor ?? 0, state.beneficioSelecionado);
+      return calcularValorLiquidoCondicao(state.comboValor ?? 0, state);
     }
 
-    const value = calcularValorLiquidoComBeneficio(state.planoValor ?? 0, state.beneficioSelecionado);
+    const value = calcularValorLiquidoCondicao(state.planoValor ?? 0, state);
     return value;
   }, [state]);
 
@@ -182,13 +183,23 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
     ? `A data de término precisa ser igual ou posterior a ${formatDateLabel(normalizedStartDate)}.`
     : null;
 
+  const conditionValidityMode = getConditionValidityMode(state);
+  const benefitValidityError = state.condicaoFinanceira !== 'NORMAL'
+    && conditionValidityMode === 'PERIODO' && state.condicaoValidaAte
+    && !isEnrollmentBenefitValidityInRange(state.condicaoValidaAte, toIsoDate(dataInicio), toIsoDate(dataFimContrato))
+      ? 'A validade do benefício precisa estar entre o início e o término da matrícula. Volte à condição financeira para ajustá-la.'
+      : null;
+
   useEffect(() => {
     update({
       dataInicio: toIsoDate(dataInicio),
       dataFimContrato: contractEndError ? undefined : toIsoDate(dataFimContrato),
+      ...(state.condicaoFinanceira && state.condicaoFinanceira !== 'NORMAL' && conditionValidityMode === 'MATRICULA'
+        ? { condicaoValidaAte: contractEndError ? undefined : toIsoDate(dataFimContrato) }
+        : {}),
       vencimentoDia: dueDayInvalid || !hasDueDay ? undefined : parsedVencimento,
     });
-  }, [contractEndError, dataFimContrato, dataInicio, dueDayInvalid, hasDueDay, parsedVencimento, update, vencimento]);
+  }, [contractEndError, dataFimContrato, dataInicio, dueDayInvalid, hasDueDay, parsedVencimento, update, vencimento, state.condicaoFinanceira, conditionValidityMode]);
 
   useEffect(() => {
     if (!payerId || !state.formaPagamento || dueDayInvalid || !hasDueDay) {
@@ -289,6 +300,7 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
                       : 'Defina a data de início e o dia do vencimento para liberar datas válidas.'}
                 </p>
               </div>
+              {benefitValidityError && <p role="alert" className="text-xs leading-relaxed text-red-700">{benefitValidityError}</p>}
             </div>
             <div className="space-y-1.5">
               <label className="text-xs text-gray-600">Dia do vencimento</label>

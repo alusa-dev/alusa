@@ -11,7 +11,8 @@ import { StepFamilyResponsibleParty } from './wizard/steps/StepFamilyResponsible
 import { StepFamilyStudents } from './wizard/steps/StepFamilyStudents';
 import { StepClassesAndBundle } from './wizard/steps/StepClassesAndBundle';
 import { StepPlan } from './wizard/steps/StepPlan';
-import { StepBolsaBeneficios } from './wizard/steps/StepBolsaBeneficios';
+import { StepFinancialCondition } from './wizard/steps/StepFinancialCondition';
+import { canAdvanceFinancialCondition } from './wizard/financial-condition';
 import { StepJurosMulta } from './wizard/steps/StepJurosMulta';
 import { StepNotifications } from './wizard/steps/StepNotifications';
 import { StepFinanceiro } from './wizard/steps/StepFinanceiro';
@@ -58,6 +59,7 @@ function canAdvanceFromAlunosFamiliares(state: WizardState) {
 }
 
 function canSubmitFamiliar(state: WizardState) {
+  if (!canAdvanceFinancialCondition(state)) return false;
   if (!state.responsavelFamiliar?.id) return false;
   if (state.alunosFamiliares.length < 1) return false;
   if (!canAdvanceFromAlunosFamiliares(state)) return false;
@@ -102,12 +104,8 @@ function canAdvanceFromPlano(state: WizardState) {
   return Boolean(state.planoId);
 }
 
-function canAdvanceFromBolsaBeneficios(state: WizardState) {
-  if ((state.modoBeneficio ?? 'SEM') === 'SEM') return true;
-  return Boolean(state.beneficioSelecionado?.id);
-}
-
 function canAdvanceFromFinanceiro(state: WizardState) {
+  if (!canAdvanceFinancialCondition(state)) return false;
   const dueDayIsValid =
     typeof state.vencimentoDia === 'number' &&
     Number.isInteger(state.vencimentoDia) &&
@@ -124,6 +122,7 @@ function canAdvanceFromFinanceiro(state: WizardState) {
 }
 
 function canSubmit(state: WizardState) {
+  if (!canAdvanceFinancialCondition(state)) return false;
   if (!state.aluno?.id) return false;
   // planoId só é obrigatório quando não é combo
   if (state.modoTurmas !== 'COMBO' && !state.planoId) return false;
@@ -193,9 +192,9 @@ export function EnrollmentWizardFlow({
       toast.info('Existe uma tentativa familiar pendente. A confirmação original será reenviada; alterações atuais não serão enviadas.');
     },
     onSuccess: (outcome) => {
+      onFamilyCompleted?.(outcome);
       wizard.reset({ contaId: contaId ?? '' });
       onClose?.();
-      onFamilyCompleted?.(outcome);
     },
     onError: (error) => {
       logClientOperationalEvent('enrollment.family_create.failed', error);
@@ -240,8 +239,8 @@ export function EnrollmentWizardFlow({
           return <StepTaxa ctx={ctx} />;
         case 'plano':
           return <StepPlan ctx={ctx} contaId={contaId} />;
-        case 'bolsaBeneficios':
-          return <StepBolsaBeneficios ctx={ctx} contaId={contaId} />;
+        case 'condicaoFinanceira':
+          return <StepFinancialCondition ctx={ctx} />;
         case 'jurosMulta':
           return <StepJurosMulta ctx={ctx} />;
         case 'notificacoes':
@@ -281,8 +280,8 @@ export function EnrollmentWizardFlow({
         return canAdvanceFromPlano(state);
       case 'jurosMulta':
         return true; // Step opcional, sempre permite avançar
-      case 'bolsaBeneficios':
-        return canAdvanceFromBolsaBeneficios(state);
+      case 'condicaoFinanceira':
+        return canAdvanceFinancialCondition(state);
       case 'notificacoes':
         return true;
       case 'financeiro':

@@ -10,9 +10,9 @@ import { enqueueContractEmailNotification } from './contract-email-queue';
 export async function queueManualContractEmail(input: { contaId: string; contratoId: string; actorId: string; operationId: string }) {
   return runWithTenant(input.contaId, async (tx) => {
     const contract = await tx.contrato.findFirst({
-      where: { id: input.contratoId, contaId: input.contaId, status: 'PENDENTE', matricula: { contaId: input.contaId } },
+      where: { id: input.contratoId, contaId: input.contaId, status: { in: ['PENDENTE', 'EXPIRADO'] }, matricula: { contaId: input.contaId } },
       select: {
-        id: true, matriculaId: true, tokenPublicoCriptografado: true, tokenPublicoHash: true, tokenExpiraEm: true,
+        id: true, matriculaId: true, tokenPublicoCriptografado: true, tokenPublicoHash: true,
         matricula: {
           select: {
             aluno: { select: { contaId: true, nome: true, email: true, dataNasc: true, responsaveis: { where: { contaId: input.contaId, tipoVinculo: { in: ['FINANCEIRO', 'PRINCIPAL'] } }, orderBy: { id: 'asc' }, take: 1, select: { responsavel: { select: { contaId: true, nome: true, email: true } } } } } },
@@ -24,7 +24,7 @@ export async function queueManualContractEmail(input: { contaId: string; contrat
     });
     if (!contract) return { status: 'NOT_FOUND' as const };
     if (!contract.conta.contractNotificationsEnabled || !contract.conta.contractEmailNotificationsEnabled) return { status: 'DISABLED' as const };
-    if (!contract.tokenPublicoCriptografado || !contract.tokenPublicoHash || (contract.tokenExpiraEm && contract.tokenExpiraEm <= new Date())) return { status: 'LINK_UNAVAILABLE' as const };
+    if (!contract.tokenPublicoCriptografado || !contract.tokenPublicoHash) return { status: 'LINK_UNAVAILABLE' as const };
     if (contract.matricula.aluno.contaId !== input.contaId) return { status: 'RECIPIENT_UNAVAILABLE' as const };
     const isAdult = isMaiorDeIdade(contract.matricula.aluno.dataNasc);
     const financialGuardian = contract.matricula.responsavelFinanceiro?.contaId === input.contaId ? contract.matricula.responsavelFinanceiro : null;
@@ -95,13 +95,13 @@ export async function drainContractEmailNotifications(input: { contaId: string; 
       const current = await tx.contractEmailNotification.findFirst({ where: { id: claimed.id, contaId: input.contaId } });
       if (!current || current.status !== 'PROCESSING' || current.lockedBy !== workerId) return { skip: 'LOST_LEASE' as const };
       const contract = await tx.contrato.findFirst({
-        where: { id: current.contratoId, contaId: input.contaId, status: 'PENDENTE', tokenPublicoHash: current.tokenPublicoHash, matricula: { contaId: input.contaId } },
+        where: { id: current.contratoId, contaId: input.contaId, status: { in: ['PENDENTE', 'EXPIRADO'] }, tokenPublicoHash: current.tokenPublicoHash, matricula: { contaId: input.contaId } },
         select: {
-          id: true, tokenExpiraEm: true, conta: { select: { nome: true, contractNotificationsEnabled: true, contractEmailNotificationsEnabled: true } },
+          id: true, conta: { select: { nome: true, contractNotificationsEnabled: true, contractEmailNotificationsEnabled: true } },
           matricula: { select: { aluno: { select: { contaId: true, nome: true, email: true, dataNasc: true, responsaveis: { where: { contaId: input.contaId, tipoVinculo: { in: ['FINANCEIRO', 'PRINCIPAL'] } }, orderBy: { id: 'asc' }, take: 1, select: { responsavel: { select: { contaId: true, nome: true, email: true } } } } } }, responsavelFinanceiro: { select: { contaId: true, nome: true, email: true } } } },
         },
       });
-      if (!contract || (contract.tokenExpiraEm && contract.tokenExpiraEm <= new Date())) return { skip: 'LINK_STALE' as const };
+      if (!contract) return { skip: 'LINK_STALE' as const };
       if (contract.matricula.aluno.contaId !== input.contaId) return { skip: 'STUDENT_TENANT_MISMATCH' as const };
       if (!contract.conta.contractNotificationsEnabled || !contract.conta.contractEmailNotificationsEnabled) return { skip: 'CHANNEL_DISABLED' as const };
       const adult = isMaiorDeIdade(contract.matricula.aluno.dataNasc);

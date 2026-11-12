@@ -1,3 +1,4 @@
+import { isEnrollmentBenefitValidityInRange } from '@alusa/domain';
 import { z } from 'zod';
 
 const optionalQueryStringDTOSchema = z.preprocess(
@@ -177,6 +178,8 @@ export const enrollmentBillingStrategyDTOSchema = z.discriminatedUnion('kind', [
 export type EnrollmentBillingStrategyDTO = z.infer<typeof enrollmentBillingStrategyDTOSchema>;
 
 export const initialEnrollmentBillingPreviewInputDTOSchema = z.object({
+  condicaoFinanceira: z.enum(['NORMAL', 'BOLSA_PARCIAL', 'ISENCAO_INTEGRAL']).optional(),
+  condicaoPercentual: z.number().positive().max(99.99).optional(),
   contaId: z.string().trim().optional(),
   enrollmentMode: z.enum(['INDIVIDUAL', 'FAMILY']).optional(),
   familyPricingMode: z.enum(['AGGREGATE_PLAN', 'ITEMIZED_COMBOS']).optional(),
@@ -349,6 +352,10 @@ export const createMatriculaInputDTOSchema = z.object({
   taxaMatricula: numberLikeDTOSchema.optional(),
   taxaIsenta: booleanLikeDTOSchema.optional(),
   taxaJustificativa: z.string().trim().optional().nullable(),
+  condicaoFinanceira: z.enum(['NORMAL', 'BOLSA_PARCIAL', 'ISENCAO_INTEGRAL']).default('NORMAL'),
+  condicaoPercentual: numberLikeDTOSchema.optional().nullable(),
+  condicaoMotivo: z.string().trim().max(500).optional().nullable(),
+  condicaoValidaAte: dateLikeDTOSchema.optional().nullable(),
   pagarTaxaAgora: booleanLikeDTOSchema.optional(),
   gerarCobrancaTaxa: booleanLikeDTOSchema.optional(),
   criarCobranca: booleanLikeDTOSchema.optional(),
@@ -375,6 +382,22 @@ export const createMatriculaInputDTOSchema = z.object({
 }).superRefine((data, context) => {
   if (Boolean(data.transferenciaOrigemVinculoId) !== Boolean(data.transferenciaMotivo)) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ['transferenciaMotivo'], message: 'Informe vínculo de origem e motivo para formalizar transferência.' });
+  }
+  if (data.condicaoFinanceira !== 'NORMAL') {
+    if (!data.condicaoMotivo?.trim()) context.addIssue({ code: z.ZodIssueCode.custom, path: ['condicaoMotivo'], message: 'Informe o motivo da condição financeira.' });
+    const dateKey = (value: string | Date | undefined | null) => {
+      if (!value) return undefined;
+      const date = value instanceof Date ? value : new Date(value);
+      return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : undefined;
+    };
+    const validUntil = dateKey(data.condicaoValidaAte);
+    if (!validUntil || !isEnrollmentBenefitValidityInRange(validUntil, dateKey(data.dataInicio), dateKey(data.dataFimContrato))) context.addIssue({ code: z.ZodIssueCode.custom, path: ['condicaoValidaAte'], message: 'A validade do benefício precisa estar dentro da vigência da matrícula.' });
+  }
+  if (data.condicaoFinanceira === 'BOLSA_PARCIAL' && !(Number(data.condicaoPercentual) > 0 && Number(data.condicaoPercentual) < 100)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['condicaoPercentual'], message: 'Informe um percentual entre 0 e 100.' });
+  }
+  if (data.condicaoFinanceira !== 'BOLSA_PARCIAL' && data.condicaoPercentual != null) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['condicaoPercentual'], message: 'Percentual só pode ser informado para bolsa parcial.' });
   }
 });
 export type CreateMatriculaInputDTO = z.input<typeof createMatriculaInputDTOSchema>;
@@ -636,6 +659,10 @@ export const matriculaResumoDTOSchema = z.object({
   taxaMatricula: z.number(),
   taxaStatus: matriculaTaxaStatusDTOSchema,
   taxaIsenta: z.boolean(),
+  condicaoFinanceira: z.enum(['NORMAL', 'BOLSA_PARCIAL', 'ISENCAO_INTEGRAL']).default('NORMAL').optional(),
+  condicaoPercentual: z.number().nullable().optional(),
+  condicaoMotivo: nullableStringDTOSchema.default(null).optional(),
+  condicaoValidaAte: nullableDateStringDTOSchema.default(null).optional(),
   vencimentoDia: z.number().int(),
   aluno: matriculaAlunoResumoDTOSchema,
   plano: matriculaPlanoResumoDTOSchema.nullable().default(null),
@@ -697,6 +724,7 @@ export const matriculaResumoDTOSchema = z.object({
       mode: z.enum(['INDIVIDUAL', 'FAMILY']),
       sourceMatriculaId: z.string(),
       targetMatriculaId: z.string(),
+      localSubscriptionId: nullableStringDTOSchema.default(null),
       familyGroupId: nullableStringDTOSchema.default(null),
       responsavelFinanceiro: matriculaResponsavelResumoDTOSchema.nullable().default(null),
       affectedMatriculaIds: z.array(z.string()).default([]),
@@ -743,6 +771,10 @@ export const matriculaCoreDTOSchema = z.object({
   taxaStatus: matriculaTaxaStatusDTOSchema,
   taxaIsenta: z.boolean(),
   taxaJustificativa: nullableStringDTOSchema.default(null).optional(),
+  condicaoFinanceira: z.enum(['NORMAL', 'BOLSA_PARCIAL', 'ISENCAO_INTEGRAL']).default('NORMAL').optional(),
+  condicaoPercentual: z.number().nullable().optional(),
+  condicaoMotivo: nullableStringDTOSchema.default(null).optional(),
+  condicaoValidaAte: nullableDateStringDTOSchema.default(null).optional(),
   vencimentoDia: z.number().int(),
   asaasId: nullableStringDTOSchema.default(null),
   asaasSubscriptionId: nullableStringDTOSchema.default(null).optional(),

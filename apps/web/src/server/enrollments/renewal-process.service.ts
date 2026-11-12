@@ -12,6 +12,9 @@ import {
   validarConflitosRematricula,
   validarDatasRematricula,
   type RenewalItemInput,
+  type RenewalFinancialCondition,
+  calculateEnrollmentFinancialCondition,
+  isEnrollmentBenefitValidityInRange,
   type RenewalOrigin,
   type RenewalHolderType,
 } from '@alusa/domain';
@@ -35,7 +38,6 @@ import {
   resolveEnrollmentRootId,
 } from './renewal-chain';
 import { assertStudentCapacity } from '@/src/server/platform-billing/capacity';
-import { calcularPrecoMatricula, type DescontoInput } from './enrollment-pricing';
 import { buildUnmappedPriorEnrollmentInCourseWhere, wasCancelledBeforeEffectiveStart } from './academic-history-query';
 
 type PrismaLike = PrismaClient | Prisma.TransactionClient;
@@ -195,7 +197,6 @@ export type RenewalProcessInput = {
   targetContractEndsAt?: Date | null;
   contractModelId?: string | null;
   financialTerms?: RenewalFinancialTermsInput | null;
-  descontos?: Array<{ id: string; cumulativo?: boolean }>;
   futureBillingStrategy?: {
     mode: 'SEPARATE' | 'UNIFY_EXISTING';
     agreementId?: string | null;
@@ -271,7 +272,6 @@ export function buildRenewalRequestFingerprint(input: RenewalProcessInput): stri
     targetContractEndsAt: input.targetContractEndsAt ?? null,
     contractModelId: input.contractModelId ?? null,
     financialTerms: input.financialTerms ?? null,
-    descontos: input.descontos ?? [],
     futureBillingStrategy: input.futureBillingStrategy ?? null,
     overrideReason: input.overrideReason?.trim() || null,
   };
@@ -553,29 +553,37 @@ async function resolveTargets(prisma: PrismaLike, contaId: string, items: Renewa
   };
 }
 
-type RenewalDiscount = DescontoInput & { id: string; nome: string };
-
-async function resolveRenewalDiscounts(prisma: PrismaLike, contaId: string, descontos?: RenewalProcessInput['descontos']) {
-  const ids = Array.from(new Set((descontos ?? []).map((item) => item.id).filter(Boolean)));
-  if (!ids.length || !('desconto' in prisma) || !prisma.desconto) return [] as RenewalDiscount[];
-
-  const records = await prisma.desconto.findMany({
-    where: { contaId, id: { in: ids }, status: 'ATIVO' },
-    select: { id: true, nome: true, tipo: true, valor: true },
-  });
-  if (records.length !== ids.length) throw new Error('Um ou mais descontos selecionados não estão disponíveis.');
-
-  return records.map((record) => ({
-    id: record.id,
-    nome: record.nome,
-    tipo: record.tipo === 'PERCENTUAL' ? 'PERCENTUAL' as const : 'FIXO' as const,
-    valor: Number(record.valor),
-    cumulativo: descontos?.find((item) => item.id === record.id)?.cumulativo,
-  }));
+function resolveRenewalFinancialCondition(
+  condition: RenewalFinancialCondition | undefined,
+  startsAt: Date,
+  endsAt?: Date | null,
+) {
+  const kind = condition?.kind ?? 'NORMAL';
+  if (kind === 'NORMAL') return { kind: 'NORMAL' as const, percentage: null, reason: null, validUntil: null };
+  const validUntil = condition?.validUntil ?? null;
+  const reason = condition?.reason?.trim() ?? '';
+  const percentage = condition?.percentage == null ? null : Number(condition.percentage);
+  const inRange = Boolean(validUntil && isEnrollmentBenefitValidityInRange(
+    validUntil,
+    startsAt.toISOString().slice(0, 10),
+    endsAt?.toISOString().slice(0, 10),
+  ));
+  if (!reason || reason.length > 500 || !inRange || (kind === 'BOLSA_PARCIAL'
+    ? percentage === null || !Number.isFinite(percentage) || percentage <= 0 || percentage >= 100
+    : percentage !== null)) {
+    return null;
+  }
+  return { kind, percentage, reason, validUntil };
 }
 
-function calculateRenewalPrice(baseAmount: number, discounts: RenewalDiscount[]) {
-  return calcularPrecoMatricula({ planoValor: baseAmount, descontos: discounts }).planoLiquido;
+function calculateRenewalPrice(
+  baseAmount: number,
+  condition?: RenewalFinancialCondition,
+) {
+  return calculateEnrollmentFinancialCondition(baseAmount, {
+    condicaoFinanceira: condition?.kind ?? 'NORMAL',
+    condicaoPercentual: condition?.percentage ?? null,
+  }).monthlyAmount;
 }
 
 type RenewalBlocker = { sourceEnrollmentId: string; code: string; message: string };
@@ -1821,7 +1829,6 @@ async function materializeFutureContract(
     matriculaId: input.matriculaId,
     modeloId: input.modeloId,
     actorId: input.actorId,
-    expirationDays: 30,
     source: 'RENEWAL',
     onExisting: 'return',
   });
@@ -1920,7 +1927,6 @@ export async function previewRenewalProcess(input: RenewalProcessInput, deps: { 
   const sourceRows = await loadSourceRows(deps.prisma, input.contaId, input.items);
   const sourceById = new Map(sourceRows.map((source) => [source.id, source]));
   const targets = await resolveTargets(deps.prisma, input.contaId, input.items);
-  const selectedDiscounts = await resolveRenewalDiscounts(deps.prisma, input.contaId, input.descontos);
   const futureAgreementCandidates = await findFutureAgreementCandidates(deps.prisma, input, targets);
   const campaign = await loadCampaignSnapshot(deps.prisma, input);
   const duplicateBlockers = await findDuplicateRenewalItems(deps.prisma, input, sourceRows);
@@ -1982,7 +1988,9 @@ export async function previewRenewalProcess(input: RenewalProcessInput, deps: { 
               message: 'Turma futura nÃ£o encontrada na conta atual.',
             });
           }
-          monthlyAmount = calculateRenewalPrice(toMoney(targetPlan?.valor), selectedDiscounts);
+          const condition = resolveRenewalFinancialCondition(item.financialCondition, input.effectiveAt ?? new Date(), input.targetContractEndsAt);
+          if (!condition) externalBlockers.push({ sourceEnrollmentId: item.sourceEnrollmentId, code: 'INVALID_FINANCIAL_CONDITION', message: 'Revise o motivo, o percentual e a validade da condição financeira deste aluno.' });
+          monthlyAmount = calculateRenewalPrice(toMoney(targetPlan?.valor), condition ?? undefined);
         } else {
           const targetCombo = targets.combosById.get(item.target.targetId);
           if (!targetCombo) {
@@ -1992,7 +2000,9 @@ export async function previewRenewalProcess(input: RenewalProcessInput, deps: { 
               message: 'Combo futuro nÃ£o encontrado na conta atual.',
             });
           }
-          monthlyAmount = calculateRenewalPrice(toMoney(targetCombo?.valor ?? targetPlan?.valor), selectedDiscounts);
+          const condition = resolveRenewalFinancialCondition(item.financialCondition, input.effectiveAt ?? new Date(), input.targetContractEndsAt);
+          if (!condition) externalBlockers.push({ sourceEnrollmentId: item.sourceEnrollmentId, code: 'INVALID_FINANCIAL_CONDITION', message: 'Revise o motivo, o percentual e a validade da condição financeira deste aluno.' });
+          monthlyAmount = calculateRenewalPrice(toMoney(targetCombo?.valor ?? targetPlan?.valor), condition ?? undefined);
         }
       }
 
@@ -2131,7 +2141,6 @@ export async function confirmRenewalProcess(
     const sourceRows = await loadSourceRows(tx, input.contaId, input.items);
     const sourceById = new Map(sourceRows.map((source) => [source.id, source]));
     const targets = await resolveTargets(tx, input.contaId, input.items);
-    const selectedDiscounts = await resolveRenewalDiscounts(tx, input.contaId, input.descontos);
     const effectiveAt = new Date(`${preview.effectiveAt}T00:00:00.000Z`);
     const firstDueDate = preview.firstDueDate ? new Date(`${preview.firstDueDate}T00:00:00.000Z`) : null;
     const targetContractEndsAt = input.targetContractEndsAt ?? addYears(effectiveAt, 1);
@@ -2235,6 +2244,16 @@ export async function confirmRenewalProcess(
                 : 'PENDENTE',
             taxaJustificativa:
               input.financialTerms?.enrollmentFeeJustification ?? source.taxaJustificativa,
+            ...(() => {
+              const condition = resolveRenewalFinancialCondition(item.financialCondition, effectiveAt, targetContractEndsAt);
+              if (!condition) throw new Error('INVALID_FINANCIAL_CONDITION');
+              return {
+                condicaoFinanceira: condition.kind,
+                condicaoPercentual: condition.percentage == null ? null : new Prisma.Decimal(condition.percentage),
+                condicaoMotivo: condition.reason,
+                condicaoValidaAte: condition.validUntil ? new Date(`${condition.validUntil}T00:00:00.000Z`) : null,
+              };
+            })(),
             formaPagamento: input.financialTerms?.paymentMethod ?? source.formaPagamento,
             formaPagamentoTaxa:
               input.financialTerms?.enrollmentFeePaymentMethod ??
@@ -2371,30 +2390,6 @@ export async function confirmRenewalProcess(
       });
 
       if (item.decision === 'RENEW' && futureEnrollmentId) {
-        const targetBaseAmount = item.target.type === 'CLASS'
-          ? toMoney(targets.plansById.get(item.target.planId)?.valor)
-          : toMoney(targets.combosById.get(item.target.targetId)?.valor);
-        const discountRows = selectedDiscounts
-          .map((discount) => ({
-            descontoId: discount.id,
-            valorFinal: discount.tipo === 'PERCENTUAL'
-              ? Math.min(targetBaseAmount, toMoney(targetBaseAmount * discount.valor / 100))
-              : Math.min(targetBaseAmount, toMoney(discount.valor)),
-          }))
-          .sort((left, right) => right.valorFinal - left.valorFinal);
-        const appliedDiscountRows = selectedDiscounts.some((discount) => discount.cumulativo)
-          ? discountRows
-          : discountRows.slice(0, 1);
-        if (appliedDiscountRows.length) {
-          await tx.descontoMatricula.createMany({
-            data: appliedDiscountRows.map((discount) => ({
-              matriculaId: futureEnrollmentId,
-              descontoId: discount.descontoId,
-              valorFinal: new Prisma.Decimal(discount.valorFinal),
-            })),
-            skipDuplicates: true,
-          });
-        }
         await tx.reservaVagaFutura.create({
           data: {
             contaId: input.contaId,
@@ -2449,12 +2444,12 @@ export async function confirmRenewalProcess(
       for (const item of renewedItems) {
         const key = item.separateBilling ? `ITEM:${item.sourceEnrollmentId}` : 'SHARED';
         const current = groups.get(key) ?? { items: [], monthlyTotal: 0, enrollmentFeeTotal: 0 };
-            const targetValue = calculateRenewalPrice(
-              toMoney(item.target.type === 'CLASS'
-                ? targets.plansById.get(item.target.planId)?.valor
-                : targets.combosById.get(item.target.targetId)?.valor),
-              selectedDiscounts,
-            );
+        const rawTargetValue = toMoney(item.target.type === 'CLASS'
+          ? targets.plansById.get(item.target.planId)?.valor
+          : targets.combosById.get(item.target.targetId)?.valor);
+        const condition = resolveRenewalFinancialCondition(item.financialCondition, effectiveAt, targetContractEndsAt);
+        if (!condition) throw new Error('INVALID_FINANCIAL_CONDITION');
+        const targetValue = calculateRenewalPrice(rawTargetValue, condition);
         current.items.push(item);
         current.monthlyTotal = toMoney(current.monthlyTotal + targetValue);
         current.enrollmentFeeTotal = toMoney(
@@ -2552,11 +2547,14 @@ export async function confirmRenewalProcess(
             if (!futureEnrollment?.matriculaFuturaId || !futureEnrollment.matriculaFutura?.alunoId) {
               throw new Error('REMATRICULA_FUTURA_NAO_ENCONTRADA');
             }
+            const condition = resolveRenewalFinancialCondition(item.financialCondition, effectiveAt, targetContractEndsAt);
+            if (!condition) throw new Error('INVALID_FINANCIAL_CONDITION');
+            const rawTargetValue = toMoney(item.target.type === 'CLASS'
+              ? targets.plansById.get(item.target.planId)?.valor
+              : targets.combosById.get(item.target.targetId)?.valor);
             const targetValue = calculateRenewalPrice(
-              toMoney(item.target.type === 'CLASS'
-                ? targets.plansById.get(item.target.planId)?.valor
-                : targets.combosById.get(item.target.targetId)?.valor),
-              selectedDiscounts,
+              rawTargetValue,
+              condition,
             );
             await tx.billingAllocation.create({
               data: {
@@ -2567,17 +2565,17 @@ export async function confirmRenewalProcess(
                 kind: 'TUITION',
                 status: 'SCHEDULED',
                 recurring: true,
-                baseAmount: toMoney(targetValue),
-                discountAmount: toMoney(
-                  toMoney(item.target.type === 'CLASS'
-                    ? targets.plansById.get(item.target.planId)?.valor
-                    : targets.combosById.get(item.target.targetId)?.valor) - targetValue,
-                ),
+                baseAmount: rawTargetValue,
+                discountAmount: toMoney(rawTargetValue - targetValue),
                 netAmount: toMoney(targetValue),
                 validFrom: effectiveAt,
                 validUntil: input.targetContractEndsAt ?? existingBillingAgreement.validUntil,
                 prorationPolicy: 'NEXT_CYCLE',
-                metadata: { processId: processo.id, sourceEnrollmentId: item.sourceEnrollmentId } as Prisma.InputJsonValue,
+                metadata: {
+                  processId: processo.id,
+                  sourceEnrollmentId: item.sourceEnrollmentId,
+                  financialCondition: condition,
+                } as Prisma.InputJsonValue,
               },
             });
           }
@@ -2684,6 +2682,10 @@ export async function confirmRenewalProcess(
                 unifiedIntoAgreementId: existingAgreement.id,
                 unifiedIntoProcessId: existingAgreement.processoId,
                 contribution,
+                financialConditions: group.items.map((item) => ({
+                  sourceEnrollmentId: item.sourceEnrollmentId,
+                  ...(item.financialCondition ?? { kind: 'NORMAL' }),
+                })),
                 ...notificationSnapshot,
               } as Prisma.InputJsonValue,
             },
@@ -2753,6 +2755,10 @@ export async function confirmRenewalProcess(
               ...(preview.futureFinancialAgreement ?? {}),
               groupKey,
               sourceEnrollmentIds: group.items.map((item) => item.sourceEnrollmentId),
+              financialConditions: group.items.map((item) => ({
+                sourceEnrollmentId: item.sourceEnrollmentId,
+                ...(item.financialCondition ?? { kind: 'NORMAL' }),
+              })),
               monthlyTotal: group.monthlyTotal,
               enrollmentFeeTotal: group.enrollmentFeeTotal,
               ...notificationSnapshot,

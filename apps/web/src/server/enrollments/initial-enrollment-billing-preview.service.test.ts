@@ -120,6 +120,65 @@ function existingSubscription(options: {
 }
 
 describe('previewInitialEnrollmentBilling', () => {
+  it('rounds each family item and splits a single family enrollment fee without duplication', async () => {
+    const catalog = buildPrisma({
+      aluno: { findMany: vi.fn().mockResolvedValue([{ id: 'aluno-1', nome: 'Ana' }, { id: 'aluno-2', nome: 'Bruno' }]) },
+      combo: { findMany: vi.fn().mockResolvedValue([
+        { id: 'combo-1', valor: 10.03, periodicidade: 'MENSAL' },
+        { id: 'combo-2', valor: 20.07, periodicidade: 'MENSAL' },
+      ]) },
+    });
+    const result = await previewInitialEnrollmentBilling({
+      ...baseInput, descontoIds: [], enrollmentMode: 'FAMILY', familyPricingMode: 'ITEMIZED_COMBOS',
+      condicaoFinanceira: 'BOLSA_PARCIAL', condicaoPercentual: 50, aggregateMonthlyAmount: 15.04, aggregateEnrollmentFeeAmount: 50.01,
+      items: [{ alunoId: 'aluno-1', comboId: 'combo-1', taxaMatricula: 50.01 }, { alunoId: 'aluno-2', comboId: 'combo-2', taxaMatricula: 50.01 }],
+    }, { prisma: catalog as never });
+    expect(result.totals.monthlyTotal).toBe(15.04);
+    expect(result.groups[0].allocations.map((item) => item.amount)).toEqual([5.01, 10.03]);
+    expect(result.groups[0].allocations.map((item) => item.enrollmentFeeAmount)).toEqual([25.01, 25]);
+    expect(result.totals.enrollmentFeeTotal).toBe(50.01);
+  });
+
+  it.each(['NORMAL', 'BOLSA_PARCIAL', 'ISENCAO_INTEGRAL'] as const)('keeps family browser and server previews identical for %s', async (condicaoFinanceira) => {
+    const input = {
+      ...baseInput,
+      descontoIds: [],
+      enrollmentMode: 'FAMILY' as const,
+      familyPricingMode: 'AGGREGATE_PLAN' as const,
+      aggregateMonthlyAmount: condicaoFinanceira === 'NORMAL' ? 200 : condicaoFinanceira === 'BOLSA_PARCIAL' ? 100 : 0,
+      aggregateEnrollmentFeeAmount: 100,
+      condicaoFinanceira,
+      condicaoPercentual: condicaoFinanceira === 'BOLSA_PARCIAL' ? 50 : undefined,
+    };
+    const browser = await previewInitialEnrollmentBilling({ ...input, items: [{ ...input.items[0], valorMensalidadeOverride: 0 }] }, { prisma: buildPrisma() as never });
+    const server = await previewInitialEnrollmentBilling(input, { prisma: buildPrisma() as never });
+    expect(browser.previewHash).toBe(server.previewHash);
+    expect(browser.totals.monthlyTotal).toBe(input.aggregateMonthlyAmount);
+    expect(browser.groups[0].allocations[0].amount).toBe(input.aggregateMonthlyAmount);
+  });
+
+  it('uses the tenant catalog despite forged monthly overrides and aggregates', async () => {
+    const preview = await previewInitialEnrollmentBilling({
+      ...baseInput, descontoIds: [], enrollmentMode: 'FAMILY', aggregateMonthlyAmount: 0,
+      condicaoFinanceira: 'NORMAL', items: [{ ...baseInput.items[0], valorMensalidadeOverride: 0 }],
+    }, { prisma: buildPrisma() as never });
+    expect(preview.totals.monthlyTotal).toBe(200);
+  });
+
+  it('aceita override recorrente zero para isenção integral sem criar mensalidade', async () => {
+    const preview = await previewInitialEnrollmentBilling(
+      {
+        ...baseInput,
+        descontoIds: [],
+        items: [{ ...baseInput.items[0], valorMensalidadeOverride: 0 }],
+      },
+      { prisma: buildPrisma() as never },
+    );
+
+    expect(preview.compatibility.compatible).toBe(true);
+    expect(preview.totals.monthlyTotal).toBe(0);
+  });
+
   it('não invalida o preview quando a sincronização de identidade altera apenas metadados técnicos', async () => {
     const aluno = {
       id: 'aluno-1',

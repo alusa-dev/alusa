@@ -40,6 +40,15 @@ type ResendCobrancaData = {
 };
 
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+const paymentMethodLabels: Record<string, string> = {
+  CARTAO_CREDITO: 'Cartão de crédito',
+  CREDIT_CARD: 'Cartão de crédito',
+  CARTAO: 'Cartão de crédito',
+  BOLETO: 'Boleto bancário',
+  PIX: 'Pix',
+  INDEFINIDO: 'Não informado',
+  UNDEFINED: 'Não informado',
+};
 const dateFormat = new Intl.DateTimeFormat('pt-BR', {
   day: '2-digit',
   month: '2-digit',
@@ -338,7 +347,7 @@ export function EnrollmentFeeSection({
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex h-5 items-center justify-between gap-2">
               <label className={labelClass}>Valor da Taxa</label>
               {taxaCobranca?.status && openTaxaStatuses.has(taxaCobranca.status) ? (
                 <button type="button" className="text-xs font-medium text-brand-accent" onClick={() => {
@@ -357,7 +366,9 @@ export function EnrollmentFeeSection({
             )}
           </div>
           <div className="space-y-1">
-            <label className={labelClass}>Status da Taxa</label>
+            <div className="flex h-5 items-center">
+              <label className={labelClass}>Status da Taxa</label>
+            </div>
             {taxaIsenta ? (
               <Input
                 value="Isenta"
@@ -394,7 +405,7 @@ export function EnrollmentFeeSection({
                 <div className="space-y-1">
                   <label className={labelClass}>Forma de Pagamento</label>
                   <Input
-                    value={taxaCobranca.formaPagamento}
+                    value={paymentMethodLabels[taxaCobranca.formaPagamento] ?? taxaCobranca.formaPagamento}
                     disabled
                     className={controlClass}
                     readOnly

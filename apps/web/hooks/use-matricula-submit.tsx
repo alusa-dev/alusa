@@ -115,6 +115,8 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
             ? formaPagamento
             : 'BOLETO';
       const billingPreview = await previewInitialEnrollmentBillingRequest({
+        condicaoFinanceira: wizardState.condicaoFinanceira ?? 'NORMAL',
+        condicaoPercentual: wizardState.condicaoFinanceira === 'BOLSA_PARCIAL' ? wizardState.condicaoPercentual : undefined,
         contaId: typeof payload.contaId === 'string' ? payload.contaId : undefined,
         billingStrategy,
         strategy:
@@ -133,9 +135,7 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
         dataFimContrato: String(payload.dataFimContrato ?? ''),
         formaPagamento: previewFormaPagamento as 'BOLETO' | 'PIX' | 'CARTAO_CREDITO',
         vencimentoDia: numberFromPayload(payload.vencimentoDia, 5),
-        descontoIds: Array.isArray(payload.descontoIds)
-          ? payload.descontoIds.filter((id): id is string => typeof id === 'string')
-          : [],
+        descontoIds: [],
         items: [
           {
             alunoId: String(payload.alunoId ?? ''),
@@ -143,11 +143,6 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
             comboId: typeof payload.comboId === 'string' ? payload.comboId : null,
             planoId: typeof payload.planoId === 'string' ? payload.planoId : null,
             taxaMatricula: numberFromPayload(payload.taxaMatricula),
-            valorMensalidadeOverride:
-              payload.valorMensalidadeOverride === null ||
-              payload.valorMensalidadeOverride === undefined
-                ? null
-                : numberFromPayload(payload.valorMensalidadeOverride),
           },
         ],
       });

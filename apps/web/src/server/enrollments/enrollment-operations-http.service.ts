@@ -110,6 +110,58 @@ async function loadFamilyEnrollmentCharge(params: {
   };
 }
 
+async function loadFamilySubscriptionCharges(params: { contaId: string; matriculaId: string }) {
+  const allocations = await prisma.familyFinancialAllocation.findMany({
+    where: {
+      contaId: params.contaId,
+      matriculaId: params.matriculaId,
+      chargeKind: 'MENSALIDADE',
+      sourceChargeId: { not: null },
+    },
+    orderBy: [{ competenceStart: 'desc' }, { createdAt: 'desc' }],
+    select: {
+      amount: true,
+      competenceStart: true,
+      competenceEnd: true,
+      sourceCharge: {
+        select: {
+          id: true,
+          status: true,
+          value: true,
+          dueDate: true,
+          billingType: true,
+          description: true,
+          asaasPaymentId: true,
+          createdAt: true,
+          paidAt: true,
+        },
+      },
+    },
+  });
+
+  return allocations.flatMap((allocation) => {
+    const charge = allocation.sourceCharge;
+    if (!charge) return [];
+    const dueDate = charge.dueDate ?? allocation.competenceStart;
+    return [{
+      id: charge.id,
+      valor: Number(allocation.amount ?? charge.value ?? 0),
+      status: mapFamilyChargeStatus(charge.status),
+      formaPagamento: mapFamilyBillingType(charge.billingType),
+      tipo: 'MENSALIDADE',
+      vencimento: dueDate,
+      descricao: charge.description ?? 'Mensalidade familiar',
+      asaasPaymentId: charge.asaasPaymentId ?? null,
+      asaasId: charge.asaasPaymentId ?? null,
+      createdAt: charge.createdAt,
+      competenciaInicio: allocation.competenceStart,
+      competenciaFim: allocation.competenceEnd ?? allocation.competenceStart,
+      dataPagamento: charge.paidAt,
+      origin: 'STANDALONE' as const,
+    }];
+  });
+}
+
 function normalizeBillingDay(day: number) {
   return Math.min(28, Math.max(1, day));
 }
@@ -313,6 +365,10 @@ export async function getMatriculaRoute(req: Request, ctx: { params: Promise<{ i
       contaId: contaCtx.contaId,
       matricula: matricula as unknown as Record<string, unknown>,
     });
+    const familySubscriptionCharges = await loadFamilySubscriptionCharges({
+      contaId: contaCtx.contaId,
+      matriculaId: matricula.id,
+    });
     const canonicalAllocation = await prisma.billingAllocation.findFirst({
       where: {
         contaId: contaCtx.contaId,
@@ -339,9 +395,13 @@ export async function getMatriculaRoute(req: Request, ctx: { params: Promise<{ i
     const mappedMatricula = {
       ...(matricula as unknown as Record<string, unknown>),
       asaasSubscriptionId: targetSubscriptionId,
-      cobrancas: familyEnrollmentCharge
-        ? [familyEnrollmentCharge, ...((matricula.cobrancas ?? []) as unknown[])]
-        : matricula.cobrancas,
+      cobrancas: [
+        ...(familyEnrollmentCharge ? [familyEnrollmentCharge] : []),
+        ...familySubscriptionCharges,
+        ...((matricula.cobrancas ?? []) as unknown[]),
+      ].filter((charge, index, all) =>
+        all.findIndex((candidate) => (candidate as { id?: string }).id === (charge as { id?: string }).id) === index,
+      ),
       assinaturaSnapshot,
       billingAgreement: canonicalAllocation
         ? {
@@ -363,6 +423,7 @@ export async function getMatriculaRoute(req: Request, ctx: { params: Promise<{ i
             mode: financialContext.mode,
             sourceMatriculaId: financialContext.sourceMatriculaId,
             targetMatriculaId: financialContext.targetMatriculaId,
+            localSubscriptionId: financialContext.localSubscriptionId,
             familyGroupId: financialContext.family?.id ?? null,
             responsavelFinanceiro: financialContext.family?.responsavel ?? null,
             affectedMatriculaIds:
