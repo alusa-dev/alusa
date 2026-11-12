@@ -13,6 +13,7 @@ import {
   calculateFamilyBenefitTotal,
   calculateFamilyMonthlyTotal,
 } from '../family-pricing';
+import { hasRecurringMonthlyCharge } from '../recurring-billing';
 
 interface StepSummaryProps {
   ctx: WizardContextValue;
@@ -132,6 +133,7 @@ function StepResumoFamiliar({ ctx }: StepSummaryProps) {
   const calcularLiquido = (valorBase: number) => calcularValorLiquidoCondicao(valorBase, state);
   const valorBeneficio = calculateFamilyBenefitTotal(state);
   const totalMensalidades = calculateFamilyMonthlyTotal(state);
+  const hasRecurringBilling = hasRecurringMonthlyCharge(state);
   const beneficioDescricao = state.condicaoFinanceira === 'ISENCAO_INTEGRAL'
     ? 'Isenção integral'
     : state.condicaoFinanceira === 'BOLSA_PARCIAL'
@@ -145,8 +147,7 @@ function StepResumoFamiliar({ ctx }: StepSummaryProps) {
       !state.responsavelFamiliar?.id ||
       !state.dataInicio ||
       !state.dataFimContrato ||
-      !state.formaPagamento ||
-      !state.vencimentoDia ||
+      (hasRecurringBilling && (!state.formaPagamento || !state.vencimentoDia)) ||
       state.alunosFamiliares.length < 1
     ) {
       setBillingPreview(null);
@@ -156,7 +157,9 @@ function StepResumoFamiliar({ ctx }: StepSummaryProps) {
       return;
     }
     let active = true;
-    const billingStrategy = state.billingStrategy ?? { kind: 'SEPARATE' as const };
+    const billingStrategy = hasRecurringBilling
+      ? state.billingStrategy ?? { kind: 'SEPARATE' as const }
+      : { kind: 'SEPARATE' as const };
     const paymentMethod =
       state.formaPagamento === 'PIX' ||
       state.formaPagamento === 'BOLETO' ||
@@ -186,8 +189,8 @@ function StepResumoFamiliar({ ctx }: StepSummaryProps) {
       responsavelFinanceiroId: state.responsavelFamiliar.id,
       dataInicio: state.dataInicio,
       dataFimContrato: state.dataFimContrato,
-      formaPagamento: paymentMethod,
-      vencimentoDia: state.vencimentoDia,
+      formaPagamento: hasRecurringBilling ? paymentMethod : 'BOLETO',
+      vencimentoDia: hasRecurringBilling ? state.vencimentoDia ?? 5 : 5,
       descontoIds: [],
       items: state.alunosFamiliares.map((aluno) => ({
         alunoId: aluno.id,
@@ -236,6 +239,7 @@ function StepResumoFamiliar({ ctx }: StepSummaryProps) {
     totalMensalidades,
     totalTaxas,
     update,
+    hasRecurringBilling,
   ]);
 
   const formaPagamentoLabel = (forma: string | undefined) => {
@@ -337,10 +341,17 @@ function StepResumoFamiliar({ ctx }: StepSummaryProps) {
               </div>
             )}
             {state.condicaoValidaAte && <div className="flex justify-between gap-4"><span className="text-slate-600">Condição acordada até</span><span>{new Date(`${state.condicaoValidaAte}T12:00:00`).toLocaleDateString('pt-BR')} · revisão manual</span></div>}
-            <div className="flex justify-between gap-4">
-              <span className="text-slate-600">Pagamento mensal</span>
-              <span className="font-medium text-slate-900">{formaPagamentoLabel(state.formaPagamento)}</span>
-            </div>
+            {hasRecurringBilling ? (
+              <div className="flex justify-between gap-4">
+                <span className="text-slate-600">Pagamento mensal</span>
+                <span className="font-medium text-slate-900">{formaPagamentoLabel(state.formaPagamento)}</span>
+              </div>
+            ) : (
+              <div className="flex justify-between gap-4">
+                <span className="text-slate-600">Cobrança mensal</span>
+                <span className="font-medium text-slate-900">Não será gerada</span>
+              </div>
+            )}
             <div className="flex justify-between gap-4">
               <span className="text-slate-600">Taxa de matrícula</span>
               <span className="font-semibold text-slate-900">
@@ -355,7 +366,7 @@ function StepResumoFamiliar({ ctx }: StepSummaryProps) {
                 </span>
               </div>
             )}
-            {state.criarCobranca && (
+            {hasRecurringBilling && (
               <div className="flex justify-between gap-4 text-sm">
                 <span className="text-slate-600">Cobranças recorrentes</span>
                 <span className="font-medium text-slate-900">1 cobrança consolidada</span>
@@ -377,7 +388,7 @@ function StepResumoFamiliar({ ctx }: StepSummaryProps) {
                   </strong>
                 </div>
               )}
-              <BillingOperationalSummary preview={billingPreview} />
+              {hasRecurringBilling && <BillingOperationalSummary preview={billingPreview} />}
             </div>
           ) : null}
         </div>
@@ -431,6 +442,7 @@ function StepResumoIndividual({ ctx }: StepSummaryProps) {
     state.modoTurmas === 'COMBO' ? (state.comboValor ?? 0) : (state.planoValor ?? 0);
   const valorBeneficio = calcularDescontoCondicao(valorMensalidade, state);
   const valorMensalidadeLiquido = calcularValorLiquidoCondicao(valorMensalidade, state);
+  const hasRecurringBilling = hasRecurringMonthlyCharge(state);
   const beneficioDescricao = state.condicaoFinanceira === 'ISENCAO_INTEGRAL'
     ? 'Isenção integral'
     : state.condicaoFinanceira === 'BOLSA_PARCIAL'
@@ -439,7 +451,7 @@ function StepResumoIndividual({ ctx }: StepSummaryProps) {
 
   useEffect(() => {
     const alunoId = state.aluno?.id;
-    if (!alunoId || !state.dataInicio || !state.dataFimContrato || !state.formaPagamento || !state.vencimentoDia) {
+    if (!alunoId || !state.dataInicio || !state.dataFimContrato || (hasRecurringBilling && (!state.formaPagamento || !state.vencimentoDia))) {
       setBillingPreview(null);
       setBillingPreviewLoading(false);
       setBillingPreviewError('Volte e complete os dados financeiros para gerar o preview.');
@@ -450,7 +462,9 @@ function StepResumoIndividual({ ctx }: StepSummaryProps) {
     let active = true;
     setBillingPreviewLoading(true);
     setBillingPreviewError(null);
-    const billingStrategy = state.billingStrategy ?? { kind: 'SEPARATE' as const };
+    const billingStrategy = hasRecurringBilling
+      ? state.billingStrategy ?? { kind: 'SEPARATE' as const }
+      : { kind: 'SEPARATE' as const };
     const formaPagamento = state.formaPagamento === 'CARTAO'
       ? 'CARTAO_CREDITO'
       : state.formaPagamento;
@@ -475,7 +489,7 @@ function StepResumoIndividual({ ctx }: StepSummaryProps) {
         formaPagamento === 'PIX' || formaPagamento === 'BOLETO' || formaPagamento === 'CARTAO_CREDITO'
           ? formaPagamento
           : 'BOLETO',
-      vencimentoDia: state.vencimentoDia,
+      vencimentoDia: hasRecurringBilling ? state.vencimentoDia ?? 5 : 5,
       descontoIds: [],
       items: [
         {
@@ -524,12 +538,13 @@ function StepResumoIndividual({ ctx }: StepSummaryProps) {
     state.taxaMatricula,
     state.turmaIds,
     state.vencimentoDia,
+    hasRecurringBilling,
     update,
   ]);
 
-  const temMulta = Boolean(state.multaPercentual && state.multaPercentual > 0);
-  const temJuros = Boolean(state.jurosMensal && state.jurosMensal > 0);
-  const temDesconto = Boolean(state.descontoAntecipado && state.descontoAntecipado > 0);
+  const temMulta = hasRecurringBilling && Boolean(state.multaPercentual && state.multaPercentual > 0);
+  const temJuros = hasRecurringBilling && Boolean(state.jurosMensal && state.jurosMensal > 0);
+  const temDesconto = hasRecurringBilling && Boolean(state.descontoAntecipado && state.descontoAntecipado > 0);
 
   const handleConfirmacaoChange = (checked: boolean | 'indeterminate') => {
     update({ confirmacaoRevisao: checked === true });
@@ -589,12 +604,14 @@ function StepResumoIndividual({ ctx }: StepSummaryProps) {
                 </span>
               </p>
             )}
-            <p>
-              Pagamento:{' '}
-              <span className="font-medium text-gray-900">
-                {formaPagamentoLabel(state.formaPagamento)}
-              </span>
-            </p>
+            {hasRecurringBilling ? (
+              <p>
+                Pagamento mensal:{' '}
+                <span className="font-medium text-gray-900">{formaPagamentoLabel(state.formaPagamento)}</span>
+              </p>
+            ) : (
+              <p>Cobrança mensal: <span className="font-medium text-gray-900">Não será gerada</span></p>
+            )}
             {turmaId && (
               <p>
                 Turma:{' '}
@@ -653,10 +670,17 @@ function StepResumoIndividual({ ctx }: StepSummaryProps) {
               </div>
             )}
             {state.condicaoValidaAte && <div className="flex justify-between gap-4"><span className="text-gray-600">Condição acordada até</span><span>{new Date(`${state.condicaoValidaAte}T12:00:00`).toLocaleDateString('pt-BR')} · revisão manual</span></div>}
-            <div className="flex justify-between gap-4">
-              <span className="text-gray-600">Pagamento mensal</span>
-              <span className="font-medium text-gray-900">{formaPagamentoLabel(state.formaPagamento)}</span>
-            </div>
+            {hasRecurringBilling ? (
+              <div className="flex justify-between gap-4">
+                <span className="text-gray-600">Pagamento mensal</span>
+                <span className="font-medium text-gray-900">{formaPagamentoLabel(state.formaPagamento)}</span>
+              </div>
+            ) : (
+              <div className="flex justify-between gap-4">
+                <span className="text-gray-600">Cobrança mensal</span>
+                <span className="font-medium text-gray-900">Não será gerada</span>
+              </div>
+            )}
             <div className="flex justify-between gap-4">
               <span className="text-gray-600">Taxa de matrícula</span>
               <span className="font-semibold text-gray-900">
@@ -713,7 +737,7 @@ function StepResumoIndividual({ ctx }: StepSummaryProps) {
               {billingPreview.billingImpact.application === 'NEXT_CYCLE' && (
                 <p className="text-sm text-gray-600">O valor será unificado somente no próximo ciclo.</p>
               )}
-              <BillingOperationalSummary preview={billingPreview} />
+              {hasRecurringBilling && <BillingOperationalSummary preview={billingPreview} />}
             </div>
           ) : null}
         </div>
@@ -749,7 +773,7 @@ function StepResumoIndividual({ ctx }: StepSummaryProps) {
           </div>
         )}
 
-        {(state.notificationChannelsTouched || state.notificationChannels.length > 0) && (
+        {hasRecurringBilling && (state.notificationChannelsTouched || state.notificationChannels.length > 0) && (
           <div className="rounded-xl bg-slate-50/70 p-4">
             <h3 className="text-sm font-semibold text-gray-900 mb-2">Notificações</h3>
             <p className="text-sm text-gray-600">

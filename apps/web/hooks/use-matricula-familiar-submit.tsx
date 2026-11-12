@@ -6,6 +6,7 @@ import type {
 } from '@/features/enrollments/components/wizard/types';
 import { previewInitialEnrollmentBillingRequest } from '@/features/enrollments/services/enrollments-service';
 import { calculateFamilyMonthlyTotal } from '@/features/enrollments/components/wizard/family-pricing';
+import { hasRecurringMonthlyCharge } from '@/features/enrollments/components/wizard/recurring-billing';
 import {
   clearFamilyEnrollmentAttempt,
   isSafelyRejectedFamilyIntent,
@@ -43,6 +44,7 @@ function buildPayload(
   uiRequestId: string,
   preview: { previewHash: string; sourceVersion: string; expiresAt: string },
 ): Record<string, unknown> {
+  const hasRecurringBilling = hasRecurringMonthlyCharge(state);
   const normalizePayment = (value: unknown) => {
     if (typeof value !== 'string') return value;
     return value === 'CARTAO' ? 'CARTAO_CREDITO' : value;
@@ -70,26 +72,26 @@ function buildPayload(
     taxaJustificativa: state.taxaJustificativa,
     pagarTaxaAgora: state.pagarTaxaAgora ?? false,
     gerarCobrancaTaxa: state.gerarCobrancaTaxa ?? false,
-    criarCobranca: state.criarCobranca ?? true,
+    criarCobranca: hasRecurringBilling,
     dataInicio: state.dataInicio,
     dataFimContrato: state.dataFimContrato,
-    vencimentoDia: state.vencimentoDia,
-    formaPagamento: normalizePayment(state.formaPagamento),
+    vencimentoDia: hasRecurringBilling ? state.vencimentoDia : undefined,
+    formaPagamento: hasRecurringBilling ? normalizePayment(state.formaPagamento) : undefined,
     formaPagamentoTaxa: normalizePayment(state.formaPagamentoTaxa),
     modeloId: state.modeloId,
-    billingStrategy: state.billingStrategy ?? { kind: 'SEPARATE' },
+    billingStrategy: hasRecurringBilling ? state.billingStrategy ?? { kind: 'SEPARATE' } : { kind: 'SEPARATE' },
     previewHash: preview.previewHash,
     sourceVersion: preview.sourceVersion,
     previewExpiresAt: preview.expiresAt,
-    notificationChannels: Array.isArray(state.notificationChannels)
+    notificationChannels: hasRecurringBilling && Array.isArray(state.notificationChannels)
       ? state.notificationChannels
       : [],
-    notificationChannelsConfigured: state.notificationChannelsTouched === true,
-    multaPercentual: state.multaPercentual,
-    jurosMensal: state.jurosMensal,
-    descontoAntecipado: state.descontoAntecipado,
-    descontoTipo: state.descontoTipo,
-    prazoDesconto: state.prazoDesconto,
+    notificationChannelsConfigured: hasRecurringBilling && state.notificationChannelsTouched === true,
+    multaPercentual: hasRecurringBilling ? state.multaPercentual : undefined,
+    jurosMensal: hasRecurringBilling ? state.jurosMensal : undefined,
+    descontoAntecipado: hasRecurringBilling ? state.descontoAntecipado : undefined,
+    descontoTipo: hasRecurringBilling ? state.descontoTipo : undefined,
+    prazoDesconto: hasRecurringBilling ? state.prazoDesconto : undefined,
     uiRequestId,
   };
 }
@@ -121,6 +123,8 @@ export function useMatriculaFamiliarSubmit(options: UseMatriculaFamiliarSubmitOp
 
       if (!body) {
         const billingStrategy = state.billingStrategy ?? { kind: 'SEPARATE' as const };
+        const hasRecurringBilling = hasRecurringMonthlyCharge(state);
+        const effectiveBillingStrategy = hasRecurringBilling ? billingStrategy : { kind: 'SEPARATE' as const };
         const descontoIds: string[] = [];
         const previewPaymentMethod =
           state.formaPagamento === 'PIX' ||
@@ -138,19 +142,21 @@ export function useMatriculaFamiliarSubmit(options: UseMatriculaFamiliarSubmitOp
           familyPricingMode: state.modoTurmas === 'TURMAS' ? 'AGGREGATE_PLAN' : 'ITEMIZED_COMBOS',
           aggregateMonthlyAmount: calculateFamilyMonthlyTotal(state),
           aggregateEnrollmentFeeAmount: state.taxaIsenta ? 0 : (state.taxaMatricula ?? 0),
-          billingStrategy,
+          billingStrategy: effectiveBillingStrategy,
           strategy:
-            billingStrategy.kind === 'JOIN_EXISTING_CURRENT_CYCLE'
+            effectiveBillingStrategy.kind === 'JOIN_EXISTING_CURRENT_CYCLE'
               ? 'INCLUDE_EXISTING'
-              : 'CREATE_SEPARATE',
+              : effectiveBillingStrategy.kind === 'SCHEDULE_NEXT_CYCLE_UNIFICATION'
+                ? 'UNIFY_NEXT_CYCLE'
+                : 'CREATE_SEPARATE',
           existingFamilyGroupId:
-            billingStrategy.kind === 'JOIN_EXISTING_CURRENT_CYCLE'
-              ? billingStrategy.financialGroupId
+            effectiveBillingStrategy.kind !== 'SEPARATE'
+              ? effectiveBillingStrategy.financialGroupId
               : null,
           responsavelFinanceiroId: state.responsavelFamiliar?.id ?? null,
           dataInicio: state.dataInicio ?? '',
           dataFimContrato: state.dataFimContrato ?? '',
-          formaPagamento: previewPaymentMethod,
+          formaPagamento: hasRecurringBilling ? previewPaymentMethod : 'BOLETO',
           vencimentoDia: state.vencimentoDia ?? 5,
           descontoIds,
           items: state.alunosFamiliares.map((aluno) => ({

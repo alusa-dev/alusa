@@ -3,6 +3,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from '@/components/ui/toast';
 import { CustomToast } from '@/components/ui/toast';
 import type { WizardState } from '@/features/enrollments/components/wizard/types';
+import { hasRecurringMonthlyCharge } from '@/features/enrollments/components/wizard/recurring-billing';
 import { prepararPayloadMatricula } from '@/lib/validations/resumo.schema';
 import { showNotificationSyncWarnings } from '@/lib/notifications/show-notification-sync-warnings';
 import { previewInitialEnrollmentBillingRequest } from '@/features/enrollments/services/enrollments-service';
@@ -101,7 +102,10 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
       if (!payload) {
         throw new Error('Não foi possível preparar os dados da matrícula.');
       }
-      const billingStrategy = resolveBillingStrategy(wizardState);
+      const hasRecurringBilling = hasRecurringMonthlyCharge(wizardState);
+      const billingStrategy = hasRecurringBilling
+        ? resolveBillingStrategy(wizardState)
+        : { kind: 'SEPARATE' as const };
       const uiRequestId =
         (wizardState as { uiRequestId?: string }).uiRequestId?.trim() || generateRequestId();
 
@@ -168,6 +172,7 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
       return sendEnrollmentAttempt(attempt);
       };
       const result = await execute();
+      const hasRecurringBilling = hasRecurringMonthlyCharge(wizardState);
       clearEnrollmentAttempt(contaId);
       setConfirmationState('IDLE');
       setData(result);
@@ -215,7 +220,9 @@ export function useMatriculaSubmit(options: UseMatriculaSubmitOptions = {}) {
             <CustomToast
               variant="success"
               title="Matrícula criada com sucesso"
-              description="A matrícula e a cobrança recorrente foram configuradas e já estão disponíveis para acompanhamento."
+              description={hasRecurringBilling
+                ? 'A matrícula e a cobrança recorrente foram configuradas e já estão disponíveis para acompanhamento.'
+                : 'A matrícula foi criada sem cobrança mensal recorrente. A taxa de matrícula segue as condições definidas para ela.'}
               onClose={() => toast.dismiss(t)}
             />
           ),

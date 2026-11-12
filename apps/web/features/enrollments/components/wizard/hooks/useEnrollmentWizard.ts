@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { ModoMatricula, StepId, WizardState, WizardContextValue } from '../types';
+import { hasRecurringMonthlyCharge } from '../recurring-billing';
 
 const INDIVIDUAL_STEPS: StepId[] = [
   'modo',
@@ -27,12 +28,16 @@ const FAMILIAR_STEPS: StepId[] = [
   'resumo',
 ];
 
-function getSteps(modoTurmas: 'TURMAS' | 'COMBO', modoMatricula: ModoMatricula): StepId[] {
+function getSteps(
+  modoTurmas: 'TURMAS' | 'COMBO',
+  modoMatricula: ModoMatricula,
+  state: WizardState,
+): StepId[] {
   const base = modoMatricula === 'FAMILIAR' ? FAMILIAR_STEPS : INDIVIDUAL_STEPS;
-  if (modoTurmas === 'COMBO') {
-    return base.filter((step) => step !== 'plano');
-  }
-  return base;
+  const steps = modoTurmas === 'COMBO' ? base.filter((step) => step !== 'plano') : base;
+  return hasRecurringMonthlyCharge(state)
+    ? steps
+    : steps.filter((step) => step !== 'jurosMulta' && step !== 'notificacoes');
 }
 
 const initialState: WizardState = {
@@ -63,8 +68,8 @@ export function useEnrollmentWizard(contaId?: string): WizardContextValue {
 
   // Steps dinâmicos baseados no modo selecionado
   const steps = useMemo(
-    () => getSteps(state.modoTurmas ?? 'TURMAS', state.modoMatricula ?? 'INDIVIDUAL'),
-    [state.modoTurmas, state.modoMatricula],
+    () => getSteps(state.modoTurmas ?? 'TURMAS', state.modoMatricula ?? 'INDIVIDUAL', state),
+    [state],
   );
 
   const update = useCallback((patch: Partial<WizardState>) => {

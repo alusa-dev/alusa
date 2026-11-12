@@ -35,6 +35,38 @@ describe('Integração do Wizard com API', () => {
       expect(result.payload?.valorMensalidadeOverride).toBe(5.01);
       expect(result.payload?.valorMensalidadeOverride).toBe(calcularValorLiquidoCondicao(10.03, state));
     });
+    it('permite isenção integral sem método/dia mensal e não cria cobrança recorrente', () => {
+      const state: WizardState = {
+        ...mockWizardState,
+        condicaoFinanceira: 'ISENCAO_INTEGRAL',
+        condicaoMotivo: 'Bolsa integral',
+        condicaoValidaAte: '2026-10-05',
+        formaPagamento: undefined,
+        vencimentoDia: undefined,
+      };
+      const result = prepararPayloadMatricula(state as unknown as Record<string, unknown>);
+      expect(result.valido).toBe(true);
+      expect(result.payload?.criarCobranca).toBe(false);
+      expect(result.payload?.formaPagamento).toBeUndefined();
+      expect(result.payload?.vencimentoDia).toBeUndefined();
+      expect(result.payload?.formaPagamentoTaxa).toBeUndefined();
+    });
+
+    it('continua exigindo método e vencimento para mensalidade com saldo após bolsa parcial', () => {
+      const state: WizardState = {
+        ...mockWizardState,
+        condicaoFinanceira: 'BOLSA_PARCIAL',
+        condicaoPercentual: 50,
+        condicaoMotivo: 'Bolsa de estudos',
+        condicaoValidaAte: '2026-10-05',
+        formaPagamento: undefined,
+        vencimentoDia: undefined,
+      };
+      const result = prepararPayloadMatricula(state as unknown as Record<string, unknown>);
+      expect(result.valido).toBe(false);
+      expect(result.erros).toContain('Defina o dia de vencimento');
+      expect(result.erros).toContain('Selecione a forma de pagamento');
+    });
     it('deve preparar payload válido do wizard', () => {
       const result = prepararPayloadMatricula(
         mockWizardState as unknown as Record<string, unknown>,

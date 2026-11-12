@@ -13,6 +13,7 @@ import { StepClassesAndBundle } from './wizard/steps/StepClassesAndBundle';
 import { StepPlan } from './wizard/steps/StepPlan';
 import { StepFinancialCondition } from './wizard/steps/StepFinancialCondition';
 import { canAdvanceFinancialCondition } from './wizard/financial-condition';
+import { hasRecurringMonthlyCharge } from './wizard/recurring-billing';
 import { StepJurosMulta } from './wizard/steps/StepJurosMulta';
 import { StepNotifications } from './wizard/steps/StepNotifications';
 import { StepFinanceiro } from './wizard/steps/StepFinanceiro';
@@ -65,7 +66,7 @@ function canSubmitFamiliar(state: WizardState) {
   if (!canAdvanceFromAlunosFamiliares(state)) return false;
   if (!state.dataInicio) return false;
   if (!state.dataFimContrato) return false;
-  if (!state.formaPagamento) return false;
+  if (hasRecurringMonthlyCharge(state) && !state.formaPagamento) return false;
   if (!state.modeloId) return false;
   if (!canAdvanceFromTaxa(state)) return false;
   if (state.confirmacaoRevisao !== true) return false;
@@ -106,14 +107,15 @@ function canAdvanceFromPlano(state: WizardState) {
 
 function canAdvanceFromFinanceiro(state: WizardState) {
   if (!canAdvanceFinancialCondition(state)) return false;
-  const dueDayIsValid =
+  const dueDayIsValid = !hasRecurringMonthlyCharge(state) || (
     typeof state.vencimentoDia === 'number' &&
     Number.isInteger(state.vencimentoDia) &&
     state.vencimentoDia >= 1 &&
-    state.vencimentoDia <= 28;
+    state.vencimentoDia <= 28
+  );
 
   return Boolean(
-    state.formaPagamento &&
+    (!hasRecurringMonthlyCharge(state) || state.formaPagamento) &&
     state.dataInicio &&
     state.dataFimContrato &&
     state.modeloId &&
@@ -128,7 +130,7 @@ function canSubmit(state: WizardState) {
   if (state.modoTurmas !== 'COMBO' && !state.planoId) return false;
   if (!state.dataInicio) return false;
   if (!state.dataFimContrato) return false;
-  if (!state.formaPagamento) return false;
+  if (hasRecurringMonthlyCharge(state) && !state.formaPagamento) return false;
   if (!state.modeloId) return false;
   if (!canAdvanceFromTaxa(state)) return false;
   if (!canAdvanceFromTurmas(state)) return false;
@@ -446,7 +448,11 @@ export function EnrollmentWizardFlow({
       </div>
       {isSubmitting && (
         <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/15">
-          <LoadingDots label="Processando matrícula e configurando cobranças" />
+          <LoadingDots
+            label={hasRecurringMonthlyCharge(wizard.state)
+              ? 'Processando matrícula e configurando cobranças'
+              : 'Processando matrícula'}
+          />
         </div>
       )}
     </div>

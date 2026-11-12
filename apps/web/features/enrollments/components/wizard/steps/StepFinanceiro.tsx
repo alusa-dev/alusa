@@ -13,8 +13,8 @@ import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { useContractTemplates } from '@/features/contracts/hooks/use-contract-templates';
 import type { WizardContextValue } from '../types';
-import { calcularValorLiquidoCondicao, getConditionValidityMode } from '../financial-condition';
-import { calculateFamilyMonthlyTotal } from '../family-pricing';
+import { getConditionValidityMode } from '../financial-condition';
+import { calculateRecurringMonthlyTotal, hasRecurringMonthlyCharge } from '../recurring-billing';
 import { SectionCard, StepHeader } from '@/components/shared/wizard/layout';
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('pt-BR');
@@ -152,22 +152,12 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
     compatibleBillingGroups[0] ??
     null;
 
-  const recurringChargeTotal = useMemo(() => {
-    if (state.modoMatricula === 'FAMILIAR') {
-      return calculateFamilyMonthlyTotal(state);
-    }
-
-    if (state.modoTurmas === 'COMBO') {
-      return calcularValorLiquidoCondicao(state.comboValor ?? 0, state);
-    }
-
-    const value = calcularValorLiquidoCondicao(state.planoValor ?? 0, state);
-    return value;
-  }, [state]);
+  const recurringChargeTotal = useMemo(() => calculateRecurringMonthlyTotal(state), [state]);
+  const hasRecurringBilling = hasRecurringMonthlyCharge(state);
 
   const normalizedStartDate = dataInicio ? normalizeDate(dataInicio) : undefined;
   const normalizedEndDate = dataFimContrato ? normalizeDate(dataFimContrato) : undefined;
-  const shouldValidateRecurringEndDate = state.criarCobranca && recurringChargeTotal > 0 && Boolean(normalizedStartDate) && !dueDayInvalid;
+  const shouldValidateRecurringEndDate = hasRecurringBilling && Boolean(normalizedStartDate) && !dueDayInvalid;
   const firstChargeableDueDate = shouldValidateRecurringEndDate && normalizedStartDate
     ? resolveChargeableFirstDueDate(normalizedStartDate, parsedVencimento)
     : undefined;
@@ -197,12 +187,14 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
       ...(state.condicaoFinanceira && state.condicaoFinanceira !== 'NORMAL' && conditionValidityMode === 'MATRICULA'
         ? { condicaoValidaAte: contractEndError ? undefined : toIsoDate(dataFimContrato) }
         : {}),
-      vencimentoDia: dueDayInvalid || !hasDueDay ? undefined : parsedVencimento,
+      ...(hasRecurringBilling
+        ? { vencimentoDia: dueDayInvalid || !hasDueDay ? undefined : parsedVencimento }
+        : {}),
     });
-  }, [contractEndError, dataFimContrato, dataInicio, dueDayInvalid, hasDueDay, parsedVencimento, update, vencimento, state.condicaoFinanceira, conditionValidityMode]);
+  }, [contractEndError, dataFimContrato, dataInicio, dueDayInvalid, hasDueDay, hasRecurringBilling, parsedVencimento, update, vencimento, state.condicaoFinanceira, conditionValidityMode]);
 
   useEffect(() => {
-    if (!payerId || !state.formaPagamento || dueDayInvalid || !hasDueDay) {
+    if (!hasRecurringBilling || !payerId || !state.formaPagamento || dueDayInvalid || !hasDueDay) {
       setBillingGroups([]);
       return;
     }
@@ -234,26 +226,32 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
       .finally(() => setLoadingBillingGroups(false));
 
     return () => controller.abort();
-  }, [dueDayInvalid, hasDueDay, parsedVencimento, payerId, payerType, state.contaId, state.formaPagamento]);
+  }, [dueDayInvalid, hasDueDay, hasRecurringBilling, parsedVencimento, payerId, payerType, state.contaId, state.formaPagamento]);
 
   useEffect(() => {
+    if (!hasRecurringBilling && activeBillingStrategy !== 'SEPARATE') {
+      update({ billingStrategy: { kind: 'SEPARATE' } });
+      return;
+    }
     if (activeBillingStrategy !== 'SEPARATE' && !compatibleBillingGroup) {
       update({ billingStrategy: { kind: 'SEPARATE' } });
     }
-  }, [activeBillingStrategy, compatibleBillingGroup, update]);
+  }, [activeBillingStrategy, compatibleBillingGroup, hasRecurringBilling, update]);
 
   return (
     <SectionCard>
       <StepHeader
-        title="Pagamento e Contrato"
-        hint="Defina datas do contrato e forma de pagamento."
+        title={hasRecurringBilling ? 'Pagamento e Contrato' : 'Contrato'}
+        hint={hasRecurringBilling
+          ? 'Defina datas do contrato e as condições da cobrança mensal.'
+          : 'Defina as datas e o modelo do contrato. Não haverá cobrança mensal recorrente.'}
       />
 
       <div className="space-y-4">
         {/* Box Datas */}
         <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
           <h3 className="text-sm font-semibold text-gray-900 mb-3">Período do contrato</h3>
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className={cn('grid gap-4', hasRecurringBilling ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
             <div className="space-y-1.5">
               <label className="text-xs text-gray-600">Data de início</label>
               <DatePicker
@@ -297,12 +295,14 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
                       ? shortContractWarning
                       : minimumEndDate
                       ? `Datas válidas a partir de ${formatDateLabel(minimumEndDate)}.`
-                      : 'Defina a data de início e o dia do vencimento para liberar datas válidas.'}
+                      : hasRecurringBilling
+                        ? 'Defina a data de início e o dia do vencimento para liberar datas válidas.'
+                        : 'Defina uma data igual ou posterior ao início da matrícula.'}
                 </p>
               </div>
               {benefitValidityError && <p role="alert" className="text-xs leading-relaxed text-red-700">{benefitValidityError}</p>}
             </div>
-            <div className="space-y-1.5">
+            {hasRecurringBilling && <div className="space-y-1.5">
               <label className="text-xs text-gray-600">Dia do vencimento</label>
               <Input
                 type="number"
@@ -326,7 +326,7 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
                   ? 'Informe um dia entre 1 e 28 para evitar rejeição da cobrança.'
                   : 'Use um dia entre 1 e 28. As datas de término são liberadas conforme esse vencimento.'}
               </p>
-            </div>
+            </div>}
           </div>
         </div>
 
@@ -364,6 +364,7 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
           </div>
         </div>
 
+        {hasRecurringBilling && <>
         {/* Box Forma de Pagamento */}
         <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
           <h3 className="text-sm font-semibold text-gray-900 mb-3">Forma de pagamento</h3>
@@ -393,8 +394,9 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
             </p>
           )}
         </div>
+        </>}
 
-        <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
+        {hasRecurringBilling && <div className="rounded-lg border border-gray-200 bg-gray-50/50 p-4">
           <h3 className="text-sm font-semibold text-gray-900 mb-3">Cobrança</h3>
           <div className="grid gap-2 sm:grid-cols-3">
             {billingStrategyOptions.map((option) => {
@@ -501,7 +503,7 @@ export function StepFinanceiro({ ctx }: StepFinanceiroProps) {
               </p>
             </div>
           )}
-        </div>
+        </div>}
       </div>
     </SectionCard>
   );

@@ -11,6 +11,7 @@ import {
   readFamilyEnrollmentAttempt,
   saveFamilyEnrollmentAttempt,
 } from '@/features/enrollments/services/family-enrollment-attempt';
+import { hasRecurringMonthlyCharge } from '@/features/enrollments/components/wizard/recurring-billing';
 
 vi.mock('@/features/enrollments/services/enrollments-service', () => ({
   previewInitialEnrollmentBillingRequest: vi.fn().mockResolvedValue({
@@ -88,6 +89,38 @@ describe('useEnrollmentWizard — getSteps', () => {
     expect(result.current.steps).toContain('alunosFamiliares');
   });
 
+  it('oculta juros e notificações sem valor mensal recorrente, nos modos individual e familiar', () => {
+    const { result } = renderHook(() => useEnrollmentWizard('conta-1'));
+    expect(result.current.steps).not.toContain('jurosMulta');
+    expect(result.current.steps).not.toContain('notificacoes');
+    expect(result.current.steps).toContain('financeiro');
+
+    act(() => result.current.update({ planoValor: 100, condicaoFinanceira: 'ISENCAO_INTEGRAL' }));
+    expect(result.current.steps).not.toContain('jurosMulta');
+    expect(result.current.steps).not.toContain('notificacoes');
+    expect(result.current.steps).toContain('financeiro');
+
+    act(() => result.current.update({ modoMatricula: 'FAMILIAR', alunosFamiliares: [{ id: 'a1', nome: 'Ana' }], planoValor: 100 }));
+    expect(result.current.steps).not.toContain('jurosMulta');
+    expect(result.current.steps).not.toContain('notificacoes');
+
+    act(() => result.current.update({ condicaoFinanceira: 'NORMAL' }));
+    expect(result.current.steps).toContain('jurosMulta');
+    expect(result.current.steps).toContain('notificacoes');
+  });
+
+  it('identifica recorrência pelo valor líquido efetivo nos planos familiares', () => {
+    const individual: WizardState = {
+      contaId: 'conta-1', modoMatricula: 'INDIVIDUAL', modoTurmas: 'TURMAS', turmaIds: [],
+      alunosFamiliares: [], planoValor: 100, condicaoFinanceira: 'ISENCAO_INTEGRAL',
+      criarCobranca: true, notificationChannels: [],
+    };
+    expect(hasRecurringMonthlyCharge(individual)).toBe(false);
+    expect(hasRecurringMonthlyCharge({ ...individual, condicaoFinanceira: 'BOLSA_PARCIAL', condicaoPercentual: 50 })).toBe(true);
+    expect(hasRecurringMonthlyCharge({ ...individual, modoMatricula: 'FAMILIAR', alunosFamiliares: [{ id: 'a1', nome: 'Ana' }], condicaoFinanceira: 'NORMAL' })).toBe(true);
+    expect(hasRecurringMonthlyCharge({ ...individual, modoMatricula: 'FAMILIAR', alunosFamiliares: [{ id: 'a1', nome: 'Ana' }], condicaoFinanceira: 'ISENCAO_INTEGRAL' })).toBe(false);
+  });
+
   it('começa no passo modo', () => {
     const { result } = renderHook(() => useEnrollmentWizard('conta-1'));
     expect(result.current.step).toBe('modo');
@@ -122,6 +155,7 @@ describe('useMatriculaFamiliarSubmit', async () => {
     alunosFamiliares: [],
     responsavelFamiliar: { id: 'resp-1', nome: 'Maria' },
     planoId: 'plano-1',
+    planoValor: 100,
     taxaMatricula: 50,
     taxaIsenta: false,
     gerarCobrancaTaxa: true,
@@ -193,6 +227,38 @@ describe('useMatriculaFamiliarSubmit', async () => {
     expect(firstPayload.descontoAntecipado).toBe(5);
     expect(firstPayload.descontoTipo).toBe('PERCENTAGE');
     expect(firstPayload.prazoDesconto).toBe(0);
+  });
+
+  it('não envia configurações de recorrência para família com isenção integral e preserva pagamento da taxa', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        familyId: 'family-waived',
+        academicStatus: 'COMPLETO',
+        operationStatus: 'PENDING',
+        results: [{ alunoId: 'a1', alunoNome: 'João', status: 'success', matriculaId: 'mat-1' }],
+      }),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+    const { result } = renderHook(() => useMatriculaFamiliarSubmit());
+    await act(async () => result.current.submit({
+      ...baseState,
+      alunosFamiliares: [alunos[0]!],
+      condicaoFinanceira: 'ISENCAO_INTEGRAL',
+      condicaoMotivo: 'Bolsa integral',
+      condicaoValidaAte: '2026-12-31',
+      formaPagamento: undefined,
+      vencimentoDia: undefined,
+    }));
+    const payload = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(payload.criarCobranca).toBe(false);
+    expect(payload.formaPagamento).toBeUndefined();
+    expect(payload.vencimentoDia).toBeUndefined();
+    expect(payload.billingStrategy).toEqual({ kind: 'SEPARATE' });
+    expect(payload.formaPagamentoTaxa).toBe('BOLETO');
+    expect(payload.multaPercentual).toBeUndefined();
+    expect(payload.jurosMensal).toBeUndefined();
+    expect(payload.notificationChannelsConfigured).toBe(false);
   });
 
   it('interrompe o fluxo quando a matrícula principal da cobrança familiar falha', async () => {

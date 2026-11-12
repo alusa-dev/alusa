@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { calculateEnrollmentFinancialCondition, isEnrollmentBenefitValidityInRange } from '@alusa/domain';
+import type { WizardState } from '@/features/enrollments/components/wizard/types';
+import { hasRecurringMonthlyCharge } from '@/features/enrollments/components/wizard/recurring-billing';
 
 /**
  * Schema completo de validação da matrícula antes da submissão
@@ -43,8 +45,8 @@ export const resumoMatriculaSchema = z
     // Financeiro
     dataInicio: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data de início inválida'),
     dataFimContrato: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Data de fim do contrato inválida'),
-    vencimentoDia: z.number().min(1).max(28, 'Dia de vencimento inválido'),
-    formaPagamento: z.enum(['DINHEIRO', 'PIX', 'CARTAO', 'CARTAO_CREDITO', 'BOLETO']),
+    vencimentoDia: z.number().min(1).max(28, 'Dia de vencimento inválido').optional(),
+    formaPagamento: z.enum(['DINHEIRO', 'PIX', 'CARTAO', 'CARTAO_CREDITO', 'BOLETO']).optional(),
     modeloId: z.string().min(1, 'Modelo de contrato é obrigatório'),
     notificationChannels: z.array(z.enum(['EMAIL', 'SMS', 'WHATSAPP'])).default([]),
     notificationChannelsConfigured: z.boolean().default(false),
@@ -109,6 +111,10 @@ export const resumoMatriculaSchema = z
       message: 'Data de fim do contrato deve ser posterior ou igual à data de início',
       path: ['dataFimContrato'],
     },
+  )
+  .refine(
+    (data) => !hasRecurringMonthlyCharge(data as WizardState) || Boolean(data.formaPagamento && data.vencimentoDia),
+    { message: 'Forma de pagamento e vencimento são obrigatórios para cobrança mensal.', path: ['formaPagamento'] },
   );
 
 /**
@@ -121,6 +127,7 @@ export function validarMatriculaCompleta(state: Record<string, unknown>): {
 } {
   const camposFaltando: string[] = [];
   const mensagens: string[] = [];
+  const hasRecurringBilling = hasRecurringMonthlyCharge(state as unknown as WizardState);
 
   // Valida aluno
   if (!state.aluno || typeof state.aluno !== 'object') {
@@ -174,12 +181,12 @@ export function validarMatriculaCompleta(state: Record<string, unknown>): {
     mensagens.push('Defina a data de fim do contrato');
   }
 
-  if (!state.vencimentoDia) {
+  if (hasRecurringBilling && !state.vencimentoDia) {
     camposFaltando.push('vencimentoDia');
     mensagens.push('Defina o dia de vencimento');
   }
 
-  if (!state.formaPagamento) {
+  if (hasRecurringBilling && !state.formaPagamento) {
     camposFaltando.push('formaPagamento');
     mensagens.push('Selecione a forma de pagamento');
   }
@@ -360,6 +367,7 @@ export function prepararPayloadMatricula(state: Record<string, unknown>): {
     };
   }
 
+  const hasRecurringBilling = hasRecurringMonthlyCharge(state as unknown as WizardState);
   const condicao = state.condicaoFinanceira ?? 'NORMAL';
   if (condicao !== 'NORMAL') {
     if (typeof state.condicaoMotivo !== 'string' || !state.condicaoMotivo.trim()) {
@@ -410,26 +418,26 @@ export function prepararPayloadMatricula(state: Record<string, unknown>): {
     // Financeiro
     dataInicio: state.dataInicio,
     dataFimContrato: state.dataFimContrato,
-    vencimentoDia: state.vencimentoDia,
-    formaPagamento: normalizePayment(state.formaPagamento),
+    vencimentoDia: hasRecurringBilling ? state.vencimentoDia : undefined,
+    formaPagamento: hasRecurringBilling ? normalizePayment(state.formaPagamento) : undefined,
     modeloId: state.modeloId,
     valorMensalidadeOverride: (() => {
       const base = state.modoTurmas === 'COMBO' ? Number(state.comboValor ?? 0) : Number(state.planoValor ?? 0);
       if (condicao === 'BOLSA_PARCIAL' || condicao === 'ISENCAO_INTEGRAL') return calculateEnrollmentFinancialCondition(base, { condicaoFinanceira: condicao, condicaoPercentual: Number(state.condicaoPercentual ?? 0) }).monthlyAmount;
       return undefined;
     })(),
-    notificationChannels: Array.isArray(state.notificationChannels) ? state.notificationChannels : [],
-    notificationChannelsConfigured: state.notificationChannelsTouched === true,
+    notificationChannels: hasRecurringBilling && Array.isArray(state.notificationChannels) ? state.notificationChannels : [],
+    notificationChannelsConfigured: hasRecurringBilling && state.notificationChannelsTouched === true,
 
     // Juros, Multa e Desconto (conforme Asaas API)
-    multaPercentual: state.multaPercentual,
-    jurosMensal: state.jurosMensal,
-    descontoAntecipado: state.descontoAntecipado,
-    descontoTipo: state.descontoTipo, // 'FIXED' ou 'PERCENTAGE'
-    prazoDesconto: state.prazoDesconto,
+    multaPercentual: hasRecurringBilling ? state.multaPercentual : undefined,
+    jurosMensal: hasRecurringBilling ? state.jurosMensal : undefined,
+    descontoAntecipado: hasRecurringBilling ? state.descontoAntecipado : undefined,
+    descontoTipo: hasRecurringBilling ? state.descontoTipo : undefined,
+    prazoDesconto: hasRecurringBilling ? state.prazoDesconto : undefined,
     descontoIds: [],
     // Metadata
-    criarCobranca: state.criarCobranca ?? true,
+    criarCobranca: hasRecurringBilling,
     contaId: state.contaId,
   };
 
