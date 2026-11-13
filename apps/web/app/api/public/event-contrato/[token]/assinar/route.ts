@@ -5,6 +5,7 @@ import { jsonSensitive } from '@/lib/http-security';
 import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { publicAssinarContratoInputDTOSchema, publicAssinarContratoResultDTOSchema } from '@/features/contracts/dtos';
 import { loadPublicContractPdf } from '@/src/server/contracts/load-public-contract-pdf';
+import { deleteSignedContractPdf, storeSignedContractPdf } from '@/src/server/contracts/signed-contract-pdf-storage.service';
 
 function mapError(error: unknown) {
   const code = error instanceof Error ? error.message : '';
@@ -21,6 +22,7 @@ function mapError(error: unknown) {
     CONTRACT_CONSENT_DUPLICATE: { status: 400, message: 'Dados de consentimento inválidos' },
     CONTRACT_CONSENT_INVALID_DECISION: { status: 400, message: 'Dados de consentimento inválidos' },
     SIGNED_PDF_SOURCE_UNAVAILABLE: { status: 500, message: 'Não foi possível carregar o PDF original' },
+    SIGNED_PDF_STORAGE_UNAVAILABLE: { status: 503, message: 'O armazenamento seguro do contrato está indisponível. Tente novamente em instantes.' },
     SIGNATURE_OTP_NOT_VERIFIED: { status: 403, message: 'Confirme o código enviado por e-mail antes de assinar' },
   };
   return map[code] ?? { status: 500, message: 'Erro ao assinar contrato' };
@@ -32,7 +34,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const limiter = rateLimit(`public-event-contract-sign:${token}:${ipFromRequest(request)}`, 8, 15 * 60 * 1000);
     if (!limiter.ok) return jsonSensitive({ error: { message: 'Muitas tentativas. Aguarde alguns minutos.' } }, { status: 429 });
     const body = publicAssinarContratoInputDTOSchema.parse(await request.json());
-    const result = await signPublicEventContract({ ...body, token, ip: ipFromRequest(request), baseUrl: request.nextUrl.origin, loadPdfBytes: loadPublicContractPdf, userAgent: body.userAgent || request.headers.get('user-agent') });
+    const result = await signPublicEventContract({ ...body, token, ip: ipFromRequest(request), baseUrl: request.nextUrl.origin, loadPdfBytes: loadPublicContractPdf, storeSignedPdf: storeSignedContractPdf, deleteSignedPdf: deleteSignedContractPdf, userAgent: body.userAgent || request.headers.get('user-agent') });
     return jsonSensitive(publicAssinarContratoResultDTOSchema.parse(result));
   } catch (error) {
     if (error instanceof z.ZodError) return jsonSensitive({ error: { message: 'Dados inválidos' } }, { status: 400 });

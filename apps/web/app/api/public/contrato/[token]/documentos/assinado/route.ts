@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { contratoPublicTokenParamsDTOSchema } from '@/features/contracts/dtos';
 import { getSignedContractDocument, findPublicContractByToken } from '@/src/server/contracts/contract-read.service';
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
+import { loadSignedContractPdf } from '@/src/server/contracts/signed-contract-pdf-storage.service';
 
 export const dynamic = 'force-dynamic';
 const notFound = () => new NextResponse(null, { status: 404, headers: { 'cache-control': 'private, no-store, max-age=0', pragma: 'no-cache', 'x-robots-tag': 'noindex, nofollow' } });
@@ -24,10 +25,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (!contract || contract.status !== 'ASSINADO') return notFound();
     const document = await getSignedContractDocument({ contaId: contract.contaId, contratoId: contract.id });
     if (!document) return notFound();
-    const match = /^data:application\/pdf;base64,([A-Za-z0-9+/]+={0,2})$/.exec(document.arquivoUrl);
-    if (!match) throw new Error('SIGNED_PDF_INVALID_CONTENT');
-    const bytes = Buffer.from(match[1], 'base64');
-    if (bytes.byteLength < 5 || bytes.subarray(0, 5).toString('ascii') !== '%PDF-') throw new Error('SIGNED_PDF_INVALID_CONTENT');
+    const bytes = await loadSignedContractPdf({ contaId: contract.contaId, contractId: contract.id, storageKey: document.storageKey, arquivoUrl: document.arquivoUrl, sha256: document.hashSha256 });
+    if (!bytes) return notFound();
     return new NextResponse(new Uint8Array(bytes), { status: 200, headers: {
       'content-type': 'application/pdf',
       'content-disposition': 'inline; filename="contrato-assinado.pdf"',

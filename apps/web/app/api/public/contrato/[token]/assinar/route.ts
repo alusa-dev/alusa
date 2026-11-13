@@ -10,6 +10,7 @@ import { ipFromRequest, rateLimit } from '@/lib/rate-limit';
 import { signPublicContract } from '@alusa/lib/contracts/use-cases/sign-contract';
 import { createContractSignedNotification } from '@alusa/lib/notifications/domain-notifications';
 import { loadPublicContractPdf } from '@/src/server/contracts/load-public-contract-pdf';
+import { deleteSignedContractPdf, storeSignedContractPdf } from '@/src/server/contracts/signed-contract-pdf-storage.service';
 import { getRequestId, logApiOperationalEvent } from '@/lib/observability/api-logger';
 
 function statusForDomainError(error: Error) {
@@ -43,6 +44,11 @@ function statusForDomainError(error: Error) {
       return {
         status: 500,
         message: 'Não foi possível carregar o PDF original para gerar a versão assinada',
+      };
+    case 'SIGNED_PDF_STORAGE_UNAVAILABLE':
+      return {
+        status: 503,
+        message: 'O armazenamento seguro do contrato está indisponível. Tente novamente em instantes.',
       };
     default:
       return null;
@@ -82,6 +88,8 @@ export async function POST(
       userAgent,
       baseUrl: request.nextUrl.origin,
       loadPdfBytes: loadPublicContractPdf,
+      storeSignedPdf: storeSignedContractPdf,
+      deleteSignedPdf: deleteSignedContractPdf,
       assinatura: body.assinatura,
       consentimentos: body.consentimentos,
     });

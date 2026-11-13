@@ -104,6 +104,38 @@ function formatContractCreatedAt(value: string) {
   return `${dateLabel}, às ${timeLabel}`;
 }
 
+function latestNotification<T extends { createdAt: string; processedAt: string | null }>(items: T[]) {
+  return [...items].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+}
+
+function maskEmail(email: string) {
+  const [localPart, domain] = email.split('@');
+  if (!localPart || !domain) return email;
+  return `${localPart[0]}***@${domain}`;
+}
+
+function maskPhone(phone: string) {
+  const digits = phone.replace(/\D/g, '');
+  return digits.length >= 4 ? `(••) •••••-${digits.slice(-4)}` : phone;
+}
+
+function notificationState(status: string, confirmed: boolean) {
+  if (status === 'SENT' && confirmed) return 'sent' as const;
+  if (status === 'PENDING' || status === 'SENT') return 'pending' as const;
+  if (status === 'PROCESSING') return 'processing' as const;
+  if (status === 'FAILED' || status === 'DLQ') return 'failed' as const;
+  return 'not-sent' as const;
+}
+
+function notificationDetail(channel: 'email' | 'whatsapp', state: ReturnType<typeof notificationState>, recipient: string) {
+  const label = channel === 'email' ? 'E-mail' : 'Mensagem';
+  if (state === 'sent') return `${label} ${channel === 'email' ? 'enviado' : 'enviada'} para · ${recipient}`;
+  if (state === 'pending') return `Envio pendente para · ${recipient}`;
+  if (state === 'processing') return `Envio em andamento para · ${recipient}`;
+  if (state === 'failed') return `Não foi possível enviar para · ${recipient}`;
+  return `Envio não realizado para · ${recipient}`;
+}
+
 export function ContratoDetalhesFeature({ contratoId, origem = 'MATRICULA' }: ContratoDetalhesFeatureProps) {
   const router = useRouter();
   const [contrato, setContrato] = useState<ContratoDetalhe | null>(null);
@@ -123,24 +155,31 @@ export function ContratoDetalhesFeature({ contratoId, origem = 'MATRICULA' }: Co
           title: 'Contrato criado',
           detail: contrato.modelo?.nome ? `Modelo: ${contrato.modelo.nome}` : undefined,
         },
-        ...notificationHistory.email.map((item) => ({
-          id: `email-${item.id}`,
-          at: item.processedAt ?? item.createdAt,
-          kind: 'NOTIFICATION' as const,
-          title: 'Envio por e-mail',
-          detail: `${notificationStatusLabel(item.status)} · ${item.recipientEmail}`,
-          error: item.lastError,
-        })),
-        ...notificationHistory.whatsapp.map((item) => ({
-          id: `whatsapp-${item.id}`,
-          at: item.processedAt ?? item.createdAt,
-          kind: 'NOTIFICATION' as const,
-          title: 'Envio por WhatsApp',
-          detail: item.status === 'SENT' && !item.providerAccepted
-            ? 'Enfileirado para envio'
-            : notificationStatusLabel(item.status),
-          error: item.lastError,
-        })),
+        ...(latestNotification(notificationHistory.email) ? (() => {
+          const item = latestNotification(notificationHistory.email)!;
+          const state = notificationState(item.status, item.status === 'SENT');
+          return [{
+            id: 'email-latest',
+            at: item.processedAt ?? item.createdAt,
+            kind: 'NOTIFICATION' as const,
+            title: 'Envio por e-mail',
+            detail: notificationDetail('email', state, maskEmail(item.recipientEmail)),
+          }];
+        })() : []),
+        ...(latestNotification(notificationHistory.whatsapp) ? (() => {
+          const item = latestNotification(notificationHistory.whatsapp)!;
+          const state = notificationState(item.status, item.providerAccepted);
+          const recipientPhone = 'recipientPhone' in item && typeof item.recipientPhone === 'string'
+            ? item.recipientPhone
+            : '';
+          return [{
+            id: 'whatsapp-latest',
+            at: item.processedAt ?? item.createdAt,
+            kind: 'NOTIFICATION' as const,
+            title: 'Envio por WhatsApp',
+            detail: notificationDetail('whatsapp', state, recipientPhone ? maskPhone(recipientPhone) : 'destinatário'),
+          }];
+        })() : []),
         ...(contrato.assinadoEm
           ? [{
               id: 'contract-signed',
@@ -239,17 +278,6 @@ export function ContratoDetalhesFeature({ contratoId, origem = 'MATRICULA' }: Co
       setRefreshingNotificationHistory(false);
     }
   };
-
-  function notificationStatusLabel(status: string) {
-    return ({
-      PENDING: 'Aguardando envio',
-      PROCESSING: 'Em processamento',
-      SENT: 'Aceito pelo provedor',
-      FAILED: 'Falha temporária; nova tentativa prevista',
-      DLQ: 'Falha após as tentativas disponíveis',
-      SKIPPED: 'Envio cancelado: preferências, destinatário ou link alterados',
-    }[status] ?? 'Status indisponível');
-  }
 
   if (loading) {
     return (

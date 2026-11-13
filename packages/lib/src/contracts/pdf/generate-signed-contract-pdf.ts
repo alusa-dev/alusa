@@ -122,7 +122,6 @@ function drawWrappedText(params: {
 export async function generateSignedContractEvidencePdf(input: SignedContractPdfInput): Promise<{
   bytes: Buffer;
   hashSha256: string;
-  dataUrl: string;
   tamanhoBytes: number;
 }> {
   const pdf = await PDFDocument.load(input.originalPdfBytes, {
@@ -415,7 +414,6 @@ export async function generateSignedContractEvidencePdf(input: SignedContractPdf
   return {
     bytes,
     hashSha256,
-    dataUrl: `data:application/pdf;base64,${bytes.toString('base64')}`,
     tamanhoBytes: bytes.byteLength,
   };
 }

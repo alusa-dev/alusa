@@ -84,6 +84,7 @@ export async function putStorageObject(params: {
   body: Buffer | Uint8Array;
   contentType: string;
   contentLength?: number;
+  metadata?: Record<string, string>;
 }): Promise<void> {
   const r2 = getR2Client();
   const config = getR2Config();
@@ -97,6 +98,7 @@ export async function putStorageObject(params: {
       Body: params.body,
       ContentType: params.contentType,
       ContentLength: params.contentLength,
+      Metadata: params.metadata,
     }),
   );
 }

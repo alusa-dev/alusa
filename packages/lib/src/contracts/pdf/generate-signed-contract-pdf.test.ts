@@ -75,7 +75,7 @@ describe('generateSignedContractEvidencePdf', () => {
 
     expect(outputPdf.getPageCount()).toBe(originalPdf.getPageCount() + 1);
     expect(signedPdf.hashSha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(signedPdf.dataUrl).toMatch(/^data:application\/pdf;base64,/);
+    expect(signedPdf.bytes.subarray(0, 5).toString('ascii')).toBe('%PDF-');
     expect(signedPdf.tamanhoBytes).toBeGreaterThan(originalPdfBytes.byteLength);
   });
 

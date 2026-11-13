@@ -38,6 +38,8 @@ type SignPublicContractInput = {
    * cannot be used to fetch the source PDF from inside the API request.
    */
   loadPdfBytes?: (_url: string) => Promise<Buffer | null>;
+  storeSignedPdf: (_input: { contaId: string; contractId: string; bytes: Buffer; sha256: string }) => Promise<string>;
+  deleteSignedPdf: (_storageKey: string) => Promise<void>;
   assinatura: { tipo: 'TEXTO' | 'DESENHADA'; valor: string; fonte?: string };
   consentimentos?: ContractConsentAnswer[];
 };
@@ -70,7 +72,7 @@ function decodePdfDataUrl(value: string) {
 async function loadPresentedPdfBytes(
   url: string,
   baseUrl?: string | null,
-  loadPdfBytes?: (url: string) => Promise<Buffer | null>,
+  loadPdfBytes?: (_url: string) => Promise<Buffer | null>,
 ) {
   const dataUrlBytes = decodePdfDataUrl(url);
   if (dataUrlBytes) return dataUrlBytes;
@@ -298,159 +300,181 @@ export async function signPublicContract(input: SignPublicContractInput): Promis
   });
 
   const signedPdfUrl = `/api/public/contrato/${encodeURIComponent(input.token)}/documentos/assinado`;
+  const signedPdfStorageKey = await input.storeSignedPdf({
+    contaId: contrato.contaId,
+    contractId: contrato.id,
+    bytes: signedPdf.bytes,
+    sha256: signedPdf.hashSha256,
+  });
 
-  await prisma.$transaction(async (tx) => {
-    await consumePublicContractSignatureOtp(tx, {
-      contaId: contrato.contaId,
-      contratoId: contrato.id,
-      cpf: signer.signer.cpf,
-      contractHash: contrato.hashPdf,
-      verificationToken: input.verificationToken,
-    });
+  try {
+    await prisma.$transaction(async (tx) => {
+      await consumePublicContractSignatureOtp(tx, {
+        contaId: contrato.contaId,
+        contratoId: contrato.id,
+        cpf: signer.signer.cpf,
+        contractHash: contrato.hashPdf,
+        verificationToken: input.verificationToken,
+      });
 
-    await createContractEvidence(tx as never, {
-      contaId: contrato.contaId,
-      contratoId: contrato.id,
-      type: 'SIGNATURE_STARTED',
-      ip: input.ip ?? null,
-      userAgent,
-      payload: {
-        signerType: signer.signer.type,
-        emailProvided: true,
-      },
-    });
-
-    await createContractEvidence(tx as never, {
-      contaId: contrato.contaId,
-      contratoId: contrato.id,
-      type: 'SIGNATURE_ACCEPTED',
-      ip: input.ip ?? null,
-      userAgent,
-      payload: {
-        aceite: true,
-        acceptanceText: CONTRACT_ACCEPTANCE_TEXT_V1,
-        acceptanceVersion: CONTRACT_ACCEPTANCE_VERSION,
-        acceptedAt: now.toISOString(),
-        payloadHash: signatureHash,
-        consentimentos: consentimentosPayload,
-      },
-    });
-
-    if (consentimentosPayload.length) {
       await createContractEvidence(tx as never, {
         contaId: contrato.contaId,
         contratoId: contrato.id,
-        type: 'CONSENT_DECISION_RECORDED',
+        type: 'SIGNATURE_STARTED',
         ip: input.ip ?? null,
         userAgent,
-        payload: { consentimentos: consentimentosPayload },
+        payload: {
+          signerType: signer.signer.type,
+          emailProvided: true,
+        },
       });
 
-      const imageConsent = consentimentosPayload.find((consentimento) => consentimento.finalidade === 'IMAGE_USE');
-      if (imageConsent) {
-        await tx.aluno.updateMany({
-          where: { id: contrato.matricula.aluno.id, contaId: contrato.contaId },
-          data: {
-            consentimentoImagem: imageConsent.decision === 'AUTORIZADO',
-            dataConsentimentoImagem: imageConsent.decision === 'AUTORIZADO' ? now : null,
-          },
+      await createContractEvidence(tx as never, {
+        contaId: contrato.contaId,
+        contratoId: contrato.id,
+        type: 'SIGNATURE_ACCEPTED',
+        ip: input.ip ?? null,
+        userAgent,
+        payload: {
+          aceite: true,
+          acceptanceText: CONTRACT_ACCEPTANCE_TEXT_V1,
+          acceptanceVersion: CONTRACT_ACCEPTANCE_VERSION,
+          acceptedAt: now.toISOString(),
+          payloadHash: signatureHash,
+          consentimentos: consentimentosPayload,
+        },
+      });
+
+      if (consentimentosPayload.length) {
+        await createContractEvidence(tx as never, {
+          contaId: contrato.contaId,
+          contratoId: contrato.id,
+          type: 'CONSENT_DECISION_RECORDED',
+          ip: input.ip ?? null,
+          userAgent,
+          payload: { consentimentos: consentimentosPayload },
+        });
+
+        const imageConsent = consentimentosPayload.find((consentimento) => consentimento.finalidade === 'IMAGE_USE');
+        if (imageConsent) {
+          await tx.aluno.updateMany({
+            where: { id: contrato.matricula.aluno.id, contaId: contrato.contaId },
+            data: {
+              consentimentoImagem: imageConsent.decision === 'AUTORIZADO',
+              dataConsentimentoImagem: imageConsent.decision === 'AUTORIZADO' ? now : null,
+            },
+          });
+        }
+      }
+
+      const updated = await tx.contrato.updateMany({
+        where: { id: contrato.id, contaId: contrato.contaId, status: { in: ['PENDENTE', 'EXPIRADO'] } },
+        data: {
+          status: 'ASSINADO',
+          assinadoPor: signer.signer.nome,
+          assinadoCpf: signer.signer.cpf,
+          assinadoDataNascimento: input.dataNascimento ? parseBrazilianDateOnlyToUtcDate(input.dataNascimento) : null,
+          assinadoEmail: otpAuthorization.emailSnapshot,
+          assinadoIp: input.ip ?? null,
+          assinadoUserAgent: userAgent,
+          assinadoEm: now,
+          hashAssinatura: signatureHash,
+          arquivoPdfAssinadoUrl: signedPdfUrl,
+          hashPdfAssinado: signedPdf.hashSha256,
+          decisoesConsentimento: consentimentosPayload,
+        },
+      });
+
+      if (updated.count !== 1) {
+        throw new Error('CONTRACT_ALREADY_SIGNED');
+      }
+
+      await tx.contratoDocumento.create({
+        data: {
+          contaId: contrato.contaId,
+          contratoId: contrato.id,
+          tipo: 'ASSINADO',
+          arquivoUrl: signedPdfUrl,
+          storageKey: signedPdfStorageKey,
+          hashSha256: signedPdf.hashSha256,
+          tamanhoBytes: signedPdf.tamanhoBytes,
+          mimeType: 'application/pdf',
+        },
+      });
+
+      await tx.contratoDocumento.create({
+        data: {
+          contaId: contrato.contaId,
+          contratoId: contrato.id,
+          tipo: 'CERTIFICADO_EVIDENCIAS',
+          arquivoUrl: signedPdfUrl,
+          storageKey: signedPdfStorageKey,
+          hashSha256: signedPdf.hashSha256,
+          tamanhoBytes: signedPdf.tamanhoBytes,
+          mimeType: 'application/pdf',
+        },
+      });
+
+      await createContractEvidence(tx as never, {
+        contaId: contrato.contaId,
+        contratoId: contrato.id,
+        type: 'SIGNED_PDF_GENERATED',
+        ip: input.ip ?? null,
+        userAgent,
+        payload: {
+          arquivoUrl: signedPdfUrl,
+          hashPdfOriginal: contrato.hashPdf,
+          hashPdfAssinado: signedPdf.hashSha256,
+          tamanhoBytes: signedPdf.tamanhoBytes,
+        } as Prisma.InputJsonObject,
+      });
+
+      await createContractEvidence(tx as never, {
+        contaId: contrato.contaId,
+        contratoId: contrato.id,
+        type: 'SIGNATURE_COMPLETED',
+        ip: input.ip ?? null,
+        userAgent,
+        payload: {
+          signatureHash,
+          signedPdfHash: signedPdf.hashSha256,
+          signerType: signer.signer.type,
+        },
+      });
+
+      const futureContract = await tx.contratoFuturo.findFirst({
+        where: { contaId: contrato.contaId, contratoId: contrato.id },
+        select: { id: true, validFrom: true },
+      });
+
+      if (futureContract) {
+        await tx.contratoFuturo.update({
+          where: { id: futureContract.id },
+          data: { status: 'SIGNED_SCHEDULED', signedAt: now },
         });
       }
-    }
 
-    const updated = await tx.contrato.updateMany({
-      where: { id: contrato.id, contaId: contrato.contaId, status: { in: ['PENDENTE', 'EXPIRADO'] } },
-      data: {
-        status: 'ASSINADO',
-        assinadoPor: signer.signer.nome,
-        assinadoCpf: signer.signer.cpf,
-        assinadoDataNascimento: input.dataNascimento ? parseBrazilianDateOnlyToUtcDate(input.dataNascimento) : null,
-        assinadoEmail: otpAuthorization.emailSnapshot,
-        assinadoIp: input.ip ?? null,
-        assinadoUserAgent: userAgent,
-        assinadoEm: now,
-        hashAssinatura: signatureHash,
-        arquivoPdfAssinadoUrl: signedPdfUrl,
-        hashPdfAssinado: signedPdf.hashSha256,
-        decisoesConsentimento: consentimentosPayload,
-      },
-    });
-
-    if (updated.count !== 1) {
-      throw new Error('CONTRACT_ALREADY_SIGNED');
-    }
-
-    await tx.contratoDocumento.create({
-      data: {
-        contaId: contrato.contaId,
-        contratoId: contrato.id,
-        tipo: 'ASSINADO',
-        arquivoUrl: signedPdf.dataUrl,
-        hashSha256: signedPdf.hashSha256,
-        tamanhoBytes: signedPdf.tamanhoBytes,
-        mimeType: 'application/pdf',
-      },
-    });
-
-    await tx.contratoDocumento.create({
-      data: {
-        contaId: contrato.contaId,
-        contratoId: contrato.id,
-        tipo: 'CERTIFICADO_EVIDENCIAS',
-        arquivoUrl: signedPdf.dataUrl,
-        hashSha256: signedPdf.hashSha256,
-        tamanhoBytes: signedPdf.tamanhoBytes,
-        mimeType: 'application/pdf',
-      },
-    });
-
-    await createContractEvidence(tx as never, {
-      contaId: contrato.contaId,
-      contratoId: contrato.id,
-      type: 'SIGNED_PDF_GENERATED',
-      ip: input.ip ?? null,
-      userAgent,
-      payload: {
-        arquivoUrl: signedPdfUrl,
-        hashPdfOriginal: contrato.hashPdf,
-        hashPdfAssinado: signedPdf.hashSha256,
-        tamanhoBytes: signedPdf.tamanhoBytes,
-      } as Prisma.InputJsonObject,
-    });
-
-    await createContractEvidence(tx as never, {
-      contaId: contrato.contaId,
-      contratoId: contrato.id,
-      type: 'SIGNATURE_COMPLETED',
-      ip: input.ip ?? null,
-      userAgent,
-      payload: {
-        signatureHash,
-        signedPdfHash: signedPdf.hashSha256,
-        signerType: signer.signer.type,
-      },
-    });
-
-    const futureContract = await tx.contratoFuturo.findFirst({
-      where: { contaId: contrato.contaId, contratoId: contrato.id },
-      select: { id: true, validFrom: true },
-    });
-
-    if (futureContract) {
-      await tx.contratoFuturo.update({
-        where: { id: futureContract.id },
-        data: { status: 'SIGNED_SCHEDULED', signedAt: now },
+      await tx.matricula.update({
+        where: { id: contrato.matriculaId },
+        data: {
+          statusContrato: futureContract ? 'AGUARDANDO_ASSINATURA' : 'ATIVO',
+          contratoAtualId: contrato.id,
+        },
       });
-    }
-
-    await tx.matricula.update({
-      where: { id: contrato.matriculaId },
-      data: {
-        statusContrato: futureContract ? 'AGUARDANDO_ASSINATURA' : 'ATIVO',
-        contratoAtualId: contrato.id,
-      },
     });
-  });
+  } catch (error) {
+    try {
+      const reference = await prisma.contratoDocumento.findFirst({
+        where: { contaId: contrato.contaId, contratoId: contrato.id, storageKey: signedPdfStorageKey },
+        select: { id: true },
+      });
+      if (!reference) await input.deleteSignedPdf(signedPdfStorageKey);
+    } catch {
+      // A failed status check may mean the transaction committed but its
+      // acknowledgement was lost; keep the object rather than break a reference.
+    }
+    throw error;
+  }
 
   return {
     success: true,

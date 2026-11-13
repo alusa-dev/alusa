@@ -6372,6 +6372,7 @@ model EventoContratoDocumento {
   eventoContratoId String
   tipo             ContratoDocumentoTipo
   arquivoUrl       String
+  storageKey       String?
   hashSha256       String
   tamanhoBytes     Int?
   mimeType         String                @default("application/pdf")
@@ -6490,6 +6491,7 @@ model ContratoDocumento {
   contratoId   String
   tipo         ContratoDocumentoTipo
   arquivoUrl   String
+  storageKey   String?
   hashSha256   String
   tamanhoBytes Int?
   mimeType     String                @default("application/pdf")

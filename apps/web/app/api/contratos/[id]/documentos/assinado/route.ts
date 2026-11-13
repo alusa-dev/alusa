@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSessionUser } from '@/lib/auth/session';
 import { contratoRouteParamsDTOSchema } from '@/features/contracts/dtos';
 import { getSignedContractDocument } from '@/src/server/contracts/contract-read.service';
+import { loadSignedContractPdf } from '@/src/server/contracts/signed-contract-pdf-storage.service';
 
 export async function GET(
   _request: NextRequest,
@@ -24,12 +25,8 @@ export async function GET(
     );
   }
 
-  if (!documento.arquivoUrl.startsWith('data:application/pdf;base64,')) {
-    return NextResponse.redirect(documento.arquivoUrl);
-  }
-
-  const base64 = documento.arquivoUrl.replace('data:application/pdf;base64,', '');
-  const bytes = Buffer.from(base64, 'base64');
+  const bytes = await loadSignedContractPdf({ contaId: user.contaId, contractId: id, storageKey: documento.storageKey, arquivoUrl: documento.arquivoUrl, sha256: documento.hashSha256 });
+  if (!bytes) return NextResponse.redirect(documento.arquivoUrl);
 
   return new NextResponse(bytes, {
     headers: {

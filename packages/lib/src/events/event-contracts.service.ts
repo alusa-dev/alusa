@@ -516,6 +516,8 @@ export async function signPublicEventContract(input: {
   userAgent?: string | null;
   baseUrl?: string | null;
   loadPdfBytes?: (_url: string) => Promise<Buffer | null>;
+  storeSignedPdf: (_input: { contaId: string; contractId: string; bytes: Buffer; sha256: string }) => Promise<string>;
+  deleteSignedPdf: (_storageKey: string) => Promise<void>;
   assinatura: { tipo: 'TEXTO' | 'DESENHADA'; valor: string; fonte?: string };
 }) {
   const contract = await findPublicEventContractByToken(input.token);
@@ -594,45 +596,65 @@ export async function signPublicEventContract(input: {
   });
 
   const signedPdfUrl = `/api/public/event-contrato/${encodeURIComponent(input.token)}/documentos/assinado`;
-  await prisma.$transaction(async (tx) => {
-    await consumePublicContractSignatureOtp(tx, {
-      contaId: contract.contaId,
-      eventoContratoId: contract.id,
-      cpf: signer.signer.cpf,
-      contractHash: contract.hashPdf,
-      verificationToken: input.verificationToken,
-    });
-
-    await recordEvidence(tx, { contaId: contract.contaId, eventoContratoId: contract.id, type: 'SIGNATURE_ACCEPTED', actorType: 'PUBLIC', payload: { aceite: true, acceptanceText: CONTRACT_ACCEPTANCE_TEXT_V1, acceptanceVersion: CONTRACT_ACCEPTANCE_VERSION, payloadHash: signatureHash, consentimentos: consentimentosPayload } });
-    if (consentimentosPayload.length) {
-      await recordEvidence(tx, { contaId: contract.contaId, eventoContratoId: contract.id, type: 'CONSENT_DECISION_RECORDED', actorType: 'PUBLIC', payload: { consentimentos: consentimentosPayload } });
-      await persistEventContractConsentRecords(tx, {
+  const signedPdfStorageKey = await input.storeSignedPdf({
+    contaId: contract.contaId,
+    contractId: contract.id,
+    bytes: signedPdf.bytes,
+    sha256: signedPdf.hashSha256,
+  });
+  try {
+    await prisma.$transaction(async (tx) => {
+      await consumePublicContractSignatureOtp(tx, {
         contaId: contract.contaId,
         eventoContratoId: contract.id,
-        alunoId: contract.alunoId,
-        signedAt: now,
-        consentimentos: consentimentosPayload,
+        cpf: signer.signer.cpf,
+        contractHash: contract.hashPdf,
+        verificationToken: input.verificationToken,
       });
-      const imageConsent = consentimentosPayload.find((consentimento) => consentimento.finalidade === 'IMAGE_USE');
-      if (imageConsent) {
-        await tx.aluno.updateMany({
-          where: { id: contract.alunoId, contaId: contract.contaId },
-          data: {
-            consentimentoImagem: imageConsent.decision === 'AUTORIZADO',
-            dataConsentimentoImagem: imageConsent.decision === 'AUTORIZADO' ? now : null,
-          },
+
+      await recordEvidence(tx, { contaId: contract.contaId, eventoContratoId: contract.id, type: 'SIGNATURE_ACCEPTED', actorType: 'PUBLIC', payload: { aceite: true, acceptanceText: CONTRACT_ACCEPTANCE_TEXT_V1, acceptanceVersion: CONTRACT_ACCEPTANCE_VERSION, payloadHash: signatureHash, consentimentos: consentimentosPayload } });
+      if (consentimentosPayload.length) {
+        await recordEvidence(tx, { contaId: contract.contaId, eventoContratoId: contract.id, type: 'CONSENT_DECISION_RECORDED', actorType: 'PUBLIC', payload: { consentimentos: consentimentosPayload } });
+        await persistEventContractConsentRecords(tx, {
+          contaId: contract.contaId,
+          eventoContratoId: contract.id,
+          alunoId: contract.alunoId,
+          signedAt: now,
+          consentimentos: consentimentosPayload,
         });
+        const imageConsent = consentimentosPayload.find((consentimento) => consentimento.finalidade === 'IMAGE_USE');
+        if (imageConsent) {
+          await tx.aluno.updateMany({
+            where: { id: contract.alunoId, contaId: contract.contaId },
+            data: {
+              consentimentoImagem: imageConsent.decision === 'AUTORIZADO',
+              dataConsentimentoImagem: imageConsent.decision === 'AUTORIZADO' ? now : null,
+            },
+          });
+        }
       }
-    }
-    const updated = await tx.eventoContrato.updateMany({
-      where: { id: contract.id, contaId: contract.contaId, status: { in: ['PENDENTE', 'EXPIRADO'] } },
-      data: { status: 'ASSINADO', assinadoPor: signer.signer.nome, assinadoCpf: signer.signer.cpf, assinadoDataNascimento: input.dataNascimento ? parseBrazilianDateOnlyToUtcDate(input.dataNascimento) : null, assinadoEmail: otpAuthorization.emailSnapshot, assinadoIp: input.ip ?? null, assinadoUserAgent: input.userAgent ?? null, assinadoEm: now, hashAssinatura: signatureHash, arquivoPdfAssinadoUrl: signedPdfUrl, hashPdfAssinado: signedPdf.hashSha256, decisoesConsentimento: consentimentosPayload },
+      const updated = await tx.eventoContrato.updateMany({
+        where: { id: contract.id, contaId: contract.contaId, status: { in: ['PENDENTE', 'EXPIRADO'] } },
+        data: { status: 'ASSINADO', assinadoPor: signer.signer.nome, assinadoCpf: signer.signer.cpf, assinadoDataNascimento: input.dataNascimento ? parseBrazilianDateOnlyToUtcDate(input.dataNascimento) : null, assinadoEmail: otpAuthorization.emailSnapshot, assinadoIp: input.ip ?? null, assinadoUserAgent: input.userAgent ?? null, assinadoEm: now, hashAssinatura: signatureHash, arquivoPdfAssinadoUrl: signedPdfUrl, hashPdfAssinado: signedPdf.hashSha256, decisoesConsentimento: consentimentosPayload },
+      });
+      if (updated.count !== 1) throw new Error('CONTRACT_ALREADY_SIGNED');
+      await tx.eventoContratoDocumento.create({ data: { contaId: contract.contaId, eventoContratoId: contract.id, tipo: 'ASSINADO', arquivoUrl: signedPdfUrl, storageKey: signedPdfStorageKey, hashSha256: signedPdf.hashSha256, tamanhoBytes: signedPdf.tamanhoBytes, mimeType: 'application/pdf' } });
+      await tx.eventoContratoDocumento.create({ data: { contaId: contract.contaId, eventoContratoId: contract.id, tipo: 'CERTIFICADO_EVIDENCIAS', arquivoUrl: signedPdfUrl, storageKey: signedPdfStorageKey, hashSha256: signedPdf.hashSha256, tamanhoBytes: signedPdf.tamanhoBytes, mimeType: 'application/pdf' } });
+      await recordEvidence(tx, { contaId: contract.contaId, eventoContratoId: contract.id, type: 'SIGNED_PDF_GENERATED', actorType: 'PUBLIC', payload: { signedPdfHash: signedPdf.hashSha256, assinatura: signer.signer.type } });
     });
-    if (updated.count !== 1) throw new Error('CONTRACT_ALREADY_SIGNED');
-    await tx.eventoContratoDocumento.create({ data: { contaId: contract.contaId, eventoContratoId: contract.id, tipo: 'ASSINADO', arquivoUrl: signedPdf.dataUrl, hashSha256: signedPdf.hashSha256, tamanhoBytes: signedPdf.tamanhoBytes } });
-    await tx.eventoContratoDocumento.create({ data: { contaId: contract.contaId, eventoContratoId: contract.id, tipo: 'CERTIFICADO_EVIDENCIAS', arquivoUrl: signedPdf.dataUrl, hashSha256: signedPdf.hashSha256, tamanhoBytes: signedPdf.tamanhoBytes } });
-    await recordEvidence(tx, { contaId: contract.contaId, eventoContratoId: contract.id, type: 'SIGNED_PDF_GENERATED', actorType: 'PUBLIC', payload: { signedPdfHash: signedPdf.hashSha256, assinatura: signer.signer.type } });
-  });
+  } catch (error) {
+    try {
+      const reference = await prisma.eventoContratoDocumento.findFirst({
+        where: { contaId: contract.contaId, eventoContratoId: contract.id, storageKey: signedPdfStorageKey },
+        select: { id: true },
+      });
+      if (!reference) await input.deleteSignedPdf(signedPdfStorageKey);
+    } catch {
+      // If commit status cannot be verified, retain the object to avoid a
+      // committed contract pointing at a deleted PDF.
+    }
+    throw error;
+  }
 
   return { success: true as const, hash: signatureHash, signedPdfHash: signedPdf.hashSha256, signedPdfUrl, contaId: contract.contaId, contratoId: contract.id, alunoNome: contract.aluno.nome, assinadoPor: signer.signer.nome };
 }
