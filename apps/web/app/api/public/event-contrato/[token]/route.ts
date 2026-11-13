@@ -9,7 +9,10 @@ import { jsonSensitive } from '@/lib/http-security';
 import { ipFromRequest } from '@/lib/rate-limit';
 import { recordPublicEventContractEvidence } from '@/src/server/contracts/public-contract-evidence.service';
 
-export async function GET(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ token: string }> },
+) {
   try {
     const parsedParams = publicEventContractRouteParamsDTOSchema.safeParse(await params);
     if (!parsedParams.success) {
@@ -17,8 +20,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     }
     const { token } = parsedParams.data;
     const contract = await findPublicEventContractByToken(token);
-    if (!contract) return jsonSensitive({ error: { message: 'Contrato não encontrado' } }, { status: 404 });
-    if (contract.status === 'CANCELADO') return jsonSensitive({ error: { message: 'Este contrato foi cancelado' } }, { status: 400 });
+    if (!contract)
+      return jsonSensitive({ error: { message: 'Contrato não encontrado' } }, { status: 404 });
+    if (contract.status === 'CANCELADO')
+      return jsonSensitive({ error: { message: 'Este contrato foi cancelado' } }, { status: 400 });
     const tokenHash = hashPublicContractToken(token);
     void recordPublicEventContractEvidence({
       contaId: contract.contaId,
@@ -28,7 +33,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       userAgent: request.headers.get('user-agent')?.slice(0, 512) ?? null,
       payload: { tokenHash },
     }).catch(() => undefined);
-    return jsonSensitive(mapPublicEventContractToDTO(contract));
+    return jsonSensitive({
+      ...mapPublicEventContractToDTO(contract),
+      arquivoPdfUrl: `/api/public/event-contrato/${encodeURIComponent(token)}/document`,
+    });
   } catch {
     return jsonSensitive({ error: { message: 'Erro ao carregar contrato' } }, { status: 500 });
   }

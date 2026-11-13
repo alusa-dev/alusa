@@ -1,4 +1,3 @@
-
 import { NextRequest } from 'next/server';
 import {
   contratoPublicTokenParamsDTOSchema,
@@ -23,7 +22,8 @@ export async function GET(
 
     const contrato = await findPublicContractByToken(token);
 
-    if (!contrato) return jsonSensitive({ error: { message: 'Contrato não encontrado' } }, { status: 404 });
+    if (!contrato)
+      return jsonSensitive({ error: { message: 'Contrato não encontrado' } }, { status: 404 });
 
     if (contrato.status === 'CANCELADO') {
       return jsonSensitive({ error: { message: 'Este contrato foi cancelado' } }, { status: 400 });
@@ -39,7 +39,10 @@ export async function GET(
     }).catch(() => undefined);
 
     return jsonSensitive(
-      contratoPublicoDTOSchema.parse(mapPublicContratoRecordToDTO(contrato)),
+      contratoPublicoDTOSchema.parse({
+        ...mapPublicContratoRecordToDTO(contrato),
+        arquivoPdfUrl: `/api/public/contrato/${encodeURIComponent(token)}/document`,
+      }),
     );
   } catch (error) {
     logApiOperationalEvent({
@@ -50,9 +53,6 @@ export async function GET(
       requestId: getRequestId(request),
       error,
     });
-    return jsonSensitive(
-      { error: { message: 'Erro ao carregar contrato' } },
-      { status: 500 },
-    );
+    return jsonSensitive({ error: { message: 'Erro ao carregar contrato' } }, { status: 500 });
   }
 }

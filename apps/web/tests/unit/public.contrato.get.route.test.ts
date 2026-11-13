@@ -42,6 +42,7 @@ describe('GET /api/public/contrato/[token]', () => {
     expect(json.matricula.aluno).not.toHaveProperty('cpf');
     expect(json.matricula.responsavelFinanceiro).not.toHaveProperty('cpf');
     expect(json.acceptanceText).toContain('Declaro que li');
+    expect(json.arquivoPdfUrl).toBe('/api/public/contrato/token-1/document');
     expect(response.headers.get('cache-control')).toContain('no-store');
   });
 
