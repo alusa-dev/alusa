@@ -593,7 +593,7 @@ export async function signPublicEventContract(input: {
     consentimentos: consentimentosPayload,
   });
 
-  const signedPdfUrl = `/api/event-contracts/${contract.id}/documentos/assinado`;
+  const signedPdfUrl = `/api/public/event-contrato/${encodeURIComponent(input.token)}/documentos/assinado`;
   await prisma.$transaction(async (tx) => {
     await consumePublicContractSignatureOtp(tx, {
       contaId: contract.contaId,

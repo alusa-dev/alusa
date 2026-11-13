@@ -31,7 +31,7 @@ describe('POST /api/public/contrato/[token]/assinar', () => {
       success: true,
       hash: 'a'.repeat(64),
       signedPdfHash: 'b'.repeat(64),
-      signedPdfUrl: '/api/contratos/contrato-1/documentos/assinado',
+      signedPdfUrl: '/api/public/contrato/token-1/documentos/assinado',
       contaId: 'conta-1',
       contratoId: 'contrato-1',
       matriculaId: 'mat-1',
