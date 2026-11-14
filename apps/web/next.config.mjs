@@ -266,6 +266,10 @@ const nextConfig = {
       if (config.cache && typeof config.cache === 'object') {
         config.cache.maxMemoryGenerations = 1;
       }
+    } else if (config.cache) {
+      // O cache padrão do Webpack pode elevar o pico de memória no build de produção.
+      // Mantém o cache apenas em memória, como recomendado pelo guia de memória do Next.js.
+      config.cache = Object.freeze({ type: 'memory' });
     }
     // Alias direto para o pacote do monorepo (fallback robusto para pnpm)
     config.resolve = config.resolve || {};
