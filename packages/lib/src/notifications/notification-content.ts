@@ -1,7 +1,7 @@
 import { NotificationCategory, NotificationSeverity, NotificationType } from '@prisma/client';
 import type { BillingOriginContextInput } from './notification-types';
 import { BILLING_NOTIFICATION_EVENT_ALIASES, BILLING_NOTIFICATION_EVENTS } from './notification-events';
-import type { BillingNotificationEventInput, WebhookNotificationEvent } from './notification-events';
+import type { WebhookNotificationEvent } from './notification-events';
 
 export { BILLING_NOTIFICATION_EVENT_ALIASES, BILLING_NOTIFICATION_EVENTS } from './notification-events';
 export type { BillingNotificationEventInput, WebhookNotificationEvent } from './notification-events';
