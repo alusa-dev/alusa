@@ -66,6 +66,7 @@ export type EligibleEventStudentsQueryDTO = z.infer<typeof eligibleEventStudents
 export const eventPublicOrdersQueryDTOSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(50).default(6),
+  orderId: z.string().trim().min(1).max(128).optional(),
   search: z.string().trim().max(120).optional(),
   status: z.enum(['PAYMENT_PENDING', 'CONFIRMED', 'CANCELLED', 'EXPIRED', 'REFUNDED', 'PARTIALLY_REFUNDED']).optional(),
 });

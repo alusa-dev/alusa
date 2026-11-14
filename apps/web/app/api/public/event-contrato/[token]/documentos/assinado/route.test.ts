@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 
-const mocks = vi.hoisted(() => ({ find: vi.fn(), get: vi.fn(), log: vi.fn() }));
+const mocks = vi.hoisted(() => ({ find: vi.fn(), get: vi.fn(), loadPdf: vi.fn(), log: vi.fn() }));
 vi.mock('@alusa/lib/events/event-contracts.service', () => ({ findPublicEventContractByToken: mocks.find }));
 vi.mock('@/src/server/contracts/contract-read.service', () => ({ getSignedEventContractDocument: mocks.get }));
 vi.mock('@/lib/observability/api-logger', () => ({ getRequestId: () => 'request-event-1', logApiOperationalEvent: mocks.log }));
+vi.mock('@/src/server/contracts/signed-contract-pdf-storage.service', () => ({ loadSignedContractPdf: mocks.loadPdf }));
 import { GET } from './route';
 
 const request = () => new NextRequest('http://localhost/api/public/event-contrato/token-1/documentos/assinado');
@@ -14,7 +15,8 @@ describe('public signed event contract PDF', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.find.mockResolvedValue({ id: 'event-contract-1', contaId: 'account-1', status: 'ASSINADO' });
-    mocks.get.mockResolvedValue({ arquivoUrl: 'data:application/pdf;base64,JVBERi0xLjQ=', hashSha256: 'sha256' });
+    mocks.get.mockResolvedValue({ arquivoUrl: 'data:application/pdf;base64,JVBERi0xLjQ=', storageKey: null, hashSha256: 'sha256' });
+    mocks.loadPdf.mockResolvedValue(Buffer.from('%PDF-1.4'));
   });
 
   it('serves signed bytes to an anonymous request scoped to the resolved tenant and contract', async () => {
@@ -26,6 +28,7 @@ describe('public signed event contract PDF', () => {
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(Uint8Array.from([37, 80, 68, 70, 45, 49, 46, 52]));
     expect(mocks.find).toHaveBeenCalledWith('token-1');
     expect(mocks.get).toHaveBeenCalledWith({ contaId: 'account-1', contratoId: 'event-contract-1' });
+    expect(mocks.loadPdf).toHaveBeenCalledWith({ contaId: 'account-1', contractId: 'event-contract-1', storageKey: null, arquivoUrl: 'data:application/pdf;base64,JVBERi0xLjQ=', sha256: 'sha256' });
   });
 
   it('returns the same 404 for invalid, not-signed, and unavailable documents', async () => {
@@ -50,7 +53,8 @@ describe('public signed event contract PDF', () => {
     ['empty', 'data:application/pdf;base64,'],
     ['malformed', 'data:application/pdf;base64,aGVsbG8='],
   ])('returns sanitized 503 for a persisted %s PDF', async (_label, arquivoUrl) => {
-    mocks.get.mockResolvedValueOnce({ arquivoUrl, hashSha256: 'sha256' });
+    mocks.get.mockResolvedValueOnce({ arquivoUrl, storageKey: null, hashSha256: 'sha256' });
+    mocks.loadPdf.mockRejectedValueOnce(new Error('SIGNED_PDF_INVALID_CONTENT'));
     const response = await GET(request(), context());
     expect(response.status).toBe(503);
     expect(response.headers.get('cache-control')).toContain('no-store');

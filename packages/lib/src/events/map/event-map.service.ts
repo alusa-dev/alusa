@@ -2237,7 +2237,7 @@ export async function requestPublicOrderTicketWhatsAppResend(ctx: EventsContext,
 export async function listEventPublicMapOrdersForAdmin(
   contaId: string,
   eventId: string,
-  options: { page?: number; pageSize?: number; search?: string; status?: string } = {},
+  options: { page?: number; pageSize?: number; orderId?: string; search?: string; status?: string } = {},
 ) {
   const page = Math.max(1, Math.floor(options.page ?? 1));
   const pageSize = Math.min(50, Math.max(1, Math.floor(options.pageSize ?? 6)));
@@ -2245,6 +2245,7 @@ export async function listEventPublicMapOrdersForAdmin(
   const where: Prisma.EventMapOrderWhereInput = {
     contaId,
     eventId,
+    ...(options.orderId ? { id: options.orderId } : {}),
     ...(options.status ? { status: options.status as Prisma.EventMapOrderWhereInput['status'] } : {}),
     ...(search ? {
       OR: [
@@ -2283,8 +2284,8 @@ export async function listEventPublicMapOrdersForAdmin(
       refundedAt: true,
       cancelledAt: true,
       map: { select: { id: true, name: true, publicSlug: true } },
-      reservation: { select: { seats: { select: { id: true, publicSeat: { select: { lotName: true } } } } } },
-      items: { select: { id: true, publicSeat: { select: { lotName: true } } } },
+      reservation: { select: { seats: { select: { id: true, publicSeat: { select: { lotName: true, sectionName: true, displayLabel: true } } } } } },
+      items: { select: { id: true, sectionName: true, seatLabel: true, publicSeat: { select: { lotName: true } } } },
       tickets: { select: { id: true, status: true } },
     },
     }),
@@ -2360,6 +2361,12 @@ export async function listEventPublicMapOrdersForAdmin(
         .map((entry) => entry.publicSeat.lotName?.trim())
         .filter((name): name is string => Boolean(name)),
     )],
+    seats: order.items.length > 0
+      ? order.items.map((item) => ({ sectionName: item.sectionName, seatLabel: item.seatLabel }))
+      : (order.reservation?.seats ?? []).map((seat) => ({
+        sectionName: seat.publicSeat.sectionName,
+        seatLabel: seat.publicSeat.displayLabel,
+      })),
     seatCount: order.reservation?.seats.length ?? order.items.length,
     ticketCount: order.tickets.filter((ticket) => ticket.status === 'VALID' || ticket.status === 'USED').length,
     ticketsUsed: order.tickets.filter((ticket) => ticket.status === 'USED').length,

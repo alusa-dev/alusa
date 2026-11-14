@@ -13,12 +13,14 @@ export function TicketReservationsTable({
   lots,
   scopedResources,
   loading,
+  searchActive = false,
 }: {
   reservations: TicketSaleDTO[];
   eventId: string;
   lots: TicketLotDTO[];
   scopedResources?: EventScopedResources;
   loading: boolean;
+  searchActive?: boolean;
 }) {
   return (
     <EventPaginatedDataTable
@@ -35,7 +37,9 @@ export function TicketReservationsTable({
       data={reservations}
       rowKey={(sale) => sale.id}
       loading={loading}
-      emptyMessage={<EmptyState title="Nenhum ingresso reservado." description="As reservas aguardando pagamento aparecerão aqui." />}
+      emptyMessage={searchActive
+        ? <EmptyState title="Nenhuma reserva encontrada." description="Tente buscar por outro comprador, mapa ou lote." />
+        : <EmptyState title="Nenhum ingresso reservado." description="As reservas aguardando pagamento aparecerão aqui." />}
     />
   );
 }

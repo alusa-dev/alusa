@@ -379,6 +379,47 @@ export async function listTicketSales(eventId?: string) {
   return (await parseResponse<JsonEnvelope<TicketSaleDTO[]>>(await fetch(`/api/events/ticket-sales?${query}`, { cache: 'no-store' }))).data;
 }
 
+export type EventPublicMapOrderDTO = {
+  id: string;
+  buyerName: string;
+  buyerEmail: string;
+  buyerPhone: string | null;
+  whatsappAvailable: boolean;
+  whatsappStatus: string | null;
+  totalAmount: number;
+  status: string;
+  ticketFulfillmentStatus: 'PENDING' | 'ISSUED' | 'FAILED' | 'REQUIRES_RECONCILIATION';
+  paymentMethod: string | null;
+  paymentStatus: string | null;
+  asaasPaymentId: string | null;
+  invoiceUrl: string | null;
+  createdAt: string;
+  expiresAt: string | null;
+  confirmedAt: string | null;
+  paidAt: string | null;
+  refundedAt: string | null;
+  cancelledAt: string | null;
+  map: { id: string; name: string; publicSlug: string | null };
+  lotNames: string[];
+  seats?: Array<{ sectionName: string; seatLabel: string }>;
+  seatCount: number;
+  ticketCount: number;
+  ticketsUsed: number;
+};
+
+export async function getEventPublicMapOrder(eventId: string, orderId: string) {
+  const query = new URLSearchParams({ page: '1', pageSize: '1', orderId });
+  const result = (await parseResponse<JsonEnvelope<{
+    items: EventPublicMapOrderDTO[];
+    page: number;
+    pageSize: number;
+    total: number;
+  }>>(await fetch(`/api/events/${eventId}/public-orders?${query}`, { cache: 'no-store' }))).data;
+  const order = result.items[0];
+  if (!order || order.id !== orderId) throw new Error('O pedido não foi encontrado neste evento.');
+  return order;
+}
+
 export type EventCheckInDTO = {
   id: string;
   buyerName: string;

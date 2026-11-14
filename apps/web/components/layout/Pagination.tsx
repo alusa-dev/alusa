@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 
 export interface PaginationProps {
@@ -19,6 +19,7 @@ export function Pagination({
   hideIfSinglePage = true,
 }: PaginationProps) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const currentPage = Math.min(totalPages, Math.max(1, page));
   const pages = useMemo<(number | '…')[]>(() => {
     if (totalPages <= 1) return [1];
     const maxButtons = 7;
@@ -26,45 +27,47 @@ export function Pagination({
       return Array.from({ length: totalPages }, (_, index) => index + 1);
     }
     const siblings = 2;
-    const left = Math.max(2, page - siblings);
-    const right = Math.min(totalPages - 1, page + siblings);
+    const left = Math.max(2, currentPage - siblings);
+    const right = Math.min(totalPages - 1, currentPage + siblings);
     const list: (number | '…')[] = [1];
     if (left > 2) list.push('…');
     for (let i = left; i <= right; i++) list.push(i);
     if (right < totalPages - 1) list.push('…');
     if (totalPages > 1) list.push(totalPages);
     return list;
-  }, [page, totalPages]);
+  }, [currentPage, totalPages]);
+
+  useEffect(() => {
+    if (page !== currentPage) onChange(currentPage);
+  }, [currentPage, onChange, page]);
 
   if (total <= 0) return null;
   if (hideIfSinglePage && totalPages <= 1) return null;
-  if (page > totalPages) setTimeout(() => onChange(totalPages), 0);
-
   return (
     <nav
       aria-label="Paginação"
       className={cn('flex min-h-9 flex-col items-center justify-between gap-3 sm:flex-row', className)}
     >
-      <div className="text-xs font-medium text-gray-500">Página {page} de {totalPages}</div>
+      <div className="text-xs font-medium text-gray-500">Página {currentPage} de {totalPages}</div>
       <div className="flex flex-wrap items-center justify-center gap-1">
         <PaginationTextButton
           aria-label="Página anterior"
-          disabled={page === 1}
-          onClick={() => onChange(Math.max(1, page - 1))}
+          disabled={currentPage === 1}
+          onClick={() => onChange(Math.max(1, currentPage - 1))}
         >
           <span aria-hidden>‹</span>
           <span>Anterior</span>
         </PaginationTextButton>
         {pages.map((p, i) =>
           p === '…' ? (
-            <span key={i} className="grid h-9 min-w-9 place-items-center px-1 text-sm font-semibold text-gray-400">
+            <span key={`ellipsis-${i}`} className="grid h-9 min-w-9 place-items-center px-1 text-sm font-semibold text-gray-400">
               …
             </span>
           ) : (
             <PageBtn
-              key={p}
-              aria-current={p === page ? 'page' : undefined}
-              active={p === page}
+              key={`page-${p}`}
+              aria-current={p === currentPage ? 'page' : undefined}
+              active={p === currentPage}
               onClick={() => onChange(p)}
             >
               {p}
@@ -73,8 +76,8 @@ export function Pagination({
         )}
         <PaginationTextButton
           aria-label="Próxima página"
-          disabled={page === totalPages}
-          onClick={() => onChange(Math.min(totalPages, page + 1))}
+          disabled={currentPage === totalPages}
+          onClick={() => onChange(Math.min(totalPages, currentPage + 1))}
         >
           <span>Próxima</span>
           <span aria-hidden>›</span>

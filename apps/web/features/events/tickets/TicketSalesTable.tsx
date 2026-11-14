@@ -14,12 +14,14 @@ export function TicketSalesTable({
   lots,
   scopedResources,
   loading,
+  searchActive = false,
 }: {
   sales: TicketSaleDTO[];
   eventId: string;
   lots: TicketLotDTO[];
   scopedResources?: EventScopedResources;
   loading: boolean;
+  searchActive?: boolean;
 }) {
   return (
     <EventPaginatedDataTable
@@ -78,7 +80,9 @@ export function TicketSalesTable({
       data={sales}
       rowKey={(sale) => sale.id}
       loading={loading}
-      emptyMessage={<EmptyState title="Nenhuma venda registrada." description="Registre vendas manuais vinculadas a um lote deste evento." />}
+      emptyMessage={searchActive
+        ? <EmptyState title="Nenhuma venda encontrada." description="Tente buscar por outro comprador, mapa ou lote." />
+        : <EmptyState title="Nenhuma venda registrada." description="Registre vendas manuais vinculadas a um lote deste evento." />}
     />
   );
 }

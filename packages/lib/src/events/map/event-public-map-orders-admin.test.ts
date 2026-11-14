@@ -42,8 +42,8 @@ describe('listEventPublicMapOrdersForAdmin', () => {
       paidAt: null,
       map: { id: 'map-1', name: 'Mapa', publicSlug: 'festival' },
       reservation: { seats: [
-        { id: 'seat-1', publicSeat: { lotName: '1º Lote' } },
-        { id: 'seat-2', publicSeat: { lotName: '1º Lote' } },
+        { id: 'seat-1', publicSeat: { lotName: '1º Lote', sectionName: 'Setor 1', displayLabel: 'A3' } },
+        { id: 'seat-2', publicSeat: { lotName: '1º Lote', sectionName: 'Setor 1', displayLabel: 'A4' } },
       ] },
       items: [],
       tickets: [],
@@ -90,7 +90,15 @@ describe('listEventPublicMapOrdersForAdmin', () => {
       select: { eventMapOrderId: true, status: true },
     }));
     expect(result.total).toBe(20);
-    expect(result.items[0]).toMatchObject({ seatCount: 2, ticketCount: 0, lotNames: ['1º Lote'] });
+    expect(result.items[0]).toMatchObject({
+      seatCount: 2,
+      ticketCount: 0,
+      lotNames: ['1º Lote'],
+      seats: [
+        { sectionName: 'Setor 1', seatLabel: 'A3' },
+        { sectionName: 'Setor 1', seatLabel: 'A4' },
+      ],
+    });
   });
 
   it('returns distinct lot snapshots from order items even after the reservation is removed', async () => {
@@ -112,11 +120,11 @@ describe('listEventPublicMapOrdersForAdmin', () => {
       map: { id: 'map-1', name: 'Sessão 02', publicSlug: 'festival' },
       reservation: null,
       items: [
-        { id: 'item-1', publicSeat: { lotName: '1º Lote' } },
-        { id: 'item-2', publicSeat: { lotName: '2º Lote' } },
-        { id: 'item-3', publicSeat: { lotName: '1º Lote' } },
-        { id: 'item-4', publicSeat: { lotName: null } },
-        { id: 'item-5', publicSeat: { lotName: '  ' } },
+        { id: 'item-1', sectionName: 'Setor snapshot', seatLabel: 'A3', publicSeat: { lotName: '1º Lote' } },
+        { id: 'item-2', sectionName: 'Setor snapshot', seatLabel: 'A4', publicSeat: { lotName: '2º Lote' } },
+        { id: 'item-3', sectionName: 'Setor 2', seatLabel: 'B1', publicSeat: { lotName: '1º Lote' } },
+        { id: 'item-4', sectionName: 'Setor 2', seatLabel: 'B2', publicSeat: { lotName: null } },
+        { id: 'item-5', sectionName: 'Setor 3', seatLabel: 'C1', publicSeat: { lotName: '  ' } },
       ],
       tickets: [],
     }]);
@@ -127,6 +135,13 @@ describe('listEventPublicMapOrdersForAdmin', () => {
       map: { name: 'Sessão 02' },
       lotNames: ['1º Lote', '2º Lote'],
       seatCount: 5,
+      seats: [
+        { sectionName: 'Setor snapshot', seatLabel: 'A3' },
+        { sectionName: 'Setor snapshot', seatLabel: 'A4' },
+        { sectionName: 'Setor 2', seatLabel: 'B1' },
+        { sectionName: 'Setor 2', seatLabel: 'B2' },
+        { sectionName: 'Setor 3', seatLabel: 'C1' },
+      ],
     });
   });
 

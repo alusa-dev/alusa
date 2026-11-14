@@ -109,11 +109,13 @@ export function TicketLotsTable({
   eventId,
   ticketMode = 'SIMPLE',
   loading,
+  searchActive = false,
 }: {
   lots: TicketLotDTO[];
   eventId: string;
   ticketMode?: EventTicketMode;
   loading: boolean;
+  searchActive?: boolean;
 }) {
   const isNumberedSeats = ticketMode === 'NUMBERED_SEATS';
 
@@ -154,7 +156,9 @@ export function TicketLotsTable({
       data={lots}
       rowKey={(lot) => lot.id}
       loading={loading}
-      emptyMessage={<EmptyState title="Nenhum lote criado." description="Crie um lote para começar a registrar vendas de ingressos deste evento." />}
+      emptyMessage={searchActive
+        ? <EmptyState title="Nenhum lote encontrado." description="Tente buscar por outro nome de lote ou sessão." />
+        : <EmptyState title="Nenhum lote criado." description="Crie um lote para começar a registrar vendas de ingressos deste evento." />}
     />
   );
 }

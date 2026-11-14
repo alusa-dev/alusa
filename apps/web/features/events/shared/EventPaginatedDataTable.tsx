@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import DataTable, { type DataTableProps } from '@/components/layout/DataTable';
 import Pagination from '@/components/layout/Pagination';
@@ -18,12 +18,13 @@ export function EventPaginatedDataTable<T extends object>({
   pageSize = EVENT_TABLE_PAGE_SIZE,
   ...tableProps
 }: EventPaginatedDataTableProps<T>) {
-  const [page, setPage] = useState(1);
   const total = data.length;
-
-  useEffect(() => {
-    setPage(1);
-  }, [total]);
+  const [pagination, setPagination] = useState({ total, pageSize, page: 1 });
+  let page = pagination.page;
+  if (pagination.total !== total || pagination.pageSize !== pageSize) {
+    page = 1;
+    setPagination({ total, pageSize, page });
+  }
 
   const paginatedData = useMemo(() => {
     const start = (page - 1) * pageSize;
@@ -35,7 +36,13 @@ export function EventPaginatedDataTable<T extends object>({
       <DataTable {...tableProps} data={paginatedData} />
       {total > 0 ? (
         <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 lg:px-6">
-          <Pagination total={total} page={page} pageSize={pageSize} onChange={setPage} hideIfSinglePage={false} />
+          <Pagination
+            total={total}
+            page={page}
+            pageSize={pageSize}
+            onChange={(nextPage) => setPagination({ total, pageSize, page: nextPage })}
+            hideIfSinglePage={false}
+          />
         </div>
       ) : null}
     </EventTablePanel>

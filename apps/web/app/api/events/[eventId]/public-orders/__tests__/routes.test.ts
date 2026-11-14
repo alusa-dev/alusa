@@ -33,8 +33,22 @@ describe('public order admin routes', () => {
     const response = await GET(new Request('http://localhost/api/events/event-1/public-orders?page=2&pageSize=10&search=Ana'), params);
     expect(response.status).toBe(200);
     expect(listOrdersMock).toHaveBeenCalledWith('conta-a', 'event-1', {
-      page: 2, pageSize: 10, search: 'Ana', status: undefined,
+      page: 2, pageSize: 10, orderId: undefined, search: 'Ana', status: undefined,
     });
+  });
+
+  it('filtra um pedido por id mantendo o escopo de conta e evento', async () => {
+    const response = await GET(new Request('http://localhost/api/events/event-1/public-orders?orderId=order-1&page=1&pageSize=1'), params);
+    expect(response.status).toBe(200);
+    expect(listOrdersMock).toHaveBeenCalledWith('conta-a', 'event-1', {
+      page: 1, pageSize: 1, orderId: 'order-1', search: undefined, status: undefined,
+    });
+  });
+
+  it('rejeita id de pedido vazio', async () => {
+    const response = await GET(new Request('http://localhost/api/events/event-1/public-orders?orderId=%20'), params);
+    expect(response.status).toBe(422);
+    expect(listOrdersMock).not.toHaveBeenCalled();
   });
 
   it('rejeita query inválida antes de consultar pedidos', async () => {

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRef, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { MoreVertical } from '@/components/icons/icons';
 
 import { Button } from '@/components/ui/button';
@@ -19,6 +19,7 @@ import { toast } from '@/components/ui/toast';
 import {
   cancelTicketSale,
   deleteTicketSale,
+  getEventPublicMapOrder,
   markTicketSalePaid,
   refundEventCharge,
   refundTicketSale,
@@ -30,12 +31,28 @@ import {
 import { eventQueryKeys } from '../shared/event-query-keys';
 import { RefundAttemptKeys } from '../refund-attempt-keys';
 import { EditSaleFormDialog } from './EditSaleFormDialog';
+import { EventPublicOrderDetailsDialog } from '../map/components/EventPublicOrderDetailsDialog';
 
 export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: TicketSaleDTO; eventId: string; lots: TicketLotDTO[]; scopedResources?: EventScopedResources }) {
   const queryClient = useQueryClient();
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [refundOpen, setRefundOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const publicOrderDetailsEnabled = Boolean(sale.eventMapOrderId);
+  const publicOrderDetailsError = sale.source === 'PUBLIC_ORDER' && !sale.eventMapOrderId
+    ? 'Este pedido não possui uma referência online disponível.'
+    : null;
+  const manualSaleDetails = sale.source === 'PUBLIC_ORDER' ? null : sale;
+  const publicOrderDetails = useQuery({
+    queryKey: ['events', eventId, 'public-order-details', sale.eventMapOrderId],
+    queryFn: () => {
+      const orderId = sale.eventMapOrderId;
+      if (!orderId) throw new Error('Este pedido não possui uma referência online disponível.');
+      return getEventPublicMapOrder(eventId, orderId);
+    },
+    enabled: detailsOpen && publicOrderDetailsEnabled,
+  });
   const refundAttemptKeys = useRef(new RefundAttemptKeys());
   const refundOperationId = sale.eventMapOrderId
     ? `event-map-order:${sale.eventMapOrderId}`
@@ -93,9 +110,6 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
     const isRefundProcessing = sale.paymentStatus === 'REFUND_IN_PROGRESS' || sale.paymentStatus === 'REFUND_REQUESTED';
     const canRefundAsaas = sale.status === 'PAID' && Boolean(sale.asaasPaymentId) && !isRefundProcessing;
     const canResendWhatsApp = sale.status === 'PAID' && Boolean(sale.whatsappAvailable);
-    const hasActions = Boolean(sale.chargeDetailUrl || sale.invoiceUrl || sale.ticketsUrl || canRefundAsaas || canResendWhatsApp);
-    if (!hasActions) return <span className="text-slate-400">-</span>;
-
     return (
       <>
         <DropdownMenu>
@@ -105,6 +119,8 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-72 max-w-[calc(100vw-2rem)]">
+            <DropdownMenuItem onSelect={() => setDetailsOpen(true)}>Ver detalhes do pedido</DropdownMenuItem>
+            {(sale.chargeDetailUrl || sale.invoiceUrl || sale.ticketsUrl || canRefundAsaas || canResendWhatsApp) ? <DropdownMenuSeparator /> : null}
             {sale.chargeDetailUrl ? (
               <DropdownMenuItem asChild>
                 <Link href={sale.chargeDetailUrl}>Ver cobrança</Link>
@@ -139,6 +155,14 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
           </DropdownMenuContent>
         </DropdownMenu>
 
+        <EventPublicOrderDetailsDialog
+          order={publicOrderDetails.data ?? null}
+          sale={publicOrderDetailsEnabled ? null : manualSaleDetails}
+          open={detailsOpen}
+          loading={publicOrderDetailsEnabled && publicOrderDetails.isLoading}
+          error={publicOrderDetails.error?.message ?? publicOrderDetailsError}
+          onOpenChange={setDetailsOpen}
+        />
         <ConfirmDialog
           open={refundOpen}
           onOpenChange={setRefundOpen}
@@ -163,6 +187,8 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-72 max-w-[calc(100vw-2rem)]">
+          <DropdownMenuItem onSelect={() => setDetailsOpen(true)}>Ver detalhes do pedido</DropdownMenuItem>
+          <DropdownMenuSeparator />
           {sale.chargeDetailUrl ? (
             <DropdownMenuItem asChild>
               <Link href={sale.chargeDetailUrl}>Ver cobrança</Link>
@@ -224,6 +250,14 @@ export function TicketActions({ sale, eventId, lots, scopedResources }: { sale: 
         </DropdownMenuContent>
       </DropdownMenu>
 
+      <EventPublicOrderDetailsDialog
+        order={publicOrderDetails.data ?? null}
+        sale={publicOrderDetailsEnabled ? null : manualSaleDetails}
+        open={detailsOpen}
+        loading={publicOrderDetailsEnabled && publicOrderDetails.isLoading}
+        error={publicOrderDetails.error?.message ?? publicOrderDetailsError}
+        onOpenChange={setDetailsOpen}
+      />
       <EditSaleFormDialog
         open={editOpen}
         onOpenChange={setEditOpen}
